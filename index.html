@@ -1,0 +1,1672 @@
+<!doctype html>
+<html>
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover"/>
+  <title>Store Inventory Count</title>
+  <style>
+    :root{
+      --bg:#f4f5f7;
+      --card:#ffffff;
+      --line:#e5e7eb;
+      --text:#111827;
+      --muted:#6b7280;
+      --primary:#111827;
+      --green:#15803d;
+      --green-2:#166534;
+      --amber:#b45309;
+      --amber-bg:#fffbeb;
+      --amber-line:#fde68a;
+      --red:#b91c1c;
+      --red-bg:#fef2f2;
+      --red-line:#fecaca;
+      --blue:#1d4ed8;
+      --blue-bg:#eff6ff;
+      --blue-line:#bfdbfe;
+      --radius:18px;
+      --shadow:0 1px 2px rgba(0,0,0,.06);
+    }
+
+    *{box-sizing:border-box}
+    html,body{
+      margin:0;
+      padding:0;
+      background:var(--bg);
+      color:var(--text);
+      font-family:system-ui,-apple-system,Segoe UI,Roboto,Helvetica,Arial,sans-serif;
+    }
+    body{-webkit-text-size-adjust:100%}
+
+    header{
+      position:sticky;
+      top:0;
+      z-index:40;
+      background:var(--primary);
+      color:#fff;
+      padding:12px 14px calc(12px + env(safe-area-inset-top));
+      border-bottom:1px solid rgba(255,255,255,.1);
+    }
+    .headerInner{
+      max-width:1200px;
+      margin:0 auto;
+      display:flex;
+      align-items:center;
+      justify-content:space-between;
+      gap:10px;
+    }
+    .titleWrap h1{
+      margin:0;
+      font-size:16px;
+      letter-spacing:.2px;
+    }
+    .titleWrap .sub{
+      font-size:12px;
+      opacity:.82;
+      margin-top:2px;
+    }
+    .headerPills{
+      display:flex;
+      gap:8px;
+      flex-wrap:wrap;
+      justify-content:flex-end;
+    }
+    .pill{
+      display:inline-flex;
+      align-items:center;
+      gap:6px;
+      border:1px solid rgba(255,255,255,.16);
+      background:rgba(255,255,255,.10);
+      color:#fff;
+      padding:7px 10px;
+      border-radius:999px;
+      font-size:12px;
+      font-weight:900;
+      white-space:nowrap;
+    }
+
+    main{
+      max-width:1200px;
+      margin:12px auto;
+      padding:0 12px 110px;
+    }
+    @media (min-width:900px){
+      main{padding-bottom:18px;}
+    }
+
+    .card{
+      background:var(--card);
+      border:1px solid var(--line);
+      border-radius:var(--radius);
+      box-shadow:var(--shadow);
+      padding:14px;
+      margin-bottom:12px;
+    }
+
+    .grid2{display:grid;grid-template-columns:1fr 1fr;gap:10px}
+    .grid3{display:grid;grid-template-columns:1fr 1fr 1fr;gap:10px}
+    @media (max-width:860px){
+      .grid2,.grid3{grid-template-columns:1fr}
+    }
+
+    label{
+      display:block;
+      font-size:12px;
+      font-weight:900;
+      color:#374151;
+      margin:8px 0 6px;
+    }
+    input,select,textarea,button{
+      font:inherit;
+    }
+    input,select,textarea{
+      width:100%;
+      background:#fff;
+      border:1px solid #d1d5db;
+      border-radius:14px;
+      padding:12px;
+      font-size:16px;
+      color:var(--text);
+    }
+    textarea{
+      min-height:76px;
+      resize:vertical;
+    }
+
+    button{
+      border:1px solid #d1d5db;
+      background:#fff;
+      color:var(--text);
+      border-radius:14px;
+      padding:12px 14px;
+      font-weight:900;
+      min-height:48px;
+      cursor:pointer;
+    }
+    button.primary{background:var(--primary);border-color:var(--primary);color:#fff}
+    button.submit{background:var(--green);border-color:var(--green);color:#fff}
+    button.submit:hover{background:var(--green-2)}
+    button.secondaryBlue{background:var(--blue-bg);border-color:var(--blue-line);color:var(--blue)}
+    button.warn{background:var(--amber-bg);border-color:var(--amber-line);color:var(--amber)}
+    button.danger{background:var(--red-bg);border-color:var(--red-line);color:var(--red)}
+    button:disabled{opacity:.6;cursor:not-allowed}
+
+    .btnRow{display:flex;gap:10px;flex-wrap:wrap;align-items:center}
+    .tinyRow{display:flex;gap:8px;flex-wrap:wrap;align-items:center}
+
+    .smallMuted{font-size:12px;color:var(--muted)}
+    .status{font-size:12px;color:var(--muted);margin-top:8px;white-space:pre-wrap}
+
+    .topTools{
+      display:flex;
+      gap:10px;
+      flex-wrap:wrap;
+      align-items:center;
+      justify-content:space-between;
+      margin-top:10px;
+    }
+    .filters{
+      display:flex;
+      gap:8px;
+      flex-wrap:wrap;
+    }
+    .filterChip{
+      border:1px solid var(--line);
+      background:#fff;
+      color:#374151;
+      border-radius:999px;
+      padding:8px 12px;
+      font-size:12px;
+      font-weight:900;
+      cursor:pointer;
+      user-select:none;
+    }
+    .filterChip.active{
+      background:var(--primary);
+      border-color:var(--primary);
+      color:#fff;
+    }
+
+    .summaryGrid{
+      display:grid;
+      grid-template-columns:repeat(4,1fr);
+      gap:10px;
+      margin-top:10px;
+    }
+    @media (max-width:860px){
+      .summaryGrid{grid-template-columns:1fr 1fr}
+    }
+    .summaryBox{
+      border:1px solid var(--line);
+      background:#fafafa;
+      border-radius:16px;
+      padding:12px;
+    }
+    .summaryBox .num{
+      font-size:24px;
+      font-weight:1000;
+      line-height:1;
+    }
+    .summaryBox .lbl{
+      font-size:12px;
+      color:var(--muted);
+      margin-top:4px;
+    }
+
+    .list{
+      display:grid;
+      gap:10px;
+      margin-top:10px;
+    }
+
+    .item{
+      background:#fff;
+      border:1px solid var(--line);
+      border-radius:18px;
+      padding:12px;
+    }
+    .item.needs{
+      background:var(--red-bg);
+      border-color:var(--red-line);
+    }
+    .item.low{
+      background:var(--amber-bg);
+      border-color:var(--amber-line);
+    }
+    .item.changed{
+      box-shadow:0 0 0 2px rgba(29,78,216,.08) inset;
+    }
+
+    .itemTop{
+      display:flex;
+      gap:10px;
+      justify-content:space-between;
+      align-items:flex-start;
+    }
+    .skuName{
+      font-size:16px;
+      font-weight:1000;
+      line-height:1.2;
+    }
+    .skuMeta{
+      margin-top:5px;
+      color:var(--muted);
+      font-size:12px;
+      line-height:1.35;
+    }
+    .badgeCol{
+      display:flex;
+      flex-direction:column;
+      gap:6px;
+      align-items:flex-end;
+      flex-shrink:0;
+    }
+    .badge{
+      display:inline-flex;
+      align-items:center;
+      gap:6px;
+      padding:6px 10px;
+      border-radius:999px;
+      font-size:11px;
+      font-weight:1000;
+      border:1px solid var(--line);
+      background:#fff;
+      white-space:nowrap;
+    }
+    .badge.red{background:var(--red-bg);border-color:var(--red-line);color:var(--red)}
+    .badge.amber{background:var(--amber-bg);border-color:var(--amber-line);color:var(--amber)}
+    .badge.blue{background:var(--blue-bg);border-color:var(--blue-line);color:var(--blue)}
+
+    .dataStrip{
+      display:grid;
+      grid-template-columns:repeat(4,1fr);
+      gap:8px;
+      margin-top:10px;
+    }
+    @media (max-width:760px){
+      .dataStrip{grid-template-columns:1fr 1fr}
+    }
+    .dataBox{
+      border:1px solid #eef2f7;
+      background:#fafafa;
+      border-radius:14px;
+      padding:10px;
+    }
+    .dataBox .big{
+      font-size:18px;
+      font-weight:1000;
+      line-height:1;
+    }
+    .dataBox .lbl{
+      font-size:11px;
+      color:var(--muted);
+      margin-top:5px;
+    }
+
+    .countRow{
+      margin-top:10px;
+      display:grid;
+      grid-template-columns:auto 120px auto auto auto;
+      gap:8px;
+      align-items:center;
+    }
+    @media (max-width:760px){
+      .countRow{
+        grid-template-columns:1fr 1fr 1fr;
+      }
+      .countInputWrap{
+        grid-column:1 / -1;
+      }
+    }
+
+    .miniBtn{
+      min-height:52px;
+      border-radius:14px;
+      font-size:18px;
+      font-weight:1000;
+      padding:0 14px;
+    }
+    .quickBtn{
+      min-height:52px;
+      border-radius:14px;
+      background:var(--blue-bg);
+      border-color:var(--blue-line);
+      color:var(--blue);
+      font-weight:1000;
+    }
+    .countInput{
+      width:100%;
+      text-align:center;
+      font-size:22px;
+      font-weight:1000;
+      min-height:52px;
+    }
+
+    .noteToggle{
+      margin-top:10px;
+      font-size:12px;
+      font-weight:900;
+      color:var(--blue);
+      cursor:pointer;
+      display:inline-block;
+    }
+    .noteWrap{
+      display:none;
+      margin-top:8px;
+    }
+    .noteWrap.open{display:block}
+
+    details.manager{
+      margin-top:6px;
+    }
+    details.manager > summary{
+      list-style:none;
+      cursor:pointer;
+      font-weight:1000;
+      font-size:14px;
+      padding:4px 0;
+    }
+    details.manager > summary::-webkit-details-marker{display:none}
+
+    dialog{
+      border:none;
+      border-radius:18px;
+      padding:0;
+      width:min(880px,96vw);
+    }
+    dialog::backdrop{background:rgba(0,0,0,.45)}
+    .dlgHeader{
+      padding:14px 14px 10px;
+      border-bottom:1px solid #eef2f7;
+      display:flex;
+      justify-content:space-between;
+      gap:10px;
+      align-items:flex-start;
+      position:sticky;
+      top:0;
+      background:#fff;
+      z-index:1;
+    }
+    .dlgTitle{font-weight:1000}
+    .dlgBody{padding:14px}
+    .dlgActions{
+      display:flex;
+      gap:10px;
+      flex-wrap:wrap;
+      justify-content:flex-end;
+      margin-top:12px;
+    }
+    @media (max-width:680px){
+      dialog{width:100vw;height:100vh;border-radius:0;max-width:none}
+      .dlgBody{padding-bottom:30px}
+    }
+
+    .managerGridWrap{
+      overflow:auto;
+      border:1px solid var(--line);
+      border-radius:16px;
+      background:#fff;
+      margin-top:12px;
+    }
+    .managerGrid{
+      width:max-content;
+      min-width:100%;
+      border-collapse:separate;
+      border-spacing:0;
+      font-size:13px;
+    }
+    .managerGrid th,
+    .managerGrid td{
+      border-right:1px solid #eef2f7;
+      border-bottom:1px solid #eef2f7;
+      padding:10px 8px;
+      text-align:center;
+      vertical-align:middle;
+      background:#fff;
+    }
+    .managerGrid thead th{
+      position:sticky;
+      top:0;
+      z-index:5;
+      background:#f9fafb;
+      min-width:92px;
+    }
+    .managerGrid .stickyLeft{
+      position:sticky;
+      left:0;
+      z-index:6;
+      background:#fff;
+      text-align:left;
+      min-width:220px;
+      max-width:220px;
+    }
+    .managerGrid thead .stickyLeft{
+      z-index:7;
+      background:#f3f4f6;
+    }
+
+    .storeCell{
+      display:flex;
+      flex-direction:column;
+      gap:4px;
+    }
+    .storeName{
+      font-weight:1000;
+      line-height:1.2;
+    }
+    .storeMeta{
+      color:var(--muted);
+      font-size:11px;
+    }
+    .storeFlags{
+      display:flex;
+      gap:6px;
+      flex-wrap:wrap;
+      margin-top:4px;
+    }
+
+    .gridBadge{
+      display:inline-flex;
+      align-items:center;
+      padding:3px 8px;
+      border-radius:999px;
+      font-size:10px;
+      font-weight:1000;
+      border:1px solid var(--line);
+      background:#fff;
+    }
+    .gridBadge.red{
+      background:var(--red-bg);
+      border-color:var(--red-line);
+      color:var(--red);
+    }
+    .gridBadge.amber{
+      background:var(--amber-bg);
+      border-color:var(--amber-line);
+      color:var(--amber);
+    }
+    .gridBadge.green{
+      background:#ecfdf5;
+      border-color:#bbf7d0;
+      color:#166534;
+    }
+
+    .invCell{
+      min-width:92px;
+      font-weight:1000;
+    }
+    .invCell .main{
+      font-size:16px;
+      line-height:1;
+    }
+    .invCell .sub{
+      margin-top:4px;
+      font-size:10px;
+      color:var(--muted);
+      line-height:1.2;
+    }
+    .invCell.needs{
+      background:var(--red-bg);
+    }
+    .invCell.low{
+      background:var(--amber-bg);
+    }
+    .invCell.ok{
+      background:#f9fafb;
+    }
+
+    .managerToolbar{
+      display:flex;
+      gap:10px;
+      flex-wrap:wrap;
+      align-items:center;
+      justify-content:space-between;
+      margin-top:10px;
+    }
+    .managerToolbar .left,
+    .managerToolbar .right{
+      display:flex;
+      gap:8px;
+      flex-wrap:wrap;
+      align-items:center;
+    }
+    .managerSearch{
+      width:260px;
+      max-width:100%;
+    }
+
+    .managerLegend{
+      display:flex;
+      gap:8px;
+      flex-wrap:wrap;
+      margin-top:10px;
+    }
+
+    .bottomBar{
+      position:fixed;
+      left:0;
+      right:0;
+      bottom:0;
+      z-index:50;
+      padding:10px 12px calc(10px + env(safe-area-inset-bottom));
+      background:rgba(244,245,247,.94);
+      backdrop-filter:saturate(180%) blur(10px);
+      border-top:1px solid rgba(17,24,39,.08);
+    }
+    .bottomInner{
+      max-width:1200px;
+      margin:0 auto;
+      display:grid;
+      grid-template-columns:1fr auto auto;
+      gap:10px;
+      align-items:center;
+    }
+    @media (max-width:760px){
+      .bottomInner{
+        grid-template-columns:1fr 1fr;
+      }
+      .bottomSummary{
+        grid-column:1 / -1;
+      }
+    }
+    .bottomSummary{
+      background:#fff;
+      border:1px solid var(--line);
+      border-radius:14px;
+      padding:10px 12px;
+    }
+    .bottomSummary .big{font-weight:1000}
+
+    .toast{
+      position:fixed;
+      left:50%;
+      transform:translateX(-50%);
+      bottom:calc(84px + env(safe-area-inset-bottom));
+      background:#111827;
+      color:#fff;
+      padding:10px 12px;
+      border-radius:999px;
+      font-size:12px;
+      font-weight:900;
+      display:none;
+      z-index:60;
+      max-width:90vw;
+      text-align:center;
+    }
+  </style>
+</head>
+<body>
+<header>
+  <div class="headerInner">
+    <div class="titleWrap">
+      <h1>Store Inventory Count</h1>
+      <div class="sub">Fast count mode for staff + manager dashboard</div>
+    </div>
+    <div class="headerPills">
+      <div class="pill" id="hdrStore">No store</div>
+      <div class="pill" id="hdrChanged">0 changed</div>
+    </div>
+  </div>
+</header>
+
+<main>
+  <div class="card">
+    <div style="display:flex;justify-content:space-between;gap:10px;flex-wrap:wrap;align-items:center">
+      <div>
+        <div style="font-weight:1000">Manager Summary Grid</div>
+        <div class="smallMuted">Stores on the left, bottle inventory across the top.</div>
+      </div>
+      <button id="refreshManagerGridBtn">Refresh Manager Grid</button>
+    </div>
+
+    <div class="managerToolbar">
+      <div class="left">
+        <input id="managerSearch" class="managerSearch" placeholder="Filter stores or bottles…" />
+      </div>
+      <div class="right">
+        <span class="filterChip" id="mgrStoreCount">0 stores</span>
+        <span class="filterChip" id="mgrSkuCount">0 bottles</span>
+      </div>
+    </div>
+
+    <div class="managerLegend">
+      <span class="gridBadge red">Needs attention</span>
+      <span class="gridBadge amber">Below PAR</span>
+      <span class="gridBadge green">Store OK</span>
+    </div>
+
+    <div class="managerGridWrap">
+      <table class="managerGrid" id="managerGrid">
+        <thead></thead>
+        <tbody></tbody>
+      </table>
+    </div>
+  </div>
+
+  <div class="card">
+    <div class="grid2">
+      <div>
+        <label>Store</label>
+        <select id="storeSelect"></select>
+      </div>
+      <div>
+        <label>Rep</label>
+        <input id="rep" placeholder="Your name" />
+      </div>
+    </div>
+
+    <label>Search</label>
+    <input id="search" placeholder="Search product name, SKU ID, UPC…" />
+
+    <div class="topTools">
+      <div class="filters">
+        <button class="filterChip" id="filterNeeds">Needs attention</button>
+        <button class="filterChip" id="filterChanged">Changed</button>
+        <button class="filterChip active" id="filterAll">All</button>
+      </div>
+
+      <div class="tinyRow">
+        <button class="secondaryBlue" id="scanBtn">Scan UPC</button>
+        <button id="refreshBtn">Refresh</button>
+      </div>
+    </div>
+
+    <div class="summaryGrid">
+      <div class="summaryBox">
+        <div class="num" id="sumTotal">0</div>
+        <div class="lbl">SKUs in store</div>
+      </div>
+      <div class="summaryBox">
+        <div class="num" id="sumNeeds">0</div>
+        <div class="lbl">Needs attention</div>
+      </div>
+      <div class="summaryBox">
+        <div class="num" id="sumChanged">0</div>
+        <div class="lbl">Changed by staff</div>
+      </div>
+      <div class="summaryBox">
+        <div class="num" id="sumShown">0</div>
+        <div class="lbl">Currently shown</div>
+      </div>
+    </div>
+
+    <div class="status" id="status"></div>
+
+    <details class="manager" id="managerDetails">
+      <summary>Manager Tools</summary>
+
+      <div style="margin-top:10px">
+        <div class="grid2">
+          <div>
+            <label>Visit notes</label>
+            <textarea id="visitNotes" placeholder="Display issues, out-of-stocks, backroom notes..."></textarea>
+          </div>
+          <div>
+            <label>Submit settings</label>
+            <div class="card" style="margin:0;padding:12px">
+              <label style="margin-top:0">
+                <input type="checkbox" id="updateInventory" checked style="width:auto;margin-right:8px">
+                Update inventory on submit
+              </label>
+              <div class="smallMuted">If checked, on-hand units will be overwritten with staff counts.</div>
+            </div>
+          </div>
+        </div>
+
+        <div class="btnRow" style="margin-top:10px">
+          <button id="addExistingBtn">Add Existing SKU</button>
+          <button id="addProductBtn">Add New Product</button>
+          <button class="warn" id="reorderBtn">Create Reorder</button>
+          <button class="danger" id="resetBtn">Reset Staff Counts</button>
+        </div>
+      </div>
+    </details>
+  </div>
+
+  <div class="list" id="list"></div>
+
+  <dialog id="scanDialog">
+    <div class="dlgHeader">
+      <div>
+        <div class="dlgTitle">Scan UPC</div>
+        <div class="smallMuted" id="scanStatus">Starting…</div>
+      </div>
+      <button id="closeScanBtn">Close</button>
+    </div>
+    <div class="dlgBody">
+      <video id="scanVideo" autoplay playsinline style="width:100%;border-radius:14px;border:1px solid var(--line);background:#000"></video>
+      <div class="smallMuted" style="margin-top:10px">Last scan: <b id="lastScanText">—</b></div>
+      <div class="smallMuted" style="margin-top:8px">Each successful scan adds <b>1 bottle</b> to the counted amount.</div>
+    </div>
+  </dialog>
+
+  <dialog id="addSkuDialog">
+    <div class="dlgHeader">
+      <div>
+        <div class="dlgTitle">Add Existing SKU to Store</div>
+        <div class="smallMuted" id="addSkuStatus">Loading…</div>
+      </div>
+      <button id="closeAddSkuBtn">Close</button>
+    </div>
+    <div class="dlgBody">
+      <label>Choose SKU</label>
+      <select id="skuPicker"></select>
+      <div class="smallMuted" id="skuPickerMeta" style="margin-top:6px"></div>
+
+      <div class="grid3" style="margin-top:10px">
+        <div>
+          <label>On-hand bottles</label>
+          <input id="as_on_hand_units" type="number" min="0" step="1" value="0">
+        </div>
+        <div>
+          <label>PAR bottles</label>
+          <input id="as_par_level_units" type="number" min="0" step="1" value="12">
+        </div>
+        <div>
+          <label>RP bottles</label>
+          <input id="as_reorder_point_units" type="number" min="0" step="1" value="4">
+        </div>
+      </div>
+
+      <div class="dlgActions">
+        <button class="primary" id="addSkuToStoreBtn">Add to Store</button>
+      </div>
+    </div>
+  </dialog>
+
+  <dialog id="addProductDialog">
+    <div class="dlgHeader">
+      <div>
+        <div class="dlgTitle">Add New Product</div>
+        <div class="smallMuted" id="addProductStatus">Ready.</div>
+      </div>
+      <button id="closeAddProductBtn">Close</button>
+    </div>
+    <div class="dlgBody">
+      <div class="grid2">
+        <div>
+          <label>SKU ID</label>
+          <input id="ap_sku_id" placeholder="STUR-VOD-CHRY-750">
+        </div>
+        <div>
+          <label>UPC</label>
+          <input id="ap_upc" placeholder="123456789012">
+        </div>
+        <div>
+          <label>Product name</label>
+          <input id="ap_sku_name" placeholder="Cherry Vodka">
+        </div>
+        <div>
+          <label>Size</label>
+          <input id="ap_size" placeholder="750ml">
+        </div>
+        <div>
+          <label>Units per case</label>
+          <input id="ap_units_per_case" type="number" min="1" step="1" value="12">
+        </div>
+        <div>
+          <label>Active</label>
+          <select id="ap_active">
+            <option value="TRUE" selected>TRUE</option>
+            <option value="FALSE">FALSE</option>
+          </select>
+        </div>
+      </div>
+
+      <div style="margin-top:12px;border-top:1px solid #eef2f7;padding-top:12px">
+        <div style="font-weight:1000">Also add to this store</div>
+        <div class="grid3" style="margin-top:6px">
+          <div>
+            <label>On-hand bottles</label>
+            <input id="ap_on_hand_units" type="number" min="0" step="1" value="0">
+          </div>
+          <div>
+            <label>PAR bottles</label>
+            <input id="ap_par_level_units" type="number" min="0" step="1" value="12">
+          </div>
+          <div>
+            <label>RP bottles</label>
+            <input id="ap_reorder_point_units" type="number" min="0" step="1" value="4">
+          </div>
+          <div>
+            <label>Add to store?</label>
+            <select id="ap_add_to_store">
+              <option value="YES" selected>YES</option>
+              <option value="NO">NO</option>
+            </select>
+          </div>
+        </div>
+      </div>
+
+      <div class="dlgActions">
+        <button class="primary" id="saveProductBtn">Save Product</button>
+      </div>
+    </div>
+  </dialog>
+</main>
+
+<div class="bottomBar">
+  <div class="bottomInner">
+    <div class="bottomSummary">
+      <div class="big" id="bottomSummary">0 shown • 0 changed • 0 need attention</div>
+      <div class="smallMuted">Only changed SKUs will be submitted</div>
+    </div>
+    <button class="secondaryBlue" id="bbScan">Scan</button>
+    <button class="submit" id="submitBtn">Submit</button>
+  </div>
+</div>
+
+<div class="toast" id="toast"></div>
+
+<script>
+(() => {
+  const $ = (id) => document.getElementById(id);
+
+  let cache = { stores: [], lines: [] };
+  let countState = {};
+  let filterMode = "all";
+  let filterText = "";
+
+  let managerGridData = { stores: [], skus: [] };
+  let managerFilterText = "";
+
+  let scanStream = null;
+  let scanTimer = null;
+  let barcodeDetector = null;
+  let lastScanAt = 0;
+
+  async function apiGet(params) {
+    const qs = new URLSearchParams(params).toString();
+    const res = await fetch(`/api/inventory?${qs}`);
+    return res.json();
+  }
+
+  async function apiPost(body) {
+    const res = await fetch(`/api/inventory`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(body),
+    });
+    return res.json();
+  }
+
+  function toast(msg){
+    const t = $("toast");
+    t.textContent = msg;
+    t.style.display = "block";
+    clearTimeout(toast._timer);
+    toast._timer = setTimeout(() => t.style.display = "none", 1800);
+  }
+
+  function setStatus(msg){
+    $("status").textContent = msg || "";
+  }
+
+  function escapeHtml(s) {
+    return String(s ?? "").replace(/[&<>"']/g, m => (
+      { "&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#039;" }[m]
+    ));
+  }
+
+  function digits(v){
+    return String(v || "").replace(/\D/g, "");
+  }
+
+  function savePrefs(){
+    localStorage.setItem("inv_store", $("storeSelect").value || "");
+    localStorage.setItem("inv_rep", $("rep").value || "");
+    localStorage.setItem("inv_manager_open", $("managerDetails").open ? "1" : "0");
+  }
+
+  function loadPrefs(){
+    $("rep").value = localStorage.getItem("inv_rep") || "";
+    if (localStorage.getItem("inv_manager_open") === "1") {
+      $("managerDetails").open = true;
+    }
+  }
+
+  function renderStores(stores){
+    const sel = $("storeSelect");
+    const saved = localStorage.getItem("inv_store") || "";
+    sel.innerHTML = "";
+
+    stores.forEach(s => {
+      const opt = document.createElement("option");
+      opt.value = s.store_id;
+      opt.textContent = `${s.store_name}${s.route ? " • " + s.route : ""}`;
+      sel.appendChild(opt);
+    });
+
+    if (saved && stores.some(s => s.store_id === saved)) {
+      sel.value = saved;
+    }
+  }
+
+  function needsAttention(line){
+    return Number(line.on_hand_units || 0) <= Number(line.reorder_point_units || 0);
+  }
+
+  function belowPar(line){
+    return Number(line.on_hand_units || 0) < Number(line.par_level_units || 0);
+  }
+
+  function isChanged(line){
+    return !!countState[line.sku_id]?.dirty;
+  }
+
+  function visibleLines(){
+    const q = (filterText || "").trim().toLowerCase();
+
+    return cache.lines.filter(line => {
+      if (q) {
+        const hay = [line.sku_name, line.sku_id, line.upc, line.size]
+          .map(x => String(x || "").toLowerCase())
+          .join(" | ");
+        if (!hay.includes(q)) return false;
+      }
+
+      if (filterMode === "needs") return needsAttention(line) || belowPar(line);
+      if (filterMode === "changed") return isChanged(line);
+      return true;
+    });
+  }
+
+  function summary(){
+    const total = cache.lines.length;
+    const needs = cache.lines.filter(l => needsAttention(l) || belowPar(l)).length;
+    const changed = cache.lines.filter(l => isChanged(l)).length;
+    const shown = visibleLines().length;
+    return { total, needs, changed, shown };
+  }
+
+  function setFilter(mode){
+    filterMode = mode;
+    $("filterNeeds").classList.toggle("active", mode === "needs");
+    $("filterChanged").classList.toggle("active", mode === "changed");
+    $("filterAll").classList.toggle("active", mode === "all");
+    render();
+  }
+
+  function updateSummaryUi(){
+    const s = summary();
+    $("sumTotal").textContent = s.total;
+    $("sumNeeds").textContent = s.needs;
+    $("sumChanged").textContent = s.changed;
+    $("sumShown").textContent = s.shown;
+    $("hdrChanged").textContent = `${s.changed} changed`;
+
+    const storeText = $("storeSelect").selectedOptions[0]?.textContent || "No store";
+    $("hdrStore").textContent = storeText;
+    $("bottomSummary").textContent = `${s.shown} shown • ${s.changed} changed • ${s.needs} need attention`;
+  }
+
+  function ensureState(line){
+    if (!countState[line.sku_id]) {
+      countState[line.sku_id] = {
+        counted: Number(line.on_hand_units || 0),
+        notes: "",
+        dirty: false
+      };
+    }
+    return countState[line.sku_id];
+  }
+
+  function render(){
+    const list = $("list");
+    list.innerHTML = "";
+
+    const lines = visibleLines();
+    updateSummaryUi();
+
+    if (!lines.length) {
+      list.innerHTML = `<div class="card"><div style="font-weight:1000">Nothing to show</div><div class="smallMuted" style="margin-top:6px">Try another filter or search term.</div></div>`;
+      return;
+    }
+
+    lines.forEach(line => {
+      const st = ensureState(line);
+      const counted = Number(st.counted || 0);
+      const onHand = Number(line.on_hand_units || 0);
+      const par = Number(line.par_level_units || 0);
+      const rp = Number(line.reorder_point_units || 0);
+      const delta = counted - onHand;
+      const unitsPerCase = Number(line.units_per_case || 12);
+      const upc = digits(line.upc);
+
+      const item = document.createElement("div");
+      item.className = "item";
+      if (needsAttention(line)) item.classList.add("needs");
+      else if (belowPar(line)) item.classList.add("low");
+      if (st.dirty) item.classList.add("changed");
+
+      item.innerHTML = `
+        <div class="itemTop">
+          <div>
+            <div class="skuName">${escapeHtml(line.sku_name || line.sku_id)}</div>
+            <div class="skuMeta">
+              SKU: ${escapeHtml(line.sku_id)}
+              ${line.size ? ` • ${escapeHtml(line.size)}` : ""}
+              ${upc ? ` • UPC ${escapeHtml(upc)}` : ""}
+              • ${unitsPerCase}/case
+            </div>
+          </div>
+          <div class="badgeCol">
+            ${needsAttention(line) ? `<div class="badge red">At / below reorder point</div>` : ""}
+            ${!needsAttention(line) && belowPar(line) ? `<div class="badge amber">Below PAR</div>` : ""}
+            ${st.dirty ? `<div class="badge blue">Changed</div>` : ""}
+          </div>
+        </div>
+
+        <div class="dataStrip">
+          <div class="dataBox">
+            <div class="big">${onHand}</div>
+            <div class="lbl">System on-hand</div>
+          </div>
+          <div class="dataBox">
+            <div class="big">${par}</div>
+            <div class="lbl">PAR</div>
+          </div>
+          <div class="dataBox">
+            <div class="big">${rp}</div>
+            <div class="lbl">Reorder point</div>
+          </div>
+          <div class="dataBox">
+            <div class="big">${delta > 0 ? "+" + delta : delta}</div>
+            <div class="lbl">Delta vs system</div>
+          </div>
+        </div>
+      `;
+
+      const countRow = document.createElement("div");
+      countRow.className = "countRow";
+
+      const minus = document.createElement("button");
+      minus.className = "miniBtn";
+      minus.textContent = "−";
+
+      const inputWrap = document.createElement("div");
+      inputWrap.className = "countInputWrap";
+      const input = document.createElement("input");
+      input.className = "countInput";
+      input.type = "number";
+      input.min = "0";
+      input.step = "1";
+      input.inputMode = "numeric";
+      input.value = counted;
+      inputWrap.appendChild(input);
+
+      const plus = document.createElement("button");
+      plus.className = "miniBtn";
+      plus.textContent = "+";
+
+      const plusCase = document.createElement("button");
+      plusCase.className = "quickBtn";
+      plusCase.textContent = `+${unitsPerCase}`;
+
+      const setSystem = document.createElement("button");
+      setSystem.className = "quickBtn";
+      setSystem.textContent = "Set = system";
+
+      function setCount(v){
+        st.counted = Math.max(0, parseInt(v || "0", 10) || 0);
+        st.dirty = (st.counted !== onHand) || !!st.notes;
+        input.value = st.counted;
+        updateSummaryUi();
+        render();
+      }
+
+      minus.addEventListener("click", () => setCount((Number(st.counted) || 0) - 1));
+      plus.addEventListener("click", () => setCount((Number(st.counted) || 0) + 1));
+      plusCase.addEventListener("click", () => setCount((Number(st.counted) || 0) + unitsPerCase));
+      setSystem.addEventListener("click", () => setCount(onHand));
+      input.addEventListener("input", () => setCount(input.value));
+
+      countRow.appendChild(minus);
+      countRow.appendChild(inputWrap);
+      countRow.appendChild(plus);
+      countRow.appendChild(plusCase);
+      countRow.appendChild(setSystem);
+
+      const noteToggle = document.createElement("div");
+      noteToggle.className = "noteToggle";
+      noteToggle.textContent = st.notes ? "Edit note" : "Add note";
+
+      const noteWrap = document.createElement("div");
+      noteWrap.className = "noteWrap";
+      const noteInput = document.createElement("input");
+      noteInput.placeholder = "Optional item note";
+      noteInput.value = st.notes || "";
+      noteWrap.appendChild(noteInput);
+
+      noteToggle.addEventListener("click", () => {
+        noteWrap.classList.toggle("open");
+      });
+
+      noteInput.addEventListener("input", () => {
+        st.notes = noteInput.value;
+        st.dirty = (Number(st.counted) !== onHand) || !!st.notes;
+        noteToggle.textContent = st.notes ? "Edit note" : "Add note";
+        updateSummaryUi();
+      });
+
+      item.appendChild(countRow);
+      item.appendChild(noteToggle);
+      item.appendChild(noteWrap);
+      list.appendChild(item);
+    });
+  }
+
+  function visibleManagerStores() {
+    const q = (managerFilterText || "").trim().toLowerCase();
+    if (!q) return managerGridData.stores || [];
+
+    return (managerGridData.stores || []).filter(store => {
+      const storeHay = [
+        store.store_name,
+        store.store_id,
+        store.route
+      ].map(x => String(x || "").toLowerCase()).join(" | ");
+
+      const skuMatch = (managerGridData.skus || []).some((sku, idx) => {
+        const cell = store.cells?.[idx];
+        const skuHay = [
+          sku.sku_name,
+          sku.sku_id,
+          sku.size,
+          cell?.on_hand_units
+        ].map(x => String(x || "").toLowerCase()).join(" | ");
+        return skuHay.includes(q);
+      });
+
+      return storeHay.includes(q) || skuMatch;
+    });
+  }
+
+  function renderManagerGrid() {
+    const table = $("managerGrid");
+    const thead = table.querySelector("thead");
+    const tbody = table.querySelector("tbody");
+
+    const skus = managerGridData.skus || [];
+    const stores = visibleManagerStores();
+
+    $("mgrStoreCount").textContent = `${stores.length} stores`;
+    $("mgrSkuCount").textContent = `${skus.length} bottles`;
+
+    thead.innerHTML = "";
+    tbody.innerHTML = "";
+
+    const headRow = document.createElement("tr");
+
+    const firstTh = document.createElement("th");
+    firstTh.className = "stickyLeft";
+    firstTh.textContent = "Store";
+    headRow.appendChild(firstTh);
+
+    skus.forEach(sku => {
+      const th = document.createElement("th");
+      th.innerHTML = `
+        <div style="font-weight:1000">${escapeHtml(sku.sku_name || sku.sku_id)}</div>
+        <div class="smallMuted" style="margin-top:4px">${escapeHtml(sku.size || "")}</div>
+      `;
+      headRow.appendChild(th);
+    });
+
+    thead.appendChild(headRow);
+
+    stores.forEach(store => {
+      const tr = document.createElement("tr");
+
+      const left = document.createElement("td");
+      left.className = "stickyLeft";
+
+      const overallClass =
+        store.needs_count > 0 ? "red" :
+        store.below_par_count > 0 ? "amber" : "green";
+
+      left.innerHTML = `
+        <div class="storeCell">
+          <div class="storeName">${escapeHtml(store.store_name || store.store_id)}</div>
+          <div class="storeMeta">
+            ${escapeHtml(store.store_id || "")}
+            ${store.route ? ` • ${escapeHtml(store.route)}` : ""}
+          </div>
+          <div class="storeFlags">
+            <span class="gridBadge ${overallClass}">
+              ${store.needs_count > 0
+                ? `${store.needs_count} need attention`
+                : store.below_par_count > 0
+                  ? `${store.below_par_count} below PAR`
+                  : `All OK`}
+            </span>
+          </div>
+        </div>
+      `;
+      tr.appendChild(left);
+
+      store.cells.forEach(cell => {
+        const td = document.createElement("td");
+        td.className = "invCell " + (
+          cell.needs_attention ? "needs" :
+          cell.below_par ? "low" : "ok"
+        );
+
+        td.innerHTML = `
+          <div class="main">${Number(cell.on_hand_units || 0)}</div>
+          <div class="sub">PAR ${Number(cell.par_level_units || 0)} • RP ${Number(cell.reorder_point_units || 0)}</div>
+        `;
+        tr.appendChild(td);
+      });
+
+      tbody.appendChild(tr);
+    });
+  }
+
+  async function loadManagerGrid() {
+    try {
+      const res = await apiPost({ action: "managerGrid" });
+      if (!res.ok) throw new Error(res.error || "Failed to load manager grid");
+      managerGridData = {
+        stores: res.stores || [],
+        skus: res.skus || []
+      };
+      renderManagerGrid();
+    } catch (err) {
+      setStatus(err.message || String(err));
+    }
+  }
+
+  async function loadStore(storeId){
+    setStatus("Loading inventory...");
+    const res = await apiGet({ action: "initData", store_id: storeId });
+    if (!res.ok) throw new Error(res.error || "Load failed.");
+
+    cache.stores = res.stores || cache.stores;
+    cache.lines = (res.lines || []).sort((a,b) => String(a.sku_name || "").localeCompare(String(b.sku_name || "")));
+
+    const keep = {};
+    cache.lines.forEach(line => {
+      const prior = countState[line.sku_id];
+      keep[line.sku_id] = prior || {
+        counted: Number(line.on_hand_units || 0),
+        notes: "",
+        dirty: false
+      };
+    });
+    countState = keep;
+
+    savePrefs();
+    render();
+    setStatus(`Loaded ${cache.lines.length} items.`);
+  }
+
+  async function loadStartup(){
+    loadPrefs();
+    setStatus("Loading stores...");
+    const res = await apiGet({ action: "initData" });
+    cache.stores = res.stores || [];
+    renderStores(cache.stores);
+
+    const first = $("storeSelect").value || cache.stores[0]?.store_id || "";
+    if (!first) {
+      setStatus("No active stores found.");
+      render();
+      return;
+    }
+
+    $("storeSelect").value = first;
+    await loadStore(first);
+    await loadManagerGrid();
+  }
+
+  function resetCounts(){
+    if (!confirm("Reset staff counts back to system on-hand for all items?")) return;
+    Object.keys(countState).forEach(k => {
+      const line = cache.lines.find(x => x.sku_id === k);
+      if (!line) return;
+      countState[k] = {
+        counted: Number(line.on_hand_units || 0),
+        notes: "",
+        dirty: false
+      };
+    });
+    render();
+    toast("Counts reset");
+  }
+
+  async function submitCounts(){
+    const storeId = $("storeSelect").value;
+    const rep = ($("rep").value || "").trim();
+
+    if (!storeId) return toast("Pick a store");
+    if (!rep) return toast("Enter your name");
+
+    const items = cache.lines
+      .filter(line => countState[line.sku_id]?.dirty)
+      .map(line => ({
+        sku_id: line.sku_id,
+        counted: Number(countState[line.sku_id]?.counted || 0),
+        notes: String(countState[line.sku_id]?.notes || "")
+      }));
+
+    if (!items.length) return toast("No changed items to submit");
+
+    const updateInventory = $("updateInventory").checked;
+
+    setStatus(`Submitting ${items.length} changed item(s)...`);
+    const res = await apiPost({
+      action: "submitCounts",
+      store_id: storeId,
+      rep,
+      updateInventory,
+      items
+    });
+
+    setStatus(res.message || "Submitted");
+    toast("Submitted");
+
+    await loadStore(storeId);
+    await loadManagerGrid();
+  }
+
+  async function createReorder(){
+    const storeId = $("storeSelect").value;
+    const rep = ($("rep").value || "").trim();
+    const notes = $("visitNotes").value || "";
+
+    if (!storeId) return toast("Pick a store");
+    if (!rep) return toast("Enter your name");
+
+    setStatus("Creating reorder...");
+    const res = await apiPost({
+      action: "createReorder",
+      store_id: storeId,
+      rep,
+      notes
+    });
+
+    setStatus(`Created ${res.created || 0} reorder lines.`);
+    toast(`Reorder: ${res.created || 0}`);
+    await loadManagerGrid();
+  }
+
+  async function fetchSkusLive(){
+    const res = await apiPost({ action: "listSkus" });
+    return (res.skus || [])
+      .sort((a,b) => String(a.sku_name || "").localeCompare(String(b.sku_name || "")));
+  }
+
+  function updateSkuMeta(){
+    const sel = $("skuPicker");
+    const opt = sel.options[sel.selectedIndex];
+    if (!opt) {
+      $("skuPickerMeta").textContent = "";
+      return;
+    }
+    const upc = digits(opt.dataset.upc || "");
+    const units = opt.dataset.units || "12";
+    $("skuPickerMeta").textContent = `${upc ? "UPC: " + upc + " • " : ""}${units}/case`;
+  }
+
+  async function openAddSkuDialog(){
+    $("addSkuStatus").textContent = "Loading SKUs...";
+    $("skuPicker").innerHTML = "";
+
+    const skus = await fetchSkusLive();
+    if (!skus.length) {
+      $("addSkuStatus").textContent = "No active SKUs found.";
+      return;
+    }
+
+    skus.forEach(s => {
+      const opt = document.createElement("option");
+      opt.value = s.sku_id;
+      opt.textContent = `${s.sku_name}${s.size ? " – " + s.size : ""} (${s.sku_id})`;
+      opt.dataset.upc = s.upc || "";
+      opt.dataset.units = String(s.units_per_case || 12);
+      $("skuPicker").appendChild(opt);
+    });
+
+    $("as_on_hand_units").value = "0";
+    $("as_par_level_units").value = "12";
+    $("as_reorder_point_units").value = "4";
+    updateSkuMeta();
+
+    $("addSkuStatus").textContent = "Choose SKU and set store-level values.";
+    $("addSkuDialog").showModal();
+  }
+
+  async function addSkuToStore(){
+    const storeId = $("storeSelect").value;
+    const skuId = $("skuPicker").value;
+    if (!storeId || !skuId) return;
+
+    $("addSkuToStoreBtn").disabled = true;
+    $("addSkuStatus").textContent = "Adding...";
+
+    try {
+      const res = await apiPost({
+        action: "addSkuToStore",
+        store_id: storeId,
+        sku_id: skuId,
+        on_hand_units: parseInt($("as_on_hand_units").value || "0", 10) || 0,
+        par_level_units: parseInt($("as_par_level_units").value || "0", 10) || 0,
+        reorder_point_units: parseInt($("as_reorder_point_units").value || "0", 10) || 0
+      });
+
+      $("addSkuStatus").textContent = res.message || "Added.";
+      toast("SKU added");
+      await loadStore(storeId);
+      await loadManagerGrid();
+      $("addSkuDialog").close();
+    } catch (e) {
+      $("addSkuStatus").textContent = e.message;
+    } finally {
+      $("addSkuToStoreBtn").disabled = false;
+    }
+  }
+
+  function openAddProductDialog(){
+    $("addProductStatus").textContent = "Creates/updates SKU and can add it to this store.";
+    $("ap_sku_id").value = "";
+    $("ap_upc").value = "";
+    $("ap_sku_name").value = "";
+    $("ap_size").value = "750ml";
+    $("ap_units_per_case").value = "12";
+    $("ap_active").value = "TRUE";
+    $("ap_on_hand_units").value = "0";
+    $("ap_par_level_units").value = "12";
+    $("ap_reorder_point_units").value = "4";
+    $("ap_add_to_store").value = "YES";
+    $("addProductDialog").showModal();
+  }
+
+  async function saveProduct(){
+    const storeId = $("storeSelect").value;
+    const sku_id = $("ap_sku_id").value.trim();
+    const upc = digits($("ap_upc").value.trim());
+    const sku_name = $("ap_sku_name").value.trim();
+    const size = $("ap_size").value.trim() || "750ml";
+    const units_per_case = Math.max(1, parseInt($("ap_units_per_case").value || "12", 10) || 12);
+    const active = $("ap_active").value === "TRUE";
+    const addToStore = $("ap_add_to_store").value === "YES";
+
+    if (!sku_id) {
+      $("addProductStatus").textContent = "SKU ID is required.";
+      return;
+    }
+    if (!sku_name) {
+      $("addProductStatus").textContent = "Product name is required.";
+      return;
+    }
+
+    $("saveProductBtn").disabled = true;
+    $("addProductStatus").textContent = "Saving...";
+
+    try {
+      const res = await apiPost({
+        action: "upsertProduct",
+        sku: { sku_id, upc, sku_name, size, units_per_case, active },
+        addToStore,
+        store_id: storeId,
+        inventory: {
+          on_hand_units: parseInt($("ap_on_hand_units").value || "0", 10) || 0,
+          par_level_units: parseInt($("ap_par_level_units").value || "0", 10) || 0,
+          reorder_point_units: parseInt($("ap_reorder_point_units").value || "0", 10) || 0
+        }
+      });
+
+      $("addProductStatus").textContent = res.message || "Saved.";
+      toast("Product saved");
+      await loadStore(storeId);
+      await loadManagerGrid();
+      $("addProductDialog").close();
+    } catch (e) {
+      $("addProductStatus").textContent = e.message;
+    } finally {
+      $("saveProductBtn").disabled = false;
+    }
+  }
+
+  function buildUpcIndex(){
+    const map = new Map();
+    (cache.lines || []).forEach(line => {
+      const upc = digits(line.upc);
+      if (upc) map.set(upc, line.sku_id);
+    });
+    return map;
+  }
+
+  async function startScan(){
+    const dlg = $("scanDialog");
+    const video = $("scanVideo");
+    const status = $("scanStatus");
+    const lastScanText = $("lastScanText");
+
+    if (!("BarcodeDetector" in window)) {
+      alert("Barcode scanning is not supported on this device/browser.");
+      return;
+    }
+
+    barcodeDetector = new BarcodeDetector({ formats: ["upc_a", "ean_13", "ean_8"] });
+
+    try {
+      status.textContent = "Requesting camera...";
+      lastScanText.textContent = "—";
+      dlg.showModal();
+
+      scanStream = await navigator.mediaDevices.getUserMedia({
+        video: { facingMode: { ideal: "environment" } },
+        audio: false
+      });
+
+      video.srcObject = scanStream;
+      await video.play();
+      status.textContent = "Scanning...";
+
+      const upcIndex = buildUpcIndex();
+
+      const scanOnce = async () => {
+        if (!video || video.readyState < 2) return;
+        try {
+          const barcodes = await barcodeDetector.detect(video);
+          if (!barcodes || !barcodes.length) return;
+
+          const code = digits(barcodes[0].rawValue);
+          const now = Date.now();
+          if (!code || (now - lastScanAt) < 850) return;
+          lastScanAt = now;
+
+          lastScanText.textContent = code;
+
+          const skuId = upcIndex.get(code);
+          if (!skuId) {
+            status.textContent = `Scanned ${code} (not in this store list).`;
+            return;
+          }
+
+          const line = cache.lines.find(x => x.sku_id === skuId);
+          if (!line) return;
+
+          const st = ensureState(line);
+          st.counted = (Number(st.counted) || 0) + 1;
+          st.dirty = (st.counted !== Number(line.on_hand_units || 0)) || !!st.notes;
+
+          status.textContent = `Matched ${code} → ${skuId}. +1 bottle`;
+          toast("+1 bottle");
+          render();
+
+          if (navigator.vibrate) navigator.vibrate(60);
+        } catch (e) {}
+      };
+
+      scanTimer = setInterval(scanOnce, 250);
+    } catch (err) {
+      status.textContent = "Camera unavailable.";
+      stopScan();
+    }
+  }
+
+  function stopScan(){
+    if (scanTimer) {
+      clearInterval(scanTimer);
+      scanTimer = null;
+    }
+    if (scanStream) {
+      scanStream.getTracks().forEach(t => t.stop());
+      scanStream = null;
+    }
+    const video = $("scanVideo");
+    if (video) video.srcObject = null;
+    const dlg = $("scanDialog");
+    if (dlg && dlg.open) dlg.close();
+  }
+
+  $("storeSelect").addEventListener("change", async () => {
+    savePrefs();
+    countState = {};
+    await loadStore($("storeSelect").value);
+  });
+
+  $("rep").addEventListener("input", savePrefs);
+  $("managerDetails").addEventListener("toggle", savePrefs);
+
+  $("search").addEventListener("input", () => {
+    filterText = $("search").value || "";
+    render();
+  });
+
+  $("managerSearch").addEventListener("input", () => {
+    managerFilterText = $("managerSearch").value || "";
+    renderManagerGrid();
+  });
+
+  $("filterNeeds").addEventListener("click", () => setFilter("needs"));
+  $("filterChanged").addEventListener("click", () => setFilter("changed"));
+  $("filterAll").addEventListener("click", () => setFilter("all"));
+
+  $("refreshBtn").addEventListener("click", () => loadStore($("storeSelect").value).catch(e => setStatus(e.message)));
+  $("refreshManagerGridBtn").addEventListener("click", loadManagerGrid);
+
+  $("resetBtn").addEventListener("click", resetCounts);
+  $("submitBtn").addEventListener("click", submitCounts);
+  $("reorderBtn").addEventListener("click", createReorder);
+
+  $("scanBtn").addEventListener("click", startScan);
+  $("bbScan").addEventListener("click", startScan);
+  $("closeScanBtn").addEventListener("click", stopScan);
+  $("scanDialog").addEventListener("close", stopScan);
+
+  $("addExistingBtn").addEventListener("click", () => openAddSkuDialog().catch(e => setStatus(e.message)));
+  $("skuPicker").addEventListener("change", updateSkuMeta);
+  $("addSkuToStoreBtn").addEventListener("click", addSkuToStore);
+  $("closeAddSkuBtn").addEventListener("click", () => $("addSkuDialog").close());
+
+  $("addProductBtn").addEventListener("click", openAddProductDialog);
+  $("saveProductBtn").addEventListener("click", saveProduct);
+  $("closeAddProductBtn").addEventListener("click", () => $("addProductDialog").close());
+
+  loadStartup().catch(err => setStatus(err.message));
+})();
+</script>
+</body>
+</html>
