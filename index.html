@@ -358,14 +358,16 @@
     details.manager{
       margin-top:6px;
     }
-    details.manager > summary{
+    details.manager > summary,
+    details.managerSummary > summary{
       list-style:none;
       cursor:pointer;
       font-weight:1000;
       font-size:14px;
       padding:4px 0;
     }
-    details.manager > summary::-webkit-details-marker{display:none}
+    details.manager > summary::-webkit-details-marker,
+    details.managerSummary > summary::-webkit-details-marker{display:none}
 
     dialog{
       border:none;
@@ -609,13 +611,18 @@
 </header>
 
 <main>
-  <div class="card">
-    <div style="display:flex;justify-content:space-between;gap:10px;flex-wrap:wrap;align-items:center">
-      <div>
-        <div style="font-weight:1000">Manager Summary Grid</div>
-        <div class="smallMuted">Stores on the left, bottle inventory across the top.</div>
+  <details class="card managerSummary" id="managerSummaryCard">
+    <summary style="display:flex;justify-content:space-between;gap:10px;align-items:center;">
+      <span>Manager Summary Grid</span>
+      <span class="smallMuted">Open / Close</span>
+    </summary>
+
+    <div style="margin-top:10px;display:flex;justify-content:space-between;gap:10px;flex-wrap:wrap;align-items:center">
+      <div class="smallMuted">Stores on the left, bottle inventory across the top.</div>
+      <div class="tinyRow">
+        <button id="refreshManagerGridBtn">Refresh Manager Grid</button>
+        <button id="backToInventoryBtn" class="primary">Back to Inventory</button>
       </div>
-      <button id="refreshManagerGridBtn">Refresh Manager Grid</button>
     </div>
 
     <div class="managerToolbar">
@@ -640,9 +647,9 @@
         <tbody></tbody>
       </table>
     </div>
-  </div>
+  </details>
 
-  <div class="card">
+  <div class="card" id="mainInventoryScreen">
     <div class="grid2">
       <div>
         <label>Store</label>
@@ -874,21 +881,6 @@
   let barcodeDetector = null;
   let lastScanAt = 0;
 
-  async function apiGet(params) {
-    const qs = new URLSearchParams(params).toString();
-    const res = await fetch(`/api/inventory?${qs}`);
-    return res.json();
-  }
-
-  async function apiPost(body) {
-    const res = await fetch(`/api/inventory`, {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify(body),
-    });
-    return res.json();
-  }
-
   function toast(msg){
     const t = $("toast");
     t.textContent = msg;
@@ -898,7 +890,23 @@
   }
 
   function setStatus(msg){
-    $("status").textContent = msg || "";
+    const el = $("status");
+    if (el) el.textContent = msg || "";
+  }
+
+  async function apiGet(params){
+    const qs = new URLSearchParams(params).toString();
+    const res = await fetch(`/api/inventory?${qs}`);
+    return res.json();
+  }
+
+  async function apiPost(body){
+    const res = await fetch(`/api/inventory`, {
+      method:"POST",
+      headers:{ "Content-Type":"application/json" },
+      body: JSON.stringify(body)
+    });
+    return res.json();
   }
 
   function escapeHtml(s) {
@@ -919,9 +927,8 @@
 
   function loadPrefs(){
     $("rep").value = localStorage.getItem("inv_rep") || "";
-    if (localStorage.getItem("inv_manager_open") === "1") {
-      $("managerDetails").open = true;
-    }
+    if (localStorage.getItem("inv_manager_open") === "1") $("managerDetails").open = true;
+    $("managerSummaryCard").open = false;
   }
 
   function renderStores(stores){
@@ -1263,7 +1270,7 @@
 
   async function loadManagerGrid() {
     try {
-      const res = await apiPost({ action: "managerGrid" });
+      const res = await apiGet({ action:"managerGrid" });
       if (!res.ok) throw new Error(res.error || "Failed to load manager grid");
       managerGridData = {
         stores: res.stores || [],
@@ -1277,8 +1284,8 @@
 
   async function loadStore(storeId){
     setStatus("Loading inventory...");
-    const res = await apiGet({ action: "initData", store_id: storeId });
-    if (!res.ok) throw new Error(res.error || "Load failed.");
+    const res = await apiGet({ action:"initData", store_id: storeId });
+    if (!res.ok) throw new Error("Load failed.");
 
     cache.stores = res.stores || cache.stores;
     cache.lines = (res.lines || []).sort((a,b) => String(a.sku_name || "").localeCompare(String(b.sku_name || "")));
@@ -1302,7 +1309,7 @@
   async function loadStartup(){
     loadPrefs();
     setStatus("Loading stores...");
-    const res = await apiGet({ action: "initData" });
+    const res = await apiGet({ action:"initData" });
     cache.stores = res.stores || [];
     renderStores(cache.stores);
 
@@ -1354,7 +1361,7 @@
 
     setStatus(`Submitting ${items.length} changed item(s)...`);
     const res = await apiPost({
-      action: "submitCounts",
+      action:"submitCounts",
       store_id: storeId,
       rep,
       updateInventory,
@@ -1378,7 +1385,7 @@
 
     setStatus("Creating reorder...");
     const res = await apiPost({
-      action: "createReorder",
+      action:"createReorder",
       store_id: storeId,
       rep,
       notes
@@ -1390,7 +1397,7 @@
   }
 
   async function fetchSkusLive(){
-    const res = await apiPost({ action: "listSkus" });
+    const res = await apiPost({ action:"listSkus" });
     return (res.skus || [])
       .sort((a,b) => String(a.sku_name || "").localeCompare(String(b.sku_name || "")));
   }
@@ -1445,7 +1452,7 @@
 
     try {
       const res = await apiPost({
-        action: "addSkuToStore",
+        action:"addSkuToStore",
         store_id: storeId,
         sku_id: skuId,
         on_hand_units: parseInt($("as_on_hand_units").value || "0", 10) || 0,
@@ -1504,7 +1511,7 @@
 
     try {
       const res = await apiPost({
-        action: "upsertProduct",
+        action:"upsertProduct",
         sku: { sku_id, upc, sku_name, size, units_per_case, active },
         addToStore,
         store_id: storeId,
@@ -1646,6 +1653,11 @@
 
   $("refreshBtn").addEventListener("click", () => loadStore($("storeSelect").value).catch(e => setStatus(e.message)));
   $("refreshManagerGridBtn").addEventListener("click", loadManagerGrid);
+
+  $("backToInventoryBtn").addEventListener("click", () => {
+    $("managerSummaryCard").open = false;
+    $("mainInventoryScreen").scrollIntoView({ behavior: "smooth", block: "start" });
+  });
 
   $("resetBtn").addEventListener("click", resetCounts);
   $("submitBtn").addEventListener("click", submitCounts);
