@@ -23,7 +23,7 @@
       --blue:#1d4ed8;
       --blue-bg:#eff6ff;
       --blue-line:#bfdbfe;
-      --radius:18px;
+      --radius:8px;
       --shadow:0 1px 2px rgba(0,0,0,.06);
     }
 
@@ -35,7 +35,10 @@
       color:var(--text);
       font-family:system-ui,-apple-system,Segoe UI,Roboto,Helvetica,Arial,sans-serif;
     }
-    body{-webkit-text-size-adjust:100%}
+    body{
+      -webkit-text-size-adjust:100%;
+      touch-action:manipulation;
+    }
 
     header{
       position:sticky;
@@ -43,7 +46,7 @@
       z-index:40;
       background:var(--primary);
       color:#fff;
-      padding:12px 14px calc(12px + env(safe-area-inset-top));
+      padding:calc(10px + env(safe-area-inset-top)) 14px 10px;
       border-bottom:1px solid rgba(255,255,255,.1);
     }
     .headerInner{
@@ -87,7 +90,7 @@
     main{
       max-width:1200px;
       margin:12px auto;
-      padding:0 12px 110px;
+      padding:0 12px 142px;
     }
     @media (min-width:900px){
       main{padding-bottom:18px;}
@@ -98,7 +101,7 @@
       border:1px solid var(--line);
       border-radius:var(--radius);
       box-shadow:var(--shadow);
-      padding:14px;
+      padding:12px;
       margin-bottom:12px;
     }
 
@@ -122,9 +125,10 @@
       width:100%;
       background:#fff;
       border:1px solid #d1d5db;
-      border-radius:14px;
+      border-radius:10px;
       padding:12px;
       font-size:16px;
+      min-height:48px;
       color:var(--text);
     }
     textarea{
@@ -136,11 +140,19 @@
       border:1px solid #d1d5db;
       background:#fff;
       color:var(--text);
-      border-radius:14px;
+      border-radius:10px;
       padding:12px 14px;
       font-weight:900;
       min-height:48px;
       cursor:pointer;
+    }
+    input:focus-visible,
+    select:focus-visible,
+    textarea:focus-visible,
+    button:focus-visible,
+    .filterChip:focus-visible{
+      outline:3px solid rgba(29,78,216,.24);
+      outline-offset:2px;
     }
     button.primary{background:var(--primary);border-color:var(--primary);color:#fff}
     button.submit{background:var(--green);border-color:var(--green);color:#fff}
@@ -173,7 +185,7 @@
       border:1px solid var(--line);
       background:#fff;
       color:#374151;
-      border-radius:999px;
+      border-radius:10px;
       padding:8px 12px;
       font-size:12px;
       font-weight:900;
@@ -198,7 +210,7 @@
     .summaryBox{
       border:1px solid var(--line);
       background:#fafafa;
-      border-radius:16px;
+      border-radius:8px;
       padding:12px;
     }
     .summaryBox .num{
@@ -211,6 +223,12 @@
       color:var(--muted);
       margin-top:4px;
     }
+    .soldSummaryGrid{
+      display:grid;
+      grid-template-columns:repeat(3,1fr);
+      gap:10px;
+      margin-top:10px;
+    }
 
     .list{
       display:grid;
@@ -221,8 +239,9 @@
     .item{
       background:#fff;
       border:1px solid var(--line);
-      border-radius:18px;
+      border-radius:8px;
       padding:12px;
+      scroll-margin-top:74px;
     }
     .item.needs{
       background:var(--red-bg);
@@ -234,6 +253,9 @@
     }
     .item.changed{
       box-shadow:0 0 0 2px rgba(29,78,216,.08) inset;
+    }
+    .item.sold{
+      background:#fff;
     }
 
     .itemTop{
@@ -275,6 +297,83 @@
     .badge.red{background:var(--red-bg);border-color:var(--red-line);color:var(--red)}
     .badge.amber{background:var(--amber-bg);border-color:var(--amber-line);color:var(--amber)}
     .badge.blue{background:var(--blue-bg);border-color:var(--blue-line);color:var(--blue)}
+    [hidden]{display:none !important}
+
+    .searchWrap{
+      position:relative;
+    }
+    .searchWrap input{
+      padding-right:54px;
+    }
+    .searchClear{
+      position:absolute;
+      top:50%;
+      right:6px;
+      transform:translateY(-50%);
+      width:40px;
+      min-height:40px;
+      padding:0;
+      border-radius:8px;
+      font-size:20px;
+      line-height:1;
+      color:#4b5563;
+    }
+
+    .viewTabs{
+      display:grid;
+      grid-template-columns:1fr 1fr;
+      gap:6px;
+      padding:4px;
+      border:1px solid var(--line);
+      border-radius:10px;
+      background:#f9fafb;
+      margin-top:10px;
+    }
+    .viewTab{
+      min-height:44px;
+      border:0;
+      border-radius:8px;
+      background:transparent;
+      padding:8px 10px;
+      line-height:1.1;
+    }
+    .viewTab.active{
+      background:var(--primary);
+      color:#fff;
+    }
+
+    .locationMode{
+      display:grid;
+      grid-template-columns:auto minmax(220px,320px);
+      gap:10px;
+      align-items:center;
+      margin-top:10px;
+    }
+    .locationModeLabel{
+      font-size:12px;
+      font-weight:1000;
+      color:#374151;
+    }
+    .segmented{
+      display:grid;
+      grid-template-columns:1fr 1fr;
+      gap:4px;
+      padding:4px;
+      border:1px solid var(--line);
+      border-radius:10px;
+      background:#f9fafb;
+    }
+    .segmentBtn{
+      min-height:42px;
+      border:0;
+      border-radius:8px;
+      background:transparent;
+      padding:8px 10px;
+    }
+    .segmentBtn.active{
+      background:var(--primary);
+      color:#fff;
+    }
 
     .dataStrip{
       display:grid;
@@ -288,7 +387,7 @@
     .dataBox{
       border:1px solid #eef2f7;
       background:#fafafa;
-      border-radius:14px;
+      border-radius:8px;
       padding:10px;
     }
     .dataBox .big{
@@ -305,40 +404,98 @@
     .countRow{
       margin-top:10px;
       display:grid;
-      grid-template-columns:auto 120px auto auto auto;
+      grid-template-columns:64px 64px minmax(100px,1fr) auto;
+      grid-template-areas:"minus plus case reset";
       gap:8px;
       align-items:center;
     }
-    @media (max-width:760px){
-      .countRow{
-        grid-template-columns:1fr 1fr 1fr;
-      }
-      .countInputWrap{
-        grid-column:1 / -1;
-      }
+    .countMinus{grid-area:minus}
+    .countPlus{grid-area:plus}
+    .countCase{grid-area:case}
+    .countReset{grid-area:reset}
+    .locationCountGrid{
+      display:grid;
+      grid-template-columns:1fr 1fr;
+      gap:8px;
+      margin-top:10px;
+    }
+    .countInputWrap{
+      position:relative;
+      min-width:0;
+    }
+    .countInputWrap.active .countInput{
+      border-color:var(--blue);
+      background:var(--blue-bg);
+      box-shadow:0 0 0 2px rgba(29,78,216,.12);
+    }
+    .countInputWrap.active .countInputLabel{
+      color:var(--blue);
+    }
+    .countInputLabel{
+      position:absolute;
+      top:6px;
+      left:0;
+      right:0;
+      z-index:1;
+      color:var(--muted);
+      font-size:10px;
+      font-weight:1000;
+      line-height:1;
+      text-align:center;
+      pointer-events:none;
     }
 
     .miniBtn{
-      min-height:52px;
-      border-radius:14px;
-      font-size:18px;
+      min-height:64px;
+      border-radius:10px;
+      font-size:26px;
       font-weight:1000;
-      padding:0 14px;
+      padding:0 12px;
     }
     .quickBtn{
-      min-height:52px;
-      border-radius:14px;
+      min-height:64px;
+      border-radius:10px;
       background:var(--blue-bg);
       border-color:var(--blue-line);
       color:var(--blue);
       font-weight:1000;
+      padding:0 12px;
     }
     .countInput{
       width:100%;
       text-align:center;
-      font-size:22px;
+      font-size:28px;
       font-weight:1000;
-      min-height:52px;
+      min-height:64px;
+      padding:22px 8px 7px;
+    }
+    .countNarrow{display:none}
+    .countDeltaLine{
+      display:flex;
+      align-items:center;
+      justify-content:space-between;
+      gap:8px;
+      margin-top:8px;
+      border:1px solid #eef2f7;
+      border-radius:8px;
+      background:#fafafa;
+      padding:8px 10px;
+      font-size:12px;
+      color:var(--muted);
+      font-weight:900;
+    }
+    .countDeltaLine strong{
+      color:var(--text);
+      font-size:16px;
+    }
+    .soldMetaLine{
+      margin-top:10px;
+      display:flex;
+      gap:8px;
+      flex-wrap:wrap;
+      color:var(--muted);
+      font-size:12px;
+      font-weight:800;
     }
 
     .noteToggle{
@@ -371,7 +528,7 @@
 
     dialog{
       border:none;
-      border-radius:18px;
+      border-radius:8px;
       padding:0;
       width:min(880px,96vw);
     }
@@ -405,7 +562,7 @@
     .managerGridWrap{
       overflow:auto;
       border:1px solid var(--line);
-      border-radius:16px;
+      border-radius:8px;
       background:#fff;
       margin-top:12px;
     }
@@ -573,7 +730,7 @@
     .bottomSummary{
       background:#fff;
       border:1px solid var(--line);
-      border-radius:14px;
+      border-radius:8px;
       padding:10px 12px;
     }
     .bottomSummary .big{font-weight:1000}
@@ -593,6 +750,278 @@
       z-index:60;
       max-width:90vw;
       text-align:center;
+    }
+
+    @media (max-width:760px){
+      main{
+        display:flex;
+        flex-direction:column;
+        margin:8px auto;
+        padding:0 8px 104px;
+      }
+      #mainInventoryScreen{order:1}
+      #list{order:2}
+      #managerSummaryCard{order:3}
+      main > dialog{order:4}
+
+      header{
+        padding:calc(8px + env(safe-area-inset-top)) 10px 8px;
+      }
+      .headerInner{
+        gap:8px;
+      }
+      .titleWrap h1{
+        font-size:14px;
+      }
+      .titleWrap .sub{
+        display:none;
+      }
+      .headerPills{
+        gap:6px;
+        flex-wrap:nowrap;
+        min-width:0;
+      }
+      .pill{
+        max-width:52vw;
+        overflow:hidden;
+        text-overflow:ellipsis;
+        padding:6px 8px;
+        font-size:11px;
+      }
+      #hdrChanged{
+        max-width:none;
+      }
+
+      .card{
+        padding:10px;
+        margin-bottom:8px;
+      }
+      .setupGrid{
+        grid-template-columns:minmax(0,1.35fr) minmax(112px,.65fr);
+        gap:8px;
+      }
+      label{
+        margin:6px 0 5px;
+      }
+      input,
+      select,
+      textarea,
+      button{
+        min-height:52px;
+      }
+
+      .summaryGrid{
+        display:none;
+      }
+      .soldSummaryGrid{
+        grid-template-columns:repeat(3,minmax(0,1fr));
+        gap:6px;
+      }
+      .soldSummaryGrid .summaryBox{
+        padding:8px 4px;
+        text-align:center;
+      }
+      .soldSummaryGrid .summaryBox .num{
+        font-size:20px;
+      }
+      .soldSummaryGrid .summaryBox .lbl{
+        font-size:10px;
+        line-height:1.1;
+      }
+      .topTools{
+        display:grid;
+        grid-template-columns:1fr;
+        gap:8px;
+      }
+      .filters{
+        display:grid;
+        grid-template-columns:repeat(3,minmax(0,1fr));
+        width:100%;
+      }
+      .filterChip{
+        display:flex;
+        align-items:center;
+        justify-content:center;
+        min-height:44px;
+        padding:8px 6px;
+        text-align:center;
+        line-height:1.1;
+      }
+      .topTools .tinyRow{
+        display:grid;
+        grid-template-columns:1fr 1fr;
+        width:100%;
+      }
+      .topTools .tinyRow button{
+        width:100%;
+      }
+      .locationMode{
+        grid-template-columns:1fr;
+        gap:6px;
+      }
+      .locationModeLabel{
+        display:none;
+      }
+      .segmented{
+        width:100%;
+      }
+      .segmentBtn{
+        min-height:46px;
+      }
+
+      .list{
+        gap:8px;
+        margin-top:8px;
+      }
+      .item{
+        padding:10px;
+      }
+      .itemTop{
+        flex-direction:column;
+        gap:8px;
+      }
+      .skuName{
+        font-size:17px;
+      }
+      .skuMeta{
+        font-size:11px;
+      }
+      .badgeCol{
+        flex-direction:row;
+        align-items:flex-start;
+        justify-content:flex-start;
+        flex-wrap:wrap;
+      }
+      .dataStrip{
+        grid-template-columns:repeat(4,minmax(0,1fr));
+        gap:6px;
+        margin-top:8px;
+      }
+      .dataBox{
+        min-width:0;
+        padding:8px 4px;
+        text-align:center;
+      }
+      .dataBox .big{
+        font-size:17px;
+      }
+      .dataBox .lbl{
+        font-size:10px;
+        line-height:1.1;
+        margin-top:4px;
+      }
+
+      .countRow{
+        margin-top:8px;
+        grid-template-columns:minmax(66px,.75fr) minmax(66px,.75fr) minmax(92px,1fr) minmax(102px,1.2fr);
+        grid-template-areas:
+          "minus plus case reset";
+        gap:8px;
+      }
+      .locationCountGrid{
+        margin-top:8px;
+      }
+      .miniBtn{
+        min-height:58px;
+        font-size:28px;
+      }
+      .quickBtn{
+        min-height:58px;
+        font-size:14px;
+      }
+      .countInput{
+        min-height:66px;
+        font-size:32px;
+      }
+      .countWide{display:none}
+      .countNarrow{display:inline}
+
+      .noteToggle{
+        display:inline-flex;
+        align-items:center;
+        min-height:38px;
+      }
+      .bottomBar{
+        padding:8px 8px calc(8px + env(safe-area-inset-bottom));
+      }
+      .bottomInner{
+        gap:8px;
+      }
+      .bottomSummary{
+        display:none;
+      }
+      .bottomInner button{
+        min-height:56px;
+      }
+      .toast{
+        bottom:calc(84px + env(safe-area-inset-bottom));
+      }
+      footer{
+        margin-bottom:150px;
+      }
+    }
+
+    @media (min-width:620px) and (max-width:760px){
+      .locationMode{
+        grid-template-columns:auto minmax(220px,320px);
+        align-items:center;
+        gap:10px;
+      }
+      .locationModeLabel{
+        display:block;
+      }
+      .topTools{
+        grid-template-columns:minmax(0,1.4fr) minmax(210px,.8fr);
+        align-items:stretch;
+      }
+      .topTools .tinyRow{
+        grid-template-columns:1fr 1fr;
+      }
+    }
+
+    @media (max-width:380px){
+      .filterChip{
+        font-size:11px;
+      }
+      .dataBox .lbl{
+        font-size:9px;
+      }
+      .quickBtn{
+        font-size:13px;
+      }
+      .countRow{
+        grid-template-columns:minmax(56px,.7fr) minmax(56px,.7fr) minmax(84px,1fr) minmax(92px,1.15fr);
+      }
+    }
+
+    @media (max-width:320px){
+      main{
+        padding-left:6px;
+        padding-right:6px;
+      }
+      .setupGrid{
+        grid-template-columns:1fr;
+      }
+      .headerInner{
+        align-items:flex-start;
+      }
+      .headerPills{
+        flex-direction:column;
+        align-items:flex-end;
+      }
+      .pill{
+        max-width:44vw;
+      }
+      .countRow{
+        grid-template-columns:1fr 1fr;
+        grid-template-areas:
+          "minus plus"
+          "case reset";
+      }
+      .miniBtn,
+      .quickBtn{
+        width:100%;
+      }
     }
   </style>
 </head>
@@ -650,7 +1079,7 @@
   </details>
 
   <div class="card" id="mainInventoryScreen">
-    <div class="grid2">
+    <div class="grid2 setupGrid">
       <div>
         <label>Store</label>
         <select id="storeSelect"></select>
@@ -661,10 +1090,26 @@
       </div>
     </div>
 
-    <label>Search</label>
-    <input id="search" placeholder="Search product name, SKU ID, UPC…" />
+    <label for="search">Search</label>
+    <div class="searchWrap">
+      <input id="search" placeholder="Search product, SKU, UPC…" autocomplete="off" enterkeyhint="search" />
+      <button class="searchClear" id="clearSearchBtn" type="button" aria-label="Clear search" hidden>×</button>
+    </div>
 
-    <div class="topTools">
+    <div class="viewTabs" aria-label="Inventory views">
+      <button class="viewTab active" id="countViewBtn" type="button">Inventory Count</button>
+      <button class="viewTab" id="soldViewBtn" type="button">Sold Since Count</button>
+    </div>
+
+    <div class="locationMode" id="locationMode" aria-label="Count location">
+      <div class="locationModeLabel">Location</div>
+      <div class="segmented">
+        <button class="segmentBtn active" id="locShelfBtn" type="button">Shelf</button>
+        <button class="segmentBtn" id="locBackBtn" type="button">Back</button>
+      </div>
+    </div>
+
+    <div class="topTools" id="countTools">
       <div class="filters">
         <button class="filterChip" id="filterNeeds">Needs attention</button>
         <button class="filterChip" id="filterChanged">Changed</button>
@@ -677,7 +1122,7 @@
       </div>
     </div>
 
-    <div class="summaryGrid">
+    <div class="summaryGrid" id="countSummaryGrid">
       <div class="summaryBox">
         <div class="num" id="sumTotal">0</div>
         <div class="lbl">SKUs in store</div>
@@ -692,6 +1137,21 @@
       </div>
       <div class="summaryBox">
         <div class="num" id="sumShown">0</div>
+        <div class="lbl">Currently shown</div>
+      </div>
+    </div>
+
+    <div class="soldSummaryGrid" id="soldSummaryGrid" hidden>
+      <div class="summaryBox">
+        <div class="num" id="soldTotal">0</div>
+        <div class="lbl">Bottles sold</div>
+      </div>
+      <div class="summaryBox">
+        <div class="num" id="soldSkus">0</div>
+        <div class="lbl">SKUs with sales</div>
+      </div>
+      <div class="summaryBox">
+        <div class="num" id="soldShown">0</div>
         <div class="lbl">Currently shown</div>
       </div>
     </div>
@@ -742,7 +1202,7 @@
     <div class="dlgBody">
       <video id="scanVideo" autoplay playsinline style="width:100%;border-radius:14px;border:1px solid var(--line);background:#000"></video>
       <div class="smallMuted" style="margin-top:10px">Last scan: <b id="lastScanText">—</b></div>
-      <div class="smallMuted" style="margin-top:8px">Each successful scan adds <b>1 bottle</b> to the counted amount.</div>
+      <div class="smallMuted" style="margin-top:8px">Each successful scan adds <b>1 bottle</b> to the selected location.</div>
     </div>
   </dialog>
 
@@ -856,7 +1316,7 @@
   </footer>
 
 
-<div class="bottomBar">
+<div class="bottomBar" id="bottomBar">
   <div class="bottomInner">
     <div class="bottomSummary">
       <div class="big" id="bottomSummary">0 shown • 0 changed • 0 need attention</div>
@@ -877,6 +1337,10 @@
   let countState = {};
   let filterMode = "all";
   let filterText = "";
+  let activeLocation = localStorage.getItem("inv_count_location") === "back" ? "back" : "shelf";
+  let activeView = localStorage.getItem("inv_active_view") === "sold" ? "sold" : "count";
+  let salesData = { lines: [], summary: { total_sold_units: 0, counted_skus: 0, total_skus: 0 } };
+  let salesLoadedStoreId = "";
 
   let managerGridData = { stores: [], skus: [] };
   let managerFilterText = "";
@@ -922,6 +1386,49 @@
 
   function digits(v){
     return String(v || "").replace(/\D/g, "");
+  }
+
+  function cleanCount(v){
+    return Math.max(0, parseInt(v || "0", 10) || 0);
+  }
+
+  function formatDelta(value){
+    return value > 0 ? "+" + value : String(value);
+  }
+
+  function totalCount(st){
+    return cleanCount(st?.shelf) + cleanCount(st?.back);
+  }
+
+  function normalizeCountState(line, prior){
+    const onHand = Number(line.on_hand_units || 0);
+    const st = prior || {};
+    const hasSplitCounts = st.shelf !== undefined || st.back !== undefined;
+    const shelf = hasSplitCounts ? cleanCount(st.shelf) : cleanCount(st.counted ?? onHand);
+    const back = hasSplitCounts ? cleanCount(st.back) : 0;
+    const normalized = {
+      shelf,
+      back,
+      counted: shelf + back,
+      notes: String(st.notes || ""),
+      dirty: false
+    };
+    normalized.dirty = (normalized.counted !== onHand) || !!normalized.notes;
+    return normalized;
+  }
+
+  function updateLocationModeUi(){
+    $("locShelfBtn")?.classList.toggle("active", activeLocation === "shelf");
+    $("locBackBtn")?.classList.toggle("active", activeLocation === "back");
+    document.querySelectorAll(".countInputWrap[data-location]").forEach(el => {
+      el.classList.toggle("active", el.dataset.location === activeLocation);
+    });
+  }
+
+  function setLocationMode(location){
+    activeLocation = location === "back" ? "back" : "shelf";
+    localStorage.setItem("inv_count_location", activeLocation);
+    updateLocationModeUi();
   }
 
   function savePrefs(){
@@ -982,6 +1489,24 @@
     });
   }
 
+  function formatDate(value){
+    if (!value) return "No count";
+    const d = new Date(value);
+    if (isNaN(d.getTime())) return String(value);
+    return d.toLocaleDateString(undefined, { month:"short", day:"numeric", year:"numeric" });
+  }
+
+  function visibleSalesLines(){
+    const q = (filterText || "").trim().toLowerCase();
+    return (salesData.lines || []).filter(line => {
+      if (!q) return true;
+      const hay = [line.sku_name, line.sku_id, line.upc, line.size]
+        .map(x => String(x || "").toLowerCase())
+        .join(" | ");
+      return hay.includes(q);
+    });
+  }
+
   function summary(){
     const total = cache.lines.length;
     const needs = cache.lines.filter(l => needsAttention(l) || belowPar(l)).length;
@@ -1009,25 +1534,144 @@
     const storeText = $("storeSelect").selectedOptions[0]?.textContent || "No store";
     $("hdrStore").textContent = storeText;
     $("bottomSummary").textContent = `${s.shown} shown • ${s.changed} changed • ${s.needs} need attention`;
+    $("submitBtn").disabled = s.changed === 0;
+    $("submitBtn").textContent = s.changed ? `Submit ${s.changed}` : "Submit";
+    $("submitBtn").setAttribute(
+      "aria-label",
+      s.changed ? `Submit ${s.changed} changed item${s.changed === 1 ? "" : "s"}` : "Submit changed items"
+    );
+  }
+
+  function updateSoldSummaryUi(){
+    const lines = salesData.lines || [];
+    const shown = visibleSalesLines().length;
+    const soldSkus = lines.filter(line => Number(line.sold_since_last_count || 0) > 0).length;
+    const totalSold = lines.reduce((sum, line) => sum + Math.max(0, Number(line.sold_since_last_count || 0)), 0);
+    $("soldTotal").textContent = totalSold;
+    $("soldSkus").textContent = soldSkus;
+    $("soldShown").textContent = shown;
+  }
+
+  function updateViewChrome(){
+    const isSold = activeView === "sold";
+    $("countViewBtn").classList.toggle("active", !isSold);
+    $("soldViewBtn").classList.toggle("active", isSold);
+    $("locationMode").hidden = isSold;
+    $("countTools").hidden = isSold;
+    $("countSummaryGrid").hidden = isSold;
+    $("soldSummaryGrid").hidden = !isSold;
+    $("managerDetails").hidden = isSold;
+    $("bottomBar").hidden = isSold;
+    if (isSold) updateSoldSummaryUi();
+    else updateSummaryUi();
+  }
+
+  async function setActiveView(view){
+    activeView = view === "sold" ? "sold" : "count";
+    localStorage.setItem("inv_active_view", activeView);
+    updateViewChrome();
+    if (activeView === "sold") {
+      await loadSalesSinceCount($("storeSelect").value);
+    } else {
+      render();
+    }
   }
 
   function ensureState(line){
     if (!countState[line.sku_id]) {
-      countState[line.sku_id] = {
-        counted: Number(line.on_hand_units || 0),
-        notes: "",
-        dirty: false
-      };
+      countState[line.sku_id] = normalizeCountState(line);
+    } else {
+      countState[line.sku_id] = normalizeCountState(line, countState[line.sku_id]);
     }
     return countState[line.sku_id];
   }
 
+  function renderSales(){
+    const list = $("list");
+    list.innerHTML = "";
+    updateViewChrome();
+
+    const lines = visibleSalesLines();
+    if (!lines.length) {
+      list.innerHTML = `<div class="card"><div style="font-weight:1000">Nothing to show</div><div class="smallMuted" style="margin-top:6px">Try another search term or refresh the store.</div></div>`;
+      return;
+    }
+
+    lines.forEach(line => {
+      const sold = line.sold_since_last_count === null || line.sold_since_last_count === undefined
+        ? null
+        : Math.max(0, Number(line.sold_since_last_count || 0));
+      const lastCount = line.last_count_units === null || line.last_count_units === undefined
+        ? "—"
+        : Number(line.last_count_units || 0);
+      const current = Number(line.current_on_hand_units || 0);
+      const unitsPerCase = Math.max(1, Number(line.units_per_case || 12) || 12);
+      const casesSold = sold === null ? null : Math.floor((sold / unitsPerCase) * 10) / 10;
+      const upc = digits(line.upc);
+
+      const item = document.createElement("div");
+      item.className = "item sold";
+      if (sold === null) item.classList.add("low");
+      else if (sold > 0) item.classList.add("changed");
+
+      item.innerHTML = `
+        <div class="itemTop">
+          <div>
+            <div class="skuName">${escapeHtml(line.sku_name || line.sku_id)}</div>
+            <div class="skuMeta">
+              SKU: ${escapeHtml(line.sku_id)}
+              ${line.size ? ` • ${escapeHtml(line.size)}` : ""}
+              ${upc ? ` • UPC ${escapeHtml(upc)}` : ""}
+              • ${unitsPerCase}/case
+            </div>
+          </div>
+          <div class="badgeCol">
+            ${sold === null ? `<div class="badge amber">No count yet</div>` : ""}
+            ${sold !== null && sold > 0 ? `<div class="badge blue">${sold} sold</div>` : ""}
+            ${sold === 0 ? `<div class="badge">No sales</div>` : ""}
+          </div>
+        </div>
+
+        <div class="dataStrip">
+          <div class="dataBox">
+            <div class="big">${lastCount}</div>
+            <div class="lbl">Last count</div>
+          </div>
+          <div class="dataBox">
+            <div class="big">${current}</div>
+            <div class="lbl">Current</div>
+          </div>
+          <div class="dataBox">
+            <div class="big">${sold === null ? "—" : sold}</div>
+            <div class="lbl">Sold</div>
+          </div>
+          <div class="dataBox">
+            <div class="big">${casesSold === null ? "—" : casesSold}</div>
+            <div class="lbl">Cases</div>
+          </div>
+        </div>
+
+        <div class="soldMetaLine">
+          <span>Last counted ${escapeHtml(formatDate(line.last_count_date))}</span>
+          ${line.last_count_rep ? `<span>by ${escapeHtml(line.last_count_rep)}</span>` : ""}
+        </div>
+      `;
+
+      list.appendChild(item);
+    });
+  }
+
   function render(){
+    if (activeView === "sold") {
+      renderSales();
+      return;
+    }
+
     const list = $("list");
     list.innerHTML = "";
 
     const lines = visibleLines();
-    updateSummaryUi();
+    updateViewChrome();
 
     if (!lines.length) {
       list.innerHTML = `<div class="card"><div style="font-weight:1000">Nothing to show</div><div class="smallMuted" style="margin-top:6px">Try another filter or search term.</div></div>`;
@@ -1036,12 +1680,13 @@
 
     lines.forEach(line => {
       const st = ensureState(line);
+      st.counted = totalCount(st);
       const counted = Number(st.counted || 0);
       const onHand = Number(line.on_hand_units || 0);
       const par = Number(line.par_level_units || 0);
       const rp = Number(line.reorder_point_units || 0);
       const delta = counted - onHand;
-      const unitsPerCase = Number(line.units_per_case || 12);
+      const unitsPerCase = Math.max(1, Number(line.units_per_case || 12) || 12);
       const upc = digits(line.upc);
 
       const item = document.createElement("div");
@@ -1064,14 +1709,14 @@
           <div class="badgeCol">
             ${needsAttention(line) ? `<div class="badge red">At / below reorder point</div>` : ""}
             ${!needsAttention(line) && belowPar(line) ? `<div class="badge amber">Below PAR</div>` : ""}
-            ${st.dirty ? `<div class="badge blue">Changed</div>` : ""}
+            <div class="badge blue changedBadge" ${st.dirty ? "" : "hidden"}>Changed</div>
           </div>
         </div>
 
         <div class="dataStrip">
           <div class="dataBox">
             <div class="big">${onHand}</div>
-            <div class="lbl">System on-hand</div>
+            <div class="lbl">System</div>
           </div>
           <div class="dataBox">
             <div class="big">${par}</div>
@@ -1079,61 +1724,144 @@
           </div>
           <div class="dataBox">
             <div class="big">${rp}</div>
-            <div class="lbl">Reorder point</div>
+            <div class="lbl">RP</div>
           </div>
           <div class="dataBox">
-            <div class="big">${delta > 0 ? "+" + delta : delta}</div>
-            <div class="lbl">Delta vs system</div>
+            <div class="big" data-total-value>${counted}</div>
+            <div class="lbl">Total</div>
           </div>
         </div>
+      `;
+
+      const locationGrid = document.createElement("div");
+      locationGrid.className = "locationCountGrid";
+
+      function makeLocationInput(location, label){
+        const wrap = document.createElement("div");
+        wrap.className = "countInputWrap";
+        wrap.dataset.location = location;
+
+        const inputLabel = document.createElement("div");
+        inputLabel.className = "countInputLabel";
+        inputLabel.textContent = label;
+
+        const input = document.createElement("input");
+        input.className = "countInput";
+        input.type = "number";
+        input.min = "0";
+        input.step = "1";
+        input.inputMode = "numeric";
+        input.pattern = "[0-9]*";
+        input.enterKeyHint = "done";
+        input.setAttribute("aria-label", `${label} count for ${line.sku_name || line.sku_id}`);
+        input.value = cleanCount(st[location]);
+
+        wrap.appendChild(inputLabel);
+        wrap.appendChild(input);
+        return { wrap, input };
+      }
+
+      const shelfInput = makeLocationInput("shelf", "Shelf");
+      const backInput = makeLocationInput("back", "Back");
+      const locationInputs = { shelf: shelfInput.input, back: backInput.input };
+      locationGrid.appendChild(shelfInput.wrap);
+      locationGrid.appendChild(backInput.wrap);
+
+      const deltaLine = document.createElement("div");
+      deltaLine.className = "countDeltaLine";
+      deltaLine.innerHTML = `
+        <span>Delta vs system</span>
+        <strong data-delta-value>${formatDelta(delta)}</strong>
       `;
 
       const countRow = document.createElement("div");
       countRow.className = "countRow";
 
       const minus = document.createElement("button");
-      minus.className = "miniBtn";
+      minus.type = "button";
+      minus.className = "miniBtn countMinus";
       minus.textContent = "−";
-
-      const inputWrap = document.createElement("div");
-      inputWrap.className = "countInputWrap";
-      const input = document.createElement("input");
-      input.className = "countInput";
-      input.type = "number";
-      input.min = "0";
-      input.step = "1";
-      input.inputMode = "numeric";
-      input.value = counted;
-      inputWrap.appendChild(input);
+      minus.setAttribute("aria-label", "Subtract one bottle from active location");
 
       const plus = document.createElement("button");
-      plus.className = "miniBtn";
+      plus.type = "button";
+      plus.className = "miniBtn countPlus";
       plus.textContent = "+";
+      plus.setAttribute("aria-label", "Add one bottle to active location");
 
       const plusCase = document.createElement("button");
-      plusCase.className = "quickBtn";
-      plusCase.textContent = `+${unitsPerCase}`;
+      plusCase.type = "button";
+      plusCase.className = "quickBtn countCase";
+      plusCase.textContent = `+${unitsPerCase} case`;
+      plusCase.setAttribute("aria-label", "Add one case to active location");
 
       const setSystem = document.createElement("button");
-      setSystem.className = "quickBtn";
-      setSystem.textContent = "Set = system";
+      setSystem.type = "button";
+      setSystem.className = "quickBtn countReset";
+      setSystem.setAttribute("aria-label", "Reset to system count");
+      setSystem.innerHTML = `<span class="countWide">Reset to system</span><span class="countNarrow">System</span>`;
 
-      function setCount(v){
-        st.counted = Math.max(0, parseInt(v || "0", 10) || 0);
+      function refreshCountUi(updateInputs = false){
+        st.shelf = cleanCount(st.shelf);
+        st.back = cleanCount(st.back);
+        st.counted = totalCount(st);
         st.dirty = (st.counted !== onHand) || !!st.notes;
-        input.value = st.counted;
+        const nextDelta = Number(st.counted || 0) - onHand;
+        const totalEl = item.querySelector("[data-total-value]");
+        const deltaEl = item.querySelector("[data-delta-value]");
+        const changedBadge = item.querySelector(".changedBadge");
+        if (updateInputs) {
+          locationInputs.shelf.value = st.shelf;
+          locationInputs.back.value = st.back;
+        }
+        if (totalEl) totalEl.textContent = st.counted;
+        if (deltaEl) deltaEl.textContent = formatDelta(nextDelta);
+        if (changedBadge) changedBadge.hidden = !st.dirty;
+        item.classList.toggle("changed", st.dirty);
         updateSummaryUi();
-        render();
       }
 
-      minus.addEventListener("click", () => setCount((Number(st.counted) || 0) - 1));
-      plus.addEventListener("click", () => setCount((Number(st.counted) || 0) + 1));
-      plusCase.addEventListener("click", () => setCount((Number(st.counted) || 0) + unitsPerCase));
-      setSystem.addEventListener("click", () => setCount(onHand));
-      input.addEventListener("input", () => setCount(input.value));
+      function setLocationCount(location, v, updateInput = true){
+        const key = location === "back" ? "back" : "shelf";
+        st[key] = cleanCount(v);
+        if (updateInput) locationInputs[key].value = st[key];
+        refreshCountUi(false);
+        if (filterMode === "changed" && !st.dirty) render();
+      }
+
+      function nudgeActiveCount(amount){
+        const key = activeLocation === "back" ? "back" : "shelf";
+        setLocationCount(key, cleanCount(st[key]) + amount);
+      }
+
+      minus.addEventListener("click", () => nudgeActiveCount(-1));
+      plus.addEventListener("click", () => nudgeActiveCount(1));
+      plusCase.addEventListener("click", () => nudgeActiveCount(unitsPerCase));
+      setSystem.addEventListener("click", () => {
+        st.shelf = onHand;
+        st.back = 0;
+        refreshCountUi(true);
+        if (filterMode === "changed" && !st.dirty) render();
+      });
+
+      [
+        { location: "shelf", input: shelfInput.input },
+        { location: "back", input: backInput.input }
+      ].forEach(({ location, input }) => {
+        input.addEventListener("focus", () => {
+          setLocationMode(location);
+          setTimeout(() => input.select(), 0);
+        });
+        input.addEventListener("input", () => {
+          setLocationCount(location, input.value, false);
+        });
+        input.addEventListener("blur", () => {
+          input.value = cleanCount(st[location]);
+          if (filterMode === "changed" && !st.dirty) render();
+        });
+      });
 
       countRow.appendChild(minus);
-      countRow.appendChild(inputWrap);
       countRow.appendChild(plus);
       countRow.appendChild(plusCase);
       countRow.appendChild(setSystem);
@@ -1157,14 +1885,18 @@
         st.notes = noteInput.value;
         st.dirty = (Number(st.counted) !== onHand) || !!st.notes;
         noteToggle.textContent = st.notes ? "Edit note" : "Add note";
-        updateSummaryUi();
+        refreshCountUi();
+        if (filterMode === "changed" && !st.dirty) render();
       });
 
+      item.appendChild(locationGrid);
+      item.appendChild(deltaLine);
       item.appendChild(countRow);
       item.appendChild(noteToggle);
       item.appendChild(noteWrap);
       list.appendChild(item);
     });
+    updateLocationModeUi();
   }
 
   function visibleManagerStores() {
@@ -1287,6 +2019,26 @@
     }
   }
 
+  async function loadSalesSinceCount(storeId){
+    if (!storeId) return;
+    setStatus("Loading sold since count...");
+    try {
+      const res = await apiGet({ action:"salesSinceCount", store_id: storeId });
+      if (!res.ok) throw new Error(res.error || "Failed to load sold since count");
+      salesData = {
+        lines: res.lines || [],
+        summary: res.summary || { total_sold_units: 0, counted_skus: 0, total_skus: 0 }
+      };
+      salesLoadedStoreId = storeId;
+      renderSales();
+      setStatus(`Loaded sold since count for ${salesData.lines.length} items.`);
+    } catch (err) {
+      salesData = { lines: [], summary: { total_sold_units: 0, counted_skus: 0, total_skus: 0 } };
+      renderSales();
+      setStatus(err.message || String(err));
+    }
+  }
+
   async function loadStore(storeId){
     setStatus("Loading inventory...");
     const res = await apiGet({ action:"initData", store_id: storeId });
@@ -1298,17 +2050,14 @@
     const keep = {};
     cache.lines.forEach(line => {
       const prior = countState[line.sku_id];
-      keep[line.sku_id] = prior || {
-        counted: Number(line.on_hand_units || 0),
-        notes: "",
-        dirty: false
-      };
+      keep[line.sku_id] = normalizeCountState(line, prior);
     });
     countState = keep;
 
     savePrefs();
     render();
-    setStatus(`Loaded ${cache.lines.length} items.`);
+    if (activeView === "sold") await loadSalesSinceCount(storeId);
+    else setStatus(`Loaded ${cache.lines.length} items.`);
   }
 
   async function loadStartup(){
@@ -1335,11 +2084,7 @@
     Object.keys(countState).forEach(k => {
       const line = cache.lines.find(x => x.sku_id === k);
       if (!line) return;
-      countState[k] = {
-        counted: Number(line.on_hand_units || 0),
-        notes: "",
-        dirty: false
-      };
+      countState[k] = normalizeCountState(line);
     });
     render();
     toast("Counts reset");
@@ -1356,7 +2101,9 @@
       .filter(line => countState[line.sku_id]?.dirty)
       .map(line => ({
         sku_id: line.sku_id,
-        counted: Number(countState[line.sku_id]?.counted || 0),
+        counted: totalCount(countState[line.sku_id]),
+        shelf: cleanCount(countState[line.sku_id]?.shelf),
+        back: cleanCount(countState[line.sku_id]?.back),
         notes: String(countState[line.sku_id]?.notes || "")
       }));
 
@@ -1600,11 +2347,13 @@
           if (!line) return;
 
           const st = ensureState(line);
-          st.counted = (Number(st.counted) || 0) + 1;
+          const location = activeLocation === "back" ? "back" : "shelf";
+          st[location] = cleanCount(st[location]) + 1;
+          st.counted = totalCount(st);
           st.dirty = (st.counted !== Number(line.on_hand_units || 0)) || !!st.notes;
 
-          status.textContent = `Matched ${code} → ${skuId}. +1 bottle`;
-          toast("+1 bottle");
+          status.textContent = `Matched ${code} → ${skuId}. +1 ${location} bottle`;
+          toast(`+1 ${location}`);
           render();
 
           if (navigator.vibrate) navigator.vibrate(60);
@@ -1636,6 +2385,7 @@
   $("storeSelect").addEventListener("change", async () => {
     savePrefs();
     countState = {};
+    salesLoadedStoreId = "";
     await loadStore($("storeSelect").value);
   });
 
@@ -1644,7 +2394,15 @@
 
   $("search").addEventListener("input", () => {
     filterText = $("search").value || "";
+    $("clearSearchBtn").hidden = !filterText;
     render();
+  });
+  $("clearSearchBtn").addEventListener("click", () => {
+    $("search").value = "";
+    filterText = "";
+    $("clearSearchBtn").hidden = true;
+    render();
+    $("search").focus();
   });
 
   $("managerSearch").addEventListener("input", () => {
@@ -1655,6 +2413,10 @@
   $("filterNeeds").addEventListener("click", () => setFilter("needs"));
   $("filterChanged").addEventListener("click", () => setFilter("changed"));
   $("filterAll").addEventListener("click", () => setFilter("all"));
+  $("countViewBtn").addEventListener("click", () => setActiveView("count").catch(e => setStatus(e.message)));
+  $("soldViewBtn").addEventListener("click", () => setActiveView("sold").catch(e => setStatus(e.message)));
+  $("locShelfBtn").addEventListener("click", () => setLocationMode("shelf"));
+  $("locBackBtn").addEventListener("click", () => setLocationMode("back"));
 
   $("refreshBtn").addEventListener("click", () => loadStore($("storeSelect").value).catch(e => setStatus(e.message)));
   $("refreshManagerGridBtn").addEventListener("click", loadManagerGrid);

@@ -82,7 +82,7 @@ function handle_(e, body) {
     assertAuthorized_(e, body);
     const action = (e?.parameter?.action) || (body?.action) || "";
     if (!action) {
-      return json_({ ok:true, service:"inventory-api", actions:["initData","listSkus","addSkuToStore","upsertProduct","submitCounts","createReorder","managerGrid"] });
+      return json_({ ok:true, service:"inventory-api", actions:["initData","listSkus","addSkuToStore","upsertProduct","submitCounts","createReorder","managerGrid","salesSinceCount"] });
     }
 
     let res;
@@ -94,6 +94,7 @@ function handle_(e, body) {
       case "submitCounts": res = apiSubmitCounts_(body); break;
       case "createReorder": res = apiCreateReorder_(body); break;
       case "managerGrid": res = apiGetManagerGrid_(); break;
+      case "salesSinceCount": res = apiGetSalesSinceCount_((e?.parameter?.store_id) || (body?.store_id) || ""); break;
       default: throw new Error(`Unknown action: ${action}`);
     }
 
@@ -370,5 +371,123 @@ function apiGetManagerGrid_() {
   return {
     stores: rows,
     skus: skuRows,
+  };
+}
+
+function firstPresent_(obj, keys) {
+  for (const key of keys) {
+    if (obj[key] !== undefined && obj[key] !== null && obj[key] !== "") return obj[key];
+  }
+  return "";
+}
+
+function getLatestCountMap_() {
+  const sh = getSheet_(SHEET_NAMES.COUNTS);
+  if (sh.getLastRow() < 2) return new Map();
+
+  const h = getHeaderMap_(sh);
+  const values = sh.getRange(2, 1, sh.getLastRow() - 1, sh.getLastColumn()).getValues();
+  const latest = new Map();
+
+  values.forEach(row => {
+    const obj = {};
+    Object.keys(h).forEach(key => obj[key] = row[h[key]]);
+
+    const ts = firstPresent_(obj, ["timestamp", "ts", "count_date", "date"]) || row[0];
+    const storeId = String(firstPresent_(obj, ["store_id", "store"]) || row[1] || "");
+    const skuId = String(firstPresent_(obj, ["sku_id", "sku"]) || row[3] || "").trim();
+    const counted = Number(firstPresent_(obj, ["after", "after_units", "counted", "counted_units", "count_units"]) || row[5] || 0);
+    const rep = String(firstPresent_(obj, ["rep", "staff"]) || row[2] || "");
+    const notes = String(firstPresent_(obj, ["notes", "note"]) || row[7] || "");
+    if (!storeId || !skuId) return;
+
+    const countDate = ts instanceof Date ? ts : new Date(ts);
+    const dateMs = countDate instanceof Date && !isNaN(countDate.getTime()) ? countDate.getTime() : 0;
+    const key = `${storeId}__${skuId}`;
+    const prior = latest.get(key);
+    if (prior && prior.date_ms > dateMs) return;
+
+    latest.set(key, {
+      store_id: storeId,
+      sku_id: skuId,
+      last_count_units: counted,
+      last_count_date: countDate instanceof Date && !isNaN(countDate.getTime()) ? countDate : "",
+      last_count_rep: rep,
+      last_count_notes: notes,
+      date_ms: dateMs,
+    });
+  });
+
+  return latest;
+}
+
+function apiGetSalesSinceCount_(store_id) {
+  requireFields_({ store_id }, ["store_id"]);
+
+  const skuRows = getAllRowsAsObjects_(getSheet_(SHEET_NAMES.SKUS));
+  const skuMap = new Map();
+  skuRows.forEach(s => {
+    if (!toBool_(s.active)) return;
+    const skuId = String(s.sku_id || "").trim();
+    if (!skuId) return;
+    skuMap.set(skuId, {
+      sku_name: String(s.sku_name || skuId),
+      upc: digitsOnly_(s.upc),
+      size: String(s.size || ""),
+      units_per_case: Number(s.units_per_case || 12),
+    });
+  });
+
+  const latestCounts = getLatestCountMap_();
+  const inventoryRows = getAllRowsAsObjects_(getSheet_(SHEET_NAMES.INVENTORY))
+    .filter(r => String(r.store_id) === String(store_id));
+
+  const lines = inventoryRows.map(r => {
+    const skuId = String(r.sku_id || "").trim();
+    const sku = skuMap.get(skuId) || {};
+    const current = Number(r.on_hand_units || 0);
+    const latest = latestCounts.get(`${store_id}__${skuId}`);
+
+    const fallbackUnits =
+      r.last_count_units !== undefined && r.last_count_units !== null && r.last_count_units !== ""
+        ? Number(r.last_count_units || 0)
+        : null;
+    const fallbackDate = r.last_count_date || "";
+    const lastCountUnits = latest ? latest.last_count_units : fallbackUnits;
+    const lastCountDate = latest ? latest.last_count_date : fallbackDate;
+    const hasLastCount = lastCountUnits !== null && lastCountUnits !== undefined && lastCountUnits !== "";
+    const sold = hasLastCount ? Math.max(0, Number(lastCountUnits || 0) - current) : null;
+
+    return {
+      sku_id: skuId,
+      sku_name: String(sku.sku_name || skuId),
+      upc: String(sku.upc || ""),
+      size: String(sku.size || ""),
+      units_per_case: Number(sku.units_per_case || 12),
+      current_on_hand_units: current,
+      last_count_units: hasLastCount ? Number(lastCountUnits || 0) : null,
+      last_count_date: lastCountDate,
+      last_count_rep: latest ? latest.last_count_rep : "",
+      sold_since_last_count: sold,
+      no_count: !hasLastCount,
+    };
+  }).sort((a, b) => {
+    const soldA = a.sold_since_last_count === null ? -1 : a.sold_since_last_count;
+    const soldB = b.sold_since_last_count === null ? -1 : b.sold_since_last_count;
+    if (soldA !== soldB) return soldB - soldA;
+    return String(a.sku_name || "").localeCompare(String(b.sku_name || ""));
+  });
+
+  const totalSold = lines.reduce((sum, line) => sum + Math.max(0, Number(line.sold_since_last_count || 0)), 0);
+  const countedSkus = lines.filter(line => !line.no_count).length;
+
+  return {
+    store_id,
+    lines,
+    summary: {
+      total_sold_units: totalSold,
+      counted_skus: countedSkus,
+      total_skus: lines.length,
+    }
   };
 }
