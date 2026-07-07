@@ -1798,8 +1798,9 @@
       const setSystem = document.createElement("button");
       setSystem.type = "button";
       setSystem.className = "quickBtn countReset";
-      setSystem.setAttribute("aria-label", "Reset to system count");
-      setSystem.innerHTML = `<span class="countWide">Reset to system</span><span class="countNarrow">System</span>`;
+      setSystem.title = "Set shelf to system on-hand and back to 0";
+      setSystem.setAttribute("aria-label", "Set shelf to system on-hand and back to zero");
+      setSystem.textContent = "Match system";
 
       function refreshCountUi(updateInputs = false){
         st.shelf = cleanCount(st.shelf);
