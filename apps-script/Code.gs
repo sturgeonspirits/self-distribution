@@ -34,6 +34,15 @@ function getHeaderMap_(sheet) {
   __HEADER_CACHE.set(key, map);
   return map;
 }
+function ensureHeaderColumns_(sheet, columns) {
+  const h = getHeaderMap_(sheet);
+  const missing = columns.filter(col => h[normalizeHeader_(col)] === undefined);
+  missing.forEach(col => {
+    sheet.getRange(1, sheet.getLastColumn() + 1).setValue(col);
+  });
+  if (missing.length) __HEADER_CACHE.delete(sheet.getSheetId());
+  return getHeaderMap_(sheet);
+}
 function toBool_(v) { return ["TRUE","YES","Y","1"].includes(String(v).toUpperCase()); }
 function digitsOnly_(v) { return String(v || "").replace(/\D/g, ""); }
 
@@ -82,7 +91,7 @@ function handle_(e, body) {
     assertAuthorized_(e, body);
     const action = (e?.parameter?.action) || (body?.action) || "";
     if (!action) {
-      return json_({ ok:true, service:"inventory-api", actions:["initData","listSkus","addSkuToStore","upsertProduct","submitCounts","createReorder","managerGrid","salesSinceCount"] });
+      return json_({ ok:true, service:"inventory-api", actions:["initData","listSkus","addSkuToStore","upsertProduct","submitCounts","createReorder","managerGrid","salesSinceCount","updateStoreContacts"] });
     }
 
     let res;
@@ -95,6 +104,7 @@ function handle_(e, body) {
       case "createReorder": res = apiCreateReorder_(body); break;
       case "managerGrid": res = apiGetManagerGrid_(); break;
       case "salesSinceCount": res = apiGetSalesSinceCount_((e?.parameter?.store_id) || (body?.store_id) || ""); break;
+      case "updateStoreContacts": res = apiUpdateStoreContacts_(body); break;
       default: throw new Error(`Unknown action: ${action}`);
     }
 
@@ -107,7 +117,11 @@ function handle_(e, body) {
 function apiGetInitData_(store_id) {
   const stores = getAllRowsAsObjects_(getSheet_(SHEET_NAMES.STORES))
     .filter(s => toBool_(s.active))
-    .map(s => ({ store_id:String(s.store_id || ""), store_name:String(s.store_name || ""), route:String(s.route||"") }))
+    .map(s => Object.assign({
+      store_id:String(s.store_id || ""),
+      store_name:String(s.store_name || ""),
+      route:String(s.route||"")
+    }, storeContactFields_(s)))
     .sort((a,b)=>a.store_name.localeCompare(b.store_name));
 
   if (!store_id) return { stores, lines: [] };
@@ -287,14 +301,39 @@ function apiCreateReorder_(p) {
   return { created: out.length };
 }
 
+function apiUpdateStoreContacts_(p) {
+  if (!p) throw new Error("Missing body");
+  requireFields_(p, ["store_id"]);
+
+  const sh = getSheet_(SHEET_NAMES.STORES);
+  const h = ensureHeaderColumns_(sh, ["manager_name", "assistant_manager_name"]);
+  const rows = getAllRowsAsObjects_(sh);
+  const storeId = String(p.store_id || "");
+  const idx = rows.findIndex(r => String(r.store_id) === storeId);
+  if (idx < 0) throw new Error("Store not found.");
+
+  const managerName = String(p.manager_name || "").trim();
+  const assistantManagerName = String(p.assistant_manager_name || "").trim();
+  const rowNum = idx + 2;
+  sh.getRange(rowNum, h.manager_name + 1).setValue(managerName);
+  sh.getRange(rowNum, h.assistant_manager_name + 1).setValue(assistantManagerName);
+
+  return {
+    message: "Store contacts saved.",
+    store_id: storeId,
+    manager_name: managerName,
+    assistant_manager_name: assistantManagerName,
+  };
+}
+
 function apiGetManagerGrid_() {
   const stores = getAllRowsAsObjects_(getSheet_(SHEET_NAMES.STORES))
     .filter(s => toBool_(s.active))
-    .map(s => ({
+    .map(s => Object.assign({
       store_id: String(s.store_id || ""),
       store_name: String(s.store_name || ""),
       route: String(s.route || "")
-    }))
+    }, storeContactFields_(s)))
     .sort((a, b) => a.store_name.localeCompare(b.store_name));
 
   const skuRows = getAllRowsAsObjects_(getSheet_(SHEET_NAMES.SKUS))
@@ -361,6 +400,8 @@ function apiGetManagerGrid_() {
       store_id: store.store_id,
       store_name: store.store_name,
       route: store.route,
+      manager_name: store.manager_name,
+      assistant_manager_name: store.assistant_manager_name,
       needs_count: needsCount,
       below_par_count: belowParCount,
       ok_count: Math.max(0, skuRows.length - needsCount - belowParCount),
@@ -379,6 +420,13 @@ function firstPresent_(obj, keys) {
     if (obj[key] !== undefined && obj[key] !== null && obj[key] !== "") return obj[key];
   }
   return "";
+}
+
+function storeContactFields_(store) {
+  return {
+    manager_name: String(firstPresent_(store, ["manager_name", "manager", "store_manager", "manager_contact"]) || ""),
+    assistant_manager_name: String(firstPresent_(store, ["assistant_manager_name", "asst_manager_name", "assistant_manager", "assistant_mgr", "asst_manager", "assistant"]) || ""),
+  };
 }
 
 function getLatestCountMap_() {

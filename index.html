@@ -198,6 +198,51 @@
       color:#fff;
     }
 
+    .storeContacts{
+      border-top:1px solid var(--line);
+      border-bottom:1px solid var(--line);
+      margin-top:8px;
+      padding:8px 0;
+    }
+    .storeContacts > summary{
+      list-style:none;
+      cursor:pointer;
+      display:flex;
+      align-items:center;
+      justify-content:space-between;
+      gap:10px;
+      min-height:38px;
+      font-weight:1000;
+    }
+    .storeContacts > summary::-webkit-details-marker{
+      display:none;
+    }
+    .storeContactsTitle{
+      font-size:13px;
+      flex-shrink:0;
+    }
+    .storeContactSummary{
+      color:var(--muted);
+      font-size:12px;
+      font-weight:800;
+      min-width:0;
+      overflow:hidden;
+      text-align:right;
+      text-overflow:ellipsis;
+      white-space:nowrap;
+    }
+    .storeContactsBody{
+      display:grid;
+      grid-template-columns:minmax(0,1fr) minmax(0,1fr) auto;
+      gap:8px;
+      align-items:end;
+      margin-top:8px;
+    }
+    .storeContactsBody .storeContactsStatus{
+      grid-column:1 / -1;
+      min-height:16px;
+    }
+
     .summaryGrid{
       display:grid;
       grid-template-columns:repeat(4,1fr);
@@ -809,6 +854,12 @@
       button{
         min-height:52px;
       }
+      .storeContactsBody{
+        grid-template-columns:1fr;
+      }
+      .storeContactSummary{
+        white-space:normal;
+      }
 
       .summaryGrid{
         display:none;
@@ -962,6 +1013,9 @@
     }
 
     @media (min-width:620px) and (max-width:760px){
+      .storeContactsBody{
+        grid-template-columns:minmax(0,1fr) minmax(0,1fr) auto;
+      }
       .locationMode{
         grid-template-columns:auto minmax(220px,320px);
         align-items:center;
@@ -1089,6 +1143,25 @@
         <input id="rep" placeholder="Your name" />
       </div>
     </div>
+
+    <details class="storeContacts" id="storeContactsDetails">
+      <summary>
+        <span class="storeContactsTitle">Store contacts</span>
+        <span class="storeContactSummary" id="storeContactSummary">Add manager names</span>
+      </summary>
+      <div class="storeContactsBody">
+        <div>
+          <label for="storeManagerName">Manager</label>
+          <input id="storeManagerName" placeholder="Manager name" autocomplete="off" />
+        </div>
+        <div>
+          <label for="storeAssistantManagerName">Assistant manager</label>
+          <input id="storeAssistantManagerName" placeholder="Assistant manager name" autocomplete="off" />
+        </div>
+        <button class="secondaryBlue" id="saveStoreContactsBtn" type="button">Save names</button>
+        <div class="smallMuted storeContactsStatus" id="storeContactsStatus"></div>
+      </div>
+    </details>
 
     <label for="search">Search</label>
     <div class="searchWrap">
@@ -1435,11 +1508,13 @@
     localStorage.setItem("inv_store", $("storeSelect").value || "");
     localStorage.setItem("inv_rep", $("rep").value || "");
     localStorage.setItem("inv_manager_open", $("managerDetails").open ? "1" : "0");
+    localStorage.setItem("inv_store_contacts_open", $("storeContactsDetails").open ? "1" : "0");
   }
 
   function loadPrefs(){
     $("rep").value = localStorage.getItem("inv_rep") || "";
     if (localStorage.getItem("inv_manager_open") === "1") $("managerDetails").open = true;
+    if (localStorage.getItem("inv_store_contacts_open") === "1") $("storeContactsDetails").open = true;
     $("managerSummaryCard").open = false;
   }
 
@@ -1457,6 +1532,91 @@
 
     if (saved && stores.some(s => s.store_id === saved)) {
       sel.value = saved;
+    }
+    updateStoreContactsUi();
+  }
+
+  function currentStore(){
+    const storeId = $("storeSelect").value || "";
+    return cache.stores.find(s => String(s.store_id) === String(storeId)) || null;
+  }
+
+  function storeContactsSummary(managerName, assistantManagerName){
+    const parts = [];
+    if (managerName) parts.push(`Manager: ${managerName}`);
+    if (assistantManagerName) parts.push(`Assistant: ${assistantManagerName}`);
+    return parts.length ? parts.join(" • ") : "Add manager names";
+  }
+
+  function updateStoreContactsUi(){
+    const managerInput = $("storeManagerName");
+    const assistantInput = $("storeAssistantManagerName");
+    if (!managerInput || !assistantInput) return;
+
+    const store = currentStore();
+    const managerName = String(store?.manager_name || "");
+    const assistantManagerName = String(store?.assistant_manager_name || "");
+
+    managerInput.value = managerName;
+    assistantInput.value = assistantManagerName;
+    $("storeContactSummary").textContent = storeContactsSummary(managerName, assistantManagerName);
+    $("storeContactsStatus").textContent = store ? "" : "Pick a store first.";
+    $("saveStoreContactsBtn").disabled = !store;
+  }
+
+  function updateStoreContactsSummaryFromInputs(){
+    const managerName = ($("storeManagerName").value || "").trim();
+    const assistantManagerName = ($("storeAssistantManagerName").value || "").trim();
+    const store = currentStore();
+    const unchanged = store
+      && managerName === String(store.manager_name || "")
+      && assistantManagerName === String(store.assistant_manager_name || "");
+    $("storeContactSummary").textContent = storeContactsSummary(managerName, assistantManagerName);
+    $("storeContactsStatus").textContent = store ? (unchanged ? "" : "Unsaved changes") : "Pick a store first.";
+  }
+
+  async function saveStoreContacts(){
+    const storeId = $("storeSelect").value || "";
+    if (!storeId) return toast("Pick a store");
+
+    const managerName = ($("storeManagerName").value || "").trim();
+    const assistantManagerName = ($("storeAssistantManagerName").value || "").trim();
+    const saveBtn = $("saveStoreContactsBtn");
+
+    saveBtn.disabled = true;
+    $("storeContactsStatus").textContent = "Saving...";
+
+    try {
+      const res = await apiPost({
+        action:"updateStoreContacts",
+        store_id: storeId,
+        manager_name: managerName,
+        assistant_manager_name: assistantManagerName,
+      });
+      if (!res.ok) throw new Error(res.error || "Failed to save store contacts");
+
+      const savedContacts = {
+        manager_name: res.manager_name ?? managerName,
+        assistant_manager_name: res.assistant_manager_name ?? assistantManagerName,
+      };
+
+      cache.stores = cache.stores.map(store =>
+        String(store.store_id) === String(storeId)
+          ? Object.assign({}, store, savedContacts)
+          : store
+      );
+      managerGridData.stores = (managerGridData.stores || []).map(store =>
+        String(store.store_id) === String(storeId)
+          ? Object.assign({}, store, savedContacts)
+          : store
+      );
+
+      updateStoreContactsUi();
+      renderManagerGrid();
+      $("storeContactsStatus").textContent = res.message || "Saved.";
+      toast("Store contacts saved");
+    } finally {
+      $("saveStoreContactsBtn").disabled = !currentStore();
     }
   }
 
@@ -1908,7 +2068,9 @@
       const storeHay = [
         store.store_name,
         store.store_id,
-        store.route
+        store.route,
+        store.manager_name,
+        store.assistant_manager_name
       ].map(x => String(x || "").toLowerCase()).join(" | ");
 
       const skuMatch = (managerGridData.skus || []).some((sku, idx) => {
@@ -1967,6 +2129,10 @@
       const overallClass =
         store.needs_count > 0 ? "red" :
         store.below_par_count > 0 ? "amber" : "green";
+      const contactMeta = [
+        store.manager_name ? `Manager: ${escapeHtml(store.manager_name)}` : "",
+        store.assistant_manager_name ? `Assistant: ${escapeHtml(store.assistant_manager_name)}` : ""
+      ].filter(Boolean).join("<br>");
 
       left.innerHTML = `
         <div class="storeCell">
@@ -1975,6 +2141,7 @@
             ${escapeHtml(store.store_id || "")}
             ${store.route ? ` • ${escapeHtml(store.route)}` : ""}
           </div>
+          ${contactMeta ? `<div class="storeMeta">${contactMeta}</div>` : ""}
           <div class="storeFlags">
             <span class="gridBadge ${overallClass}">
               ${store.needs_count > 0
@@ -2047,6 +2214,7 @@
 
     cache.stores = res.stores || cache.stores;
     cache.lines = (res.lines || []).sort((a,b) => String(a.sku_name || "").localeCompare(String(b.sku_name || "")));
+    updateStoreContactsUi();
 
     const keep = {};
     cache.lines.forEach(line => {
@@ -2392,6 +2560,16 @@
 
   $("rep").addEventListener("input", savePrefs);
   $("managerDetails").addEventListener("toggle", savePrefs);
+  $("storeContactsDetails").addEventListener("toggle", savePrefs);
+  $("storeManagerName").addEventListener("input", updateStoreContactsSummaryFromInputs);
+  $("storeAssistantManagerName").addEventListener("input", updateStoreContactsSummaryFromInputs);
+  $("saveStoreContactsBtn").addEventListener("click", () => {
+    saveStoreContacts().catch(err => {
+      const msg = err.message || String(err);
+      $("storeContactsStatus").textContent = msg;
+      setStatus(msg);
+    });
+  });
 
   $("search").addEventListener("input", () => {
     filterText = $("search").value || "";
