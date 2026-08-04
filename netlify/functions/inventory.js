@@ -1,9 +1,13 @@
+// App version: 2026.08.04.1
+const APP_VERSION = "2026.08.04.1";
+
 export async function handler(event) {
   const cors = {
     "Access-Control-Allow-Origin": "*",
     "Access-Control-Allow-Headers": "Content-Type",
     "Access-Control-Allow-Methods": "GET, POST, OPTIONS",
     "Cache-Control": "no-store",
+    "X-App-Version": APP_VERSION,
   };
 
   if (event.httpMethod === "OPTIONS") {

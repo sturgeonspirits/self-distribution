@@ -1,6 +1,9 @@
 /*********************************
  * Inventory API (JSON) for Netlify
+ * App version: 2026.08.04.1
  *********************************/
+
+const APP_VERSION = "2026.08.04.1";
 
 const SHEET_NAMES = {
   STORES: "Stores",
@@ -91,7 +94,7 @@ function handle_(e, body) {
     assertAuthorized_(e, body);
     const action = (e?.parameter?.action) || (body?.action) || "";
     if (!action) {
-      return json_({ ok:true, service:"inventory-api", actions:["initData","listSkus","addSkuToStore","upsertProduct","submitCounts","createReorder","managerGrid","salesSinceCount","updateStoreContacts"] });
+      return json_({ ok:true, service:"inventory-api", version:APP_VERSION, actions:["initData","listSkus","addSkuToStore","upsertProduct","submitCounts","createReorder","managerGrid","salesSinceCount","updateStoreContacts"] });
     }
 
     let res;
@@ -108,9 +111,9 @@ function handle_(e, body) {
       default: throw new Error(`Unknown action: ${action}`);
     }
 
-    return json_(Object.assign({ ok:true }, res));
+    return json_(Object.assign({ ok:true, version:APP_VERSION }, res));
   } catch (err) {
-    return json_({ ok:false, error: err?.message ? err.message : String(err) });
+    return json_({ ok:false, version:APP_VERSION, error: err?.message ? err.message : String(err) });
   }
 }
 

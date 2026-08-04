@@ -1,11 +1,17 @@
 # Inventory Netlify App
 
+Version: `2026.08.04.1`
+
 This repo contains:
 
 - `index.html` — Netlify-hosted staff + manager UI
 - `netlify/functions/inventory.js` — proxy to Apps Script
 - `apps-script/Code.gs` — JSON API backend for Google Apps Script
 - `netlify.toml` — Netlify configuration
+
+## Versioning
+
+All deployable files are stamped with the same app version. When updating Apps Script, confirm the `APP_VERSION` value in `apps-script/Code.gs` matches the version shown in this README and the Netlify-hosted app footer.
 
 ## Deploy flow
 
