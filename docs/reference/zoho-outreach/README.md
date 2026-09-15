@@ -1,0 +1,40 @@
+# Zoho Outreach Test Package
+
+Current complete version: `2026.09.15.3-TEST`
+
+Paste target: the full contents of `Code.gs` into the Apps Script `Code.gs`
+file attached to the staging Distribution Directory workbook only.
+
+## Delivery Standard
+
+- Every `Code.gs` revision increments `OUTREACH_VERSION`.
+- The beginning of `Code.gs` lists the changes in that version.
+- Deliveries always provide one complete, paste-ready file.
+- The owner is never asked to merge or add snippets manually.
+- Zoho credentials remain in Apps Script Properties and are never committed.
+
+## Test Safety
+
+- The code is locked to staging spreadsheet
+  `1tWJ2ZnFT15cjuk7qvCWbJUJX1pAQYYsbSy5owWa8Uzo`.
+- Zoho authentication must use `karl@sturgeonspirits.com`.
+- Messages display `sales@sturgeonspirits.com` as the sender alias.
+- Test messages may be delivered only to `karl@sturgeonspirits.com`.
+- Queued and LIVE sends are disabled in this build.
+
+## Updating The Sell Sheet
+
+The sell-sheet URL is not hardcoded in `Code.gs`. Update the pale-yellow
+`Email Editor!B12` cell whenever a new PDF is published. `Campaign Settings`
+follows that cell automatically, and every newly generated message uses the
+current value. Keep the linked file shared as **Anyone with the link can view**.
+
+## Updating The Website
+
+The footer website and logo are maintained outside the code. Update the
+pale-yellow `Email Editor!B14` and `Email Editor!B15` cells. `Campaign
+Settings` follows them automatically, and every newly generated email uses the
+current URLs. The logo is clickable, with a text website link underneath for
+email clients that block remote images.
+
+Follow `TEST-SETUP.md` for installation and the first controlled send.
