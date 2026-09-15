@@ -1,12 +1,13 @@
 /**
  * Sturgeon Spirits distribution outreach tracker
  *
- * VERSION: 2026.09.15.3-TEST
+ * VERSION: 2026.09.15.5-TEST
  *
  * CHANGES IN THIS VERSION
- * - Added editable website and logo URLs to the shared email footer.
- * - Added a small clickable Sturgeon Spirits logo with a text-link fallback.
- * - Required valid http(s) website and logo URLs before any test send.
+ * - Added an editable sender-title field to every email footer.
+ * - Set Karl's default title to President.
+ * - Kept the footer logo-only, with no separate text website link.
+ * - Retained the renamed Distribution Directory and Leads sheet.
  * - Retained the staging workbook lock and Karl-only delivery restriction.
  * - Kept queued and LIVE campaign sends disabled.
  *
@@ -19,7 +20,7 @@
  * Sends through the authenticated Zoho Mail API account.
  */
 
-const OUTREACH_VERSION = '2026.09.15.3-TEST';
+const OUTREACH_VERSION = '2026.09.15.5-TEST';
 
 const OUTREACH = Object.freeze({
   ENVIRONMENT: 'STAGING_TEST',
@@ -28,7 +29,7 @@ const OUTREACH = Object.freeze({
   EXPECTED_SENDER_ALIAS: 'sales@sturgeonspirits.com',
   EXPECTED_TEST_RECIPIENT: 'karl@sturgeonspirits.com',
   ALLOW_LIVE_SENDS: false,
-  LEADS_SHEET: 'Tavern League Members Directory and Leads',
+  LEADS_SHEET: 'Distribution Directory and Leads',
   SETTINGS_SHEET: 'Campaign Settings',
   LOG_SHEET: 'Activity Log',
   FIRST_DATA_ROW: 2,
@@ -457,7 +458,6 @@ function templateValues_(row, settings) {
   const sellSheet = String(settings['Wholesale sell-sheet URL'] || '').trim();
   const website = String(settings['Website URL'] || '').trim();
   const logo = String(settings['Logo URL'] || '').trim();
-  const websiteLabel = website.replace(/^https?:\/\/(www\.)?/i, '').replace(/\/.*$/, '');
   return {
     'First Name': firstName,
     'Business Name': smartTitleCase_(String(row[OUTREACH.COL.BUSINESS - 1] || 'your business')),
@@ -469,8 +469,7 @@ function templateValues_(row, settings) {
     'Physical Address': String(settings['Physical mailing address'] || ''),
     'Website Footer': website && logo ?
       '<a href="' + escapeHtml_(website) + '"><img src="' + escapeHtml_(logo) +
-      '" alt="Sturgeon Spirits" width="180" style="display:block;width:180px;max-width:100%;height:auto;border:0;margin:10px 0 6px"></a>' +
-      '<a href="' + escapeHtml_(website) + '">' + escapeHtml_(websiteLabel) + '</a><br>' : '',
+      '" alt="Sturgeon Spirits" width="180" style="display:block;width:180px;max-width:100%;height:auto;border:0;margin:10px 0 6px"></a>' : '',
     'Sell Sheet Link': sellSheet ? '<p><a href="' + escapeHtml_(sellSheet) + '">View our current wholesale sell sheet</a></p>' : ''
   };
 }

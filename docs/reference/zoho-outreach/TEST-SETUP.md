@@ -1,6 +1,6 @@
 # Zoho Outreach Test Setup
 
-Package version: `2026.09.15.3-TEST`
+Package version: `2026.09.15.5-TEST`
 
 ## Staging Resources
 
@@ -17,6 +17,7 @@ The staging workbook is already configured with:
 - Test recipient: `karl@sturgeonspirits.com`
 - Wholesale sell-sheet link in the Email Editor
 - Website footer link in the Email Editor
+- Editable footer sender name and title in the Email Editor
 
 ## Install The Complete Test Mailer
 
@@ -44,7 +45,7 @@ The staging workbook is already configured with:
 
 ## Send One Controlled Test
 
-1. On `Tavern League Members Directory and Leads`, select a prospect row with a
+1. On `Distribution Directory and Leads`, select a prospect row with a
    supplied, published or confirmed email.
 2. Choose **Sturgeon Outreach TEST > Send test for active row**.
 3. The message is personalized from that row but is delivered only to
@@ -56,10 +57,17 @@ The staging workbook is already configured with:
    To`, and the current mailer version.
 
 The shared footer website and logo are edited in the pale-yellow `Email
-Editor!B14` and `Email Editor!B15` cells. The small logo links to
-`https://sturgeonspirits.com/`, with a text-link fallback underneath. They
-appear in every initial, follow-up and reactivation message without hardcoding
-either URL in `Code.gs`.
+Editor!B15` and `Email Editor!B16` cells. The small logo links to
+`https://sturgeonspirits.com/`. No separate text website link is added. The
+logo appears in every initial, follow-up and reactivation message without
+hardcoding either URL in `Code.gs`.
+
+The footer sender is also editable. `Email Editor!B6` contains the sender name
+and `Email Editor!B7` contains the sender title. Karl's defaults are `Karl
+Loewenstein` and `President`. Change both fields before sending on behalf of a
+different employee. The title may be left blank. This does not change the
+authenticated Zoho mailbox or the visible `sales@sturgeonspirits.com` sender
+alias.
 
 The selected prospect is not marked as contacted by a test send. This build
 cannot send queued or LIVE email.
@@ -68,6 +76,6 @@ cannot send queued or LIVE email.
 
 The current sell-sheet PDF was verified with an **Anyone with the link can
 view** reader permission on 2026-09-15. When the sell sheet changes, replace the
-URL in the pale-yellow `Email Editor!B12` cell and keep the new file publicly
+URL in the pale-yellow `Email Editor!B13` cell and keep the new file publicly
 viewable. The mailer reads that cell at send time; no `Code.gs` revision is
 needed for a sell-sheet update.

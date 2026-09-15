@@ -1,6 +1,6 @@
 # Zoho Outreach Test Package
 
-Current complete version: `2026.09.15.3-TEST`
+Current complete version: `2026.09.15.5-TEST`
 
 Paste target: the full contents of `Code.gs` into the Apps Script `Code.gs`
 file attached to the staging Distribution Directory workbook only.
@@ -25,16 +25,25 @@ file attached to the staging Distribution Directory workbook only.
 ## Updating The Sell Sheet
 
 The sell-sheet URL is not hardcoded in `Code.gs`. Update the pale-yellow
-`Email Editor!B12` cell whenever a new PDF is published. `Campaign Settings`
+`Email Editor!B13` cell whenever a new PDF is published. `Campaign Settings`
 follows that cell automatically, and every newly generated message uses the
 current value. Keep the linked file shared as **Anyone with the link can view**.
 
 ## Updating The Website
 
 The footer website and logo are maintained outside the code. Update the
-pale-yellow `Email Editor!B14` and `Email Editor!B15` cells. `Campaign
+pale-yellow `Email Editor!B15` and `Email Editor!B16` cells. `Campaign
 Settings` follows them automatically, and every newly generated email uses the
-current URLs. The logo is clickable, with a text website link underneath for
-email clients that block remote images.
+current URLs. The footer contains only the small clickable logo; it does not
+add a separate text website link.
+
+## Updating The Sender Footer
+
+The pale-yellow shared fields in `Email Editor` control the closing, sender
+name, sender title, business name, tagline, mailing address, website and logo.
+Change the sender name and, when applicable, the title before sending on behalf
+of another employee. The title may be left blank.
+The staging build still sends through Karl's authenticated Zoho mailbox and the
+`sales@sturgeonspirits.com` alias.
 
 Follow `TEST-SETUP.md` for installation and the first controlled send.
