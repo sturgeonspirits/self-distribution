@@ -53,7 +53,7 @@ Manual fixture import passed on 2026-09-15:
 This establishes manual-run idempotency for the current fixture set. It does
 not yet approve an automatic trigger or production installation.
 
-### Zoho Outreach Checkpoint: `2026.09.15.5-TEST`
+### Zoho Outreach Checkpoint: `2026.09.15.6-TEST`
 
 Karl's Zoho mailbox connection and one controlled send passed on 2026-09-15:
 
@@ -67,7 +67,7 @@ Karl's Zoho mailbox connection and one controlled send passed on 2026-09-15:
   message.
 - `Activity Log` now records the prospect as `Intended Recipient`, the actual
   Karl-only destination as `Delivered To`, and the mailer version separately.
-- The complete `2026.09.15.5-TEST` source remains locked to the staging
+- The complete `2026.09.15.6-TEST` source remains locked to the staging
   spreadsheet and blocks queued and LIVE sends at both menu and send-function
   levels.
 - Every template now includes only a small public Sturgeon Spirits logo linked
@@ -76,6 +76,7 @@ Karl's Zoho mailbox connection and one controlled send passed on 2026-09-15:
 - Footer sender name and title are editable shared fields. Karl's staging
   defaults are `Karl Loewenstein` and `President`; changing them does not alter
   the authenticated Zoho mailbox or sender alias.
+- Every template leaves one blank line between the closing and sender name.
 
 The staging audience audit found 493 accounts, 143 syntactically valid email
 addresses, 115 cold-prospect addresses that satisfy the current safety rules,

@@ -1,6 +1,6 @@
 # Zoho Outreach Test Package
 
-Current complete version: `2026.09.15.5-TEST`
+Current complete version: `2026.09.15.6-TEST`
 
 Paste target: the full contents of `Code.gs` into the Apps Script `Code.gs`
 file attached to the staging Distribution Directory workbook only.
@@ -41,6 +41,7 @@ add a separate text website link.
 
 The pale-yellow shared fields in `Email Editor` control the closing, sender
 name, sender title, business name, tagline, mailing address, website and logo.
+Every template leaves one blank line between the closing and sender name.
 Change the sender name and, when applicable, the title before sending on behalf
 of another employee. The title may be left blank.
 The staging build still sends through Karl's authenticated Zoho mailbox and the

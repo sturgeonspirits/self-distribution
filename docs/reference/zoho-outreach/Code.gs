@@ -1,9 +1,10 @@
 /**
  * Sturgeon Spirits distribution outreach tracker
  *
- * VERSION: 2026.09.15.5-TEST
+ * VERSION: 2026.09.15.6-TEST
  *
  * CHANGES IN THIS VERSION
+ * - Added a blank line between the email closing and sender name.
  * - Added an editable sender-title field to every email footer.
  * - Set Karl's default title to President.
  * - Kept the footer logo-only, with no separate text website link.
@@ -20,7 +21,7 @@
  * Sends through the authenticated Zoho Mail API account.
  */
 
-const OUTREACH_VERSION = '2026.09.15.5-TEST';
+const OUTREACH_VERSION = '2026.09.15.6-TEST';
 
 const OUTREACH = Object.freeze({
   ENVIRONMENT: 'STAGING_TEST',

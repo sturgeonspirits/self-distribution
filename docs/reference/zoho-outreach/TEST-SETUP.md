@@ -1,6 +1,6 @@
 # Zoho Outreach Test Setup
 
-Package version: `2026.09.15.5-TEST`
+Package version: `2026.09.15.6-TEST`
 
 ## Staging Resources
 
@@ -64,8 +64,9 @@ hardcoding either URL in `Code.gs`.
 
 The footer sender is also editable. `Email Editor!B6` contains the sender name
 and `Email Editor!B7` contains the sender title. Karl's defaults are `Karl
-Loewenstein` and `President`. Change both fields before sending on behalf of a
-different employee. The title may be left blank. This does not change the
+Loewenstein` and `President`. Every template leaves one blank line after the
+closing. Change both fields before sending on behalf of a different employee.
+The title may be left blank. This does not change the
 authenticated Zoho mailbox or the visible `sales@sturgeonspirits.com` sender
 alias.
 
