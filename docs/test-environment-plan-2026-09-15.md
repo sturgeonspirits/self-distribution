@@ -86,6 +86,12 @@ Karl's Zoho mailbox connection and one controlled send passed on 2026-09-15:
   with message ID `1789567288902138300`. Its post-send CRM fields were repaired
   after the old lead-status validation rejected `Pilot sent`; the corrected
   sender now records the existing allowed `Sent` status.
+- Far Vu Golf Course was accepted by Zoho with message ID
+  `1789567646037155100`, and Hilton Garden Inn Oshkosh was accepted with
+  message ID `1789567672432155300`.
+- All three pilot rows and source leads now show successful sends with
+  `Follow-up 1` due on 2026-09-23. The pilot cap is exhausted and Campaign
+  Settings was returned to `TEST` mode after verification.
 
 The staging audience audit found 493 accounts, 143 syntactically valid email
 addresses, 115 cold-prospect addresses that satisfy the current safety rules,
