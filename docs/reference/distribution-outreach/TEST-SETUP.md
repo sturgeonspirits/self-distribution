@@ -1,6 +1,6 @@
-# Zoho Outreach Pilot Setup
+# Distribution Outreach Pilot Setup
 
-Package version: `2026.09.16.1-PILOT`
+Package version: `2026.09.16.6-PILOT`
 
 ## Staging Resources
 
@@ -19,6 +19,7 @@ The staging workbook is already configured with:
 - Wholesale sell-sheet link in the Email Editor
 - Website footer link in the Email Editor
 - Editable footer sender name and title in the Email Editor
+- Optional public customer-application URL in Campaign Settings
 
 ## Install The Complete Test Mailer
 
@@ -28,7 +29,7 @@ The staging workbook is already configured with:
 4. Select all of that file's contents and replace them with the complete
    `Code.gs` from this directory. Do not append code.
 5. Save the Apps Script project and reload the spreadsheet.
-6. Choose **Sturgeon Outreach PILOT > Verify pilot configuration**.
+6. Choose **Distribution Outreach PILOT > Verify pilot configuration**.
 
 ## Connect Karl's Zoho Mailbox
 
@@ -36,7 +37,7 @@ The staging workbook is already configured with:
    account.
 2. Generate a short-lived authorization code with scopes
    `ZohoMail.accounts.READ,ZohoMail.messages.CREATE`.
-3. In the staging spreadsheet, choose **Sturgeon Outreach PILOT > 1. Connect
+3. In the staging spreadsheet, choose **Distribution Outreach PILOT > 1. Connect
    Zoho**.
 4. Paste the Client ID, Client Secret and short-lived grant code into the three
    prompts. They are stored in staging Apps Script Properties, not the sheet or
@@ -48,7 +49,7 @@ The staging workbook is already configured with:
 
 1. On `Distribution Directory and Leads`, select a prospect row with a
    supplied, published or confirmed email.
-2. Choose **Sturgeon Outreach PILOT > Send Karl-only test for active lead**.
+2. Choose **Distribution Outreach PILOT > Send Karl-only test for active lead**.
 3. The message is personalized from that row but is delivered only to
    `karl@sturgeonspirits.com`.
 4. Confirm the From address, subject, formatting, personalization, opt-out text,
@@ -71,6 +72,10 @@ The title may be left blank. This does not change the
 authenticated Zoho mailbox or the visible `sales@sturgeonspirits.com` sender
 alias.
 
+Do not enter a customer-application URL until the Netlify staging page is
+publicly reachable and tested. When the setting is blank, initial emails omit
+the application link.
+
 The selected prospect is not marked as contacted by a test send. This build
 cannot send queued or bulk email.
 
@@ -80,7 +85,7 @@ cannot send queued or bulk email.
    email address and intended message.
 2. Change `Pilot Approval` from `Pending review` to `Approved` only for the
    candidate you are ready to contact.
-3. Choose **Sturgeon Outreach PILOT > Enable PILOT mode (real email)** and
+3. Choose **Distribution Outreach PILOT > Enable PILOT mode (real email)** and
    confirm the warning. This enables delivery but sends nothing.
 4. Keep the approved candidate's row selected and choose **Send approved pilot
    for selected row**.

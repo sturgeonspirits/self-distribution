@@ -1,9 +1,20 @@
 /**
- * Sturgeon Spirits distribution outreach tracker
+ * Sturgeon Spirits Distribution Outreach
  *
- * VERSION: 2026.09.16.1-PILOT
+ * VERSION: 2026.09.16.6-PILOT
  *
  * CHANGES IN THIS VERSION
+ * - Added a configurable wholesale customer-application link to initial emails.
+ * - Placed the application link with the standard footer and sell-sheet link.
+ * - Suppressed the link until Customer application URL is a public HTTPS URL.
+ * - Kept follow-up and reactivation messages unchanged.
+ * - Standardized the script, menu and package name as Distribution Outreach.
+ * - Retained Zoho only as the configured email delivery service.
+ * - Corrected the expected visible sender to sales@sturgeonspirits.com.
+ * - Kept karl@sturgeonspirits.com as the authenticated staging mailbox.
+ * - Uses saved app drafts from the Outreach Drafts tab when present.
+ * - Keeps the sell sheet, signature, logo and compliance footer standardized.
+ * - Leaves template-based messages unchanged when no custom draft exists.
  * - Fixed pilot lead updates to use the existing validated Sent status.
  * - Preserved the post-send do-not-resend recovery guard.
  * - Added individually approved real-email pilot sending from Pilot Review.
@@ -26,7 +37,7 @@
  * Sends through the authenticated Zoho Mail API account.
  */
 
-const OUTREACH_VERSION = '2026.09.16.1-PILOT';
+const OUTREACH_VERSION = '2026.09.16.6-PILOT';
 
 const OUTREACH = Object.freeze({
   ENVIRONMENT: 'STAGING_PILOT',
@@ -41,6 +52,7 @@ const OUTREACH = Object.freeze({
   PILOT_SHEET: 'Pilot Review',
   SETTINGS_SHEET: 'Campaign Settings',
   LOG_SHEET: 'Activity Log',
+  DRAFTS_SHEET: 'Outreach Drafts',
   FIRST_DATA_ROW: 2,
   COL: Object.freeze({
     BUSINESS: 1,
@@ -83,7 +95,7 @@ const OUTREACH = Object.freeze({
 
 function onOpen() {
   SpreadsheetApp.getUi()
-    .createMenu('Sturgeon Outreach PILOT')
+    .createMenu('Distribution Outreach PILOT')
     .addItem('Verify pilot configuration', 'showPilotConfiguration')
     .addSeparator()
     .addItem('1. Connect Zoho', 'connectZoho')
@@ -232,7 +244,7 @@ function sendTestForActiveRow() {
   validateCampaignSettings_(settings, true);
   const row = sheet.getRange(rowNumber, 1, 1, OUTREACH.COL.LAST_DATA_COLUMN).getValues()[0];
   const stage = row[OUTREACH.COL.STAGE - 1] || 'Initial';
-  const message = buildMessage_(stage, row, settings);
+  const message = buildMessage_(stage, row, settings, rowNumber);
   const result = sendZohoEmail_(settings['Test recipient'], message.subject, message.html, settings, 'TEST');
   appendLog_(
     row,
@@ -284,13 +296,14 @@ function sendApprovedPilotForActiveRow() {
   assertPilotLeadEligible_(row);
 
   const stage = String(row[OUTREACH.COL.STAGE - 1] || 'Initial');
-  const message = buildMessage_(stage, row, settings);
+  const message = buildMessage_(stage, row, settings, sourceRowNumber);
   const ui = SpreadsheetApp.getUi();
   const confirmation = ui.alert(
     'Send REAL pilot email?',
     'Business: ' + business + '\n' +
       'Recipient: ' + email + '\n' +
       'Subject: ' + message.subject + '\n\n' +
+      'Saved app draft: ' + (message.usesSavedDraft ? 'Yes' : 'No') + '\n\n' +
       'This sends a real email from ' + settings['Sender address'] + '.',
     ui.ButtonSet.YES_NO
   );
@@ -474,7 +487,52 @@ function getPilotHistory_() {
     });
 }
 
-function buildMessage_(stage, row, settings) {
+function draftKey_(sourceRowNumber, stage) {
+  return Number(sourceRowNumber) + '::' + String(stage || 'Initial').trim().toLowerCase();
+}
+
+function getSavedDraft_(sourceRowNumber, stage) {
+  if (!sourceRowNumber) return null;
+  const sheet = SpreadsheetApp.getActive().getSheetByName(OUTREACH.DRAFTS_SHEET);
+  if (!sheet || sheet.getLastRow() < 2) return null;
+  const values = sheet.getDataRange().getValues();
+  const headers = values[0].map(function (value) {
+    return String(value || '').trim().toLowerCase().replace(/\s+/g, '_');
+  });
+  const keyColumn = headers.indexOf('draft_key');
+  const subjectColumn = headers.indexOf('subject');
+  const bodyColumn = headers.indexOf('body_text');
+  if (keyColumn < 0 || subjectColumn < 0 || bodyColumn < 0) {
+    throw new Error('Outreach Drafts is missing required columns.');
+  }
+  const expectedKey = draftKey_(sourceRowNumber, stage);
+  for (let index = values.length - 1; index >= 1; index -= 1) {
+    if (String(values[index][keyColumn] || '') !== expectedKey) continue;
+    const subject = String(values[index][subjectColumn] || '').trim();
+    const bodyText = String(values[index][bodyColumn] || '').trim();
+    return subject && bodyText ? { subject:subject, bodyText:bodyText } : null;
+  }
+  return null;
+}
+
+function splitMessageTemplate_(template) {
+  const source = String(template || '');
+  const marker = '{{Sell Sheet Link}}';
+  const markerIndex = source.indexOf(marker);
+  if (markerIndex < 0) return { body:source, footer:'' };
+  return {
+    body:source.slice(0, markerIndex),
+    footer:source.slice(markerIndex)
+  };
+}
+
+function plainTextToHtml_(text) {
+  return String(text || '').trim().split(/\n{2,}/).filter(Boolean).map(function (block) {
+    return '<p>' + escapeHtml_(block).replace(/\n/g, '<br>') + '</p>';
+  }).join('');
+}
+
+function buildMessage_(stage, row, settings, sourceRowNumber) {
   let keys;
   if (stage === 'Reactivation') {
     keys = ['Reactivation subject', 'Reactivation HTML'];
@@ -486,10 +544,21 @@ function buildMessage_(stage, row, settings) {
     const segmentKey = segmentTemplateKey_(row[OUTREACH.COL.SEGMENT - 1]);
     keys = ['Segment ' + segmentKey + ' subject', 'Segment ' + segmentKey + ' HTML'];
   }
-  const values = templateValues_(row, settings);
+  const values = templateValues_(row, settings, stage);
+  const template = String(settings[keys[1]] || '');
+  const parts = splitMessageTemplate_(template);
+  const savedDraft = getSavedDraft_(sourceRowNumber, stage);
+  if (savedDraft) {
+    return {
+      subject:savedDraft.subject,
+      html:plainTextToHtml_(savedDraft.bodyText) + renderTemplate_(parts.footer, values, true),
+      usesSavedDraft:true
+    };
+  }
   return {
     subject: renderTemplate_(String(settings[keys[0]] || ''), values, false),
-    html: renderTemplate_(String(settings[keys[1]] || ''), values, true)
+    html: renderTemplate_(template, values, true),
+    usesSavedDraft:false
   };
 }
 
@@ -539,7 +608,7 @@ function getAccessToken_() {
   if (cached) return cached;
   const properties = PropertiesService.getScriptProperties().getProperties();
   ['ZOHO_CLIENT_ID', 'ZOHO_CLIENT_SECRET', 'ZOHO_REFRESH_TOKEN'].forEach(function (key) {
-    if (!properties[key]) throw new Error('Zoho is not connected. Use Sturgeon Outreach PILOT > 1. Connect Zoho.');
+    if (!properties[key]) throw new Error('Zoho is not connected. Use Distribution Outreach PILOT > 1. Connect Zoho.');
   });
   const settings = getSettings_();
   const response = UrlFetchApp.fetch(settings['Zoho accounts URL'] + '/oauth/v2/token', {
@@ -600,6 +669,10 @@ function validateCampaignSettings_(settings, isTest) {
   if (!/^https?:\/\/\S+$/i.test(String(settings['Logo URL'] || '').trim())) {
     throw new Error('Logo URL must begin with http:// or https://.');
   }
+  const applicationUrl = String(settings['Customer application URL'] || '').trim();
+  if (applicationUrl && !/^https:\/\/\S+$/i.test(applicationUrl)) {
+    throw new Error('Customer application URL must begin with https://.');
+  }
   if (
     OUTREACH.ENVIRONMENT === 'STAGING_PILOT' &&
     ['TEST', 'PILOT'].indexOf(String(settings['Mode']).toUpperCase()) === -1
@@ -617,12 +690,16 @@ function validateCampaignSettings_(settings, isTest) {
   }
 }
 
-function templateValues_(row, settings) {
+function templateValues_(row, settings, stage) {
   const contact = String(row[OUTREACH.COL.CONTACT - 1] || '').trim();
   const firstName = contact ? contact.split(/\s+/)[0] : 'there';
   const sellSheet = String(settings['Wholesale sell-sheet URL'] || '').trim();
   const website = String(settings['Website URL'] || '').trim();
   const logo = String(settings['Logo URL'] || '').trim();
+  const applicationUrl = String(settings['Customer application URL'] || '').trim();
+  const sellSheetLink = sellSheet ? '<p><a href="' + escapeHtml_(sellSheet) + '">View our current wholesale sell sheet</a></p>' : '';
+  const applicationLink = stage === 'Initial' && /^https:\/\/\S+$/i.test(applicationUrl) ?
+    '<p>If you would like to get the account setup started, <a href="' + escapeHtml_(applicationUrl) + '">complete our short wholesale customer application</a>.</p>' : '';
   return {
     'First Name': firstName,
     'Business Name': smartTitleCase_(String(row[OUTREACH.COL.BUSINESS - 1] || 'your business')),
@@ -635,7 +712,7 @@ function templateValues_(row, settings) {
     'Website Footer': website && logo ?
       '<a href="' + escapeHtml_(website) + '"><img src="' + escapeHtml_(logo) +
       '" alt="Sturgeon Spirits" width="180" style="display:block;width:180px;max-width:100%;height:auto;border:0;margin:10px 0 6px"></a>' : '',
-    'Sell Sheet Link': sellSheet ? '<p><a href="' + escapeHtml_(sellSheet) + '">View our current wholesale sell sheet</a></p>' : ''
+    'Sell Sheet Link': sellSheetLink + applicationLink
   };
 }
 

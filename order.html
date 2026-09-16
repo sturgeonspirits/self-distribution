@@ -1,0 +1,229 @@
+<!doctype html>
+<!-- App version: 2026.09.16.21 -->
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+  <meta name="app-version" content="2026.09.16.21" />
+  <title>Order request | Sturgeon Distribution Hub</title>
+  <link rel="stylesheet" href="/assets/customer-portal.css?v=2026.09.16.21" />
+</head>
+<body>
+  <header class="siteHeader">
+    <div class="headerInner">
+      <a class="brand" href="https://sturgeonspirits.com" target="_blank" rel="noopener noreferrer">
+        <img src="/assets/sturgeon-spirits-logo.png" alt="Sturgeon Spirits" />
+        <span class="brandText"><strong>Sturgeon Spirits</strong><span>Customer ordering</span></span>
+      </a>
+      <a class="headerLink" href="/customer-signup.html">Become a customer</a>
+    </div>
+  </header>
+
+  <main>
+    <div class="pageIntro">
+      <h1>Request an order</h1>
+      <p>Choose what you need and tell us when delivery would work best. We will confirm product availability, pricing, terms, and delivery before the order is final.</p>
+      <div class="notice">Sturgeon Spirits handles your order, delivery, and invoice directly. The invoice will show that payment should be sent to Badger State Cooperative. This page only sends an order request.</div>
+    </div>
+
+    <form id="orderForm" novalidate>
+      <input class="honeypot" name="company_website" type="text" tabindex="-1" autocomplete="off" aria-hidden="true" />
+      <fieldset>
+        <legend>Customer</legend>
+        <div class="grid">
+          <label>Business name
+            <input name="business_name" required maxlength="160" autocomplete="organization" />
+          </label>
+          <label>Customer ID <span class="hint">Optional. Include it if Sturgeon Spirits assigned one.</span>
+            <input name="customer_id" maxlength="60" autocomplete="off" />
+          </label>
+          <label>Your name
+            <input name="contact_name" required maxlength="120" autocomplete="name" />
+          </label>
+          <label>Ordering email
+            <input name="email" required type="email" maxlength="200" inputmode="email" autocomplete="email" />
+          </label>
+          <label>Phone <span class="hint">Optional</span>
+            <input name="phone" type="tel" maxlength="40" inputmode="tel" autocomplete="tel" />
+          </label>
+          <label>PO number <span class="hint">Optional</span>
+            <input name="po_number" maxlength="80" />
+          </label>
+        </div>
+      </fieldset>
+
+      <fieldset>
+        <legend>Products</legend>
+        <p class="sectionHelp">Request by case or bottle. The team will confirm the final quantity.</p>
+        <div class="loading" id="productLoading">Loading current products...</div>
+        <div class="orderLines" id="orderLines"></div>
+        <div class="actions" style="margin-top:12px"><button id="addLineBtn" type="button">Add product</button></div>
+        <div class="totals" id="orderTotals" aria-live="polite"></div>
+      </fieldset>
+
+      <fieldset>
+        <legend>Delivery</legend>
+        <div class="grid">
+          <label>Requested delivery date <span class="hint">Optional. We will confirm the date.</span>
+            <input name="requested_delivery_date" type="date" />
+          </label>
+          <label>Delivery window <span class="hint">Optional</span>
+            <input name="delivery_window" maxlength="160" placeholder="Example: Tuesday before 2 PM" />
+          </label>
+          <label class="span2">Delivery instructions <span class="hint">Optional</span>
+            <textarea name="delivery_instructions" maxlength="1000"></textarea>
+          </label>
+          <label class="span2">Notes for this order <span class="hint">Events, product substitutions, or anything else the team should know.</span>
+            <textarea name="notes" maxlength="2000"></textarea>
+          </label>
+        </div>
+      </fieldset>
+
+      <div class="formActions">
+        <div class="actions">
+          <button class="primary" id="submitOrderBtn" type="submit">Send order request</button>
+          <a class="button" href="mailto:sales@sturgeonspirits.com">Email the team</a>
+        </div>
+        <div class="status" id="orderStatus" role="status" aria-live="polite"></div>
+      </div>
+    </form>
+
+    <section class="successPanel" id="orderSuccess" hidden tabindex="-1">
+      <h2>Your request is in.</h2>
+      <p>The Sturgeon Spirits team will confirm availability, pricing, delivery, and the final order details.</p>
+      <p class="reference" id="orderReference"></p>
+      <p><a href="mailto:sales@sturgeonspirits.com">sales@sturgeonspirits.com</a> · 920-267-5192</p>
+    </section>
+  </main>
+
+  <footer><div class="footerInner"><strong>Sturgeon Spirits</strong><br />2663 Oregon St., Oshkosh, WI 54902 · sales@sturgeonspirits.com · 920-267-5192<br />Sturgeon Spirits provides the products, delivery, and invoice. The invoice directs payment to Badger State Cooperative.</div></footer>
+
+  <template id="orderLineTemplate">
+    <div class="orderLine">
+      <label class="productField">Product
+        <select class="productSelect" required></select>
+      </label>
+      <label class="quantityField">Quantity
+        <input class="quantityInput" type="number" min="1" max="999" step="1" value="1" required inputmode="numeric" />
+      </label>
+      <label>Unit
+        <select class="unitSelect"><option>Cases</option><option>Bottles</option></select>
+      </label>
+      <button class="iconButton removeLineBtn" type="button" aria-label="Remove product" title="Remove product">×</button>
+    </div>
+  </template>
+
+  <script>
+  (() => {
+    "use strict";
+    const APP_VERSION = "2026.09.16.21";
+    const form = document.getElementById("orderForm");
+    const linesEl = document.getElementById("orderLines");
+    const loadingEl = document.getElementById("productLoading");
+    const status = document.getElementById("orderStatus");
+    const submit = document.getElementById("submitOrderBtn");
+    let skus = [];
+    let submissionToken = crypto.randomUUID ? crypto.randomUUID() : `${Date.now()}-${Math.random()}`;
+
+    function escapeHtml(value){
+      return String(value ?? "").replace(/[&<>'"]/g, char => ({"&":"&amp;","<":"&lt;",">":"&gt;","'":"&#39;",'"':"&quot;"}[char]));
+    }
+
+    function productOptions(){
+      return `<option value="">Choose a product</option>${skus.map(sku => `<option value="${escapeHtml(sku.sku_id)}">${escapeHtml(sku.sku_name)}${sku.size ? ` · ${escapeHtml(sku.size)}` : ""}</option>`).join("")}`;
+    }
+
+    function addLine(){
+      const line = document.getElementById("orderLineTemplate").content.firstElementChild.cloneNode(true);
+      line.querySelector(".productSelect").innerHTML = productOptions();
+      line.querySelector(".removeLineBtn").addEventListener("click", () => {
+        if (linesEl.children.length === 1) {
+          line.querySelector(".productSelect").value = "";
+          line.querySelector(".quantityInput").value = "1";
+          return;
+        }
+        line.remove();
+        updateTotals();
+      });
+      line.addEventListener("input", updateTotals);
+      line.addEventListener("change", updateTotals);
+      linesEl.appendChild(line);
+      updateTotals();
+    }
+
+    function collectLines(){
+      return Array.from(linesEl.querySelectorAll(".orderLine")).map(line => {
+        const skuId = line.querySelector(".productSelect").value;
+        const sku = skus.find(item => item.sku_id === skuId) || {};
+        return {
+          sku_id:skuId,
+          sku_name:sku.sku_name || "",
+          quantity:Number(line.querySelector(".quantityInput").value || 0),
+          unit:line.querySelector(".unitSelect").value,
+        };
+      }).filter(line => line.sku_id && line.quantity > 0);
+    }
+
+    function updateTotals(){
+      const lines = collectLines();
+      const cases = lines.filter(line => line.unit === "Cases").reduce((sum,line) => sum + line.quantity, 0);
+      const bottles = lines.filter(line => line.unit === "Bottles").reduce((sum,line) => sum + line.quantity, 0);
+      document.getElementById("orderTotals").textContent = `${lines.length} product${lines.length === 1 ? "" : "s"} · ${cases} case${cases === 1 ? "" : "s"} · ${bottles} bottle${bottles === 1 ? "" : "s"}`;
+    }
+
+    async function loadProducts(){
+      try {
+        const response = await fetch("/api/customer", {method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({action:"listSkus"})});
+        const result = await response.json();
+        if (!result.ok || !Array.isArray(result.skus)) throw new Error(result.error || "Products could not be loaded.");
+        skus = result.skus;
+        loadingEl.hidden = true;
+        addLine();
+      } catch (error) {
+        loadingEl.textContent = `${error.message} Please email sales@sturgeonspirits.com to order.`;
+        submit.disabled = true;
+      }
+    }
+
+    document.getElementById("addLineBtn").addEventListener("click", addLine);
+    form.addEventListener("submit", async event => {
+      event.preventDefault();
+      status.className = "status";
+      status.textContent = "";
+      if (!form.reportValidity()) return;
+      const orderLines = collectLines();
+      if (!orderLines.length) {
+        status.className = "status error";
+        status.textContent = "Choose at least one product and quantity.";
+        return;
+      }
+      const data = new FormData(form);
+      const payload = Object.fromEntries(data.entries());
+      payload.action = "submitOnlineOrderRequest";
+      payload.app_version = APP_VERSION;
+      payload.submission_token = submissionToken;
+      payload.lines = orderLines;
+      submit.disabled = true;
+      submit.textContent = "Sending...";
+      try {
+        const response = await fetch("/api/customer", {method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify(payload)});
+        const result = await response.json();
+        if (!result.ok) throw new Error(result.error || "We could not send the order request.");
+        form.hidden = true;
+        document.getElementById("orderReference").textContent = `Order request: ${result.request_id}`;
+        const success = document.getElementById("orderSuccess");
+        success.hidden = false;
+        success.focus();
+      } catch (error) {
+        status.className = "status error";
+        status.textContent = `${error.message} Please try again or email sales@sturgeonspirits.com.`;
+        submit.disabled = false;
+        submit.textContent = "Send order request";
+      }
+    });
+
+    loadProducts();
+  })();
+  </script>
+</body>
+</html>

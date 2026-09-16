@@ -53,7 +53,7 @@ Manual fixture import passed on 2026-09-15:
 This establishes manual-run idempotency for the current fixture set. It does
 not yet approve an automatic trigger or production installation.
 
-### Zoho Outreach Checkpoint: `2026.09.16.1-PILOT`
+### Distribution Outreach Checkpoint: `2026.09.16.1-PILOT`
 
 Karl's Zoho mailbox connection and one controlled send passed on 2026-09-15:
 

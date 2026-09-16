@@ -1,6 +1,6 @@
-# Zoho Outreach Pilot Package
+# Distribution Outreach Pilot Package
 
-Current complete version: `2026.09.16.1-PILOT`
+Current complete version: `2026.09.16.6-PILOT`
 
 Paste target: the full contents of `Code.gs` into the Apps Script `Code.gs`
 file attached to the staging Distribution Directory workbook only.
@@ -42,6 +42,15 @@ pale-yellow `Email Editor!B15` and `Email Editor!B16` cells. `Campaign
 Settings` follows them automatically, and every newly generated email uses the
 current URLs. The footer contains only the small clickable logo; it does not
 add a separate text website link.
+
+## Customer Application Link
+
+The customer application is published by Netlify from `customer-signup.html`.
+After the staging page is deployed and tested, add its public HTTPS address to
+the `Customer application URL` row in Campaign Settings. Initial emails then
+include a short wholesale-application link beside the sell-sheet footer link.
+Follow-up and reactivation messages do not include it. Leaving the setting
+blank suppresses the link, so a local or unfinished page is never emailed.
 
 ## Updating The Sender Footer
 

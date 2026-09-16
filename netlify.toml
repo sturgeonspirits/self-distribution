@@ -1,4 +1,4 @@
-# App version: 2026.08.04.1
+# App version: 2026.09.16.21
 [build]
   publish = "."
   functions = "netlify/functions"
@@ -6,4 +6,9 @@
 [[redirects]]
   from = "/api/inventory"
   to = "/.netlify/functions/inventory"
+  status = 200
+
+[[redirects]]
+  from = "/api/customer"
+  to = "/.netlify/functions/customer"
   status = 200

@@ -1,11 +1,11 @@
 <!doctype html>
-<!-- App version: 2026.08.04.1 -->
+<!-- App version: 2026.09.16.21 -->
 <html>
 <head>
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover"/>
-  <meta name="app-version" content="2026.08.04.1" />
-  <title>Store Inventory Count</title>
+  <meta name="app-version" content="2026.09.16.21" />
+  <title>Sturgeon Distribution Hub</title>
   <style>
     :root{
       --bg:#f4f5f7;
@@ -59,10 +59,19 @@
       justify-content:space-between;
       gap:10px;
     }
+    .headerMain{
+      min-width:0;
+    }
     .titleWrap h1{
       margin:0;
       font-size:16px;
       letter-spacing:.2px;
+    }
+    .productName{
+      margin-bottom:2px;
+      font-size:11px;
+      font-weight:800;
+      color:rgba(255,255,255,.72);
     }
     .titleWrap .sub{
       font-size:12px;
@@ -88,6 +97,40 @@
       font-weight:900;
       white-space:nowrap;
     }
+    .appNav{
+      max-width:1200px;
+      margin:9px auto 0;
+      display:grid;
+      grid-template-columns:1fr 1fr;
+      gap:4px;
+      padding:4px;
+      border:1px solid rgba(255,255,255,.16);
+      border-radius:8px;
+      background:rgba(255,255,255,.08);
+    }
+    .appNavBtn{
+      min-height:40px;
+      padding:8px 12px;
+      border:0;
+      border-radius:6px;
+      background:transparent;
+      color:rgba(255,255,255,.8);
+      display:inline-flex;
+      align-items:center;
+      justify-content:center;
+      gap:8px;
+    }
+    .appNavBtn.active{
+      background:#fff;
+      color:var(--primary);
+    }
+    .appNavBtn svg,
+    .iconBtn svg,
+    .actionBtn svg{
+      width:18px;
+      height:18px;
+      flex:0 0 auto;
+    }
 
     main{
       max-width:1200px;
@@ -105,6 +148,377 @@
       box-shadow:var(--shadow);
       padding:12px;
       margin-bottom:12px;
+    }
+    .screenHeading{
+      display:flex;
+      align-items:flex-start;
+      justify-content:space-between;
+      gap:12px;
+      margin:2px 0 12px;
+    }
+    .screenHeading h2{
+      margin:0;
+      font-size:20px;
+      line-height:1.2;
+      letter-spacing:0;
+    }
+    .screenHeading p{
+      margin:4px 0 0;
+      color:var(--muted);
+      font-size:13px;
+    }
+    .iconBtn{
+      width:48px;
+      min-width:48px;
+      padding:0;
+      display:inline-flex;
+      align-items:center;
+      justify-content:center;
+    }
+
+    .outreachSummary{
+      display:grid;
+      grid-template-columns:repeat(3,1fr);
+      gap:8px;
+      margin-bottom:12px;
+    }
+    .outreachMetric{
+      min-width:0;
+      border:1px solid var(--line);
+      border-radius:8px;
+      background:#fff;
+      padding:12px;
+    }
+    .outreachMetric strong{
+      display:block;
+      font-size:24px;
+      line-height:1;
+    }
+    .outreachMetric span{
+      display:block;
+      margin-top:5px;
+      color:var(--muted);
+      font-size:11px;
+      font-weight:800;
+      line-height:1.2;
+    }
+    .outreachControls{
+      display:grid;
+      grid-template-columns:minmax(0,1fr) minmax(260px,.7fr);
+      gap:10px;
+      margin-bottom:10px;
+    }
+    .audienceBar{
+      display:grid;
+      grid-template-columns:minmax(240px,1fr) minmax(180px,.5fr) auto;
+      gap:10px;
+      align-items:end;
+      margin-bottom:10px;
+      padding:10px;
+      border:1px solid var(--line);
+      border-radius:8px;
+      background:#fff;
+    }
+    .audienceBar label{
+      margin-top:0;
+    }
+    .audienceCount{
+      min-height:48px;
+      display:flex;
+      align-items:center;
+      justify-content:center;
+      padding:8px 12px;
+      border:1px solid var(--green);
+      border-radius:8px;
+      background:#ecfdf5;
+      color:var(--green-2);
+      font-size:12px;
+      font-weight:1000;
+      white-space:nowrap;
+    }
+    .outreachTabs{
+      display:grid;
+      grid-template-columns:repeat(4,1fr);
+      gap:4px;
+      padding:4px;
+      border:1px solid var(--line);
+      border-radius:8px;
+      background:#f9fafb;
+    }
+    .outreachTab{
+      min-height:48px;
+      padding:8px;
+      border:0;
+      border-radius:6px;
+      background:transparent;
+    }
+    .outreachTab.active{
+      background:var(--primary);
+      color:#fff;
+    }
+    .outreachList{
+      display:grid;
+      gap:8px;
+    }
+    .outreachCard{
+      background:#fff;
+      border:1px solid var(--line);
+      border-radius:8px;
+      padding:12px;
+    }
+    .outreachCard.priority{
+      border-left:4px solid var(--amber);
+    }
+    .outreachCardTop{
+      display:flex;
+      justify-content:space-between;
+      align-items:flex-start;
+      gap:10px;
+    }
+    .businessName{
+      font-size:17px;
+      font-weight:1000;
+      line-height:1.2;
+    }
+    .contactLine{
+      margin-top:4px;
+      color:var(--muted);
+      font-size:12px;
+      line-height:1.35;
+    }
+    .outreachMeta{
+      display:flex;
+      flex-wrap:wrap;
+      gap:6px;
+      margin-top:9px;
+    }
+    .outreachActions{
+      display:grid;
+      grid-template-columns:repeat(4,minmax(0,1fr));
+      gap:8px;
+      margin-top:10px;
+    }
+    .actionBtn{
+      min-width:0;
+      min-height:48px;
+      padding:8px 10px;
+      border:1px solid #d1d5db;
+      border-radius:10px;
+      background:#fff;
+      color:var(--text);
+      font-weight:900;
+      cursor:pointer;
+      display:inline-flex;
+      align-items:center;
+      justify-content:center;
+      gap:7px;
+      line-height:1.15;
+      text-decoration:none;
+    }
+    .outreachEmpty{
+      padding:26px 18px;
+      text-align:center;
+      border:1px dashed #cbd5e1;
+      border-radius:8px;
+      background:#fff;
+    }
+    .outreachEmpty strong{display:block}
+    .outreachEmpty span{
+      display:block;
+      color:var(--muted);
+      font-size:12px;
+      margin-top:5px;
+    }
+    .modeNotice{
+      display:flex;
+      align-items:flex-start;
+      gap:8px;
+      padding:10px 12px;
+      border:1px solid var(--blue-line);
+      border-radius:8px;
+      background:var(--blue-bg);
+      color:#1e3a8a;
+      font-size:12px;
+      line-height:1.4;
+      margin-bottom:10px;
+    }
+    .modeNotice svg{width:18px;height:18px;flex:0 0 auto}
+    .customerLinks{
+      display:grid;
+      grid-template-columns:1fr 1fr;
+      gap:8px;
+      margin:10px 0 14px;
+    }
+    .customerLink{
+      min-height:48px;
+      display:flex;
+      align-items:center;
+      justify-content:center;
+      gap:8px;
+      padding:10px 12px;
+      border:1px solid var(--line);
+      border-radius:6px;
+      background:#fff;
+      color:var(--text);
+      font-weight:850;
+      text-decoration:none;
+      box-shadow:var(--shadow);
+    }
+    .customerLink svg{width:18px;height:18px;flex:0 0 auto}
+    .outcomeGrid{
+      display:grid;
+      grid-template-columns:1fr 1fr;
+      gap:8px;
+    }
+    .outcomeOption{
+      min-height:58px;
+      text-align:left;
+      padding:10px 12px;
+    }
+    .outcomeOption.active{
+      background:var(--primary);
+      border-color:var(--primary);
+      color:#fff;
+    }
+    .emailPreview{
+      border:1px solid var(--line);
+      border-radius:8px;
+      background:#fafafa;
+      padding:12px;
+      white-space:pre-wrap;
+      font-size:13px;
+      line-height:1.5;
+    }
+    textarea.emailEditor{
+      min-height:260px;
+      resize:vertical;
+      font:inherit;
+      font-size:15px;
+      line-height:1.5;
+      white-space:pre-wrap;
+    }
+    .reviewFooterNote{
+      display:flex;
+      align-items:flex-start;
+      gap:8px;
+      margin-top:10px;
+      color:var(--muted);
+      font-size:12px;
+      line-height:1.4;
+    }
+    .reviewFooterNote svg{width:16px;height:16px;flex:0 0 auto}
+    .reviewSaveRow{
+      display:flex;
+      align-items:center;
+      justify-content:flex-end;
+      gap:10px;
+      margin-top:14px;
+    }
+    .reviewSaveRow .status{margin-right:auto}
+    .businessDetailHero{
+      padding-bottom:12px;
+      border-bottom:1px solid var(--line);
+    }
+    .businessDetailHero h3{
+      margin:0;
+      font-size:20px;
+      line-height:1.2;
+    }
+    .businessDetailHero p{
+      margin:5px 0 0;
+      color:var(--muted);
+      font-size:13px;
+    }
+    .businessDetailGrid{
+      display:grid;
+      grid-template-columns:1fr 1fr;
+      gap:18px;
+      margin-top:14px;
+    }
+    .detailSection{
+      min-width:0;
+    }
+    .detailSection.full{
+      grid-column:1 / -1;
+    }
+    .detailSection h4{
+      margin:0 0 7px;
+      font-size:13px;
+    }
+    .detailRows{
+      border-top:1px solid var(--line);
+    }
+    .detailRow{
+      display:grid;
+      grid-template-columns:minmax(110px,.45fr) minmax(0,1fr);
+      gap:10px;
+      padding:8px 0;
+      border-bottom:1px solid var(--line);
+      font-size:13px;
+      line-height:1.35;
+    }
+    .detailLabel{
+      color:var(--muted);
+      font-weight:800;
+    }
+    .detailValue{
+      min-width:0;
+      overflow-wrap:anywhere;
+      white-space:pre-wrap;
+    }
+    .activityTimeline{
+      display:grid;
+      gap:0;
+      border-top:1px solid var(--line);
+    }
+    .activityItem{
+      padding:9px 0;
+      border-bottom:1px solid var(--line);
+    }
+    .activityItem strong{
+      display:block;
+      font-size:13px;
+    }
+    .activityItem span{
+      display:block;
+      margin-top:3px;
+      color:var(--muted);
+      font-size:12px;
+      white-space:pre-wrap;
+    }
+    .contactEditPanel{
+      margin-top:14px;
+      padding:0;
+      border-top:1px solid var(--line);
+      border-bottom:1px solid var(--line);
+    }
+    .contactEditPanel > summary{
+      list-style:none;
+      cursor:pointer;
+      min-height:50px;
+      display:flex;
+      align-items:center;
+      justify-content:space-between;
+      gap:8px;
+      font-size:13px;
+      font-weight:1000;
+    }
+    .contactEditPanel > summary::-webkit-details-marker{display:none}
+    .contactEditGrid{
+      display:grid;
+      grid-template-columns:1fr 1fr;
+      gap:8px 12px;
+      padding-bottom:12px;
+    }
+    .contactEditGrid .full{
+      grid-column:1 / -1;
+    }
+    .contactEditActions{
+      display:flex;
+      align-items:center;
+      justify-content:flex-end;
+      gap:10px;
+      grid-column:1 / -1;
     }
 
     .grid2{display:grid;grid-template-columns:1fr 1fr;gap:10px}
@@ -344,6 +758,7 @@
     .badge.red{background:var(--red-bg);border-color:var(--red-line);color:var(--red)}
     .badge.amber{background:var(--amber-bg);border-color:var(--amber-line);color:var(--amber)}
     .badge.blue{background:var(--blue-bg);border-color:var(--blue-line);color:var(--blue)}
+    .badge.green{background:#ecfdf5;border-color:#bbf7d0;color:#166534}
     [hidden]{display:none !important}
 
     .searchWrap{
@@ -801,21 +1216,28 @@
 
     @media (max-width:760px){
       main{
-        display:flex;
-        flex-direction:column;
         margin:8px auto;
         padding:0 8px 104px;
+      }
+      #inventoryScreen{
+        display:flex;
+        flex-direction:column;
       }
       #mainInventoryScreen{order:1}
       #list{order:2}
       #managerSummaryCard{order:3}
-      main > dialog{order:4}
 
       header{
         padding:calc(8px + env(safe-area-inset-top)) 10px 8px;
       }
       .headerInner{
         gap:8px;
+      }
+      .appNav{
+        margin-top:7px;
+      }
+      .appNavBtn{
+        min-height:38px;
       }
       .titleWrap h1{
         font-size:14px;
@@ -861,6 +1283,51 @@
       }
       .storeContactSummary{
         white-space:normal;
+      }
+      .screenHeading{
+        margin-bottom:8px;
+      }
+      .screenHeading h2{
+        font-size:18px;
+      }
+      .outreachSummary{
+        gap:6px;
+        margin-bottom:8px;
+      }
+      .outreachMetric{
+        padding:10px 6px;
+        text-align:center;
+      }
+      .outreachMetric strong{
+        font-size:22px;
+      }
+      .outreachMetric span{
+        font-size:10px;
+      }
+      .outreachControls{
+        grid-template-columns:1fr;
+        gap:8px;
+      }
+      .audienceBar{
+        grid-template-columns:1fr 1fr;
+        gap:8px;
+        padding:8px;
+      }
+      .audienceCount{
+        grid-column:1 / -1;
+      }
+      .outreachCard{
+        padding:10px;
+      }
+      .outreachCardTop{
+        flex-direction:column;
+        gap:7px;
+      }
+      .outreachActions{
+        grid-template-columns:1fr 1fr;
+      }
+      .actionBtn{
+        min-height:52px;
       }
 
       .summaryGrid{
@@ -1036,6 +1503,9 @@
     }
 
     @media (max-width:380px){
+      .customerLinks{
+        grid-template-columns:1fr;
+      }
       .filterChip{
         font-size:11px;
       }
@@ -1047,6 +1517,44 @@
       }
       .countRow{
         grid-template-columns:minmax(56px,.7fr) minmax(56px,.7fr) minmax(84px,1fr) minmax(92px,1.15fr);
+      }
+      .appNavBtn{
+        padding:7px 4px;
+        gap:5px;
+        font-size:13px;
+      }
+      .outreachActions{
+        grid-template-columns:1fr 1fr;
+      }
+      .outreachActions .actionPrimary{
+        grid-column:auto;
+      }
+      .outcomeGrid{
+        grid-template-columns:1fr;
+      }
+      .businessDetailGrid{
+        grid-template-columns:1fr;
+        gap:14px;
+      }
+      .detailSection.full{
+        grid-column:auto;
+      }
+      .detailRow{
+        grid-template-columns:1fr;
+        gap:3px;
+      }
+      .contactEditGrid{
+        grid-template-columns:1fr;
+      }
+      .contactEditGrid .full,
+      .contactEditActions{
+        grid-column:auto;
+      }
+      .audienceBar{
+        grid-template-columns:1fr;
+      }
+      .audienceCount{
+        grid-column:auto;
       }
     }
 
@@ -1078,24 +1586,39 @@
       .quickBtn{
         width:100%;
       }
+      .outreachActions{
+        grid-template-columns:1fr;
+      }
     }
   </style>
 </head>
 <body>
 <header>
   <div class="headerInner">
-    <div class="titleWrap">
-      <h1>Store Inventory Count</h1>
-      <div class="sub">Fast count mode for staff + manager dashboard</div>
+    <div class="headerMain">
+      <div class="titleWrap">
+        <div class="productName">Sturgeon Distribution Hub</div>
+        <h1 id="appTitle">Inventory</h1>
+        <div class="sub" id="appSubtitle">Count shelf and back stock without losing your place</div>
+      </div>
     </div>
     <div class="headerPills">
       <div class="pill" id="hdrStore">No store</div>
       <div class="pill" id="hdrChanged">0 changed</div>
     </div>
   </div>
+  <nav class="appNav" aria-label="Distribution sections">
+    <button class="appNavBtn active" id="inventoryNavBtn" type="button" aria-current="page">
+      <i data-lucide="package-check"></i><span>Inventory</span>
+    </button>
+    <button class="appNavBtn" id="outreachNavBtn" type="button">
+      <i data-lucide="send"></i><span>Outreach</span>
+    </button>
+  </nav>
 </header>
 
 <main>
+  <section id="inventoryScreen">
   <details class="card managerSummary" id="managerSummaryCard">
     <summary style="display:flex;justify-content:space-between;gap:10px;align-items:center;">
       <span>Manager Summary Grid</span>
@@ -1108,6 +1631,11 @@
         <button id="refreshManagerGridBtn">Refresh Manager Grid</button>
         <button id="backToInventoryBtn" class="primary">Back to Inventory</button>
       </div>
+    </div>
+
+    <div class="modeNotice" style="margin-top:10px">
+      <i data-lucide="plug-zap"></i>
+      <span><strong>Future Toast stock connection:</strong> read-only staging is planned after each Toast menu item is matched to a Sturgeon SKU. No Toast data is connected yet.</span>
     </div>
 
     <div class="managerToolbar">
@@ -1265,6 +1793,75 @@
   </div>
 
   <div class="list" id="list"></div>
+  </section>
+
+  <section id="outreachScreen" hidden>
+    <div class="screenHeading">
+      <div>
+        <h2>Outreach</h2>
+        <p>Work the next lead, then record what happened.</p>
+      </div>
+      <button class="iconBtn" id="refreshOutreachBtn" type="button" aria-label="Refresh outreach" title="Refresh outreach">
+        <i data-lucide="refresh-cw"></i>
+      </button>
+      <button class="primary" id="addNewsletterContactBtn" type="button" hidden>
+        <i data-lucide="user-plus"></i><span>Add contact</span>
+      </button>
+    </div>
+
+    <div class="outreachSummary" aria-label="Outreach summary">
+      <div class="outreachMetric"><strong id="outreachDueCount">0</strong><span>Due today</span></div>
+      <div class="outreachMetric"><strong id="outreachBusinessCount">0</strong><span>Businesses</span></div>
+      <div class="outreachMetric"><strong id="outreachWaitingCount">0</strong><span>Waiting on reply</span></div>
+    </div>
+
+    <div class="modeNotice" id="outreachModeNotice">
+      <i data-lucide="shield-check"></i>
+      <span>Email review and outcome tracking are available here. Sending remains in the controlled Zoho mailer during testing.</span>
+    </div>
+
+    <div class="customerLinks" aria-label="Customer links">
+      <a class="customerLink" href="/customer-signup.html" target="_blank" rel="noopener noreferrer"><i data-lucide="clipboard-list"></i><span>Customer signup</span></a>
+      <a class="customerLink" href="/order.html" target="_blank" rel="noopener noreferrer"><i data-lucide="shopping-cart"></i><span>Order request</span></a>
+    </div>
+
+    <div class="audienceBar" id="outreachAudienceBar" aria-label="Outreach audience and sorting">
+      <div>
+        <label for="outreachAudiencePreset">Who to show</label>
+        <select id="outreachAudiencePreset">
+          <option value="all">All businesses</option>
+          <option value="weekly">Weekly: Fit 5, 0–15 mi</option>
+          <option value="distance_needed">Fit 5 needing distance</option>
+        </select>
+      </div>
+      <div>
+        <label for="outreachSort">Order results</label>
+        <select id="outreachSort">
+          <option value="recommended">Recommended</option>
+          <option value="distance">Closest first</option>
+          <option value="fit">Best fit first</option>
+          <option value="business">Business name A–Z</option>
+        </select>
+      </div>
+      <div class="audienceCount" id="outreachAudienceCount">0 shown</div>
+    </div>
+
+    <div class="outreachControls">
+      <div class="outreachTabs" aria-label="Outreach views">
+        <button class="outreachTab active" id="outreachTodayBtn" type="button">Today</button>
+        <button class="outreachTab" id="outreachDirectoryBtn" type="button">Businesses</button>
+        <button class="outreachTab" id="outreachSentBtn" type="button">Sent</button>
+        <button class="outreachTab" id="outreachNewsletterBtn" type="button">Newsletter</button>
+      </div>
+      <div class="searchWrap">
+        <input id="outreachSearch" placeholder="Search any business information" autocomplete="off" enterkeyhint="search" aria-label="Search outreach" />
+        <button class="searchClear" id="clearOutreachSearchBtn" type="button" aria-label="Clear outreach search" hidden>×</button>
+      </div>
+    </div>
+
+    <div class="status" id="outreachStatus"></div>
+    <div class="outreachList" id="outreachList"></div>
+  </section>
 
   <dialog id="scanDialog">
     <div class="dlgHeader">
@@ -1384,11 +1981,142 @@
       </div>
     </div>
   </dialog>
+
+  <dialog id="outreachReviewDialog">
+    <div class="dlgHeader">
+      <div>
+        <div class="dlgTitle" id="outreachReviewTitle">Review email</div>
+        <div class="smallMuted" id="outreachReviewRecipient"></div>
+      </div>
+      <button id="closeOutreachReviewBtn" type="button">Close</button>
+    </div>
+    <div class="dlgBody">
+      <label for="outreachReviewSubject">Subject</label>
+      <input id="outreachReviewSubject" maxlength="200" />
+      <label for="outreachReviewBody">Message</label>
+      <textarea class="emailEditor" id="outreachReviewBody" maxlength="20000"></textarea>
+      <div class="reviewFooterNote" id="outreachReviewFooterNote">
+        <i data-lucide="lock-keyhole"></i>
+        <span>The sell-sheet link, signature, logo, mailing address, and opt-out text are added automatically.</span>
+      </div>
+      <div class="reviewSaveRow" id="outreachReviewSaveRow">
+        <span class="status" id="outreachDraftStatus"></span>
+        <button class="primary" id="saveOutreachDraftBtn" type="button" disabled>Save draft</button>
+      </div>
+      <div class="modeNotice" id="outreachReviewNotice" style="margin-top:12px;margin-bottom:0">
+        <i data-lucide="lock-keyhole"></i>
+        <span>Saving does not send or approve this email. The saved draft will be available to the controlled Zoho mailer.</span>
+      </div>
+    </div>
+  </dialog>
+
+  <dialog id="outcomeDialog">
+    <div class="dlgHeader">
+      <div>
+        <div class="dlgTitle">Log outcome</div>
+        <div class="smallMuted" id="outcomeBusiness"></div>
+      </div>
+      <button id="closeOutcomeBtn" type="button">Close</button>
+    </div>
+    <div class="dlgBody">
+      <div class="outcomeGrid" id="outcomeGrid">
+        <button class="outcomeOption" type="button" data-outcome="Interested">Interested</button>
+        <button class="outcomeOption" type="button" data-outcome="Schedule tasting">Schedule tasting</button>
+        <button class="outcomeOption" type="button" data-outcome="Follow up later">Follow up later</button>
+        <button class="outcomeOption" type="button" data-outcome="Visit in person">Visit in person</button>
+        <button class="outcomeOption" type="button" data-outcome="Wrong contact">Wrong contact</button>
+        <button class="outcomeOption" type="button" data-outcome="Not interested">Not interested</button>
+      </div>
+      <label for="outcomeFollowUpDate">Next follow-up</label>
+      <input id="outcomeFollowUpDate" type="date" />
+      <label for="outcomeNotes">Notes</label>
+      <textarea id="outcomeNotes" placeholder="What did they say? Who should follow up?"></textarea>
+      <div class="status" id="outcomeStatus"></div>
+      <div class="dlgActions">
+        <button class="primary" id="saveOutcomeBtn" type="button" disabled>Save outcome</button>
+      </div>
+    </div>
+  </dialog>
+
+  <dialog id="businessDetailDialog">
+    <div class="dlgHeader">
+      <div>
+        <div class="dlgTitle">Business details</div>
+        <div class="smallMuted">Complete directory record</div>
+      </div>
+      <button id="closeBusinessDetailBtn" type="button">Close</button>
+    </div>
+    <div class="dlgBody" id="businessDetailBody"></div>
+  </dialog>
+
+  <dialog id="newsletterContactDialog">
+    <div class="dlgHeader">
+      <div>
+        <div class="dlgTitle" id="newsletterContactTitle">Add newsletter contact</div>
+        <div class="smallMuted">Customers and non-customers can both be included.</div>
+      </div>
+      <button id="closeNewsletterContactBtn" type="button">Close</button>
+    </div>
+    <div class="dlgBody">
+      <div class="contactEditGrid">
+        <div>
+          <label for="newsletterName">Name</label>
+          <input id="newsletterName" type="text" autocomplete="name" />
+        </div>
+        <div>
+          <label for="newsletterEmail">Email</label>
+          <input id="newsletterEmail" type="email" autocomplete="email" />
+        </div>
+        <div>
+          <label for="newsletterOrganization">Organization</label>
+          <input id="newsletterOrganization" type="text" />
+        </div>
+        <div>
+          <label for="newsletterRelationship">Relationship</label>
+          <select id="newsletterRelationship">
+            <option>Customer</option><option>Prospect</option><option>Vendor</option><option>Banker</option>
+            <option>Distributor</option><option>Community</option><option>Partner</option><option>Other</option>
+          </select>
+        </div>
+        <div>
+          <label for="newsletterStatus">Newsletter status</label>
+          <select id="newsletterStatus">
+            <option>Candidate</option><option>Invite planned</option><option>Invited</option><option>Subscribed</option>
+            <option>Declined</option><option>Unsubscribed</option>
+          </select>
+        </div>
+        <div>
+          <label for="newsletterConsentDate">Consent date</label>
+          <input id="newsletterConsentDate" type="date" />
+        </div>
+        <div class="full">
+          <label for="newsletterConsentSource">Consent or source</label>
+          <input id="newsletterConsentSource" type="text" placeholder="Requested by contact, signup form, existing relationship" />
+        </div>
+        <div class="full">
+          <label for="newsletterTopics">Topics</label>
+          <input id="newsletterTopics" type="text" placeholder="New products, events, wholesale updates" />
+        </div>
+        <div class="full">
+          <label for="newsletterNotes">Notes</label>
+          <textarea id="newsletterNotes"></textarea>
+        </div>
+      </div>
+      <div class="modeNotice" style="margin-top:12px">
+        <i data-lucide="shield-check"></i>
+        <span>This records list membership only. Newsletter sending remains disabled.</span>
+      </div>
+      <div class="status" id="newsletterContactStatus"></div>
+      <div class="dlgActions">
+        <button class="primary" id="saveNewsletterContactBtn" type="button">Save contact</button>
+      </div>
+    </div>
+  </dialog>
 </main>
 
   <footer style="max-width:1200px;margin:18px auto 120px;padding:0 12px;text-align:center;color:#6b7280;font-size:12px;">
     Designed by <a href="https://scriptspirit.dev" target="_blank" rel="noopener noreferrer" style="color:#1d4ed8;text-decoration:none;font-weight:700;">Script Spirit</a>
-    <span id="appVersionFooter"> • Version 2026.08.04.1</span>
+    <span id="appVersionFooter"> • Version 2026.09.16.21</span>
   </footer>
 
 
@@ -1405,10 +2133,11 @@
 
 <div class="toast" id="toast"></div>
 
+<script src="https://unpkg.com/lucide@0.468.0/dist/umd/lucide.min.js"></script>
 <script>
 (() => {
   const $ = (id) => document.getElementById(id);
-  const APP_VERSION = "2026.08.04.1";
+  const APP_VERSION = "2026.09.16.21";
   $("appVersionFooter").textContent = ` • Version ${APP_VERSION}`;
 
   let cache = { stores: [], lines: [] };
@@ -1417,8 +2146,25 @@
   let filterText = "";
   let activeLocation = localStorage.getItem("inv_count_location") === "back" ? "back" : "shelf";
   let activeView = localStorage.getItem("inv_active_view") === "sold" ? "sold" : "count";
+  let activeAppSection = localStorage.getItem("distribution_section") === "outreach" ? "outreach" : "inventory";
   let salesData = { lines: [], summary: { total_sold_units: 0, counted_skus: 0, total_skus: 0 } };
   let salesLoadedStoreId = "";
+
+  let outreachData = { today: [], directory: [], sent: [], newsletter: [], summary: { due_today: 0, total_businesses: 0, waiting: 0, weekly_ready: 0 } };
+  let outreachView = localStorage.getItem("outreach_view") || "today";
+  if (outreachView === "leads") outreachView = "directory";
+  let outreachAudiencePreset = ["weekly", "distance_needed"].includes(localStorage.getItem("outreach_audience"))
+    ? localStorage.getItem("outreach_audience")
+    : "all";
+  let outreachSort = ["recommended", "distance", "fit", "business"].includes(localStorage.getItem("outreach_sort"))
+    ? localStorage.getItem("outreach_sort")
+    : "recommended";
+  let outreachFilterText = "";
+  let outreachLoaded = false;
+  let selectedOutreachRecord = null;
+  let selectedOutcome = "";
+  let outreachDraftOriginal = { subject:"", body:"" };
+  let selectedNewsletterContact = null;
 
   let managerGridData = { stores: [], skus: [] };
   let managerFilterText = "";
@@ -1456,10 +2202,718 @@
     return res.json();
   }
 
+  function refreshIcons(){
+    if (window.lucide) window.lucide.createIcons({ attrs: { "aria-hidden":"true" } });
+  }
+
+  function setOutreachStatus(message){
+    $("outreachStatus").textContent = message || "";
+  }
+
+  function setAppSection(section){
+    activeAppSection = section === "outreach" ? "outreach" : "inventory";
+    localStorage.setItem("distribution_section", activeAppSection);
+    const isOutreach = activeAppSection === "outreach";
+
+    $("inventoryScreen").hidden = isOutreach;
+    $("outreachScreen").hidden = !isOutreach;
+    $("inventoryNavBtn").classList.toggle("active", !isOutreach);
+    $("outreachNavBtn").classList.toggle("active", isOutreach);
+    $("inventoryNavBtn").toggleAttribute("aria-current", !isOutreach);
+    $("outreachNavBtn").toggleAttribute("aria-current", isOutreach);
+    $("appTitle").textContent = isOutreach ? "Outreach" : "Inventory";
+    $("appSubtitle").textContent = isOutreach
+      ? "Lead to follow-up, in one place"
+      : "Count shelf and back stock without losing your place";
+
+    if (isOutreach) {
+      const summary = outreachData.summary || {};
+      $("hdrStore").textContent = `${Number(summary.due_today || 0)} due`;
+      $("hdrChanged").textContent = `${Number(summary.waiting || 0)} waiting`;
+      $("bottomBar").hidden = true;
+      if (!outreachLoaded) loadOutreach().catch(err => setOutreachStatus(err.message));
+    } else {
+      updateSummaryUi();
+      updateViewChrome();
+    }
+    window.scrollTo({ top:0, behavior:"auto" });
+    refreshIcons();
+  }
+
+  function formatOutreachDate(value){
+    if (!value) return "";
+    const raw = String(value);
+    const d = /^\d{4}-\d{2}-\d{2}$/.test(raw) ? new Date(`${raw}T12:00:00`) : new Date(value);
+    if (isNaN(d.getTime())) return String(value);
+    return d.toLocaleDateString(undefined, { month:"short", day:"numeric", year:d.getFullYear() !== new Date().getFullYear() ? "numeric" : undefined });
+  }
+
+  function outreachRecordsForView(){
+    let rows = [...(outreachData[outreachView] || [])];
+    if (outreachAudiencePreset === "weekly") rows = rows.filter(record => record.weekly_eligible === true);
+    if (outreachAudiencePreset === "distance_needed") {
+      rows = rows.filter(record => Number(record.craft_spirit_fit) === 5 && (record.miles === null || record.miles === undefined || record.miles === ""));
+    }
+    const query = outreachFilterText.trim().toLowerCase();
+    if (query) {
+      rows = rows.filter(record => [
+        record.business,
+        record.contact,
+        record.email,
+        record.phone,
+        record.city,
+        record.status,
+        record.outcome,
+        record.relationship,
+        ...(record.fields || []).map(field => field.value),
+      ]
+        .map(value => String(value || "").toLowerCase())
+        .join(" | ")
+        .includes(query));
+    }
+
+    const businessSort = (a, b) => String(a.business || "").localeCompare(String(b.business || ""));
+    const distanceValue = record => record.miles === null || record.miles === undefined || record.miles === ""
+      ? Number.POSITIVE_INFINITY
+      : Number(record.miles);
+    const distanceSort = (a, b) => {
+      return (distanceValue(a) - distanceValue(b)) || businessSort(a, b);
+    };
+    const fitSort = (a, b) => (Number(b.craft_spirit_fit || 0) - Number(a.craft_spirit_fit || 0)) || distanceSort(a, b);
+    const confidenceScore = record => ({ confirmed:3, published:2, supplied:1 }[String(record.email_confidence || "").toLowerCase()] || 0);
+    const priorityScore = record => {
+      const priority = String(record.priority || "").toLowerCase();
+      if (["high", "1", "a"].includes(priority)) return 3;
+      if (["medium", "2", "b"].includes(priority)) return 2;
+      return priority ? 1 : 0;
+    };
+
+    if (outreachSort === "distance") rows.sort(distanceSort);
+    else if (outreachSort === "fit") rows.sort(fitSort);
+    else if (outreachSort === "business") rows.sort(businessSort);
+    else if (outreachAudiencePreset === "weekly") {
+      rows.sort((a, b) => (distanceValue(a) - distanceValue(b)) || (confidenceScore(b) - confidenceScore(a)) || businessSort(a, b));
+    } else {
+      rows.sort((a, b) => (priorityScore(b) - priorityScore(a)) || fitSort(a, b));
+    }
+    return rows;
+  }
+
+  function outreachRecordKey(record){
+    return `${record.source_row || ""}::${record.business || ""}`;
+  }
+
+  function outreachBusinessName(record){
+    return record.display_business || record.business || "Unnamed business";
+  }
+
+  function outreachBadgeClass(status){
+    const value = String(status || "").toLowerCase();
+    if (value.includes("interested") || value.includes("replied")) return "green";
+    if (value.includes("due") || value.includes("error")) return "red";
+    if (value.includes("sent") || value.includes("waiting")) return "blue";
+    return "amber";
+  }
+
+  function mapsDirectionsUrl(record){
+    const destination = record.address || [outreachBusinessName(record), record.city, record.state].filter(Boolean).join(", ");
+    return `https://www.google.com/maps/dir/?api=1&destination=${encodeURIComponent(destination)}`;
+  }
+
+  function renderNewsletterContacts(){
+    const query = outreachFilterText.trim().toLowerCase();
+    const contacts = (outreachData.newsletter || []).filter(contact => !query || [
+      contact.name, contact.email, contact.organization, contact.relationship_type,
+      contact.status, contact.consent_source, contact.topics, contact.notes,
+    ].some(value => String(value || "").toLowerCase().includes(query)));
+    $("outreachAudienceCount").textContent = `${contacts.length} contact${contacts.length === 1 ? "" : "s"}`;
+    $("outreachList").innerHTML = contacts.length ? contacts.map(contact => `
+      <article class="outreachCard" data-newsletter-id="${escapeHtml(contact.contact_id)}">
+        <div class="outreachCardTop">
+          <div><div class="businessName">${escapeHtml(contact.name || contact.email)}</div><div class="contactLine">${escapeHtml([contact.organization, contact.email].filter(Boolean).join(" • "))}</div></div>
+          <span class="badge ${contact.status === "Subscribed" ? "green" : contact.status === "Unsubscribed" ? "red" : "amber"}">${escapeHtml(contact.status || "Candidate")}</span>
+        </div>
+        <div class="outreachMeta"><span class="badge">${escapeHtml(contact.relationship_type || "Other")}</span>${contact.topics ? `<span class="badge blue">${escapeHtml(contact.topics)}</span>` : ""}</div>
+        <div class="outreachActions"><button class="actionBtn primary" type="button" data-newsletter-action="manage"><i data-lucide="contact-round"></i><span>Manage contact</span></button></div>
+      </article>`).join("") : `<div class="outreachEmpty"><strong>No newsletter contacts yet</strong><span>Add customers, prospects, partners, or personal business contacts such as your banker.</span></div>`;
+    refreshIcons();
+  }
+
+  function renderOutreach(){
+    const summary = outreachData.summary || {};
+    $("outreachDueCount").textContent = Number(summary.due_today || 0);
+    $("outreachBusinessCount").textContent = Number(summary.total_businesses || 0);
+    $("outreachWaitingCount").textContent = Number(summary.waiting || 0);
+    if (activeAppSection === "outreach") {
+      $("hdrStore").textContent = `${Number(summary.due_today || 0)} due`;
+      $("hdrChanged").textContent = `${Number(summary.waiting || 0)} waiting`;
+    }
+
+    ["today", "directory", "sent", "newsletter"].forEach(view => {
+      $(`outreach${view.charAt(0).toUpperCase() + view.slice(1)}Btn`).classList.toggle("active", outreachView === view);
+    });
+    const newsletterView = outreachView === "newsletter";
+    $("outreachAudienceBar").hidden = newsletterView;
+    $("addNewsletterContactBtn").hidden = !newsletterView;
+    $("outreachSearch").placeholder = newsletterView ? "Search newsletter contacts" : "Search any business information";
+    if (newsletterView) {
+      renderNewsletterContacts();
+      return;
+    }
+    $("outreachAudiencePreset").value = outreachAudiencePreset;
+    $("outreachSort").value = outreachSort;
+
+    const list = $("outreachList");
+    const records = outreachRecordsForView();
+    $("outreachAudienceCount").textContent = outreachAudiencePreset === "weekly"
+      ? `${records.length} ready this week`
+      : outreachAudiencePreset === "distance_needed"
+        ? `${records.length} need distance`
+        : `${records.length} shown`;
+    if (!records.length) {
+      const emptyDetail = outreachAudiencePreset === "weekly"
+        ? "No businesses in this work stage meet every weekly audience rule."
+        : outreachAudiencePreset === "distance_needed"
+          ? "Every Fit 5 business in this work stage has a distance."
+          : "Try another work stage or clear the search.";
+      list.innerHTML = `<div class="outreachEmpty"><strong>Nothing in this view</strong><span>${emptyDetail}</span></div>`;
+      refreshIcons();
+      return;
+    }
+
+    list.innerHTML = records.map(record => {
+      const status = String(record.status || "Not contacted");
+      const priority = String(record.priority || "");
+      const dateLabel = record.next_follow_up
+        ? `Follow up ${formatOutreachDate(record.next_follow_up)}`
+        : record.last_emailed
+          ? `Sent ${formatOutreachDate(record.last_emailed)}`
+          : "Not contacted";
+      const contact = [record.contact, record.email].filter(Boolean).join(" • ") || "Contact details needed";
+      return `
+        <article class="outreachCard ${priority.toLowerCase().includes("high") ? "priority" : ""}" data-record-key="${escapeHtml(outreachRecordKey(record))}">
+          <div class="outreachCardTop">
+            <div>
+              <div class="businessName">${escapeHtml(outreachBusinessName(record))}</div>
+              <div class="contactLine">${escapeHtml(contact)}</div>
+            </div>
+            <span class="badge ${outreachBadgeClass(status)}">${escapeHtml(status)}</span>
+          </div>
+          <div class="outreachMeta">
+            <span class="badge">${escapeHtml(dateLabel)}</span>
+            ${Number(record.craft_spirit_fit || 0) ? `<span class="badge green">Fit ${escapeHtml(record.craft_spirit_fit)}</span>` : ""}
+            ${record.miles !== null && record.miles !== undefined && record.miles !== "" ? `<span class="badge blue">${escapeHtml(record.miles)} mi</span>` : (Number(record.craft_spirit_fit || 0) === 5 ? `<span class="badge amber">Distance needed</span>` : "")}
+            ${priority ? `<span class="badge amber">${escapeHtml(priority)} priority</span>` : ""}
+            ${record.outcome ? `<span class="badge">${escapeHtml(record.outcome)}</span>` : ""}
+            ${record.programs?.newsletter_status === "Subscribed" ? `<span class="badge green">Newsletter</span>` : ""}
+            ${record.programs?.ordering_status === "Active" ? `<span class="badge blue">Online ordering</span>` : ""}
+            ${Number(record.email_engagement?.open_count || 0) > 0 ? `<span class="badge blue">Estimated opened</span>` : ""}
+            ${Number(record.email_engagement?.click_count || 0) > 0 ? `<span class="badge green">Clicked</span>` : ""}
+          </div>
+          <div class="outreachActions">
+            <button class="actionBtn primary actionPrimary" type="button" data-outreach-action="review"><i data-lucide="mail-open"></i><span>Review email</span></button>
+            <button class="actionBtn" type="button" data-outreach-action="outcome"><i data-lucide="clipboard-check"></i><span>Log outcome</span></button>
+            <button class="actionBtn" type="button" data-outreach-action="details"><i data-lucide="building-2"></i><span>Business details</span></button>
+            <a class="actionBtn" href="${escapeHtml(mapsDirectionsUrl(record))}" target="_blank" rel="noopener noreferrer" aria-label="Directions to ${escapeHtml(outreachBusinessName(record))}"><i data-lucide="navigation"></i><span>Directions</span></a>
+          </div>
+        </article>`;
+    }).join("");
+    refreshIcons();
+  }
+
+  async function loadOutreach(){
+    setOutreachStatus("Loading outreach...");
+    const res = await apiGet({ action:"outreachDashboard" });
+    if (!res.ok) throw new Error(res.error || "Outreach failed to load.");
+    outreachData = {
+      today: res.today || [],
+      directory: res.directory || [],
+      sent: res.sent || [],
+      newsletter: res.newsletter_contacts || [],
+      summary: res.summary || { due_today:0, total_businesses:0, waiting:0, weekly_ready:0 },
+    };
+    outreachLoaded = true;
+    const noticeText = $("outreachModeNotice").querySelector("span");
+    noticeText.textContent = res.is_mock
+      ? `Local mock data: ${Number(res.summary?.total_businesses || 0)} sample businesses. The staging connection will load the complete spreadsheet directory.`
+      : "Email review and outcome tracking are available here. Sending remains in the controlled Zoho mailer during testing.";
+    $("outreachModeNotice").hidden = !!res.can_send && !res.is_mock;
+    renderOutreach();
+    setOutreachStatus(`Updated ${new Date().toLocaleTimeString([], { hour:"numeric", minute:"2-digit" })}.`);
+  }
+
+  function findOutreachRecordFromElement(element){
+    const card = element.closest("[data-record-key]");
+    if (!card) return null;
+    const key = card.dataset.recordKey;
+    return [outreachData.today, outreachData.directory, outreachData.sent]
+      .flat()
+      .find(record => outreachRecordKey(record) === key) || null;
+  }
+
+  function openOutreachReview(record, showActivity){
+    selectedOutreachRecord = record;
+    $("outreachReviewTitle").textContent = showActivity ? "Activity" : "Review email";
+    $("outreachReviewRecipient").textContent = [outreachBusinessName(record), record.email].filter(Boolean).join(" • ");
+    $("outreachReviewSubject").value = showActivity ? "Recent contact history" : (record.subject || `A Wisconsin spirits option for ${outreachBusinessName(record)}`);
+    $("outreachReviewSubject").readOnly = !!showActivity;
+    $("outreachReviewNotice").hidden = !!showActivity;
+    $("outreachReviewFooterNote").hidden = !!showActivity;
+    $("outreachReviewSaveRow").hidden = !!showActivity;
+    if (showActivity) {
+      const activity = Array.isArray(record.activity) ? record.activity : [];
+      $("outreachReviewBody").value = activity.length
+        ? activity.map(item => `${formatOutreachDate(item.timestamp)} — ${item.result || item.stage || "Activity"}${item.detail ? `\n${item.detail}` : ""}`).join("\n\n")
+        : "No activity has been recorded yet.";
+      $("outreachReviewBody").readOnly = true;
+    } else {
+      $("outreachReviewBody").value = record.body_text || record.preview || htmlToPlainText(record.preview_html) || `Hi ${record.contact || "there"},\n\nI wanted to introduce Sturgeon Spirits and see whether our Wisconsin-made spirits might be a good fit for you.`;
+      $("outreachReviewBody").readOnly = false;
+      outreachDraftOriginal = {
+        subject:$("outreachReviewSubject").value,
+        body:$("outreachReviewBody").value,
+      };
+      $("saveOutreachDraftBtn").disabled = true;
+      $("outreachDraftStatus").textContent = record.has_saved_draft
+        ? `Saved ${formatOutreachDate(record.draft_updated_at) || "as a draft"}`
+        : "Not saved as a custom draft";
+    }
+    $("outreachReviewDialog").showModal();
+    refreshIcons();
+  }
+
+  function outreachDraftIsDirty(){
+    return $("outreachReviewSubject").value !== outreachDraftOriginal.subject
+      || $("outreachReviewBody").value !== outreachDraftOriginal.body;
+  }
+
+  function updateOutreachDraftState(){
+    if (!selectedOutreachRecord || $("outreachReviewBody").readOnly) return;
+    const dirty = outreachDraftIsDirty();
+    $("saveOutreachDraftBtn").disabled = !dirty;
+    $("outreachDraftStatus").textContent = dirty ? "Unsaved changes" : (
+      selectedOutreachRecord.has_saved_draft
+        ? `Saved ${formatOutreachDate(selectedOutreachRecord.draft_updated_at) || "as a draft"}`
+        : "Not saved as a custom draft"
+    );
+  }
+
+  async function saveOutreachDraft(){
+    if (!selectedOutreachRecord || !outreachDraftIsDirty()) return;
+    const subject = $("outreachReviewSubject").value.trim();
+    const bodyText = $("outreachReviewBody").value.trim();
+    if (!subject) return toast("Add a subject");
+    if (!bodyText) return toast("Add an email message");
+
+    const button = $("saveOutreachDraftBtn");
+    button.disabled = true;
+    $("outreachDraftStatus").textContent = "Saving...";
+    try {
+      const res = await apiPost({
+        action:"saveOutreachDraft",
+        source_row:selectedOutreachRecord.source_row,
+        business:selectedOutreachRecord.business,
+        email:selectedOutreachRecord.email,
+        message_stage:selectedOutreachRecord.next_email || "Initial",
+        subject:subject,
+        body_text:bodyText,
+      });
+      if (!res.ok) throw new Error(res.error || "Draft could not be saved.");
+      outreachDraftOriginal = { subject:subject, body:bodyText };
+      selectedOutreachRecord.subject = subject;
+      selectedOutreachRecord.body_text = bodyText;
+      selectedOutreachRecord.has_saved_draft = true;
+      selectedOutreachRecord.draft_updated_at = res.updated_at || new Date().toISOString();
+      $("outreachReviewSubject").value = subject;
+      $("outreachReviewBody").value = bodyText;
+      $("outreachDraftStatus").textContent = "Draft saved";
+      toast("Email draft saved");
+    } catch (err) {
+      $("outreachDraftStatus").textContent = err.message || String(err);
+      button.disabled = false;
+    }
+  }
+
+  function closeOutreachReview(){
+    if (!$("outreachReviewBody").readOnly && outreachDraftIsDirty() && !confirm("Close without saving these email changes?")) return;
+    $("outreachReviewDialog").close();
+  }
+
+  function openOutcomeDialog(record){
+    selectedOutreachRecord = record;
+    selectedOutcome = "";
+    $("outcomeBusiness").textContent = outreachBusinessName(record);
+    $("outcomeNotes").value = "";
+    $("outcomeFollowUpDate").value = "";
+    $("outcomeStatus").textContent = "";
+    $("saveOutcomeBtn").disabled = true;
+    document.querySelectorAll(".outcomeOption").forEach(button => button.classList.remove("active"));
+    $("outcomeDialog").showModal();
+  }
+
+  function displayDetailValue(value){
+    if (value === true) return "Yes";
+    if (value === false) return "No";
+    if (value === null || value === undefined || value === "") return "Not recorded";
+    if (typeof value === "string" && /^\d{4}-\d{2}-\d{2}(T.*)?$/.test(value)) return formatOutreachDate(value);
+    return String(value);
+  }
+
+  function detailRowsHtml(rows){
+    const available = rows.filter(row => row.value !== undefined && row.value !== null && row.value !== "");
+    if (!available.length) return `<div class="smallMuted">No information recorded.</div>`;
+    return `<div class="detailRows">${available.map(row => `
+      <div class="detailRow">
+        <div class="detailLabel">${escapeHtml(row.label)}</div>
+        <div class="detailValue">${escapeHtml(displayDetailValue(row.value))}</div>
+      </div>`).join("")}</div>`;
+  }
+
+  function editableFieldValue(record, canonical){
+    const actualKey = record.editable_fields?.[canonical];
+    if (!actualKey) return "";
+    const field = (record.fields || []).find(item => item.key === actualKey);
+    return field ? String(field.value ?? "") : "";
+  }
+
+  function contactEditHtml(record){
+    const definitions = [
+      { key:"contact", label:"Contact name", type:"text" },
+      { key:"email", label:"Email", type:"email" },
+      { key:"phone", label:"Phone", type:"tel" },
+      { key:"website", label:"Website", type:"url" },
+      { key:"address", label:"Street address", type:"text" },
+      { key:"city", label:"City", type:"text" },
+      { key:"state", label:"State", type:"text" },
+      { key:"postal_code", label:"ZIP", type:"text" },
+      { key:"craft_spirit_fit", label:"Craft-spirit fit (1–5)", type:"number", attributes:'min="1" max="5" step="1" inputmode="numeric"' },
+      { key:"miles", label:"Miles from Oshkosh", type:"number", attributes:'min="0" step="0.1" inputmode="decimal"' },
+      { key:"rating_basis", label:"Why this fit rating?", type:"text", full:true },
+      { key:"email_confidence", label:"Email confidence", options:["", "Confirmed", "Published", "Supplied", "Needs verification"] },
+    ];
+    const fields = definitions.filter(definition => record.editable_fields?.[definition.key]);
+    const controls = fields.map(definition => {
+      const value = editableFieldValue(record, definition.key);
+      const options = definition.options ? [...definition.options] : [];
+      if (value && !options.includes(value)) options.push(value);
+      const input = definition.options
+        ? `<select id="businessEdit_${escapeHtml(definition.key)}" data-edit-field="${escapeHtml(definition.key)}">${options.map(option => `<option value="${escapeHtml(option)}" ${option === value ? "selected" : ""}>${escapeHtml(option || "Choose confidence")}</option>`).join("")}</select>`
+        : `<input id="businessEdit_${escapeHtml(definition.key)}" type="${definition.type}" data-edit-field="${escapeHtml(definition.key)}" value="${escapeHtml(value)}" ${definition.attributes || ""} />`;
+      return `
+        <div class="${definition.key === "address" || definition.full ? "full" : ""}">
+          <label for="businessEdit_${escapeHtml(definition.key)}">${escapeHtml(definition.label)}</label>
+          ${input}
+        </div>`;
+    }).join("");
+    return `
+      <details class="contactEditPanel">
+        <summary><span>Edit business information or add a note</span><span class="smallMuted">Open</span></summary>
+        <div class="contactEditGrid">
+          ${controls || `<div class="smallMuted full">This sheet has no editable contact columns.</div>`}
+          <div class="full">
+            <label for="businessAdditionalNote">Add note</label>
+            <textarea id="businessAdditionalNote" placeholder="Add new information without replacing earlier notes"></textarea>
+          </div>
+          <div class="contactEditActions">
+            <span class="status" id="businessEditStatus"></span>
+            <button class="primary" id="saveBusinessEditBtn" type="button">Save updates</button>
+          </div>
+        </div>
+      </details>`;
+  }
+
+  function programEditHtml(record){
+    const programs = record.programs || {};
+    const newsletterStatuses = ["Not invited", "Candidate", "Invite planned", "Invited", "Subscribed", "Declined", "Unsubscribed"];
+    const orderingStatuses = ["Not offered", "Candidate", "Invite planned", "Invited", "Active", "Paused"];
+    const optionsHtml = (options, selected) => options.map(option =>
+      `<option value="${escapeHtml(option)}" ${option === selected ? "selected" : ""}>${escapeHtml(option)}</option>`
+    ).join("");
+    return `
+      <details class="contactEditPanel">
+        <summary><span>Newsletter and online ordering</span><span class="smallMuted">Plan</span></summary>
+        <div class="contactEditGrid">
+          <div>
+            <label for="programNewsletterStatus">Newsletter status</label>
+            <select id="programNewsletterStatus">${optionsHtml(newsletterStatuses, programs.newsletter_status || "Not invited")}</select>
+          </div>
+          <div>
+            <label for="programNewsletterStatusDate">Status date</label>
+            <input id="programNewsletterStatusDate" type="date" value="${escapeHtml(String(programs.newsletter_status_date || "").slice(0, 10))}" />
+          </div>
+          <div class="full">
+            <label for="programNewsletterConsentSource">Consent or source</label>
+            <input id="programNewsletterConsentSource" type="text" value="${escapeHtml(programs.newsletter_consent_source || "")}" placeholder="Signup form, requested by contact, sales follow-up" />
+          </div>
+          <div>
+            <label for="programOrderingStatus">Online ordering status</label>
+            <select id="programOrderingStatus">${optionsHtml(orderingStatuses, programs.ordering_status || "Not offered")}</select>
+          </div>
+          <div>
+            <label for="programOrderingInviteDate">Invite date</label>
+            <input id="programOrderingInviteDate" type="date" value="${escapeHtml(String(programs.ordering_invite_date || "").slice(0, 10))}" />
+          </div>
+          <div>
+            <label for="programOrderingCustomerId">Ordering customer ID</label>
+            <input id="programOrderingCustomerId" type="text" value="${escapeHtml(programs.ordering_customer_id || "")}" />
+          </div>
+          <div>
+            <label for="programOrderingPortalUrl">Customer ordering link</label>
+            <input id="programOrderingPortalUrl" type="url" value="${escapeHtml(programs.ordering_portal_url || "")}" placeholder="Added after an ordering platform is chosen" />
+          </div>
+          <div class="full">
+            <label for="programNotes">Program notes</label>
+            <textarea id="programNotes" placeholder="Interest, consent details, ordering requirements">${escapeHtml(programs.notes || "")}</textarea>
+          </div>
+          <div class="modeNotice full" style="margin:0">
+            <i data-lucide="construction"></i>
+            <span>Planning only. This section cannot send a newsletter, invite a customer, or place an order.</span>
+          </div>
+          <div class="contactEditActions">
+            <span class="status" id="programEditStatus"></span>
+            <button class="primary" id="saveProgramSettingsBtn" type="button">Save program plan</button>
+          </div>
+        </div>
+      </details>`;
+  }
+
+  function openBusinessDetail(record){
+    selectedOutreachRecord = record;
+    const contactRows = [
+      { label:"Contact", value:record.contact },
+      { label:"Email", value:record.email },
+      { label:"Phone", value:record.phone },
+      { label:"Website", value:record.website },
+      { label:"Address", value:record.address },
+    ];
+    const relationshipRows = [
+      { label:"Relationship", value:record.relationship },
+      { label:"Status", value:record.status },
+      { label:"Priority", value:record.priority },
+      { label:"Segment", value:record.segment },
+      { label:"Email confidence", value:record.email_confidence },
+      { label:"Do not email", value:record.do_not_email },
+      { label:"Next follow-up", value:record.next_follow_up },
+    ];
+    const qualificationRows = [
+      { label:"Ready for weekly email", value:record.weekly_eligible ? "Yes" : "No" },
+      { label:"Craft-spirit fit", value:record.craft_spirit_fit },
+      { label:"Miles from Oshkosh", value:record.miles },
+      { label:"Rating basis", value:record.rating_basis },
+      { label:"Why not ready", value:record.weekly_eligible ? "" : (record.weekly_exclusion_reasons || []).join("; ") },
+    ];
+    const salesRows = [
+      { label:"Last order", value:record.last_order },
+      { label:"Order count", value:record.order_count },
+      { label:"Lifetime invoiced", value:record.lifetime_invoiced },
+      { label:"Customer source", value:record.customer_source },
+    ];
+    const programRows = [
+      { label:"Newsletter", value:record.programs?.newsletter_status || "Not invited" },
+      { label:"Newsletter source", value:record.programs?.newsletter_consent_source },
+      { label:"Online ordering", value:record.programs?.ordering_status || "Not offered" },
+      { label:"Ordering customer ID", value:record.programs?.ordering_customer_id },
+      { label:"Ordering invite", value:record.programs?.ordering_invite_date },
+    ];
+    const engagementRows = [
+      { label:"Estimated opens", value:Number(record.email_engagement?.open_count || 0) },
+      { label:"Last estimated open", value:record.email_engagement?.last_opened },
+      { label:"Clicks", value:Number(record.email_engagement?.click_count || 0) },
+      { label:"Last click", value:record.email_engagement?.last_clicked },
+      { label:"Replies", value:Number(record.email_engagement?.reply_count || 0) },
+      { label:"Bounces", value:Number(record.email_engagement?.bounce_count || 0) },
+      { label:"Tracking source", value:record.email_engagement?.source },
+    ];
+    const activity = Array.isArray(record.activity) ? record.activity : [];
+    const activityHtml = activity.length
+      ? `<div class="activityTimeline">${activity.map(item => `
+          <div class="activityItem">
+            <strong>${escapeHtml(item.result || item.stage || "Activity")} · ${escapeHtml(formatOutreachDate(item.timestamp) || "Date not recorded")}</strong>
+            ${item.detail ? `<span>${escapeHtml(item.detail)}</span>` : ""}
+          </div>`).join("")}</div>`
+      : `<div class="smallMuted">No activity has been recorded.</div>`;
+    const allFields = Array.isArray(record.fields) ? record.fields : [];
+
+    $("businessDetailBody").innerHTML = `
+      <div class="businessDetailHero">
+        <h3>${escapeHtml(outreachBusinessName(record))}</h3>
+        <p>${escapeHtml([record.city, record.relationship, record.status].filter(Boolean).join(" • ") || "Directory record")}</p>
+      </div>
+      ${contactEditHtml(record)}
+      ${programEditHtml(record)}
+      <div class="businessDetailGrid">
+        <section class="detailSection"><h4>Contact and location</h4>${detailRowsHtml(contactRows)}</section>
+        <section class="detailSection"><h4>Relationship and outreach</h4>${detailRowsHtml(relationshipRows)}</section>
+        <section class="detailSection"><h4>Weekly audience</h4>${detailRowsHtml(qualificationRows)}</section>
+        <section class="detailSection"><h4>Sales history</h4>${detailRowsHtml(salesRows)}</section>
+        <section class="detailSection"><h4>Optional programs</h4>${detailRowsHtml(programRows)}</section>
+        <section class="detailSection"><h4>Email engagement</h4>${detailRowsHtml(engagementRows)}<p class="smallMuted" style="margin:10px 0 0">Opens are estimates. Clicks, replies, and orders are stronger engagement signals.</p></section>
+        <section class="detailSection"><h4>Notes</h4>${detailRowsHtml([{ label:"Notes", value:record.notes }, { label:"Outcome", value:record.outcome }])}</section>
+        <section class="detailSection full"><h4>Activity</h4>${activityHtml}</section>
+        <section class="detailSection full"><h4>All spreadsheet fields</h4>${detailRowsHtml(allFields)}</section>
+      </div>`;
+    if (!$("businessDetailDialog").open) $("businessDetailDialog").showModal();
+  }
+
+  async function saveBusinessEdits(){
+    if (!selectedOutreachRecord) return;
+    const saveButton = $("saveBusinessEditBtn");
+    const status = $("businessEditStatus");
+    const updates = {};
+    $("businessDetailBody").querySelectorAll("[data-edit-field]").forEach(input => {
+      updates[input.dataset.editField] = input.value;
+    });
+    const additionalNote = $("businessAdditionalNote")?.value.trim() || "";
+    saveButton.disabled = true;
+    status.textContent = "Saving...";
+    try {
+      const res = await apiPost({
+        action:"updateOutreachBusiness",
+        source_row:selectedOutreachRecord.source_row,
+        business:selectedOutreachRecord.business,
+        original_email:selectedOutreachRecord.email,
+        updates:updates,
+        additional_note:additionalNote,
+      });
+      if (!res.ok) throw new Error(res.error || "Business information could not be saved.");
+      toast(res.message || "Business updated");
+      const sourceRow = selectedOutreachRecord.source_row;
+      await loadOutreach();
+      const updated = outreachData.directory.find(record => Number(record.source_row) === Number(sourceRow));
+      if (updated) openBusinessDetail(updated);
+    } catch (err) {
+      status.textContent = err.message || String(err);
+      saveButton.disabled = false;
+    }
+  }
+
+  async function saveProgramSettings(){
+    if (!selectedOutreachRecord) return;
+    const button = $("saveProgramSettingsBtn");
+    const status = $("programEditStatus");
+    button.disabled = true;
+    status.textContent = "Saving...";
+    try {
+      const res = await apiPost({
+        action:"updateOutreachPrograms",
+        source_row:selectedOutreachRecord.source_row,
+        business:selectedOutreachRecord.business,
+        email:selectedOutreachRecord.email,
+        newsletter_status:$("programNewsletterStatus").value,
+        newsletter_consent_source:$("programNewsletterConsentSource").value.trim(),
+        newsletter_status_date:$("programNewsletterStatusDate").value,
+        ordering_status:$("programOrderingStatus").value,
+        ordering_customer_id:$("programOrderingCustomerId").value.trim(),
+        ordering_invite_date:$("programOrderingInviteDate").value,
+        ordering_portal_url:$("programOrderingPortalUrl").value.trim(),
+        notes:$("programNotes").value.trim(),
+      });
+      if (!res.ok) throw new Error(res.error || "Program plan could not be saved.");
+      toast("Program plan saved");
+      const sourceRow = selectedOutreachRecord.source_row;
+      await loadOutreach();
+      const updated = outreachData.directory.find(record => Number(record.source_row) === Number(sourceRow));
+      if (updated) openBusinessDetail(updated);
+    } catch (err) {
+      status.textContent = err.message || String(err);
+      button.disabled = false;
+    }
+  }
+
+  function openNewsletterContact(contact){
+    selectedNewsletterContact = contact || null;
+    $("newsletterContactTitle").textContent = contact ? "Edit newsletter contact" : "Add newsletter contact";
+    $("newsletterName").value = contact?.name || "";
+    $("newsletterEmail").value = contact?.email || "";
+    $("newsletterOrganization").value = contact?.organization || "";
+    $("newsletterRelationship").value = contact?.relationship_type || "Other";
+    $("newsletterStatus").value = contact?.status || "Candidate";
+    $("newsletterConsentDate").value = String(contact?.consent_date || "").slice(0, 10);
+    $("newsletterConsentSource").value = contact?.consent_source || "";
+    $("newsletterTopics").value = contact?.topics || "";
+    $("newsletterNotes").value = contact?.notes || "";
+    $("newsletterContactStatus").textContent = "";
+    $("newsletterContactDialog").showModal();
+    refreshIcons();
+  }
+
+  async function saveNewsletterContact(){
+    const button = $("saveNewsletterContactBtn");
+    button.disabled = true;
+    $("newsletterContactStatus").textContent = "Saving...";
+    try {
+      const res = await apiPost({
+        action:"upsertNewsletterContact",
+        contact_id:selectedNewsletterContact?.contact_id || "",
+        name:$("newsletterName").value.trim(),
+        email:$("newsletterEmail").value.trim(),
+        organization:$("newsletterOrganization").value.trim(),
+        relationship_type:$("newsletterRelationship").value,
+        status:$("newsletterStatus").value,
+        consent_source:$("newsletterConsentSource").value.trim(),
+        consent_date:$("newsletterConsentDate").value,
+        topics:$("newsletterTopics").value.trim(),
+        notes:$("newsletterNotes").value.trim(),
+      });
+      if (!res.ok) throw new Error(res.error || "Newsletter contact could not be saved.");
+      $("newsletterContactDialog").close();
+      toast("Newsletter contact saved");
+      await loadOutreach();
+    } catch (err) {
+      $("newsletterContactStatus").textContent = err.message || String(err);
+    } finally {
+      button.disabled = false;
+    }
+  }
+
+  function selectOutcome(button){
+    selectedOutcome = button.dataset.outcome || "";
+    document.querySelectorAll(".outcomeOption").forEach(option => option.classList.toggle("active", option === button));
+    $("saveOutcomeBtn").disabled = !selectedOutcome;
+    if (selectedOutcome === "Follow up later" && !$("outcomeFollowUpDate").value) {
+      const date = new Date();
+      date.setDate(date.getDate() + 7);
+      $("outcomeFollowUpDate").value = date.toISOString().slice(0, 10);
+    }
+  }
+
+  async function saveOutreachOutcome(){
+    if (!selectedOutreachRecord || !selectedOutcome) return;
+    const button = $("saveOutcomeBtn");
+    button.disabled = true;
+    $("outcomeStatus").textContent = "Saving...";
+    try {
+      const res = await apiPost({
+        action:"updateOutreachOutcome",
+        source_row:selectedOutreachRecord.source_row,
+        business:selectedOutreachRecord.business,
+        email:selectedOutreachRecord.email,
+        outcome:selectedOutcome,
+        next_follow_up:$("outcomeFollowUpDate").value,
+        notes:$("outcomeNotes").value.trim(),
+      });
+      if (!res.ok) throw new Error(res.error || "Outcome could not be saved.");
+      $("outcomeDialog").close();
+      toast("Outcome saved");
+      await loadOutreach();
+    } catch (err) {
+      $("outcomeStatus").textContent = err.message || String(err);
+      button.disabled = false;
+    }
+  }
+
   function escapeHtml(s) {
     return String(s ?? "").replace(/[&<>"']/g, m => (
       { "&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#039;" }[m]
     ));
+  }
+
+  function htmlToPlainText(html){
+    if (!html) return "";
+    const doc = new DOMParser().parseFromString(String(html), "text/html");
+    doc.querySelectorAll("br").forEach(node => node.replaceWith("\n"));
+    doc.querySelectorAll("p,div,li,h1,h2,h3,h4").forEach(node => node.append("\n"));
+    return String(doc.body.textContent || "").replace(/\n{3,}/g, "\n\n").trim();
   }
 
   function digits(v){
@@ -1694,10 +3148,12 @@
     $("sumNeeds").textContent = s.needs;
     $("sumChanged").textContent = s.changed;
     $("sumShown").textContent = s.shown;
-    $("hdrChanged").textContent = `${s.changed} changed`;
 
     const storeText = $("storeSelect").selectedOptions[0]?.textContent || "No store";
-    $("hdrStore").textContent = storeText;
+    if (activeAppSection === "inventory") {
+      $("hdrChanged").textContent = `${s.changed} changed`;
+      $("hdrStore").textContent = storeText;
+    }
     $("bottomSummary").textContent = `${s.shown} shown • ${s.changed} changed • ${s.needs} need attention`;
     $("submitBtn").disabled = s.changed === 0;
     $("submitBtn").textContent = s.changed ? `Submit ${s.changed}` : "Submit";
@@ -1726,7 +3182,7 @@
     $("countSummaryGrid").hidden = isSold;
     $("soldSummaryGrid").hidden = !isSold;
     $("managerDetails").hidden = isSold;
-    $("bottomBar").hidden = isSold;
+    $("bottomBar").hidden = isSold || activeAppSection !== "inventory";
     if (isSold) updateSoldSummaryUi();
     else updateSummaryUi();
   }
@@ -2628,6 +4084,97 @@
   $("saveProductBtn").addEventListener("click", saveProduct);
   $("closeAddProductBtn").addEventListener("click", () => $("addProductDialog").close());
 
+  $("inventoryNavBtn").addEventListener("click", () => setAppSection("inventory"));
+  $("outreachNavBtn").addEventListener("click", () => setAppSection("outreach"));
+  $("refreshOutreachBtn").addEventListener("click", () => loadOutreach().catch(err => setOutreachStatus(err.message)));
+
+  $("outreachAudiencePreset").addEventListener("change", () => {
+    outreachAudiencePreset = ["weekly", "distance_needed"].includes($("outreachAudiencePreset").value)
+      ? $("outreachAudiencePreset").value
+      : "all";
+    localStorage.setItem("outreach_audience", outreachAudiencePreset);
+    if (outreachAudiencePreset !== "all") {
+      outreachView = "directory";
+      localStorage.setItem("outreach_view", outreachView);
+    }
+    renderOutreach();
+  });
+  $("outreachSort").addEventListener("change", () => {
+    outreachSort = $("outreachSort").value;
+    localStorage.setItem("outreach_sort", outreachSort);
+    renderOutreach();
+  });
+
+  $("outreachTodayBtn").addEventListener("click", () => {
+    outreachView = "today";
+    localStorage.setItem("outreach_view", outreachView);
+    renderOutreach();
+  });
+  $("outreachDirectoryBtn").addEventListener("click", () => {
+    outreachView = "directory";
+    localStorage.setItem("outreach_view", outreachView);
+    renderOutreach();
+  });
+  $("outreachSentBtn").addEventListener("click", () => {
+    outreachView = "sent";
+    localStorage.setItem("outreach_view", outreachView);
+    renderOutreach();
+  });
+  $("outreachNewsletterBtn").addEventListener("click", () => {
+    outreachView = "newsletter";
+    localStorage.setItem("outreach_view", outreachView);
+    renderOutreach();
+  });
+  $("addNewsletterContactBtn").addEventListener("click", () => openNewsletterContact(null));
+  $("outreachSearch").addEventListener("input", () => {
+    outreachFilterText = $("outreachSearch").value || "";
+    $("clearOutreachSearchBtn").hidden = !outreachFilterText;
+    renderOutreach();
+  });
+  $("clearOutreachSearchBtn").addEventListener("click", () => {
+    outreachFilterText = "";
+    $("outreachSearch").value = "";
+    $("clearOutreachSearchBtn").hidden = true;
+    renderOutreach();
+    $("outreachSearch").focus();
+  });
+  $("outreachList").addEventListener("click", event => {
+    const newsletterButton = event.target.closest("[data-newsletter-action]");
+    if (newsletterButton) {
+      const card = newsletterButton.closest("[data-newsletter-id]");
+      const contact = (outreachData.newsletter || []).find(item => item.contact_id === card?.dataset.newsletterId);
+      if (contact) openNewsletterContact(contact);
+      return;
+    }
+    const actionButton = event.target.closest("[data-outreach-action]");
+    if (!actionButton) return;
+    const record = findOutreachRecordFromElement(actionButton);
+    if (!record) return;
+    const action = actionButton.dataset.outreachAction;
+    if (action === "outcome") openOutcomeDialog(record);
+    else if (action === "details") openBusinessDetail(record);
+    else openOutreachReview(record, false);
+  });
+  $("outcomeGrid").addEventListener("click", event => {
+    const button = event.target.closest(".outcomeOption");
+    if (button) selectOutcome(button);
+  });
+  $("saveOutcomeBtn").addEventListener("click", saveOutreachOutcome);
+  $("closeOutcomeBtn").addEventListener("click", () => $("outcomeDialog").close());
+  $("outreachReviewSubject").addEventListener("input", updateOutreachDraftState);
+  $("outreachReviewBody").addEventListener("input", updateOutreachDraftState);
+  $("saveOutreachDraftBtn").addEventListener("click", saveOutreachDraft);
+  $("closeOutreachReviewBtn").addEventListener("click", closeOutreachReview);
+  $("closeBusinessDetailBtn").addEventListener("click", () => $("businessDetailDialog").close());
+  $("closeNewsletterContactBtn").addEventListener("click", () => $("newsletterContactDialog").close());
+  $("saveNewsletterContactBtn").addEventListener("click", saveNewsletterContact);
+  $("businessDetailBody").addEventListener("click", event => {
+    if (event.target.closest("#saveBusinessEditBtn")) saveBusinessEdits();
+    if (event.target.closest("#saveProgramSettingsBtn")) saveProgramSettings();
+  });
+
+  refreshIcons();
+  setAppSection(activeAppSection);
   loadStartup().catch(err => setStatus(err.message));
 })();
 </script>

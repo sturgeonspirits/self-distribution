@@ -1,0 +1,270 @@
+<!doctype html>
+<!-- App version: 2026.09.16.21 -->
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+  <meta name="app-version" content="2026.09.16.21" />
+  <title>Wholesale application | Sturgeon Distribution Hub</title>
+  <link rel="stylesheet" href="/assets/customer-portal.css?v=2026.09.16.21" />
+</head>
+<body>
+  <header class="siteHeader">
+    <div class="headerInner">
+      <a class="brand" href="https://sturgeonspirits.com" target="_blank" rel="noopener noreferrer">
+        <img src="/assets/sturgeon-spirits-logo.png" alt="Sturgeon Spirits" />
+        <span class="brandText"><strong>Sturgeon Spirits</strong><span>Craft distillery in Oshkosh, Wisconsin</span></span>
+      </a>
+      <a class="headerLink" href="/order.html">Request an order</a>
+    </div>
+  </header>
+
+  <main>
+    <div class="pageIntro">
+      <h1>Become a Sturgeon Spirits customer</h1>
+      <p>Tell us about your business so we can confirm licensing, delivery, and the right products for your operation.</p>
+      <section class="notice processNotice" aria-labelledby="purchaseProcessTitle">
+        <div>
+          <h2 id="purchaseProcessTitle">How purchasing works</h2>
+          <p><strong>Sturgeon Spirits self-distributes.</strong> You work directly with our team on product selection, ordering, service, and delivery.</p>
+          <p>Sturgeon Spirits will deliver your products and provide the invoice. The invoice will show that payment should be sent to <a href="https://badgerstatecoop.com/wordpress/" target="_blank" rel="noopener noreferrer">Badger State Cooperative</a>, as required by Wisconsin's alcohol distribution structure. Sturgeon Spirits remains your day-to-day contact.</p>
+        </div>
+      </section>
+      <div class="notice">Submitting this form starts an account review. It does not approve an account, establish payment terms, or place an order.</div>
+    </div>
+
+    <form id="customerForm" novalidate>
+      <input class="honeypot" id="companyWebsite" name="company_website" type="text" tabindex="-1" autocomplete="off" aria-hidden="true" />
+      <fieldset>
+        <legend>Business</legend>
+        <p class="sectionHelp">Use the legal name shown on the seller's permit. Add the public-facing name if it is different.</p>
+        <div class="grid">
+          <label>Legal business name
+            <input name="legal_business_name" required maxlength="160" autocomplete="organization" />
+          </label>
+          <label>Business name or DBA
+            <input name="business_name" maxlength="160" />
+          </label>
+          <label>Business type
+            <select name="business_type" required>
+              <option value="">Choose one</option>
+              <option>Restaurant or bar</option>
+              <option>Liquor retailer</option>
+              <option>Grocery or convenience store</option>
+              <option>Hotel or event venue</option>
+              <option>Golf course or club</option>
+              <option>Caterer</option>
+              <option>Other</option>
+            </select>
+          </label>
+          <label>Website <span class="hint">Optional</span>
+            <input name="website" type="url" maxlength="300" inputmode="url" autocomplete="url" />
+          </label>
+          <label>Wisconsin seller's permit number
+            <input name="seller_permit_number" required maxlength="30" inputmode="numeric" autocomplete="off" />
+            <span class="hint">Usually a 15-digit number.</span>
+          </label>
+        </div>
+      </fieldset>
+
+      <fieldset>
+        <legend>Primary contact</legend>
+        <p class="sectionHelp">This is the person we should contact about account setup and product questions.</p>
+        <div class="grid">
+          <label>Contact name
+            <input name="primary_contact_name" required maxlength="120" autocomplete="name" />
+          </label>
+          <label>Title or role
+            <input name="primary_contact_title" maxlength="100" autocomplete="organization-title" />
+          </label>
+          <label>Email
+            <input name="primary_email" required type="email" maxlength="200" inputmode="email" autocomplete="email" />
+          </label>
+          <label>Phone
+            <input name="primary_phone" required type="tel" maxlength="40" inputmode="tel" autocomplete="tel" />
+          </label>
+          <label>Ordering email <span class="hint">Leave blank if the primary email should receive order messages.</span>
+            <input name="ordering_email" type="email" maxlength="200" inputmode="email" />
+          </label>
+          <label>Accounts payable email <span class="hint">We will use this address for invoice communication. The invoice will direct payment to Badger State Cooperative. Optional if it is the same as the primary email.</span>
+            <input name="ap_email" type="email" maxlength="200" inputmode="email" />
+          </label>
+          <label>Accounts payable contact <span class="hint">Optional</span>
+            <input name="ap_contact_name" maxlength="120" />
+          </label>
+          <label>Invoice preference
+            <select name="invoice_preference">
+              <option>Email</option>
+              <option>Paper with delivery</option>
+              <option>Both email and paper</option>
+            </select>
+          </label>
+        </div>
+      </fieldset>
+
+      <fieldset>
+        <legend>Delivery and billing</legend>
+        <div class="grid">
+          <label class="span2">Delivery street address
+            <input name="delivery_address_1" required maxlength="180" autocomplete="street-address" />
+          </label>
+          <label class="span2">Suite, unit, or receiving entrance <span class="hint">Optional</span>
+            <input name="delivery_address_2" maxlength="120" />
+          </label>
+          <label>City
+            <input name="delivery_city" required maxlength="100" autocomplete="address-level2" />
+          </label>
+          <label>State
+            <input name="delivery_state" required maxlength="2" value="WI" autocomplete="address-level1" />
+          </label>
+          <label>ZIP code
+            <input name="delivery_zip" required maxlength="10" inputmode="numeric" autocomplete="postal-code" />
+          </label>
+          <label>Preferred delivery window <span class="hint">Optional</span>
+            <input name="delivery_window" maxlength="160" placeholder="Example: Tuesday before 2 PM" />
+          </label>
+          <label class="span2">Delivery instructions <span class="hint">Receiving door, stairs, loading area, who can sign, or hours to avoid.</span>
+            <textarea name="delivery_instructions" maxlength="1000"></textarea>
+          </label>
+          <label class="span2 checkLabel">
+            <input id="billingSame" name="billing_same" type="checkbox" checked />
+            <span>Billing address is the same as the delivery address.</span>
+          </label>
+          <div class="span2 grid" id="billingFields" hidden>
+            <label class="span2">Billing street address
+              <input name="billing_address_1" maxlength="180" autocomplete="billing street-address" />
+            </label>
+            <label>Billing city
+              <input name="billing_city" maxlength="100" autocomplete="billing address-level2" />
+            </label>
+            <label>Billing state
+              <input name="billing_state" maxlength="2" value="WI" autocomplete="billing address-level1" />
+            </label>
+            <label>Billing ZIP code
+              <input name="billing_zip" maxlength="10" inputmode="numeric" autocomplete="billing postal-code" />
+            </label>
+          </div>
+        </div>
+      </fieldset>
+
+      <fieldset>
+        <legend>What would help your operation?</legend>
+        <p class="sectionHelp">This helps Karl bring the right products and ideas to the first conversation.</p>
+        <div class="grid">
+          <div class="span2 checkGroup" role="group" aria-label="Product interests">
+            <label class="checkLabel"><input name="product_interests" type="checkbox" value="Infusions and signature cocktails" /><span>Infusions and signature cocktail ideas</span></label>
+            <label class="checkLabel"><input name="product_interests" type="checkbox" value="Core spirits" /><span>Core spirits</span></label>
+            <label class="checkLabel"><input name="product_interests" type="checkbox" value="Seasonal releases" /><span>Seasonal releases</span></label>
+            <label class="checkLabel"><input name="product_interests" type="checkbox" value="Special selections" /><span>Private or special selections</span></label>
+            <label class="checkLabel"><input name="product_interests" type="checkbox" value="Not sure yet" /><span>Not sure yet</span></label>
+          </div>
+          <label>Expected ordering frequency <span class="hint">Optional</span>
+            <select name="expected_order_frequency">
+              <option value="">Not sure yet</option>
+              <option>Weekly</option>
+              <option>Every two weeks</option>
+              <option>Monthly</option>
+              <option>Seasonally or for events</option>
+            </select>
+          </label>
+          <label>How did you hear about us? <span class="hint">Optional</span>
+            <input name="referral_source" maxlength="160" />
+          </label>
+          <label class="span2">Anything else we should know? <span class="hint">Menu ideas, shelf goals, upcoming events, or account questions.</span>
+            <textarea name="notes" maxlength="2000"></textarea>
+          </label>
+        </div>
+      </fieldset>
+
+      <fieldset>
+        <legend>Authorization</legend>
+        <div class="grid">
+          <label>Authorized submitter name
+            <input name="authorized_name" required maxlength="120" autocomplete="name" />
+          </label>
+          <label>Title
+            <input name="authorized_title" required maxlength="100" autocomplete="organization-title" />
+          </label>
+          <label class="span2 checkLabel">
+            <input name="attested" type="checkbox" required />
+            <span>I confirm that I am authorized to submit this information and that it is accurate to the best of my knowledge.</span>
+          </label>
+          <label class="span2 checkLabel">
+            <input name="newsletter_opt_in" type="checkbox" />
+            <span>Send me occasional Sturgeon Spirits product, cocktail, and distillery updates. This is optional and I can unsubscribe at any time.</span>
+          </label>
+        </div>
+      </fieldset>
+
+      <div class="formActions">
+        <div class="actions">
+          <button class="primary" id="submitCustomerBtn" type="submit">Submit for review</button>
+          <a class="button" href="mailto:sales@sturgeonspirits.com">Ask a question</a>
+        </div>
+        <div class="status" id="customerStatus" role="status" aria-live="polite"></div>
+      </div>
+    </form>
+
+    <section class="successPanel" id="customerSuccess" hidden tabindex="-1">
+      <h2>Thanks. We received your information.</h2>
+      <p>Karl or a member of the Sturgeon Spirits team will review the account and follow up about licensing, products, delivery, and ordering access.</p>
+      <p class="reference" id="customerReference"></p>
+      <p><a href="mailto:sales@sturgeonspirits.com">sales@sturgeonspirits.com</a> · 920-267-5192</p>
+    </section>
+  </main>
+
+  <footer><div class="footerInner"><strong>Sturgeon Spirits</strong><br />2663 Oregon St., Oshkosh, WI 54902 · sales@sturgeonspirits.com · 920-267-5192<br />Sturgeon Spirits provides the products, delivery, and invoice. The invoice directs payment to Badger State Cooperative.</div></footer>
+
+  <script>
+  (() => {
+    "use strict";
+    const APP_VERSION = "2026.09.16.21";
+    const form = document.getElementById("customerForm");
+    const status = document.getElementById("customerStatus");
+    const submit = document.getElementById("submitCustomerBtn");
+    const billingSame = document.getElementById("billingSame");
+    const billingFields = document.getElementById("billingFields");
+    let submissionToken = crypto.randomUUID ? crypto.randomUUID() : `${Date.now()}-${Math.random()}`;
+
+    billingSame.addEventListener("change", () => { billingFields.hidden = billingSame.checked; });
+
+    form.addEventListener("submit", async event => {
+      event.preventDefault();
+      status.className = "status";
+      status.textContent = "";
+      if (!form.reportValidity()) return;
+      const data = new FormData(form);
+      const payload = Object.fromEntries(data.entries());
+      payload.action = "submitCustomerApplication";
+      payload.app_version = APP_VERSION;
+      payload.submission_token = submissionToken;
+      payload.billing_same = billingSame.checked;
+      payload.attested = data.has("attested");
+      payload.newsletter_opt_in = data.has("newsletter_opt_in");
+      payload.product_interests = data.getAll("product_interests");
+      submit.disabled = true;
+      submit.textContent = "Submitting...";
+      try {
+        const response = await fetch("/api/customer", {
+          method:"POST",
+          headers:{"Content-Type":"application/json"},
+          body:JSON.stringify(payload),
+        });
+        const result = await response.json();
+        if (!result.ok) throw new Error(result.error || "We could not submit the form.");
+        form.hidden = true;
+        document.getElementById("customerReference").textContent = `Application reference: ${result.application_id}`;
+        const success = document.getElementById("customerSuccess");
+        success.hidden = false;
+        success.focus();
+      } catch (error) {
+        status.className = "status error";
+        status.textContent = `${error.message} Please try again or email sales@sturgeonspirits.com.`;
+        submit.disabled = false;
+        submit.textContent = "Submit for review";
+      }
+    });
+  })();
+  </script>
+</body>
+</html>

@@ -1,5 +1,5 @@
-// App version: 2026.08.04.1
-const APP_VERSION = "2026.08.04.1";
+// App version: 2026.09.16.21
+const APP_VERSION = "2026.09.16.21";
 
 export async function handler(event) {
   const cors = {
