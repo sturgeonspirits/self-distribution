@@ -1,6 +1,6 @@
 # Zoho Outreach Pilot Setup
 
-Package version: `2026.09.15.7-PILOT`
+Package version: `2026.09.16.1-PILOT`
 
 ## Staging Resources
 
@@ -99,6 +99,10 @@ and email before sending.
 If Zoho accepts an email but a later sheet update fails, `Send Status` becomes
 `SENT - REVIEW` with **DO NOT RESEND** in the notes and the Zoho message ID is
 preserved.
+
+The source lead uses the existing validated `Sent` status after a successful
+pilot delivery. Pilot-specific details remain in `Pilot Review` and `Activity
+Log`.
 
 ## Before Each Pilot Send
 

@@ -1,6 +1,6 @@
 # Zoho Outreach Pilot Package
 
-Current complete version: `2026.09.15.7-PILOT`
+Current complete version: `2026.09.16.1-PILOT`
 
 Paste target: the full contents of `Code.gs` into the Apps Script `Code.gs`
 file attached to the staging Distribution Directory workbook only.

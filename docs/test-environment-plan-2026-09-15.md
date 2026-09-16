@@ -53,7 +53,7 @@ Manual fixture import passed on 2026-09-15:
 This establishes manual-run idempotency for the current fixture set. It does
 not yet approve an automatic trigger or production installation.
 
-### Zoho Outreach Checkpoint: `2026.09.15.7-PILOT`
+### Zoho Outreach Checkpoint: `2026.09.16.1-PILOT`
 
 Karl's Zoho mailbox connection and one controlled send passed on 2026-09-15:
 
@@ -67,7 +67,7 @@ Karl's Zoho mailbox connection and one controlled send passed on 2026-09-15:
   message.
 - `Activity Log` now records the prospect as `Intended Recipient`, the actual
   Karl-only destination as `Delivered To`, and the mailer version separately.
-- The complete `2026.09.15.7-PILOT` source remains locked to the staging
+- The complete `2026.09.16.1-PILOT` source remains locked to the staging
   spreadsheet. It keeps queued and bulk sends blocked while allowing at most
   three individually approved, separately confirmed pilot emails.
 - Every template now includes only a small public Sturgeon Spirits logo linked
@@ -82,6 +82,10 @@ Karl's Zoho mailbox connection and one controlled send passed on 2026-09-15:
   approved and confirmed individually.
 - The three stale pilot source-row references were corrected, and the sender
   now re-resolves a uniquely matching business and email after future sorts.
+- Dockside Tavern's approved pilot email was accepted by Zoho on 2026-09-16
+  with message ID `1789567288902138300`. Its post-send CRM fields were repaired
+  after the old lead-status validation rejected `Pilot sent`; the corrected
+  sender now records the existing allowed `Sent` status.
 
 The staging audience audit found 493 accounts, 143 syntactically valid email
 addresses, 115 cold-prospect addresses that satisfy the current safety rules,

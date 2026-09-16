@@ -1,9 +1,11 @@
 /**
  * Sturgeon Spirits distribution outreach tracker
  *
- * VERSION: 2026.09.15.7-PILOT
+ * VERSION: 2026.09.16.1-PILOT
  *
  * CHANGES IN THIS VERSION
+ * - Fixed pilot lead updates to use the existing validated Sent status.
+ * - Preserved the post-send do-not-resend recovery guard.
  * - Added individually approved real-email pilot sending from Pilot Review.
  * - Added a hard three-email pilot cap, duplicate prevention and final confirmation.
  * - Added pilot send results to the lead row, Pilot Review and Activity Log.
@@ -24,7 +26,7 @@
  * Sends through the authenticated Zoho Mail API account.
  */
 
-const OUTREACH_VERSION = '2026.09.15.7-PILOT';
+const OUTREACH_VERSION = '2026.09.16.1-PILOT';
 
 const OUTREACH = Object.freeze({
   ENVIRONMENT: 'STAGING_PILOT',
@@ -333,7 +335,7 @@ function sendApprovedPilotForActiveRow() {
 
     row[OUTREACH.COL.QUEUE - 1] = false;
     row[OUTREACH.COL.STAGE - 1] = nextStage;
-    row[OUTREACH.COL.STATUS - 1] = 'Pilot sent';
+    row[OUTREACH.COL.STATUS - 1] = 'Sent';
     row[OUTREACH.COL.LAST_EMAILED - 1] = now;
     row[OUTREACH.COL.FOLLOWUP_DUE - 1] = nextStage === 'Complete' ? '' : addDays_(now, followupDelay);
     row[OUTREACH.COL.MESSAGE_ID - 1] = result.messageId;
