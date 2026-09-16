@@ -1,6 +1,6 @@
-# Zoho Outreach Test Setup
+# Zoho Outreach Pilot Setup
 
-Package version: `2026.09.15.6-TEST`
+Package version: `2026.09.15.7-PILOT`
 
 ## Staging Resources
 
@@ -11,10 +11,11 @@ Package version: `2026.09.15.6-TEST`
 
 The staging workbook is already configured with:
 
-- Mode: `TEST`
+- Starting mode: `TEST`; real delivery requires a confirmed switch to `PILOT`
 - Authenticated Zoho mailbox: `karl@sturgeonspirits.com`
 - Visible sender alias: `sales@sturgeonspirits.com`
-- Test recipient: `karl@sturgeonspirits.com`
+- Karl-only test recipient: `karl@sturgeonspirits.com`
+- Three-candidate `Pilot Review` with separate approval and send-status fields
 - Wholesale sell-sheet link in the Email Editor
 - Website footer link in the Email Editor
 - Editable footer sender name and title in the Email Editor
@@ -27,7 +28,7 @@ The staging workbook is already configured with:
 4. Select all of that file's contents and replace them with the complete
    `Code.gs` from this directory. Do not append code.
 5. Save the Apps Script project and reload the spreadsheet.
-6. Choose **Sturgeon Outreach TEST > Verify test configuration**.
+6. Choose **Sturgeon Outreach PILOT > Verify pilot configuration**.
 
 ## Connect Karl's Zoho Mailbox
 
@@ -35,7 +36,7 @@ The staging workbook is already configured with:
    account.
 2. Generate a short-lived authorization code with scopes
    `ZohoMail.accounts.READ,ZohoMail.messages.CREATE`.
-3. In the staging spreadsheet, choose **Sturgeon Outreach TEST > 1. Connect
+3. In the staging spreadsheet, choose **Sturgeon Outreach PILOT > 1. Connect
    Zoho**.
 4. Paste the Client ID, Client Secret and short-lived grant code into the three
    prompts. They are stored in staging Apps Script Properties, not the sheet or
@@ -47,7 +48,7 @@ The staging workbook is already configured with:
 
 1. On `Distribution Directory and Leads`, select a prospect row with a
    supplied, published or confirmed email.
-2. Choose **Sturgeon Outreach TEST > Send test for active row**.
+2. Choose **Sturgeon Outreach PILOT > Send Karl-only test for active lead**.
 3. The message is personalized from that row but is delivered only to
    `karl@sturgeonspirits.com`.
 4. Confirm the From address, subject, formatting, personalization, opt-out text,
@@ -71,9 +72,35 @@ authenticated Zoho mailbox or the visible `sales@sturgeonspirits.com` sender
 alias.
 
 The selected prospect is not marked as contacted by a test send. This build
-cannot send queued or LIVE email.
+cannot send queued or bulk email.
 
-## Before Any Live Send
+## Send The Three-Email Pilot
+
+1. Review each candidate on `Pilot Review`. Confirm the business, contact,
+   email address and intended message.
+2. Change `Pilot Approval` from `Pending review` to `Approved` only for the
+   candidate you are ready to contact.
+3. Choose **Sturgeon Outreach PILOT > Enable PILOT mode (real email)** and
+   confirm the warning. This enables delivery but sends nothing.
+4. Keep the approved candidate's row selected and choose **Send approved pilot
+   for selected row**.
+5. Read the final dialog, which shows the real business, recipient and subject.
+   Choose **Yes** only when they are correct.
+6. Confirm `Pilot Review`, the source lead and `Activity Log` all record the
+   message ID and send time. Use **Disable pilot mode** whenever real delivery
+   should be paused.
+
+The pilot allows no more than three successful real sends. It blocks duplicate
+recipients, non-prospects, unverified addresses, prior-contact rows, do-not-email
+records and any row that cannot be matched uniquely to its source lead. If the
+lead sheet is sorted, the script re-resolves the current row by exact business
+and email before sending.
+
+If Zoho accepts an email but a later sheet update fails, `Send Status` becomes
+`SENT - REVIEW` with **DO NOT RESEND** in the notes and the Zoho message ID is
+preserved.
+
+## Before Each Pilot Send
 
 The current sell-sheet PDF was verified with an **Anyone with the link can
 view** reader permission on 2026-09-15. When the sell sheet changes, replace the

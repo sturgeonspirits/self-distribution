@@ -53,7 +53,7 @@ Manual fixture import passed on 2026-09-15:
 This establishes manual-run idempotency for the current fixture set. It does
 not yet approve an automatic trigger or production installation.
 
-### Zoho Outreach Checkpoint: `2026.09.15.6-TEST`
+### Zoho Outreach Checkpoint: `2026.09.15.7-PILOT`
 
 Karl's Zoho mailbox connection and one controlled send passed on 2026-09-15:
 
@@ -67,9 +67,9 @@ Karl's Zoho mailbox connection and one controlled send passed on 2026-09-15:
   message.
 - `Activity Log` now records the prospect as `Intended Recipient`, the actual
   Karl-only destination as `Delivered To`, and the mailer version separately.
-- The complete `2026.09.15.6-TEST` source remains locked to the staging
-  spreadsheet and blocks queued and LIVE sends at both menu and send-function
-  levels.
+- The complete `2026.09.15.7-PILOT` source remains locked to the staging
+  spreadsheet. It keeps queued and bulk sends blocked while allowing at most
+  three individually approved, separately confirmed pilot emails.
 - Every template now includes only a small public Sturgeon Spirits logo linked
   to the company website. The website and logo URLs are maintained in `Email
   Editor!B15:B16`, not hardcoded in the script.
@@ -77,6 +77,11 @@ Karl's Zoho mailbox connection and one controlled send passed on 2026-09-15:
   defaults are `Karl Loewenstein` and `President`; changing them does not alter
   the authenticated Zoho mailbox or sender alias.
 - Every template leaves one blank line between the closing and sender name.
+- Installing the pilot leaves Campaign Settings in `TEST` mode. Enabling
+  `PILOT` mode sends nothing by itself; each `Pilot Review` row must still be
+  approved and confirmed individually.
+- The three stale pilot source-row references were corrected, and the sender
+  now re-resolves a uniquely matching business and email after future sorts.
 
 The staging audience audit found 493 accounts, 143 syntactically valid email
 addresses, 115 cold-prospect addresses that satisfy the current safety rules,

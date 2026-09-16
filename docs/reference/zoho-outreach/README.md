@@ -1,6 +1,6 @@
-# Zoho Outreach Test Package
+# Zoho Outreach Pilot Package
 
-Current complete version: `2026.09.15.6-TEST`
+Current complete version: `2026.09.15.7-PILOT`
 
 Paste target: the full contents of `Code.gs` into the Apps Script `Code.gs`
 file attached to the staging Distribution Directory workbook only.
@@ -13,14 +13,20 @@ file attached to the staging Distribution Directory workbook only.
 - The owner is never asked to merge or add snippets manually.
 - Zoho credentials remain in Apps Script Properties and are never committed.
 
-## Test Safety
+## Pilot Safety
 
 - The code is locked to staging spreadsheet
   `1tWJ2ZnFT15cjuk7qvCWbJUJX1pAQYYsbSy5owWa8Uzo`.
 - Zoho authentication must use `karl@sturgeonspirits.com`.
 - Messages display `sales@sturgeonspirits.com` as the sender alias.
-- Test messages may be delivered only to `karl@sturgeonspirits.com`.
-- Queued and LIVE sends are disabled in this build.
+- Karl-only test messages may still be delivered to `karl@sturgeonspirits.com`.
+- Real pilot email is disabled until **Enable PILOT mode** is confirmed.
+- Only individually `Approved` rows on `Pilot Review` can receive a real email.
+- Every real pilot email requires a separate confirmation and the build stops
+  after three successful pilot sends.
+- The sender re-resolves the source lead by exact business and email if row
+  sorting changes its row number, then requires a unique match.
+- Duplicate-recipient, queued and bulk sends are disabled.
 
 ## Updating The Sell Sheet
 
