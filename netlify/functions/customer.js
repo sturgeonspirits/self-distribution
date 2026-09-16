@@ -1,5 +1,5 @@
-// App version: 2026.09.16.21
-const APP_VERSION = "2026.09.16.21";
+// App version: 2026.09.16.22
+const APP_VERSION = "2026.09.16.22";
 const ALLOWED_ACTIONS = new Set(["listSkus", "submitCustomerApplication", "submitOnlineOrderRequest"]);
 
 export async function handler(event) {

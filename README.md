@@ -1,6 +1,6 @@
 # Sturgeon Distribution Hub
 
-Version: `2026.09.16.21`
+Version: `2026.09.16.22`
 
 Repository: `sturgeonspirits/sturgeon-distribution-hub`
 
@@ -32,6 +32,8 @@ The customer signup and order-request pages write only to the staging workbook. 
 Netlify publishes `customer-signup.html` at `/customer-signup.html`. Distribution Outreach adds a short wholesale-application link to initial-email footers only when Campaign Settings contains a valid public `Customer application URL`. A missing URL suppresses the link so staging and local addresses are never emailed.
 
 New customer applications collect the Wisconsin seller's permit number. They do not collect alcohol license type, license number, or issuing municipality. Existing staging-sheet columns and historical values are retained but are no longer populated by the application.
+
+The newsletter option is selected by default and tells applicants to uncheck it if they do not want marketing email. Stored consent-source text records that the option was preselected rather than describing it as a manually selected opt-in.
 
 ## Versioning
 

@@ -1,8 +1,11 @@
 /*********************************
  * Inventory API (JSON) for Netlify
- * App version: 2026.09.16.21
+ * App version: 2026.09.16.22
  *
  * CHANGES IN THIS VERSION
+ * - Selected newsletter participation by default on the customer application.
+ * - Added explicit instructions for applicants who do not want newsletter email.
+ * - Recorded that the newsletter option was preselected on the form.
  * - Prepared the Netlify-hosted customer application for initial-email links.
  * - Kept the public link disabled until a deployed HTTPS URL is configured.
  * - Standardized the companion email system name as Distribution Outreach.
@@ -59,7 +62,7 @@
  * - Use only in the staging inventory backend until testing is complete.
  *********************************/
 
-const APP_VERSION = "2026.09.16.21";
+const APP_VERSION = "2026.09.16.22";
 
 const SHEET_NAMES = {
   STORES: "Stores",
@@ -1632,7 +1635,7 @@ function upsertNewsletterFromApplication_(application) {
   set("organization", application.business_name || application.legal_business_name);
   set("relationship_type", "Customer");
   set("status", "Subscribed");
-  set("consent_source", "Customer application form");
+  set("consent_source", "Customer application form; option preselected and could be unchecked");
   set("consent_date", now);
   set("topics", "Products, cocktails, distillery updates");
   set("notes", `Application ${application.application_id}`);
