@@ -1,14 +1,19 @@
 /*********************************
  * Inventory API (JSON) for Netlify
- * App version: 2026.09.16.23
+ * App version: 2026.09.16.24
  *
  * CHANGES IN THIS VERSION
+ * - Added an immediate staff email for each new wholesale customer application.
+ * - Sent application notices to sales@sturgeonspirits.com with a direct review link.
+ * - Set the applicant as the reply-to address for efficient follow-up.
+ * - Recorded notification success or failure beside the saved application.
+ * - Kept application storage successful even if the notification email fails.
+ *
+ * EARLIER STAGING CHANGES
  * - Enabled API-key authentication for every Inventory API request.
  * - Required the same API_KEY in Apps Script Properties and Netlify.
  * - Rejected direct requests that omit the key or provide the wrong key.
  * - Preserved all inventory, outreach, customer and ordering behavior from .22.
- *
- * EARLIER STAGING CHANGES
  * - Selected newsletter participation by default on the customer application.
  * - Added explicit instructions for applicants who do not want newsletter email.
  * - Recorded that the newsletter option was preselected on the form.
@@ -68,7 +73,7 @@
  * - Use only in the staging inventory backend until testing is complete.
  *********************************/
 
-const APP_VERSION = "2026.09.16.23";
+const APP_VERSION = "2026.09.16.24";
 
 const SHEET_NAMES = {
   STORES: "Stores",
@@ -89,6 +94,7 @@ const OUTREACH_ENGAGEMENT_SHEET_NAME = "Email Engagement";
 const TOAST_ITEM_MAP_SHEET_NAME = "Toast Item Map";
 const NEWSLETTER_CONTACTS_SHEET_NAME = "Newsletter Contacts";
 const CUSTOMER_APPLICATIONS_SHEET_NAME = "Customer Applications";
+const CUSTOMER_APPLICATION_NOTIFICATION_EMAIL = "sales@sturgeonspirits.com";
 const ONLINE_ORDER_REQUESTS_SHEET_NAME = "Online Order Requests";
 const ONLINE_ORDER_LINES_SHEET_NAME = "Online Order Lines";
 
@@ -1651,6 +1657,52 @@ function upsertNewsletterFromApplication_(application) {
   sheet.getRange(match >= 0 ? match + 2 : sheet.getLastRow() + 1, 1, 1, row.length).setValues([row]);
 }
 
+function sendCustomerApplicationNotification_(application, sheet, rowNumber) {
+  const business = application.business_name || application.legal_business_name;
+  const reviewUrl = `https://docs.google.com/spreadsheets/d/${OUTREACH_SPREADSHEET_ID}/edit#gid=${sheet.getSheetId()}&range=A${rowNumber}`;
+  const subject = `New wholesale application: ${business}`;
+  const lines = [
+    "A new wholesale customer application is ready for review.",
+    "",
+    `Application ID: ${application.application_id}`,
+    `Business: ${business}`,
+    `Legal business name: ${application.legal_business_name}`,
+    `Contact: ${application.primary_contact_name}`,
+    `Email: ${application.primary_email}`,
+    `Phone: ${application.primary_phone}`,
+    `Newsletter: ${application.newsletter_opt_in ? "Yes" : "No"}`,
+    "",
+    `Review the application: ${reviewUrl}`,
+  ];
+  const html = [
+    "<p>A new wholesale customer application is ready for review.</p>",
+    "<ul>",
+    `<li><strong>Application ID:</strong> ${escapeOutreachHtml_(application.application_id)}</li>`,
+    `<li><strong>Business:</strong> ${escapeOutreachHtml_(business)}</li>`,
+    `<li><strong>Legal business name:</strong> ${escapeOutreachHtml_(application.legal_business_name)}</li>`,
+    `<li><strong>Contact:</strong> ${escapeOutreachHtml_(application.primary_contact_name)}</li>`,
+    `<li><strong>Email:</strong> ${escapeOutreachHtml_(application.primary_email)}</li>`,
+    `<li><strong>Phone:</strong> ${escapeOutreachHtml_(application.primary_phone)}</li>`,
+    `<li><strong>Newsletter:</strong> ${application.newsletter_opt_in ? "Yes" : "No"}</li>`,
+    "</ul>",
+    `<p><a href="${escapeOutreachHtml_(reviewUrl)}">Review this application in the staging sheet</a></p>`,
+  ].join("");
+
+  try {
+    MailApp.sendEmail({
+      to: CUSTOMER_APPLICATION_NOTIFICATION_EMAIL,
+      replyTo: application.primary_email,
+      name: "Sturgeon Distribution Hub",
+      subject: subject,
+      body: lines.join("\n"),
+      htmlBody: html,
+    });
+    return { status:"Sent", sent_at:new Date(), error:"" };
+  } catch (error) {
+    return { status:"Send error", sent_at:"", error:String(error).slice(0, 500) };
+  }
+}
+
 function apiSubmitCustomerApplication_(p) {
   if (!p) throw new Error("Missing form data.");
   if (String(p.company_website || "").trim()) return { message:"Application received.", application_id:"RECEIVED" };
@@ -1700,6 +1752,7 @@ function apiSubmitCustomerApplication_(p) {
   if (!lock.tryLock(5000)) throw new Error("Another application is being recorded. Try again in a moment.");
   try {
     const sheet = getCustomerApplicationsSheet_(true);
+    ensureHeaderColumns_(sheet, ["Notification Status", "Notification Sent At", "Notification Error"]);
     const priorId = existingSubmissionByToken_(sheet, application.submission_token, "Application ID");
     if (priorId) return { message:"Application already received.", application_id:priorId };
     const h = getHeaderMap_(sheet);
@@ -1716,6 +1769,13 @@ function apiSubmitCustomerApplication_(p) {
     set("app_version", APP_VERSION);
     sheet.appendRow(row);
     upsertNewsletterFromApplication_(application);
+    const applicationRow = sheet.getLastRow();
+    const notification = sendCustomerApplicationNotification_(application, sheet, applicationRow);
+    sheet.getRange(applicationRow, h.notification_status + 1, 1, 3).setValues([[
+      notification.status,
+      notification.sent_at,
+      notification.error,
+    ]]);
     return { message:"Application received for review.", application_id:application.application_id };
   } finally {
     lock.releaseLock();
