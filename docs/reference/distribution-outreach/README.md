@@ -1,6 +1,6 @@
 # Distribution Outreach Pilot Package
 
-Current complete version: `2026.09.16.6-PILOT`
+Current complete version: `2026.09.17.7-PILOT`
 
 Paste target: the full contents of `Code.gs` into the Apps Script `Code.gs`
 file attached to the staging Distribution Directory workbook only.
@@ -49,7 +49,8 @@ The customer application is published by Netlify from `customer-signup.html`.
 After the staging page is deployed and tested, add its public HTTPS address to
 the `Customer application URL` row in Campaign Settings. Initial emails then
 include a short wholesale-application link beside the sell-sheet footer link.
-Follow-up and reactivation messages do not include it. Leaving the setting
+The link includes the permanent Account ID plus the business and email for
+server-side verification. Follow-up and reactivation messages do not include it. Leaving the setting
 blank suppresses the link, so a local or unfinished page is never emailed.
 
 ## Updating The Sender Footer
@@ -57,7 +58,7 @@ blank suppresses the link, so a local or unfinished page is never emailed.
 The pale-yellow shared fields in `Email Editor` control the closing, sender
 name, sender title, business name, tagline, mailing address, website and logo.
 Every template leaves one blank line between the closing and sender name.
-Change the sender name and, when applicable, the title before sending on behalf
+Karl's title is **Founder and Distiller**. Change the sender name and, when applicable, the title before sending on behalf
 of another employee. The title may be left blank.
 The staging build still sends through Karl's authenticated Zoho mailbox and the
 `sales@sturgeonspirits.com` alias.

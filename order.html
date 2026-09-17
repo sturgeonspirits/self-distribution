@@ -1,12 +1,12 @@
 <!doctype html>
-<!-- App version: 2026.09.16.26 -->
+<!-- App version: 2026.09.17.27 -->
 <html lang="en">
 <head>
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
-  <meta name="app-version" content="2026.09.16.26" />
+  <meta name="app-version" content="2026.09.17.27" />
   <title>Order request | Sturgeon Distribution Hub</title>
-  <link rel="stylesheet" href="/assets/customer-portal.css?v=2026.09.16.26" />
+  <link rel="stylesheet" href="/assets/customer-portal.css?v=2026.09.17.27" />
 </head>
 <body>
   <header class="siteHeader">
@@ -28,6 +28,7 @@
 
     <form id="orderForm" novalidate>
       <input class="honeypot" name="form_trap" type="text" tabindex="-1" autocomplete="one-time-code" aria-hidden="true" />
+      <input name="account_id" type="hidden" />
       <fieldset>
         <legend>Customer</legend>
         <div class="grid">
@@ -116,7 +117,7 @@
   <script>
   (() => {
     "use strict";
-    const APP_VERSION = "2026.09.16.26";
+    const APP_VERSION = "2026.09.17.27";
     const form = document.getElementById("orderForm");
     const linesEl = document.getElementById("orderLines");
     const loadingEl = document.getElementById("productLoading");
@@ -124,6 +125,25 @@
     const submit = document.getElementById("submitOrderBtn");
     let skus = [];
     let submissionToken = crypto.randomUUID ? crypto.randomUUID() : `${Date.now()}-${Math.random()}`;
+
+    const link = new URLSearchParams(window.location.search);
+    function applyLinkContext(){
+      const accountId = link.get("account_id") || "";
+      const business = link.get("business") || "";
+      const email = link.get("email") || "";
+      const customerId = link.get("customer_id") || "";
+      form.elements.account_id.defaultValue = accountId;
+      form.elements.account_id.value = accountId;
+      if (business) form.elements.business_name.defaultValue = business;
+      if (email) form.elements.email.defaultValue = email;
+      if (customerId) form.elements.customer_id.defaultValue = customerId;
+      if (business && !form.elements.business_name.value) form.elements.business_name.value = business;
+      if (email && !form.elements.email.value) form.elements.email.value = email;
+      if (customerId && !form.elements.customer_id.value) form.elements.customer_id.value = customerId;
+    }
+    applyLinkContext();
+    window.addEventListener("pageshow", applyLinkContext);
+    window.setTimeout(applyLinkContext, 250);
 
     function escapeHtml(value){
       return String(value ?? "").replace(/[&<>'"]/g, char => ({"&":"&amp;","<":"&lt;",">":"&gt;","'":"&#39;",'"':"&quot;"}[char]));
@@ -200,6 +220,7 @@
       const data = new FormData(form);
       const payload = Object.fromEntries(data.entries());
       payload.action = "submitOnlineOrderRequest";
+      payload.account_id = link.get("account_id") || payload.account_id || "";
       payload.app_version = APP_VERSION;
       payload.submission_token = submissionToken;
       payload.lines = orderLines;

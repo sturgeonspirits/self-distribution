@@ -1,10 +1,10 @@
 <!doctype html>
-<!-- App version: 2026.09.16.26 -->
+<!-- App version: 2026.09.17.27 -->
 <html>
 <head>
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover"/>
-  <meta name="app-version" content="2026.09.16.26" />
+  <meta name="app-version" content="2026.09.17.27" />
   <title>Sturgeon Distribution Hub</title>
   <style>
     :root{
@@ -156,6 +156,9 @@
       gap:12px;
       margin:2px 0 12px;
     }
+    .screenHeading > div:first-child{min-width:0}
+    .screenHeading > .tinyRow{flex:0 0 auto}
+    .outreachHeadingActions button{white-space:nowrap}
     .screenHeading h2{
       margin:0;
       font-size:20px;
@@ -1590,6 +1593,15 @@
     }
 
     @media (max-width:380px){
+      .screenHeading{flex-wrap:wrap}
+      .screenHeading > div:first-child{flex:1 0 100%}
+      .screenHeading > .tinyRow{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));width:100%;min-width:0}
+      .screenHeading > .tinyRow button{width:100%;min-width:0;padding:8px 4px;font-size:11px}
+      .outreachHeadingActions button span{display:none}
+      .outreachControls,
+      .outreachControls > *,
+      .searchWrap{min-width:0;width:100%}
+      .outreachTabs{min-width:0;width:100%;grid-template-columns:1fr 1fr}
       .customerLinks{
         grid-template-columns:1fr;
       }
@@ -1662,6 +1674,9 @@
       .headerInner{
         align-items:flex-start;
       }
+      .appNav{width:100%;min-width:0}
+      .appNavBtn{min-width:0;padding:6px 2px;font-size:11px;gap:2px}
+      .appNavBtn svg{display:none}
       .headerPills{
         flex-direction:column;
         align-items:flex-end;
@@ -1897,13 +1912,32 @@
         <h2>Outreach</h2>
         <p>Work the next lead, then record what happened.</p>
       </div>
-      <button class="iconBtn" id="refreshOutreachBtn" type="button" aria-label="Refresh outreach" title="Refresh outreach">
-        <i data-lucide="refresh-cw"></i>
-      </button>
-      <button class="primary" id="addNewsletterContactBtn" type="button" hidden>
-        <i data-lucide="user-plus"></i><span>Add contact</span>
-      </button>
+      <div class="tinyRow outreachHeadingActions">
+        <button class="iconBtn" id="refreshOutreachBtn" type="button" aria-label="Refresh outreach" title="Refresh outreach">
+          <i data-lucide="refresh-cw"></i>
+        </button>
+        <button class="primary" id="addNewsletterContactBtn" type="button" aria-label="Add newsletter contact" title="Add newsletter contact" hidden>
+          <i data-lucide="user-plus"></i><span>Add contact</span>
+        </button>
+        <button id="addBusinessBtn" type="button" aria-label="Add business" title="Add business">
+          <i data-lucide="building-2"></i><span>Add business</span>
+        </button>
+        <button id="importBusinessesBtn" type="button" aria-label="Import businesses from CSV" title="Import businesses from CSV">
+          <i data-lucide="file-up"></i><span>Import CSV</span>
+        </button>
+      </div>
     </div>
+
+    <div class="customerAccess" id="outreachAccessPanel">
+      <div>
+        <label for="outreachStaffAccessCode">Staff access code</label>
+        <input id="outreachStaffAccessCode" type="password" autocomplete="current-password" inputmode="text" />
+      </div>
+      <button class="primary" id="unlockOutreachBtn" type="button"><i data-lucide="unlock-keyhole"></i><span>Unlock</span></button>
+      <div class="status" id="outreachAccessStatus"></div>
+    </div>
+
+    <div id="outreachWorkspace" hidden>
 
     <div class="outreachSummary" aria-label="Outreach summary">
       <div class="outreachMetric"><strong id="outreachDueCount">0</strong><span>Due today</span></div>
@@ -1957,6 +1991,7 @@
 
     <div class="status" id="outreachStatus"></div>
     <div class="outreachList" id="outreachList"></div>
+    </div>
   </section>
 
   <section id="customersScreen" hidden>
@@ -2013,6 +2048,17 @@
           <input id="customerStaffName" placeholder="Your name" autocomplete="name" />
         </div>
       </div>
+      <details class="managerCard" id="hubSystemPanel" style="margin-bottom:12px">
+        <summary>System status and reconciliation</summary>
+        <div class="managerBody">
+          <div class="status" id="hubSystemStatus">Load status to verify the staging Hub and integrations.</div>
+          <div class="btnRow" style="margin-top:10px">
+            <button id="loadHubStatusBtn" type="button"><i data-lucide="activity"></i><span>Check status</span></button>
+            <button id="initializeHubBtn" type="button"><i data-lucide="shield-check"></i><span>Initialize staging Hub</span></button>
+            <button id="reconcileHubBtn" type="button"><i data-lucide="refresh-cw"></i><span>Reconcile records</span></button>
+          </div>
+        </div>
+      </details>
       <div class="status" id="customerWorkflowStatus"></div>
       <div class="workflowList" id="customerWorkflowList"></div>
     </div>
@@ -2278,11 +2324,49 @@
     </div>
     <div class="dlgBody" id="customerRecordBody"></div>
   </dialog>
+
+  <dialog id="addBusinessDialog">
+    <div class="dlgHeader">
+      <div><div class="dlgTitle">Add business</div><div class="smallMuted">Creates one permanent directory account.</div></div>
+      <button id="closeAddBusinessBtn" type="button">Close</button>
+    </div>
+    <div class="dlgBody">
+      <div class="workflowEditGrid">
+        <div><label for="newBusinessName">Business name</label><input id="newBusinessName" required /></div>
+        <div><label for="newBusinessContact">Contact</label><input id="newBusinessContact" /></div>
+        <div><label for="newBusinessEmail">Email</label><input id="newBusinessEmail" type="email" /></div>
+        <div><label for="newBusinessPhone">Phone</label><input id="newBusinessPhone" type="tel" /></div>
+        <div class="full"><label for="newBusinessAddress">Street address</label><input id="newBusinessAddress" /></div>
+        <div><label for="newBusinessCity">City</label><input id="newBusinessCity" /></div>
+        <div><label for="newBusinessState">State</label><input id="newBusinessState" maxlength="2" value="WI" /></div>
+        <div><label for="newBusinessZip">ZIP code</label><input id="newBusinessZip" inputmode="numeric" /></div>
+        <div><label for="newBusinessFit">Craft-spirit fit</label><select id="newBusinessFit"><option value="">Not rated</option><option>1</option><option>2</option><option>3</option><option>4</option><option>5</option></select></div>
+        <div><label for="newBusinessMiles">Miles from Oshkosh</label><input id="newBusinessMiles" type="number" min="0" step="0.1" /></div>
+        <div class="full"><label for="newBusinessNotes">Notes</label><textarea id="newBusinessNotes" maxlength="4000"></textarea></div>
+      </div>
+      <div class="status" id="addBusinessStatus"></div>
+      <div class="dlgActions"><button class="primary" id="saveNewBusinessBtn" type="button">Add business</button></div>
+    </div>
+  </dialog>
+
+  <dialog id="importBusinessesDialog">
+    <div class="dlgHeader">
+      <div><div class="dlgTitle">Import businesses</div><div class="smallMuted">Reviewable CSV import; existing matches are skipped.</div></div>
+      <button id="closeImportBusinessesBtn" type="button">Close</button>
+    </div>
+    <div class="dlgBody">
+      <label for="businessCsvFile">CSV file</label>
+      <input id="businessCsvFile" type="file" accept=".csv,text/csv" />
+      <div class="modeNotice" style="margin-top:12px"><i data-lucide="shield-check"></i><span>Recognized columns include business name, contact, email, phone, address, city, state, ZIP, fit, miles, source, and notes. Imports never overwrite existing businesses.</span></div>
+      <div class="status" id="importBusinessesStatus"></div>
+      <div class="dlgActions"><button class="primary" id="runBusinessImportBtn" type="button" disabled>Import reviewed rows</button></div>
+    </div>
+  </dialog>
 </main>
 
   <footer style="max-width:1200px;margin:18px auto 120px;padding:0 12px;text-align:center;color:#6b7280;font-size:12px;">
     Designed by <a href="https://scriptspirit.dev" target="_blank" rel="noopener noreferrer" style="color:#1d4ed8;text-decoration:none;font-weight:700;">Script Spirit</a>
-    <span id="appVersionFooter"> • Version 2026.09.16.26</span>
+    <span id="appVersionFooter"> • Version 2026.09.17.27</span>
   </footer>
 
 
@@ -2303,7 +2387,7 @@
 <script>
 (() => {
   const $ = (id) => document.getElementById(id);
-  const APP_VERSION = "2026.09.16.26";
+  const APP_VERSION = "2026.09.17.27";
   $("appVersionFooter").textContent = ` • Version ${APP_VERSION}`;
 
   let cache = { stores: [], lines: [] };
@@ -2341,6 +2425,7 @@
   let customerLoaded = false;
   let selectedCustomerRecord = null;
   let staffAccessCode = sessionStorage.getItem("distribution_staff_access") || "";
+  let pendingBusinessImport = [];
 
   let managerGridData = { stores: [], skus: [] };
   let managerFilterText = "";
@@ -2433,7 +2518,8 @@
       $("hdrStore").textContent = `${Number(summary.due_today || 0)} due`;
       $("hdrChanged").textContent = `${Number(summary.waiting || 0)} waiting`;
       $("bottomBar").hidden = true;
-      if (!outreachLoaded) loadOutreach().catch(err => setOutreachStatus(err.message));
+      showOutreachAccessState();
+      if (staffAccessCode && !outreachLoaded) loadOutreach().catch(handleCustomerError);
     } else if (isCustomers) {
       $("bottomBar").hidden = true;
       showCustomerAccessState();
@@ -2450,6 +2536,17 @@
   const ORDER_STATUSES = ["New", "Reviewing", "Confirmed", "Invoicing", "Ready for delivery", "Completed", "Cancelled"];
   const INVOICE_STATUSES = ["Not started", "Ready for Badger", "Invoice requested", "Invoice received", "Invoice delivered", "Paid", "Cancelled"];
   const DELIVERY_STATUSES = ["Not scheduled", "Scheduled", "Delivered", "Issue"];
+
+  function showOutreachAccessState(){
+    const unlocked = !!staffAccessCode;
+    $("outreachAccessPanel").hidden = unlocked;
+    $("outreachWorkspace").hidden = !unlocked;
+    if (!unlocked) {
+      $("outreachStaffAccessCode").value = "";
+      $("hdrStore").textContent = "Locked";
+      $("hdrChanged").textContent = "Staff only";
+    }
+  }
 
   function showCustomerAccessState(){
     $("customerAccessPanel").hidden = customerLoaded;
@@ -2468,9 +2565,16 @@
       staffAccessCode = "";
       sessionStorage.removeItem("distribution_staff_access");
       customerLoaded = false;
+      outreachLoaded = false;
       showCustomerAccessState();
-      $("customerAccessStatus").textContent = message;
-      $("staffAccessCode").focus();
+      showOutreachAccessState();
+      if (activeAppSection === "outreach") {
+        $("outreachAccessStatus").textContent = message;
+        $("outreachStaffAccessCode").focus();
+      } else {
+        $("customerAccessStatus").textContent = message;
+        $("staffAccessCode").focus();
+      }
       return;
     }
     if (!customerLoaded) {
@@ -2493,6 +2597,7 @@
     $("customerAccessStatus").textContent = "Unlocking...";
     try {
       await loadCustomerWorkQueue();
+      showOutreachAccessState();
     } catch (error) {
       handleCustomerError(error);
     } finally {
@@ -2503,11 +2608,31 @@
   function lockCustomerWorkspace(){
     staffAccessCode = "";
     customerLoaded = false;
+    outreachLoaded = false;
     selectedCustomerRecord = null;
     sessionStorage.removeItem("distribution_staff_access");
     customerData = { applications:[], orders:[], summary:{} };
     showCustomerAccessState();
+    showOutreachAccessState();
     $("customerAccessStatus").textContent = "Customer records locked.";
+  }
+
+  async function unlockOutreachWorkspace(){
+    const code = $("outreachStaffAccessCode").value.trim();
+    if (!code) return $("outreachAccessStatus").textContent = "Enter the staff access code.";
+    staffAccessCode = code;
+    sessionStorage.setItem("distribution_staff_access", code);
+    $("unlockOutreachBtn").disabled = true;
+    $("outreachAccessStatus").textContent = "Unlocking...";
+    try {
+      await loadOutreach();
+      showOutreachAccessState();
+    } catch (error) {
+      handleCustomerError(error);
+      $("outreachAccessStatus").textContent = error.message || String(error);
+    } finally {
+      $("unlockOutreachBtn").disabled = false;
+    }
   }
 
   function customerStatusOptions(){
@@ -2645,11 +2770,14 @@
 
     const contactRows = isOrder ? [
       { label:"Contact", value:record.contact_name }, { label:"Email", value:record.email }, { label:"Phone", value:record.phone },
+      { label:"Account ID", value:record.account_id }, { label:"Account link", value:record.account_link_status },
       { label:"Customer ID", value:record.customer_id }, { label:"PO number", value:record.po_number }, { label:"Verification", value:record.verification_status },
+      { label:"Integration", value:record.integration_status }, { label:"Badger match", value:record.badger_match_status },
       { label:"Requested delivery", value:formatOutreachDate(record.requested_delivery_date) }, { label:"Delivery window", value:record.delivery_window },
       { label:"Delivery instructions", value:record.delivery_instructions }, { label:"Customer notes", value:record.customer_notes },
     ] : [
       { label:"Legal business", value:record.legal_business_name }, { label:"Business type", value:record.business_type }, { label:"Website", value:record.website },
+      { label:"Account ID", value:record.account_id }, { label:"Account link", value:record.account_link_status }, { label:"Data sync", value:record.data_sync_status },
       { label:"Seller permit", value:record.seller_permit_number }, { label:"Contact", value:record.primary_contact_name }, { label:"Title", value:record.primary_contact_title },
       { label:"Email", value:record.primary_email }, { label:"Phone", value:record.primary_phone }, { label:"Ordering email", value:record.ordering_email },
       { label:"Accounts payable", value:[record.ap_contact_name, record.ap_email].filter(Boolean).join(" • ") }, { label:"Invoice preference", value:record.invoice_preference },
@@ -2669,6 +2797,7 @@
       <div class="workflowEditGrid">
         <div><label for="customerRecordStatus">Order status</label><select id="customerRecordStatus">${selectOptionsHtml(ORDER_STATUSES, record.workflow_status || "New")}</select></div>
         <div><label for="customerRecordAssigned">Assigned to</label><input id="customerRecordAssigned" value="${escapeHtml(record.assigned_to || "")}" /></div>
+        <div class="full"><label for="customerRecordAccountId">Account ID</label><input id="customerRecordAccountId" value="${escapeHtml(record.account_id || "")}" placeholder="Link this order to a directory account" /></div>
         <div><label for="customerRecordInvoiceStatus">Badger invoice status</label><select id="customerRecordInvoiceStatus">${selectOptionsHtml(INVOICE_STATUSES, record.invoice_status || "Not started")}</select></div>
         <div><label for="customerRecordInvoiceNumber">Badger invoice number</label><input id="customerRecordInvoiceNumber" value="${escapeHtml(record.badger_invoice_number || "")}" /></div>
         <div><label for="customerRecordDeliveryStatus">Delivery status</label><select id="customerRecordDeliveryStatus">${selectOptionsHtml(DELIVERY_STATUSES, record.delivery_status || "Not scheduled")}</select></div>
@@ -2679,7 +2808,11 @@
       <div class="workflowEditGrid">
         <div><label for="customerRecordStatus">Application status</label><select id="customerRecordStatus">${selectOptionsHtml(APPLICATION_STATUSES, record.workflow_status || "New")}</select></div>
         <div><label for="customerRecordAssigned">Assigned to</label><input id="customerRecordAssigned" value="${escapeHtml(record.assigned_to || "")}" /></div>
+        <div class="full"><label for="customerRecordAccountId">Account ID</label><input id="customerRecordAccountId" value="${escapeHtml(record.account_id || "")}" placeholder="Leave blank to match or create during activation" /></div>
         <div><label for="customerRecordCustomerId">Customer ID</label><input id="customerRecordCustomerId" value="${escapeHtml(record.customer_id || "")}" /></div>
+        <div><label for="customerRecordInventoryRoute">Inventory route</label><input id="customerRecordInventoryRoute" value="${escapeHtml(record.inventory_route || "")}" placeholder="Unassigned" /></div>
+        <div><label for="customerRecordInventoryStoreId">Inventory store ID</label><input id="customerRecordInventoryStoreId" value="${escapeHtml(record.inventory_store_id || "")}" placeholder="Generated if blank" /></div>
+        <label class="full checkLabel"><input id="customerRecordInventoryTracking" type="checkbox" ${record.inventory_tracking ? "checked" : ""} /><span>Track shelf and back-stock inventory for this customer.</span></label>
         <div class="full"><label for="customerRecordStaffNotes">Staff notes</label><textarea id="customerRecordStaffNotes" maxlength="4000">${escapeHtml(record.staff_notes || "")}</textarea></div>
         <div class="full"><div class="status" id="customerRecordStatusMessage"></div><div class="dlgActions"><button class="primary" id="saveCustomerRecordBtn" type="button">Save application</button></div></div>
       </div>`;
@@ -2709,6 +2842,7 @@
     const payload = isOrder ? {
       action:"updateOnlineOrderRequest",
       request_id:selectedCustomerRecord.request_id,
+      account_id:$("customerRecordAccountId").value.trim(),
       workflow_status:$("customerRecordStatus").value,
       badger_invoice_number:$("customerRecordInvoiceNumber").value.trim(),
       invoice_status:$("customerRecordInvoiceStatus").value,
@@ -2720,8 +2854,12 @@
     } : {
       action:"updateCustomerApplication",
       application_id:selectedCustomerRecord.application_id,
+      account_id:$("customerRecordAccountId").value.trim(),
       workflow_status:$("customerRecordStatus").value,
       customer_id:$("customerRecordCustomerId").value.trim(),
+      inventory_tracking:$("customerRecordInventoryTracking").checked,
+      inventory_store_id:$("customerRecordInventoryStoreId").value.trim(),
+      inventory_route:$("customerRecordInventoryRoute").value.trim(),
       assigned_to:$("customerRecordAssigned").value.trim(),
       staff_notes:$("customerRecordStaffNotes").value.trim(),
       staff_name:staffName,
@@ -2923,7 +3061,7 @@
 
   async function loadOutreach(){
     setOutreachStatus("Loading outreach...");
-    const res = await apiGet({ action:"outreachDashboard" });
+    const res = await staffApiGet({ action:"outreachDashboard" });
     if (!res.ok) throw new Error(res.error || "Outreach failed to load.");
     outreachData = {
       today: res.today || [],
@@ -3009,8 +3147,9 @@
     button.disabled = true;
     $("outreachDraftStatus").textContent = "Saving...";
     try {
-      const res = await apiPost({
+      const res = await staffApiPost({
         action:"saveOutreachDraft",
+        account_id:selectedOutreachRecord.account_id,
         source_row:selectedOutreachRecord.source_row,
         business:selectedOutreachRecord.business,
         email:selectedOutreachRecord.email,
@@ -3267,8 +3406,9 @@
     saveButton.disabled = true;
     status.textContent = "Saving...";
     try {
-      const res = await apiPost({
+      const res = await staffApiPost({
         action:"updateOutreachBusiness",
+        account_id:selectedOutreachRecord.account_id,
         source_row:selectedOutreachRecord.source_row,
         business:selectedOutreachRecord.business,
         original_email:selectedOutreachRecord.email,
@@ -3294,8 +3434,9 @@
     button.disabled = true;
     status.textContent = "Saving...";
     try {
-      const res = await apiPost({
+      const res = await staffApiPost({
         action:"updateOutreachPrograms",
+        account_id:selectedOutreachRecord.account_id,
         source_row:selectedOutreachRecord.source_row,
         business:selectedOutreachRecord.business,
         email:selectedOutreachRecord.email,
@@ -3342,9 +3483,10 @@
     button.disabled = true;
     $("newsletterContactStatus").textContent = "Saving...";
     try {
-      const res = await apiPost({
+      const res = await staffApiPost({
         action:"upsertNewsletterContact",
         contact_id:selectedNewsletterContact?.contact_id || "",
+        account_id:selectedNewsletterContact?.account_id || "",
         name:$("newsletterName").value.trim(),
         email:$("newsletterEmail").value.trim(),
         organization:$("newsletterOrganization").value.trim(),
@@ -3383,8 +3525,9 @@
     button.disabled = true;
     $("outcomeStatus").textContent = "Saving...";
     try {
-      const res = await apiPost({
+      const res = await staffApiPost({
         action:"updateOutreachOutcome",
+        account_id:selectedOutreachRecord.account_id,
         source_row:selectedOutreachRecord.source_row,
         business:selectedOutreachRecord.business,
         email:selectedOutreachRecord.email,
@@ -3400,6 +3543,149 @@
       $("outcomeStatus").textContent = err.message || String(err);
       button.disabled = false;
     }
+  }
+
+  function requireDirectoryAccess(message){
+    if (staffAccessCode) return true;
+    showOutreachAccessState();
+    $("outreachAccessStatus").textContent = message || "Unlock staff access first.";
+    $("outreachStaffAccessCode").focus();
+    return false;
+  }
+
+  function openAddBusiness(){
+    if (!requireDirectoryAccess("Unlock staff access before adding or importing businesses.")) return;
+    ["newBusinessName","newBusinessContact","newBusinessEmail","newBusinessPhone","newBusinessAddress","newBusinessCity","newBusinessZip","newBusinessMiles","newBusinessNotes"].forEach(id => { $(id).value = ""; });
+    $("newBusinessState").value = "WI";
+    $("newBusinessFit").value = "";
+    $("addBusinessStatus").textContent = "";
+    $("addBusinessDialog").showModal();
+  }
+
+  async function saveNewBusiness(){
+    const staffName = $("customerStaffName").value.trim() || localStorage.getItem("customer_staff_name") || "";
+    if (!staffName) return $("addBusinessStatus").textContent = "Enter your staff name in Customers before saving.";
+    if (!$("newBusinessName").value.trim()) return $("addBusinessStatus").textContent = "Business name is required.";
+    const button = $("saveNewBusinessBtn");
+    button.disabled = true;
+    $("addBusinessStatus").textContent = "Adding business...";
+    try {
+      const result = await staffApiPost({
+        action:"createOutreachBusiness", staff_name:staffName,
+        business_name:$("newBusinessName").value.trim(), contact:$("newBusinessContact").value.trim(),
+        email:$("newBusinessEmail").value.trim(), phone:$("newBusinessPhone").value.trim(),
+        address:$("newBusinessAddress").value.trim(), city:$("newBusinessCity").value.trim(),
+        state:$("newBusinessState").value.trim(), postal_code:$("newBusinessZip").value.trim(),
+        craft_spirit_fit:$("newBusinessFit").value, miles:$("newBusinessMiles").value,
+        notes:$("newBusinessNotes").value.trim(), lead_source:"Manual app entry",
+      });
+      if (!result.ok) throw new Error(result.error || "Business could not be added.");
+      $("addBusinessDialog").close();
+      await loadOutreach();
+      toast("Business added");
+    } catch (error) {
+      $("addBusinessStatus").textContent = error.message || String(error);
+      if (error.staffAuth) handleCustomerError(error);
+    } finally {
+      button.disabled = false;
+    }
+  }
+
+  function parseCsv(text){
+    const rows = [];
+    let row = [], field = "", quoted = false;
+    for (let index = 0; index < text.length; index += 1) {
+      const char = text[index];
+      if (quoted && char === '"' && text[index + 1] === '"') { field += '"'; index += 1; }
+      else if (char === '"') quoted = !quoted;
+      else if (char === "," && !quoted) { row.push(field); field = ""; }
+      else if ((char === "\n" || char === "\r") && !quoted) {
+        if (char === "\r" && text[index + 1] === "\n") index += 1;
+        row.push(field); field = "";
+        if (row.some(value => String(value).trim())) rows.push(row);
+        row = [];
+      } else field += char;
+    }
+    row.push(field);
+    if (row.some(value => String(value).trim())) rows.push(row);
+    return rows;
+  }
+
+  function normalizeCsvHeader(value){
+    return String(value || "").trim().toLowerCase().replace(/[^a-z0-9]+/g, "_").replace(/^_|_$/g, "");
+  }
+
+  async function prepareBusinessImport(file){
+    pendingBusinessImport = [];
+    $("runBusinessImportBtn").disabled = true;
+    if (!file) return $("importBusinessesStatus").textContent = "Choose a CSV file.";
+    const matrix = parseCsv(await file.text());
+    if (matrix.length < 2) return $("importBusinessesStatus").textContent = "The CSV needs a header row and at least one business.";
+    const aliases = {
+      business_name:["business_name","business","company","company_name","account_name"], contact:["contact","contact_name","contact_person","name"],
+      email:["email","email_address"], phone:["phone","phone_number","telephone"], address:["address","street_address","street","address_1"],
+      city:["city","town"], state:["state"], postal_code:["postal_code","zip","zip_code"], craft_spirit_fit:["craft_spirit_fit","fit","fit_score"],
+      miles:["miles","distance","distance_miles"], lead_source:["lead_source","source"], notes:["notes","note"],
+    };
+    const headers = matrix[0].map(normalizeCsvHeader);
+    const positions = Object.fromEntries(Object.entries(aliases).map(([key, names]) => [key, headers.findIndex(header => names.includes(header))]));
+    if (positions.business_name < 0) return $("importBusinessesStatus").textContent = "No business-name column was found.";
+    pendingBusinessImport = matrix.slice(1).map(values => Object.fromEntries(Object.entries(positions).map(([key, position]) => [key, position >= 0 ? String(values[position] || "").trim() : ""]))).filter(row => row.business_name);
+    if (!pendingBusinessImport.length) return $("importBusinessesStatus").textContent = "No rows contain a business name.";
+    if (pendingBusinessImport.length > 500) return $("importBusinessesStatus").textContent = "Choose a file with 500 businesses or fewer.";
+    $("importBusinessesStatus").textContent = `${pendingBusinessImport.length} business row${pendingBusinessImport.length === 1 ? "" : "s"} ready for duplicate-checked import.`;
+    $("runBusinessImportBtn").disabled = false;
+  }
+
+  async function runBusinessImport(){
+    const staffName = $("customerStaffName").value.trim() || localStorage.getItem("customer_staff_name") || "";
+    if (!staffName) return $("importBusinessesStatus").textContent = "Enter your staff name in Customers before importing.";
+    const file = $("businessCsvFile").files[0];
+    const button = $("runBusinessImportBtn");
+    button.disabled = true;
+    $("importBusinessesStatus").textContent = "Importing and checking duplicates...";
+    try {
+      const result = await staffApiPost({ action:"importOutreachBusinesses", staff_name:staffName, source_name:file?.name || "CSV import", rows:pendingBusinessImport });
+      if (!result.ok) throw new Error(result.error || "Import failed.");
+      $("importBusinessesStatus").textContent = result.message;
+      await loadOutreach();
+      toast("Business import complete");
+    } catch (error) {
+      $("importBusinessesStatus").textContent = error.message || String(error);
+      if (error.staffAuth) handleCustomerError(error);
+      button.disabled = false;
+    }
+  }
+
+  async function loadHubSystemStatus(){
+    $("hubSystemStatus").textContent = "Checking staging Hub...";
+    const result = await staffApiGet({ action:"hubSystemStatus" });
+    if (!result.ok) throw new Error(result.error || "System status could not be loaded.");
+    const sheetSummary = (result.inventory_sheets || []).map(item => `${item.name}: ${item.matches ? "verified" : "not copied"}`).join(" · ");
+    $("hubSystemStatus").textContent = `${result.migration_status} · Inventory reads from ${result.operational_spreadsheet}. Badger: ${result.badger_tracker}. Toast: ${result.toast_adapter}. ${sheetSummary}`;
+    $("initializeHubBtn").disabled = result.migration_status === "ACTIVE";
+    return result;
+  }
+
+  async function initializeHardenedHub(){
+    const staffName = $("customerStaffName").value.trim();
+    if (!staffName) return $("hubSystemStatus").textContent = "Enter your staff name first.";
+    if (!confirm("Initialize the hardened STAGING Hub now? This copies and checksum-verifies inventory tabs. It does not modify production.")) return;
+    $("hubSystemStatus").textContent = "Copying and verifying staging inventory tabs...";
+    const result = await staffApiPost({ action:"initializeHardenedHub", confirmation:"STAGING ONLY", staff_name:staffName });
+    if (!result.ok) throw new Error(result.error || "Staging Hub initialization failed.");
+    $("hubSystemStatus").textContent = result.message;
+    await loadHubSystemStatus();
+  }
+
+  async function reconcileHubRecords(){
+    const staffName = $("customerStaffName").value.trim();
+    if (!staffName) return $("hubSystemStatus").textContent = "Enter your staff name first.";
+    $("hubSystemStatus").textContent = "Reconciling orders, Badger invoices, and deliveries...";
+    const result = await staffApiPost({ action:"reconcileIntegrations", staff_name:staffName });
+    if (!result.ok) throw new Error(result.error || "Reconciliation failed.");
+    $("hubSystemStatus").textContent = `${result.message} ${result.checked} orders checked; ${result.badger_matches} invoice matches; ${result.deliveries} delivery records; ${result.attention} need attention.`;
+    await loadCustomerWorkQueue();
   }
 
   function escapeHtml(s) {
@@ -4587,6 +4873,8 @@
   $("inventoryNavBtn").addEventListener("click", () => setAppSection("inventory"));
   $("outreachNavBtn").addEventListener("click", () => setAppSection("outreach"));
   $("customersNavBtn").addEventListener("click", () => setAppSection("customers"));
+  $("unlockOutreachBtn").addEventListener("click", unlockOutreachWorkspace);
+  $("outreachStaffAccessCode").addEventListener("keydown", event => { if (event.key === "Enter") unlockOutreachWorkspace(); });
   $("refreshOutreachBtn").addEventListener("click", () => loadOutreach().catch(err => setOutreachStatus(err.message)));
   $("refreshCustomersBtn").addEventListener("click", () => {
     if (!staffAccessCode) return showCustomerAccessState();
@@ -4636,6 +4924,9 @@
   $("customerRecordBody").addEventListener("click", event => {
     if (event.target.closest("#saveCustomerRecordBtn")) saveCustomerRecord();
   });
+  $("loadHubStatusBtn").addEventListener("click", () => loadHubSystemStatus().catch(handleCustomerError));
+  $("initializeHubBtn").addEventListener("click", () => initializeHardenedHub().catch(handleCustomerError));
+  $("reconcileHubBtn").addEventListener("click", () => reconcileHubRecords().catch(handleCustomerError));
 
   $("outreachAudiencePreset").addEventListener("change", () => {
     outreachAudiencePreset = ["weekly", "distance_needed"].includes($("outreachAudiencePreset").value)
@@ -4675,6 +4966,21 @@
     renderOutreach();
   });
   $("addNewsletterContactBtn").addEventListener("click", () => openNewsletterContact(null));
+  $("addBusinessBtn").addEventListener("click", openAddBusiness);
+  $("closeAddBusinessBtn").addEventListener("click", () => $("addBusinessDialog").close());
+  $("saveNewBusinessBtn").addEventListener("click", saveNewBusiness);
+  $("importBusinessesBtn").addEventListener("click", () => {
+    if (!requireDirectoryAccess("Unlock staff access before adding or importing businesses.")) return;
+    pendingBusinessImport = [];
+    $("businessCsvFile").value = "";
+    $("importBusinessesStatus").textContent = "Choose a CSV file to review.";
+    $("runBusinessImportBtn").disabled = true;
+    $("importBusinessesDialog").showModal();
+    refreshIcons();
+  });
+  $("closeImportBusinessesBtn").addEventListener("click", () => $("importBusinessesDialog").close());
+  $("businessCsvFile").addEventListener("change", event => prepareBusinessImport(event.target.files[0]).catch(error => { $("importBusinessesStatus").textContent = error.message || String(error); }));
+  $("runBusinessImportBtn").addEventListener("click", runBusinessImport);
   $("outreachSearch").addEventListener("input", () => {
     outreachFilterText = $("outreachSearch").value || "";
     $("clearOutreachSearchBtn").hidden = !outreachFilterText;

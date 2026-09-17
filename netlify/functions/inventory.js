@@ -1,9 +1,20 @@
-// App version: 2026.09.16.26
-const APP_VERSION = "2026.09.16.26";
+// App version: 2026.09.17.27
+const APP_VERSION = "2026.09.17.27";
 const STAFF_ACTIONS = new Set([
+  "outreachDashboard",
+  "saveOutreachDraft",
+  "updateOutreachOutcome",
+  "updateOutreachBusiness",
+  "updateOutreachPrograms",
+  "upsertNewsletterContact",
   "customerWorkQueue",
   "updateCustomerApplication",
   "updateOnlineOrderRequest",
+  "createOutreachBusiness",
+  "importOutreachBusinesses",
+  "hubSystemStatus",
+  "initializeHardenedHub",
+  "reconcileIntegrations",
 ]);
 
 function response(statusCode, headers, body) {

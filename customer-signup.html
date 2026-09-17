@@ -1,12 +1,12 @@
 <!doctype html>
-<!-- App version: 2026.09.16.26 -->
+<!-- App version: 2026.09.17.27 -->
 <html lang="en">
 <head>
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
-  <meta name="app-version" content="2026.09.16.26" />
+  <meta name="app-version" content="2026.09.17.27" />
   <title>Wholesale application | Sturgeon Distribution Hub</title>
-  <link rel="stylesheet" href="/assets/customer-portal.css?v=2026.09.16.26" />
+  <link rel="stylesheet" href="/assets/customer-portal.css?v=2026.09.17.27" />
 </head>
 <body>
   <header class="siteHeader">
@@ -35,6 +35,7 @@
 
     <form id="customerForm" novalidate>
       <input class="honeypot" name="form_trap" type="text" tabindex="-1" autocomplete="one-time-code" aria-hidden="true" />
+      <input name="account_id" type="hidden" />
       <fieldset>
         <legend>Business</legend>
         <p class="sectionHelp">Use the legal name shown on the seller's permit. Add the public-facing name if it is different.</p>
@@ -218,13 +219,31 @@
   <script>
   (() => {
     "use strict";
-    const APP_VERSION = "2026.09.16.26";
+    const APP_VERSION = "2026.09.17.27";
     const form = document.getElementById("customerForm");
     const status = document.getElementById("customerStatus");
     const submit = document.getElementById("submitCustomerBtn");
     const billingSame = document.getElementById("billingSame");
     const billingFields = document.getElementById("billingFields");
     let submissionToken = crypto.randomUUID ? crypto.randomUUID() : `${Date.now()}-${Math.random()}`;
+
+    const link = new URLSearchParams(window.location.search);
+    function applyLinkContext(){
+      const accountId = link.get("account_id") || "";
+      const business = link.get("business") || "";
+      const email = link.get("email") || "";
+      form.elements.account_id.defaultValue = accountId;
+      form.elements.account_id.value = accountId;
+      if (business) form.elements.business_name.defaultValue = business;
+      if (business && !form.elements.business_name.value) form.elements.business_name.value = business;
+      if (email) form.elements.primary_email.defaultValue = email;
+      if (email) form.elements.ordering_email.defaultValue = email;
+      if (email && !form.elements.primary_email.value) form.elements.primary_email.value = email;
+      if (email && !form.elements.ordering_email.value) form.elements.ordering_email.value = email;
+    }
+    applyLinkContext();
+    window.addEventListener("pageshow", applyLinkContext);
+    window.setTimeout(applyLinkContext, 250);
 
     billingSame.addEventListener("change", () => { billingFields.hidden = billingSame.checked; });
 
@@ -236,6 +255,7 @@
       const data = new FormData(form);
       const payload = Object.fromEntries(data.entries());
       payload.action = "submitCustomerApplication";
+      payload.account_id = link.get("account_id") || payload.account_id || "";
       payload.app_version = APP_VERSION;
       payload.submission_token = submissionToken;
       payload.billing_same = billingSame.checked;

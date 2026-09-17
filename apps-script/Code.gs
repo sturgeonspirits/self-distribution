@@ -1,14 +1,18 @@
 /*********************************
  * Inventory API (JSON) for Netlify
- * App version: 2026.09.16.26
+ * App version: 2026.09.17.27
  *
  * CHANGES IN THIS VERSION
- * - Added staff work queues for customer applications and online orders.
- * - Added reviewed status, assignment, customer ID and staff notes to applications.
- * - Added order status, Badger invoice, delivery and staff-note controls.
- * - Added an append-only Customer Workflow Log for staff changes.
- * - Recognized approved active applications as verified online-ordering accounts.
- * - Kept customer records available only through staff-protected Netlify actions.
+ * - Added a guarded, verified migration into one staging Distribution Hub workbook.
+ * - Kept the existing staging Inventory Backend as a rollback source until cutover.
+ * - Replaced spreadsheet-row identity with permanent account IDs.
+ * - Added write-ahead submission journals, audit events and retryable integration jobs.
+ * - Linked outreach, applications, ordering access, orders, delivery and Badger invoices.
+ * - Added protected business creation and reviewable CSV business imports.
+ * - Added idempotent customer, store, delivery and Badger reconciliation writes.
+ * - Kept the proven Badger parser separate and read only from this application.
+ * - Added a disabled Toast catalog adapter boundary without adding credentials.
+ * - Preserved all existing inventory, count, reorder and outreach workflows.
  *
  * EARLIER STAGING CHANGES
  * - Replaced the browser-autofill-prone company_website spam trap.
@@ -84,7 +88,7 @@
  * - Use only in the staging inventory backend until testing is complete.
  *********************************/
 
-const APP_VERSION = "2026.09.16.26";
+const APP_VERSION = "2026.09.17.27";
 
 const SHEET_NAMES = {
   STORES: "Stores",
@@ -94,9 +98,10 @@ const SHEET_NAMES = {
   REORDERS: "Reorders",
 };
 
-const SPREADSHEET_ID = "1asGSIuz65hhbXbanDSuLdgsasDKqAyVWgu7DGi42Il8"; // staging Inventory Backend only
+const LEGACY_INVENTORY_SPREADSHEET_ID = "1asGSIuz65hhbXbanDSuLdgsasDKqAyVWgu7DGi42Il8"; // staging rollback source
 const REQUIRE_API_KEY = true;
 const OUTREACH_SPREADSHEET_ID = "1tWJ2ZnFT15cjuk7qvCWbJUJX1pAQYYsbSy5owWa8Uzo"; // staging only
+const BADGER_TRACKER_SPREADSHEET_ID = "10KM-L-iAXJ4WQ1HfLWWoGkINsi9tEvVs6J5XiHBsMIQ"; // staging parser output only
 const OUTREACH_SHEET_NAME = "Distribution Directory and Leads";
 const OUTREACH_ACTIVITY_SHEET_NAME = "Activity Log";
 const OUTREACH_DRAFTS_SHEET_NAME = "Outreach Drafts";
@@ -109,9 +114,41 @@ const CUSTOMER_APPLICATION_NOTIFICATION_EMAIL = "sales@sturgeonspirits.com";
 const ONLINE_ORDER_REQUESTS_SHEET_NAME = "Online Order Requests";
 const ONLINE_ORDER_LINES_SHEET_NAME = "Online Order Lines";
 const CUSTOMER_WORKFLOW_LOG_SHEET_NAME = "Customer Workflow Log";
+const HUB_CONFIGURATION_SHEET_NAME = "Hub Configuration";
+const SUBMISSION_JOURNAL_SHEET_NAME = "Submission Journal";
+const HUB_AUDIT_SHEET_NAME = "Hub Audit Log";
+const INTEGRATION_JOBS_SHEET_NAME = "Integration Jobs";
+const IMPORT_BATCHES_SHEET_NAME = "Import Batches";
+const IMPORT_ROWS_SHEET_NAME = "Import Rows";
+const DELIVERIES_SHEET_NAME = "Deliveries";
+const DELIVERY_LINES_SHEET_NAME = "Delivery Lines";
+const ACCOUNT_ID_HEADER = "Account ID";
+const HUB_MIGRATION_STATUS_KEY = "inventory_migration_status";
+const HUB_MIGRATION_ACTIVE = "ACTIVE";
+const ORDER_CATALOG_SOURCE = "SHEETS"; // Toast remains disabled until a reviewed integration is configured.
+
+let __OPERATIONAL_SS = null;
+
+function getLegacyInventorySs_() {
+  return SpreadsheetApp.openById(LEGACY_INVENTORY_SPREADSHEET_ID);
+}
+
+function getHubConfigurationValue_(key) {
+  const sheet = getOutreachSs_().getSheetByName(HUB_CONFIGURATION_SHEET_NAME);
+  if (!sheet || sheet.getLastRow() < 2) return "";
+  const values = sheet.getRange(2, 1, sheet.getLastRow() - 1, 2).getValues();
+  const row = values.find(item => String(item[0] || "").trim() === String(key));
+  return row ? String(row[1] || "").trim() : "";
+}
+
+function isHubInventoryActive_() {
+  return getHubConfigurationValue_(HUB_MIGRATION_STATUS_KEY) === HUB_MIGRATION_ACTIVE;
+}
 
 function getSs_() {
-  return SPREADSHEET_ID ? SpreadsheetApp.openById(SPREADSHEET_ID) : SpreadsheetApp.getActiveSpreadsheet();
+  if (__OPERATIONAL_SS) return __OPERATIONAL_SS;
+  __OPERATIONAL_SS = isHubInventoryActive_() ? getOutreachSs_() : getLegacyInventorySs_();
+  return __OPERATIONAL_SS;
 }
 function getSheet_(name) {
   const sh = getSs_().getSheetByName(name);
@@ -165,6 +202,219 @@ function getAllRowsAsObjects_(sheet) {
   });
 }
 
+function ensureSheet_(ss, name, headers) {
+  let sheet = ss.getSheetByName(name);
+  if (!sheet) {
+    sheet = ss.insertSheet(name);
+    sheet.getRange(1, 1, 1, headers.length).setValues([headers])
+      .setFontWeight("bold").setBackground("#44656b").setFontColor("#ffffff");
+    sheet.setFrozenRows(1);
+  } else {
+    ensureHeaderColumns_(sheet, headers);
+  }
+  return sheet;
+}
+
+function permanentId_(prefix) {
+  return `${prefix}-${Utilities.getUuid().replace(/-/g, "").toUpperCase()}`;
+}
+
+function safeJson_(value) {
+  return JSON.stringify(value, (key, item) => key === "api_key" ? undefined : item);
+}
+
+function sha256_(value) {
+  const bytes = Utilities.computeDigest(Utilities.DigestAlgorithm.SHA_256, String(value || ""), Utilities.Charset.UTF_8);
+  return bytes.map(byte => (`0${(byte < 0 ? byte + 256 : byte).toString(16)}`).slice(-2)).join("");
+}
+
+function sheetChecksum_(sheet) {
+  return sha256_(safeJson_(sheet.getDataRange().getDisplayValues()));
+}
+
+function ensureFoundationalSheets_() {
+  const hub = getOutreachSs_();
+  ensureSheet_(hub, HUB_CONFIGURATION_SHEET_NAME, ["Key", "Value", "Updated At", "Updated By", "App Version"]);
+  ensureSheet_(hub, SUBMISSION_JOURNAL_SHEET_NAME, [
+    "Journal ID", "Received At", "Submission Type", "Submission Token", "Account ID", "Business", "Payload JSON",
+    "Payload Hash", "Status", "Primary Record ID", "Error", "Completed At", "App Version"
+  ]);
+  ensureSheet_(hub, HUB_AUDIT_SHEET_NAME, [
+    "Event ID", "Timestamp", "Action", "Record Type", "Record ID", "Account ID", "Actor", "Source", "Target",
+    "Result", "Details", "App Version"
+  ]);
+  ensureSheet_(hub, INTEGRATION_JOBS_SHEET_NAME, [
+    "Job ID", "Created At", "Updated At", "Job Type", "Record Type", "Record ID", "Account ID", "Status",
+    "Attempts", "Next Attempt At", "Payload JSON", "Payload Hash", "Last Error", "Completed At", "App Version"
+  ]);
+  ensureSheet_(hub, IMPORT_BATCHES_SHEET_NAME, [
+    "Batch ID", "Created At", "Created By", "Source Name", "Source Hash", "Row Count", "Created Count", "Skipped Count",
+    "Error Count", "Status", "Completed At", "App Version"
+  ]);
+  ensureSheet_(hub, IMPORT_ROWS_SHEET_NAME, [
+    "Batch ID", "Source Row", "Account ID", "Business Name", "Email", "City", "Normalized JSON", "Row Hash",
+    "Status", "Detail", "Processed At", "App Version"
+  ]);
+  ensureSheet_(hub, DELIVERIES_SHEET_NAME, [
+    "Delivery ID", "Request ID", "Account ID", "Store ID", "Business Name", "Delivery Status", "Requested Date",
+    "Delivered At", "Assigned To", "Badger Invoice Number", "Created At", "Updated At", "App Version"
+  ]);
+  ensureSheet_(hub, DELIVERY_LINES_SHEET_NAME, [
+    "Delivery ID", "Request ID", "Account ID", "Line Number", "SKU ID", "SKU Name", "Quantity", "Unit",
+    "Bottle Equivalent", "Created At", "App Version"
+  ]);
+}
+
+function setHubConfigurationValue_(key, value, actor) {
+  ensureFoundationalSheets_();
+  const sheet = getOutreachSs_().getSheetByName(HUB_CONFIGURATION_SHEET_NAME);
+  const h = getHeaderMap_(sheet);
+  const rows = sheet.getLastRow() < 2 ? [] : sheet.getRange(2, 1, sheet.getLastRow() - 1, sheet.getLastColumn()).getValues();
+  const index = rows.findIndex(row => String(row[h.key] || "").trim() === String(key));
+  const target = index >= 0 ? index + 2 : sheet.getLastRow() + 1;
+  const row = index >= 0 ? rows[index].slice() : Array(sheet.getLastColumn()).fill("");
+  row[h.key] = key;
+  row[h.value] = value;
+  row[h.updated_at] = new Date();
+  row[h.updated_by] = actor || "Sturgeon Distribution Hub";
+  row[h.app_version] = APP_VERSION;
+  sheet.getRange(target, 1, 1, row.length).setValues([row]);
+}
+
+function appendAudit_(action, recordType, recordId, accountId, actor, source, target, result, details) {
+  ensureFoundationalSheets_();
+  getOutreachSs_().getSheetByName(HUB_AUDIT_SHEET_NAME).appendRow([
+    permanentId_("EVT"), new Date(), action, recordType || "", recordId || "", accountId || "",
+    actor || "Sturgeon Distribution Hub", source || "", target || "", result || "Recorded", details || "", APP_VERSION,
+  ]);
+}
+
+function startSubmissionJournal_(type, token, accountId, business, payload) {
+  ensureFoundationalSheets_();
+  const sheet = getOutreachSs_().getSheetByName(SUBMISSION_JOURNAL_SHEET_NAME);
+  const h = getHeaderMap_(sheet);
+  if (sheet.getLastRow() >= 2) {
+    const rows = sheet.getRange(2, 1, sheet.getLastRow() - 1, sheet.getLastColumn()).getValues();
+    const prior = rows.find(row => String(row[h.submission_token] || "") === String(token || "") && String(row[h.submission_type] || "") === String(type));
+    if (prior) return { id:String(prior[h.journal_id] || ""), row:rows.indexOf(prior) + 2, prior_record_id:String(prior[h.primary_record_id] || "") };
+  }
+  const journalId = permanentId_("JRN");
+  const payloadJson = safeJson_(payload);
+  sheet.appendRow([
+    journalId, new Date(), type, token, accountId || "", business || "", payloadJson, sha256_(payloadJson),
+    "Received", "", "", "", APP_VERSION,
+  ]);
+  return { id:journalId, row:sheet.getLastRow(), prior_record_id:"" };
+}
+
+function completeSubmissionJournal_(journal, status, recordId, error) {
+  const sheet = getOutreachSs_().getSheetByName(SUBMISSION_JOURNAL_SHEET_NAME);
+  const h = getHeaderMap_(sheet);
+  sheet.getRange(journal.row, h.status + 1).setValue(status);
+  sheet.getRange(journal.row, h.primary_record_id + 1).setValue(recordId || "");
+  sheet.getRange(journal.row, h.error + 1).setValue(String(error || "").slice(0, 2000));
+  if (status === "Completed") sheet.getRange(journal.row, h.completed_at + 1).setValue(new Date());
+}
+
+function enqueueIntegrationJob_(jobType, recordType, recordId, accountId, payload) {
+  ensureFoundationalSheets_();
+  const sheet = getOutreachSs_().getSheetByName(INTEGRATION_JOBS_SHEET_NAME);
+  const h = getHeaderMap_(sheet);
+  const payloadJson = safeJson_(payload || {});
+  const payloadHash = sha256_(payloadJson);
+  if (sheet.getLastRow() >= 2) {
+    const rows = sheet.getRange(2, 1, sheet.getLastRow() - 1, sheet.getLastColumn()).getValues();
+    const prior = rows.find(row => String(row[h.job_type] || "") === jobType && String(row[h.record_id] || "") === String(recordId) && String(row[h.payload_hash] || "") === payloadHash);
+    if (prior) return String(prior[h.job_id] || "");
+  }
+  const jobId = permanentId_("JOB");
+  sheet.appendRow([
+    jobId, new Date(), new Date(), jobType, recordType, recordId, accountId || "", "Pending", 0, new Date(),
+    payloadJson, payloadHash, "", "", APP_VERSION,
+  ]);
+  return jobId;
+}
+
+function updateIntegrationJob_(jobId, status, error) {
+  const sheet = getOutreachSs_().getSheetByName(INTEGRATION_JOBS_SHEET_NAME);
+  if (!sheet || sheet.getLastRow() < 2) return;
+  const h = getHeaderMap_(sheet);
+  const ids = sheet.getRange(2, h.job_id + 1, sheet.getLastRow() - 1, 1).getValues();
+  const index = ids.findIndex(row => String(row[0] || "") === String(jobId));
+  if (index < 0) return;
+  const rowNumber = index + 2;
+  const attempts = Number(sheet.getRange(rowNumber, h.attempts + 1).getValue() || 0) + 1;
+  sheet.getRange(rowNumber, h.updated_at + 1).setValue(new Date());
+  sheet.getRange(rowNumber, h.status + 1).setValue(status);
+  sheet.getRange(rowNumber, h.attempts + 1).setValue(attempts);
+  sheet.getRange(rowNumber, h.last_error + 1).setValue(String(error || "").slice(0, 2000));
+  if (status === "Completed") sheet.getRange(rowNumber, h.completed_at + 1).setValue(new Date());
+  else sheet.getRange(rowNumber, h.next_attempt_at + 1).setValue(new Date(Date.now() + Math.min(24, Math.pow(2, attempts)) * 60 * 60 * 1000));
+}
+
+function migrationInventorySheetStatus_() {
+  const source = getLegacyInventorySs_();
+  const hub = getOutreachSs_();
+  return Object.values(SHEET_NAMES).map(name => {
+    const sourceSheet = source.getSheetByName(name);
+    const hubSheet = hub.getSheetByName(name);
+    return {
+      name:name,
+      source_rows:sourceSheet ? sourceSheet.getLastRow() : 0,
+      hub_rows:hubSheet ? hubSheet.getLastRow() : 0,
+      matches:!!sourceSheet && !!hubSheet && sheetChecksum_(sourceSheet) === sheetChecksum_(hubSheet),
+    };
+  });
+}
+
+function apiInitializeHardenedHub_(p) {
+  if (String(p?.confirmation || "") !== "STAGING ONLY") throw new Error("Staging migration confirmation is required.");
+  const lock = LockService.getScriptLock();
+  if (!lock.tryLock(30000)) throw new Error("Another migration or write is in progress.");
+  try {
+    ensureFoundationalSheets_();
+    if (isHubInventoryActive_()) return { message:"The hardened staging Hub is already active.", migration_status:HUB_MIGRATION_ACTIVE, sheets:migrationInventorySheetStatus_() };
+    const source = getLegacyInventorySs_();
+    const hub = getOutreachSs_();
+    Object.values(SHEET_NAMES).forEach(name => {
+      const sourceSheet = source.getSheetByName(name);
+      if (!sourceSheet) throw new Error(`Rollback source is missing ${name}.`);
+      const existing = hub.getSheetByName(name);
+      if (existing) {
+        if (sheetChecksum_(existing) !== sheetChecksum_(sourceSheet)) throw new Error(`${name} already exists in the Hub but does not match the rollback source.`);
+        return;
+      }
+      sourceSheet.copyTo(hub).setName(name);
+    });
+    const checks = migrationInventorySheetStatus_();
+    const failed = checks.filter(item => !item.matches);
+    if (failed.length) throw new Error(`Migration verification failed for: ${failed.map(item => item.name).join(", ")}.`);
+    ensureAccountIdentityModel_(true);
+    setHubConfigurationValue_(HUB_MIGRATION_STATUS_KEY, HUB_MIGRATION_ACTIVE, String(p.staff_name || "Staging administrator"));
+    setHubConfigurationValue_("legacy_inventory_spreadsheet_id", LEGACY_INVENTORY_SPREADSHEET_ID, String(p.staff_name || "Staging administrator"));
+    setHubConfigurationValue_("badger_tracker_spreadsheet_id", BADGER_TRACKER_SPREADSHEET_ID, String(p.staff_name || "Staging administrator"));
+    setHubConfigurationValue_("order_catalog_source", ORDER_CATALOG_SOURCE, String(p.staff_name || "Staging administrator"));
+    __OPERATIONAL_SS = hub;
+    appendAudit_("INITIALIZE_HARDENED_HUB", "System", "staging-hub", "", String(p.staff_name || "Staging administrator"), LEGACY_INVENTORY_SPREADSHEET_ID, OUTREACH_SPREADSHEET_ID, "Completed", "Inventory tabs copied and checksum verified before cutover.");
+    return { message:"The hardened staging Hub is active. The prior Inventory Backend remains unchanged for rollback.", migration_status:HUB_MIGRATION_ACTIVE, sheets:checks };
+  } finally {
+    lock.releaseLock();
+  }
+}
+
+function apiGetHubSystemStatus_() {
+  ensureFoundationalSheets_();
+  const active = isHubInventoryActive_();
+  return {
+    migration_status:active ? HUB_MIGRATION_ACTIVE : "NOT STARTED",
+    operational_spreadsheet:active ? "Staging Distribution Hub" : "Staging Inventory Backend",
+    inventory_sheets:migrationInventorySheetStatus_(),
+    badger_tracker:"Configured (read only)",
+    toast_adapter:"Disabled",
+    catalog_source:ORDER_CATALOG_SOURCE,
+  };
+}
+
 function json_(obj) {
   return ContentService.createTextOutput(JSON.stringify(obj)).setMimeType(ContentService.MimeType.JSON);
 }
@@ -199,7 +449,7 @@ function handle_(e, body) {
     assertAuthorized_(e, body);
     const action = (e?.parameter?.action) || (body?.action) || "";
     if (!action) {
-      return json_({ ok:true, service:"sturgeon-distribution-hub", version:APP_VERSION, actions:["initData","listSkus","addSkuToStore","upsertProduct","submitCounts","createReorder","managerGrid","salesSinceCount","updateStoreContacts","outreachDashboard","saveOutreachDraft","updateOutreachOutcome","updateOutreachBusiness","updateOutreachPrograms","upsertNewsletterContact","submitCustomerApplication","submitOnlineOrderRequest","customerWorkQueue","updateCustomerApplication","updateOnlineOrderRequest"] });
+      return json_({ ok:true, service:"sturgeon-distribution-hub", version:APP_VERSION, actions:["initData","listSkus","addSkuToStore","upsertProduct","submitCounts","createReorder","managerGrid","salesSinceCount","updateStoreContacts","outreachDashboard","saveOutreachDraft","updateOutreachOutcome","updateOutreachBusiness","updateOutreachPrograms","createOutreachBusiness","importOutreachBusinesses","upsertNewsletterContact","submitCustomerApplication","submitOnlineOrderRequest","customerWorkQueue","updateCustomerApplication","updateOnlineOrderRequest","hubSystemStatus","initializeHardenedHub","reconcileIntegrations"] });
     }
 
     let res;
@@ -218,12 +468,17 @@ function handle_(e, body) {
       case "updateOutreachOutcome": res = apiUpdateOutreachOutcome_(body); break;
       case "updateOutreachBusiness": res = apiUpdateOutreachBusiness_(body); break;
       case "updateOutreachPrograms": res = apiUpdateOutreachPrograms_(body); break;
+      case "createOutreachBusiness": res = apiCreateOutreachBusiness_(body); break;
+      case "importOutreachBusinesses": res = apiImportOutreachBusinesses_(body); break;
       case "upsertNewsletterContact": res = apiUpsertNewsletterContact_(body); break;
       case "submitCustomerApplication": res = apiSubmitCustomerApplication_(body); break;
       case "submitOnlineOrderRequest": res = apiSubmitOnlineOrderRequest_(body); break;
       case "customerWorkQueue": res = apiGetCustomerWorkQueue_(); break;
       case "updateCustomerApplication": res = apiUpdateCustomerApplication_(body); break;
       case "updateOnlineOrderRequest": res = apiUpdateOnlineOrderRequest_(body); break;
+      case "hubSystemStatus": res = apiGetHubSystemStatus_(); break;
+      case "initializeHardenedHub": res = apiInitializeHardenedHub_(body); break;
+      case "reconcileIntegrations": res = apiReconcileIntegrations_(body); break;
       default: throw new Error(`Unknown action: ${action}`);
     }
 
@@ -278,23 +533,46 @@ function apiGetInitData_(store_id) {
 }
 
 function apiListSkus_() {
+  const toastMap = new Map();
+  const toastSheet = getOutreachSs_().getSheetByName(TOAST_ITEM_MAP_SHEET_NAME);
+  if (toastSheet && toastSheet.getLastRow() >= 2) {
+    getAllRowsAsObjects_(toastSheet).forEach(item => {
+      if (!toBool_(item.active)) return;
+      const skuId = String(item.sturgeon_sku_id || "").trim();
+      if (!skuId || toastMap.has(skuId)) return;
+      toastMap.set(skuId, {
+        external_item_id:String(item.toast_item_guid || ""),
+        stock_status:String(item.stock_status || "Not connected"),
+        toast_item_name:String(item.toast_item_name || ""),
+      });
+    });
+  }
   const map = new Map();
   getAllRowsAsObjects_(getSheet_(SHEET_NAMES.SKUS)).forEach(s=>{
     if (!toBool_(s.active)) return;
     const id = String(s.sku_id||"").trim();
     if (!id) return;
+    const toast = toastMap.get(id) || {};
     map.set(id,{
       sku_id:id,
       sku_name:s.sku_name,
       upc:digitsOnly_(s.upc),
       size:s.size,
       units_per_case:Number(s.units_per_case||12),
+      catalog_source:ORDER_CATALOG_SOURCE,
+      availability_status:"Not connected",
+      external_item_id:String(toast.external_item_id || ""),
+      toast_mapping_status:toast.external_item_id ? "Mapped; adapter disabled" : "Not mapped",
     });
   });
-  return { skus:Array.from(map.values()).sort((a,b)=>String(a.sku_name||"").localeCompare(String(b.sku_name||""))) };
+  return {
+    catalog_source:ORDER_CATALOG_SOURCE,
+    availability_source:"Toast adapter disabled; staff confirms availability",
+    skus:Array.from(map.values()).sort((a,b)=>String(a.sku_name||"").localeCompare(String(b.sku_name||""))),
+  };
 }
 
-function apiAddSkuToStore_(p) {
+function apiAddSkuToStoreUnlocked_(p) {
   if (!p) throw new Error("Missing body");
   requireFields_(p, ["store_id","sku_id"]);
 
@@ -316,7 +594,7 @@ function apiAddSkuToStore_(p) {
   return { message:"Added SKU to store." };
 }
 
-function apiUpsertProduct_(p) {
+function apiUpsertProductUnlocked_(p) {
   if (!p || !p.sku) throw new Error("Missing sku");
   requireFields_(p.sku, ["sku_id","sku_name"]);
 
@@ -339,7 +617,7 @@ function apiUpsertProduct_(p) {
   else sh.appendRow(row);
 
   if (p.addToStore) {
-    apiAddSkuToStore_({
+    apiAddSkuToStoreUnlocked_({
       store_id:p.store_id,
       sku_id:id,
       on_hand_units:p.inventory?.on_hand_units,
@@ -351,7 +629,7 @@ function apiUpsertProduct_(p) {
   return { message:"Product saved." };
 }
 
-function apiSubmitCounts_(p) {
+function apiSubmitCountsUnlocked_(p) {
   if (!p) throw new Error("Missing body");
   requireFields_(p, ["store_id","rep"]);
   if (!Array.isArray(p.items) || !p.items.length) throw new Error("Missing items[]");
@@ -385,7 +663,7 @@ function apiSubmitCounts_(p) {
   return { message:`Submitted ${out.length} counts.`, submitted: out.length };
 }
 
-function apiCreateReorder_(p) {
+function apiCreateReorderUnlocked_(p) {
   if (!p) throw new Error("Missing body");
   requireFields_(p, ["store_id","rep"]);
 
@@ -420,7 +698,7 @@ function apiCreateReorder_(p) {
   return { created: out.length };
 }
 
-function apiUpdateStoreContacts_(p) {
+function apiUpdateStoreContactsUnlocked_(p) {
   if (!p) throw new Error("Missing body");
   requireFields_(p, ["store_id"]);
 
@@ -444,6 +722,22 @@ function apiUpdateStoreContacts_(p) {
     assistant_manager_name: assistantManagerName,
   };
 }
+
+function withInventoryWriteLock_(callback) {
+  const lock = LockService.getScriptLock();
+  if (!lock.tryLock(10000)) throw new Error("Another inventory update is in progress. Try again in a moment.");
+  try {
+    return callback();
+  } finally {
+    lock.releaseLock();
+  }
+}
+
+function apiAddSkuToStore_(p) { return withInventoryWriteLock_(() => apiAddSkuToStoreUnlocked_(p)); }
+function apiUpsertProduct_(p) { return withInventoryWriteLock_(() => apiUpsertProductUnlocked_(p)); }
+function apiSubmitCounts_(p) { return withInventoryWriteLock_(() => apiSubmitCountsUnlocked_(p)); }
+function apiCreateReorder_(p) { return withInventoryWriteLock_(() => apiCreateReorderUnlocked_(p)); }
+function apiUpdateStoreContacts_(p) { return withInventoryWriteLock_(() => apiUpdateStoreContactsUnlocked_(p)); }
 
 function apiGetManagerGrid_() {
   const stores = getAllRowsAsObjects_(getSheet_(SHEET_NAMES.STORES))
@@ -659,6 +953,300 @@ function apiGetSalesSinceCount_(store_id) {
   };
 }
 
+function normalizeBusinessKey_(value) {
+  return String(value || "").trim().toLowerCase().replace(/[^a-z0-9]+/g, " ").trim();
+}
+
+function accountIdentityFromRows_(rows) {
+  const identity = { by_id:new Map(), by_row:new Map(), by_email:new Map(), by_business_city:new Map(), rows:rows };
+  rows.forEach((row, index) => {
+    const accountId = String(row.account_id || "").trim();
+    const sourceRow = index + 2;
+    const business = String(outreachValue_(row, ["business", "business_name"]) || "").trim();
+    const email = String(outreachValue_(row, ["email", "email_address"]) || "").trim().toLowerCase();
+    const city = String(outreachValue_(row, ["city", "town"]) || "").trim();
+    const record = { account_id:accountId, source_row:sourceRow, business:business, email:email, city:city, row:row };
+    if (accountId) identity.by_id.set(accountId, record);
+    identity.by_row.set(sourceRow, record);
+    if (email) {
+      if (!identity.by_email.has(email)) identity.by_email.set(email, []);
+      identity.by_email.get(email).push(record);
+    }
+    const businessCity = `${normalizeBusinessKey_(business)}::${normalizeBusinessKey_(city)}`;
+    if (business && !identity.by_business_city.has(businessCity)) identity.by_business_city.set(businessCity, []);
+    if (business) identity.by_business_city.get(businessCity).push(record);
+  });
+  return identity;
+}
+
+function findIdentityMatch_(identity, accountId, business, email, city) {
+  const requestedId = String(accountId || "").trim();
+  const normalizedEmail = String(email || "").trim().toLowerCase();
+  const normalizedBusiness = normalizeBusinessKey_(business);
+  const normalizedCity = normalizeBusinessKey_(city);
+  if (requestedId && identity.by_id.has(requestedId)) {
+    const record = identity.by_id.get(requestedId);
+    const emailMatches = normalizedEmail && record.email === normalizedEmail;
+    const businessMatches = normalizedBusiness && normalizeBusinessKey_(record.business) === normalizedBusiness;
+    if (emailMatches || businessMatches) return { record:record, status:"Account ID verified" };
+    return { record:null, status:"Account ID needs staff review" };
+  }
+  if (normalizedEmail && identity.by_email.has(normalizedEmail)) {
+    const matches = identity.by_email.get(normalizedEmail).filter(record => !normalizedBusiness || normalizeBusinessKey_(record.business) === normalizedBusiness);
+    if (matches.length === 1) return { record:matches[0], status:"Email and business matched" };
+  }
+  const businessCity = `${normalizedBusiness}::${normalizedCity}`;
+  if (normalizedBusiness && normalizedCity && identity.by_business_city.has(businessCity)) {
+    const matches = identity.by_business_city.get(businessCity);
+    if (matches.length === 1) return { record:matches[0], status:"Business and city matched" };
+  }
+  return { record:null, status:"Needs staff match" };
+}
+
+function backfillAccountIdsInSheet_(sheet, identity, options) {
+  if (!sheet || sheet.getLastRow() < 2) return 0;
+  const h = ensureHeaderColumns_(sheet, [ACCOUNT_ID_HEADER]);
+  const rows = sheet.getRange(2, 1, sheet.getLastRow() - 1, sheet.getLastColumn()).getValues();
+  let changed = 0;
+  rows.forEach(row => {
+    if (String(row[h.account_id] || "").trim()) return;
+    const sourceRow = h.source_row !== undefined ? Number(row[h.source_row] || 0) : 0;
+    let match = sourceRow ? identity.by_row.get(sourceRow) : null;
+    if (!match) {
+      const businessKey = (options?.business_keys || ["business", "business_name"]).find(key => h[key] !== undefined);
+      const emailKey = (options?.email_keys || ["email", "primary_email", "intended_recipient"]).find(key => h[key] !== undefined);
+      const cityKey = (options?.city_keys || ["city", "delivery_city"]).find(key => h[key] !== undefined);
+      const result = findIdentityMatch_(identity, "", businessKey ? row[h[businessKey]] : "", emailKey ? row[h[emailKey]] : "", cityKey ? row[h[cityKey]] : "");
+      match = result.record;
+    }
+    if (!match) return;
+    row[h.account_id] = match.account_id;
+    changed += 1;
+  });
+  if (changed) sheet.getRange(2, 1, rows.length, rows[0].length).setValues(rows);
+  return changed;
+}
+
+function ensureAccountIdentityModel_(lockHeld) {
+  let lock = null;
+  if (!lockHeld) {
+    lock = LockService.getScriptLock();
+    if (!lock.tryLock(15000)) throw new Error("Another account update is in progress.");
+  }
+  try {
+    const sheet = getOutreachSheet_(OUTREACH_SHEET_NAME);
+    const h = ensureHeaderColumns_(sheet, [ACCOUNT_ID_HEADER, "Record Created At", "Record Updated At"]);
+    if (sheet.getLastRow() >= 2) {
+      const rows = sheet.getRange(2, 1, sheet.getLastRow() - 1, sheet.getLastColumn()).getValues();
+      let changed = false;
+      const now = new Date();
+      const seenAccountIds = new Set();
+      rows.forEach((row, index) => {
+        const businessKey = h.business_name !== undefined ? "business_name" : (h.business !== undefined ? "business" : "");
+        if (!businessKey || !String(row[h[businessKey]] || "").trim()) return;
+        if (!String(row[h.account_id] || "").trim()) {
+          row[h.account_id] = permanentId_("ACC");
+          changed = true;
+        }
+        const accountId = String(row[h.account_id] || "").trim();
+        if (seenAccountIds.has(accountId)) throw new Error(`Duplicate Account ID found on directory row ${index + 2}. Correct it before continuing.`);
+        seenAccountIds.add(accountId);
+        if (!row[h.record_created_at]) {
+          row[h.record_created_at] = now;
+          changed = true;
+        }
+      });
+      if (changed) sheet.getRange(2, 1, rows.length, rows[0].length).setValues(rows);
+    }
+    const identity = accountIdentityFromRows_(getAllRowsAsObjects_(sheet));
+    [
+      [getOutreachSs_().getSheetByName(OUTREACH_DRAFTS_SHEET_NAME), {}],
+      [getOutreachSs_().getSheetByName(OUTREACH_PROGRAMS_SHEET_NAME), {}],
+      [getOutreachSs_().getSheetByName(OUTREACH_ENGAGEMENT_SHEET_NAME), {}],
+      [getOutreachSs_().getSheetByName(OUTREACH_ACTIVITY_SHEET_NAME), { business_keys:["business"], email_keys:["intended_recipient"] }],
+      [getOutreachSs_().getSheetByName(CUSTOMER_APPLICATIONS_SHEET_NAME), { business_keys:["business_name", "legal_business_name"], email_keys:["primary_email"], city_keys:["delivery_city"] }],
+      [getOutreachSs_().getSheetByName(ONLINE_ORDER_REQUESTS_SHEET_NAME), { business_keys:["business_name"], email_keys:["email"] }],
+      [getOutreachSs_().getSheetByName(NEWSLETTER_CONTACTS_SHEET_NAME), { business_keys:["source_business", "organization"], email_keys:["email"] }],
+    ].forEach(item => backfillAccountIdsInSheet_(item[0], identity, item[1]));
+    return accountIdentityFromRows_(getAllRowsAsObjects_(sheet));
+  } finally {
+    if (lock) lock.releaseLock();
+  }
+}
+
+function setDirectoryField_(row, headers, aliases, value) {
+  const key = aliases.map(normalizeHeader_).find(alias => headers[alias] !== undefined);
+  if (key !== undefined) row[headers[key]] = value;
+}
+
+function directoryRowFromBusiness_(sheet, p, accountId, now) {
+  const h = getHeaderMap_(sheet);
+  const row = Array(sheet.getLastColumn()).fill("");
+  setDirectoryField_(row, h, ["Account ID"], accountId);
+  setDirectoryField_(row, h, ["Business Name", "Business"], String(p.business_name || p.business || "").trim());
+  setDirectoryField_(row, h, ["Contact Person", "Contact"], String(p.contact || p.contact_name || "").trim());
+  setDirectoryField_(row, h, ["Email"], String(p.email || "").trim().toLowerCase());
+  setDirectoryField_(row, h, ["Phone Number", "Phone"], String(p.phone || "").trim());
+  setDirectoryField_(row, h, ["Street Address", "Address"], String(p.address || p.street_address || "").trim());
+  setDirectoryField_(row, h, ["City"], String(p.city || "").trim());
+  setDirectoryField_(row, h, ["State"], String(p.state || "WI").trim().toUpperCase());
+  setDirectoryField_(row, h, ["Zip Code", "ZIP"], String(p.postal_code || p.zip || "").trim());
+  setDirectoryField_(row, h, ["Next Email"], String(p.next_email || "Initial"));
+  setDirectoryField_(row, h, ["Status"], String(p.status || (p.email ? "Not contacted" : "Needs email")));
+  setDirectoryField_(row, h, ["Priority"], String(p.priority || "Medium"));
+  setDirectoryField_(row, h, ["Do Not Email"], toBool_(p.do_not_email));
+  setDirectoryField_(row, h, ["Craft-Spirit Fit (1–5)", "Craft-Spirit Fit (1-5)"], String(p.craft_spirit_fit || ""));
+  setDirectoryField_(row, h, ["Rating Basis"], String(p.rating_basis || ""));
+  setDirectoryField_(row, h, ["Miles"], p.miles === "" || p.miles === undefined ? "" : Number(p.miles));
+  setDirectoryField_(row, h, ["Lead Source"], String(p.lead_source || "Sturgeon Distribution Hub"));
+  setDirectoryField_(row, h, ["Email Confidence"], String(p.email_confidence || (p.email ? "Needs verification" : "")));
+  setDirectoryField_(row, h, ["Relationship"], String(p.relationship || "Prospect"));
+  setDirectoryField_(row, h, ["Notes"], String(p.notes || ""));
+  setDirectoryField_(row, h, ["Record Created At"], now);
+  setDirectoryField_(row, h, ["Record Updated At"], now);
+  return row;
+}
+
+function sheetSafeText_(value, maxLength, label) {
+  const text = publicText_(value, maxLength, label);
+  return /^[=+\-@]/.test(text) ? `'${text}` : text;
+}
+
+function validateBusinessInput_(p) {
+  const business = sheetSafeText_(p.business_name || p.business, 160, "Business name");
+  if (!business) throw new Error("Business name is required.");
+  const email = publicEmail_(p.email, "Email", false);
+  const fit = String(p.craft_spirit_fit || "").trim();
+  if (fit && (!Number.isInteger(Number(fit)) || Number(fit) < 1 || Number(fit) > 5)) throw new Error("Craft-spirit fit must be from 1 to 5.");
+  const miles = String(p.miles ?? "").trim();
+  if (miles && (!Number.isFinite(Number(miles)) || Number(miles) < 0 || Number(miles) > 1000)) throw new Error("Miles must be from 0 to 1000.");
+  return {
+    business_name:business,
+    contact:sheetSafeText_(p.contact || p.contact_name, 120, "Contact"),
+    email:email,
+    phone:sheetSafeText_(p.phone, 40, "Phone"),
+    address:sheetSafeText_(p.address || p.street_address, 180, "Address"),
+    city:sheetSafeText_(p.city, 100, "City"),
+    state:sheetSafeText_(p.state || "WI", 2, "State").toUpperCase(),
+    postal_code:sheetSafeText_(p.postal_code || p.zip, 10, "ZIP code"),
+    craft_spirit_fit:fit,
+    rating_basis:sheetSafeText_(p.rating_basis, 1000, "Rating basis"),
+    miles:miles,
+    lead_source:sheetSafeText_(p.lead_source || "Sturgeon Distribution Hub", 200, "Lead source"),
+    email_confidence:sheetSafeText_(p.email_confidence || (email ? "Needs verification" : ""), 80, "Email confidence"),
+    relationship:sheetSafeText_(p.relationship || "Prospect", 80, "Relationship"),
+    priority:sheetSafeText_(p.priority || "Medium", 40, "Priority"),
+    status:sheetSafeText_(p.status || (email ? "Not contacted" : "Needs email"), 80, "Status"),
+    next_email:sheetSafeText_(p.next_email || "Initial", 80, "Next email"),
+    notes:sheetSafeText_(p.notes, 4000, "Notes"),
+    do_not_email:toBool_(p.do_not_email),
+  };
+}
+
+function duplicateBusiness_(identity, p) {
+  const email = String(p.email || "").trim().toLowerCase();
+  if (email && identity.by_email.has(email)) return identity.by_email.get(email)[0];
+  const key = `${normalizeBusinessKey_(p.business_name)}::${normalizeBusinessKey_(p.city)}`;
+  const matches = identity.by_business_city.get(key) || [];
+  return matches.length ? matches[0] : null;
+}
+
+function apiCreateOutreachBusiness_(p) {
+  if (!p) throw new Error("Missing business.");
+  const input = validateBusinessInput_(p);
+  const lock = LockService.getScriptLock();
+  if (!lock.tryLock(10000)) throw new Error("Another directory update is in progress.");
+  try {
+    const identity = ensureAccountIdentityModel_(true);
+    const duplicate = duplicateBusiness_(identity, input);
+    if (duplicate) throw new Error(`A matching business already exists: ${duplicate.business}.`);
+    const sheet = getOutreachSheet_(OUTREACH_SHEET_NAME);
+    const accountId = permanentId_("ACC");
+    const now = new Date();
+    sheet.appendRow(directoryRowFromBusiness_(sheet, input, accountId, now));
+    appendAudit_("CREATE_BUSINESS", "Account", accountId, accountId, String(p.staff_name || "Staff"), "Sturgeon Distribution Hub", OUTREACH_SHEET_NAME, "Completed", `Created ${input.business_name}.`);
+    return { message:"Business added to the directory.", account_id:accountId, source_row:sheet.getLastRow() };
+  } finally {
+    lock.releaseLock();
+  }
+}
+
+function apiImportOutreachBusinesses_(p) {
+  if (!p || !Array.isArray(p.rows) || !p.rows.length) throw new Error("Choose a CSV containing at least one business.");
+  if (p.rows.length > 500) throw new Error("Import no more than 500 businesses at a time.");
+  const sourceName = publicText_(p.source_name || "CSV import", 200, "Source name");
+  const staffName = publicText_(p.staff_name || "Staff", 120, "Staff name");
+  const lock = LockService.getScriptLock();
+  if (!lock.tryLock(30000)) throw new Error("Another directory import is in progress.");
+  try {
+    ensureFoundationalSheets_();
+    let identity = ensureAccountIdentityModel_(true);
+    const directory = getOutreachSheet_(OUTREACH_SHEET_NAME);
+    const batches = getOutreachSs_().getSheetByName(IMPORT_BATCHES_SHEET_NAME);
+    const importRows = getOutreachSs_().getSheetByName(IMPORT_ROWS_SHEET_NAME);
+    const batchId = permanentId_("IMP");
+    const sourceJson = safeJson_(p.rows);
+    const sourceHash = sha256_(sourceJson);
+    let created = 0;
+    let skipped = 0;
+    let errors = 0;
+    p.rows.forEach((raw, index) => {
+      let accountId = "";
+      let status = "Error";
+      let detail = "";
+      let normalizedForLog = {
+        business_name:String(raw.business_name || raw.business || "").slice(0, 160),
+        email:String(raw.email || "").slice(0, 200),
+        city:String(raw.city || "").slice(0, 100),
+      };
+      try {
+        const input = validateBusinessInput_(Object.assign({}, raw, { lead_source:raw.lead_source || sourceName }));
+        normalizedForLog = input;
+        const duplicate = duplicateBusiness_(identity, input);
+        if (duplicate) {
+          accountId = duplicate.account_id;
+          status = "Skipped duplicate";
+          detail = `Matched ${duplicate.business}`;
+          skipped += 1;
+        } else {
+          accountId = permanentId_("ACC");
+          directory.appendRow(directoryRowFromBusiness_(directory, input, accountId, new Date()));
+          status = "Created";
+          detail = "Added to directory";
+          created += 1;
+          const createdRecord = {
+            account_id:accountId,
+            source_row:directory.getLastRow(),
+            business:input.business_name,
+            email:String(input.email || "").toLowerCase(),
+            city:String(input.city || ""),
+          };
+          identity.by_id.set(accountId, createdRecord);
+          if (createdRecord.email) {
+            const emailMatches = identity.by_email.get(createdRecord.email) || [];
+            emailMatches.push(createdRecord);
+            identity.by_email.set(createdRecord.email, emailMatches);
+          }
+          const businessCityKey = `${normalizeBusinessKey_(createdRecord.business)}::${normalizeBusinessKey_(createdRecord.city)}`;
+          const businessMatches = identity.by_business_city.get(businessCityKey) || [];
+          businessMatches.push(createdRecord);
+          identity.by_business_city.set(businessCityKey, businessMatches);
+        }
+      } catch (error) {
+        errors += 1;
+        detail = String(error.message || error).slice(0, 1000);
+      }
+      const normalizedJson = safeJson_(normalizedForLog);
+      importRows.appendRow([batchId, index + 2, accountId, raw.business_name || raw.business || "", raw.email || "", raw.city || "", normalizedJson, sha256_(normalizedJson), status, detail, new Date(), APP_VERSION]);
+    });
+    batches.appendRow([batchId, new Date(), staffName, sourceName, sourceHash, p.rows.length, created, skipped, errors, errors ? "Completed with errors" : "Completed", new Date(), APP_VERSION]);
+    appendAudit_("IMPORT_BUSINESSES", "Import Batch", batchId, "", staffName, sourceName, OUTREACH_SHEET_NAME, errors ? "Completed with errors" : "Completed", `${created} created; ${skipped} skipped; ${errors} errors.`);
+    return { message:`Import complete: ${created} created, ${skipped} skipped, ${errors} errors.`, batch_id:batchId, created:created, skipped:skipped, errors:errors };
+  } finally {
+    lock.releaseLock();
+  }
+}
+
 function outreachValue_(row, keys) {
   return firstPresent_(row, keys);
 }
@@ -743,18 +1331,24 @@ function outreachWeeklyExclusionReasons_(record) {
 
 function outreachActivityMap_() {
   const sheet = getOutreachSheet_(OUTREACH_ACTIVITY_SHEET_NAME);
+  ensureHeaderColumns_(sheet, [ACCOUNT_ID_HEADER]);
   const rows = getAllRowsAsObjects_(sheet);
   const activity = new Map();
   rows.forEach(row => {
     const business = String(outreachValue_(row, ["business"]) || "").trim();
     if (!business) return;
-    const key = business.toLowerCase();
-    if (!activity.has(key)) activity.set(key, []);
-    activity.get(key).push({
+    const accountId = String(row.account_id || "").trim();
+    const keys = [`business:${business.toLowerCase()}`];
+    if (accountId) keys.unshift(`account:${accountId}`);
+    const item = {
       timestamp: outreachValue_(row, ["timestamp"]),
       stage: String(outreachValue_(row, ["message_stage", "stage"]) || ""),
       result: String(outreachValue_(row, ["result"]) || ""),
       detail: String(outreachValue_(row, ["error/detail", "error_detail", "detail"]) || ""),
+    };
+    keys.forEach(key => {
+      if (!activity.has(key)) activity.set(key, []);
+      activity.get(key).push(item);
     });
   });
   activity.forEach(items => items.sort((a, b) => {
@@ -774,17 +1368,21 @@ function getOutreachCampaignSettings_() {
   }, {});
 }
 
-function outreachDraftKey_(sourceRow, stage) {
-  return `${Number(sourceRow)}::${String(stage || "Initial").trim().toLowerCase()}`;
+function outreachDraftKey_(identityKey, stage) {
+  return `${String(identityKey || "").trim()}::${String(stage || "Initial").trim().toLowerCase()}`;
 }
 
 function getOutreachDraftSheet_(createIfMissing) {
   const ss = getOutreachSs_();
   let sheet = ss.getSheetByName(OUTREACH_DRAFTS_SHEET_NAME);
-  if (sheet || !createIfMissing) return sheet;
+  if (sheet) {
+    ensureHeaderColumns_(sheet, [ACCOUNT_ID_HEADER]);
+    return sheet;
+  }
+  if (!createIfMissing) return sheet;
 
   sheet = ss.insertSheet(OUTREACH_DRAFTS_SHEET_NAME);
-  const headers = [["Draft Key", "Source Row", "Business Name", "Email", "Message Stage", "Subject", "Body Text", "Updated At", "Updated By", "App Version"]];
+  const headers = [["Draft Key", "Account ID", "Source Row", "Business Name", "Email", "Message Stage", "Subject", "Body Text", "Updated At", "Updated By", "App Version"]];
   sheet.getRange(1, 1, 1, headers[0].length).setValues(headers)
     .setFontWeight("bold")
     .setBackground("#e5e7eb")
@@ -810,14 +1408,17 @@ function outreachDraftMap_() {
   if (!sheet || sheet.getLastRow() < 2) return drafts;
   getAllRowsAsObjects_(sheet).forEach(row => {
     const sourceRow = Number(row.source_row || 0);
+    const accountId = String(row.account_id || "").trim();
     const stage = String(row.message_stage || "Initial").trim();
-    if (!sourceRow) return;
-    drafts.set(outreachDraftKey_(sourceRow, stage), {
+    if (!sourceRow && !accountId) return;
+    const draft = {
       subject: String(row.subject || "").trim(),
       body_text: String(row.body_text || "").trim(),
       updated_at: row.updated_at || "",
       updated_by: String(row.updated_by || ""),
-    });
+    };
+    if (accountId) drafts.set(outreachDraftKey_(accountId, stage), draft);
+    if (sourceRow) drafts.set(outreachDraftKey_(sourceRow, stage), draft);
   });
   return drafts;
 }
@@ -825,11 +1426,15 @@ function outreachDraftMap_() {
 function getOutreachProgramSheet_(createIfMissing) {
   const ss = getOutreachSs_();
   let sheet = ss.getSheetByName(OUTREACH_PROGRAMS_SHEET_NAME);
-  if (sheet || !createIfMissing) return sheet;
+  if (sheet) {
+    ensureHeaderColumns_(sheet, [ACCOUNT_ID_HEADER]);
+    return sheet;
+  }
+  if (!createIfMissing) return sheet;
 
   sheet = ss.insertSheet(OUTREACH_PROGRAMS_SHEET_NAME);
   const headers = [[
-    "Program Key", "Source Row", "Business Name", "Email",
+    "Program Key", "Account ID", "Source Row", "Business Name", "Email",
     "Newsletter Status", "Newsletter Consent Source", "Newsletter Status Date",
     "Ordering Status", "Ordering Customer ID", "Ordering Invite Date", "Ordering Portal URL",
     "Updated At", "Updated By", "Notes", "App Version"
@@ -852,8 +1457,9 @@ function outreachProgramMap_() {
   if (!sheet || sheet.getLastRow() < 2) return programs;
   getAllRowsAsObjects_(sheet).forEach(row => {
     const sourceRow = Number(row.source_row || 0);
-    if (!sourceRow) return;
-    programs.set(sourceRow, {
+    const accountId = String(row.account_id || "").trim();
+    if (!sourceRow && !accountId) return;
+    const program = {
       newsletter_status: String(row.newsletter_status || "Not invited"),
       newsletter_consent_source: String(row.newsletter_consent_source || ""),
       newsletter_status_date: row.newsletter_status_date || "",
@@ -863,7 +1469,9 @@ function outreachProgramMap_() {
       ordering_portal_url: String(row.ordering_portal_url || ""),
       notes: String(row.notes || ""),
       updated_at: row.updated_at || "",
-    });
+    };
+    if (accountId) programs.set(accountId, program);
+    if (sourceRow) programs.set(sourceRow, program);
   });
   return programs;
 }
@@ -874,9 +1482,11 @@ function outreachEngagementMap_() {
   if (!sheet || sheet.getLastRow() < 2) return engagement;
   getAllRowsAsObjects_(sheet).forEach(row => {
     const sourceRow = Number(row.source_row || 0);
-    if (!sourceRow) return;
-    if (!engagement.has(sourceRow)) {
-      engagement.set(sourceRow, {
+    const accountId = String(row.account_id || "").trim();
+    const key = accountId || sourceRow;
+    if (!key) return;
+    if (!engagement.has(key)) {
+      engagement.set(key, {
         open_count:0,
         last_opened:"",
         click_count:0,
@@ -886,7 +1496,7 @@ function outreachEngagementMap_() {
         source:"",
       });
     }
-    const summary = engagement.get(sourceRow);
+    const summary = engagement.get(key);
     const eventType = String(row.event_type || "").trim().toLowerCase();
     const eventAt = outreachDate_(row.event_at);
     const newest = (current, candidate) => {
@@ -912,6 +1522,7 @@ function newsletterContacts_() {
   if (!sheet || sheet.getLastRow() < 2) return [];
   return getAllRowsAsObjects_(sheet).filter(row => row.email).map(row => ({
     contact_id:String(row.contact_id || ""),
+    account_id:String(row.account_id || ""),
     name:String(row.name || ""),
     email:String(row.email || ""),
     organization:String(row.organization || ""),
@@ -1082,8 +1693,9 @@ function outreachRecord_(row, sourceRow, activityMap, settings, draftMap, progra
   const contact = String(outreachValue_(row, ["contact", "contact_name", "contact_person", "first_name"]) || "").trim();
   const status = String(outreachValue_(row, ["status"]) || "Not contacted").trim();
   const relationship = String(outreachValue_(row, ["relationship"]) || "").trim();
+  const accountId = String(row.account_id || "").trim();
   const messageStage = String(outreachValue_(row, ["next_email", "stage"]) || "Initial").trim();
-  const draft = draftMap.get(outreachDraftKey_(sourceRow, messageStage));
+  const draft = draftMap.get(outreachDraftKey_(accountId || sourceRow, messageStage)) || draftMap.get(outreachDraftKey_(sourceRow, messageStage));
   const message = outreachMessage_(row, settings, draft);
   const city = String(outreachValue_(row, ["city", "town"]) || "").trim();
   const state = String(outreachValue_(row, ["state"]) || "").trim();
@@ -1091,6 +1703,7 @@ function outreachRecord_(row, sourceRow, activityMap, settings, draftMap, progra
   const street = String(outreachValue_(row, ["address", "street", "street_address", "address_1"]) || "").trim();
   const address = [street, city, state, postalCode].filter(Boolean).join(", ");
   const record = {
+    account_id: accountId,
     source_row: sourceRow,
     business: business,
     display_business: outreachDisplayBusinessName_(business),
@@ -1134,7 +1747,7 @@ function outreachRecord_(row, sourceRow, activityMap, settings, draftMap, progra
     preview_html: message.html,
     has_saved_draft: message.has_saved_draft,
     draft_updated_at: message.draft_updated_at,
-    programs: programMap.get(sourceRow) || {
+    programs: programMap.get(accountId) || programMap.get(sourceRow) || {
       newsletter_status:"Not invited",
       newsletter_consent_source:"",
       newsletter_status_date:"",
@@ -1145,7 +1758,7 @@ function outreachRecord_(row, sourceRow, activityMap, settings, draftMap, progra
       notes:"",
       updated_at:"",
     },
-    email_engagement: engagementMap.get(sourceRow) || {
+    email_engagement: engagementMap.get(accountId) || engagementMap.get(sourceRow) || {
       open_count:0,
       last_opened:"",
       click_count:0,
@@ -1154,7 +1767,7 @@ function outreachRecord_(row, sourceRow, activityMap, settings, draftMap, progra
       bounce_count:0,
       source:"Not connected",
     },
-    activity: (activityMap.get(business.toLowerCase()) || []).slice(0, 5),
+    activity: (activityMap.get(`account:${accountId}`) || activityMap.get(`business:${business.toLowerCase()}`) || []).slice(0, 5),
   };
   record.weekly_exclusion_reasons = outreachWeeklyExclusionReasons_(record);
   record.weekly_eligible = record.weekly_exclusion_reasons.length === 0;
@@ -1162,6 +1775,7 @@ function outreachRecord_(row, sourceRow, activityMap, settings, draftMap, progra
 }
 
 function apiGetOutreachDashboard_() {
+  ensureAccountIdentityModel_();
   const sheet = getOutreachSheet_(OUTREACH_SHEET_NAME);
   const rows = getAllRowsAsObjects_(sheet);
   const activityMap = outreachActivityMap_();
@@ -1219,10 +1833,11 @@ function outreachStatusForOutcome_(outcome) {
 
 function appendOutreachActivity_(record, outcome, notes) {
   const sheet = getOutreachSheet_(OUTREACH_ACTIVITY_SHEET_NAME);
-  const h = getHeaderMap_(sheet);
+  const h = ensureHeaderColumns_(sheet, [ACCOUNT_ID_HEADER]);
   const row = Array(sheet.getLastColumn()).fill("");
   const set = (key, value) => { if (h[key] !== undefined) row[h[key]] = value; };
   set("timestamp", new Date());
+  set("account_id", record.account_id || "");
   set("business", record.business);
   set("intended_recipient", record.email);
   set("message_stage", "OUTCOME");
@@ -1237,10 +1852,11 @@ function appendOutreachActivity_(record, outcome, notes) {
 
 function appendOutreachDraftActivity_(record, stage, subject) {
   const sheet = getOutreachSheet_(OUTREACH_ACTIVITY_SHEET_NAME);
-  const h = getHeaderMap_(sheet);
+  const h = ensureHeaderColumns_(sheet, [ACCOUNT_ID_HEADER]);
   const row = Array(sheet.getLastColumn()).fill("");
   const set = (key, value) => { if (h[key] !== undefined) row[h[key]] = value; };
   set("timestamp", new Date());
+  set("account_id", record.account_id || "");
   set("business", record.business);
   set("intended_recipient", record.email);
   set("message_stage", stage);
@@ -1257,10 +1873,10 @@ function apiSaveOutreachDraft_(p) {
   if (!p) throw new Error("Missing body");
   requireFields_(p, ["source_row", "business", "message_stage", "subject", "body_text"]);
 
-  const subject = String(p.subject || "").trim();
-  const bodyText = String(p.body_text || "").trim();
-  if (!subject || subject.length > 200) throw new Error("Subject must be between 1 and 200 characters.");
-  if (!bodyText || bodyText.length > 20000) throw new Error("Message must be between 1 and 20,000 characters.");
+  const subject = publicText_(p.subject, 200, "Subject");
+  const bodyText = publicText_(p.body_text, 20000, "Message");
+  if (!subject) throw new Error("Subject is required.");
+  if (!bodyText) throw new Error("Message is required.");
 
   const leadsSheet = getOutreachSheet_(OUTREACH_SHEET_NAME);
   const rowNumber = Number(p.source_row);
@@ -1275,21 +1891,24 @@ function apiSaveOutreachDraft_(p) {
     Object.keys(h).forEach(key => current[key] = values[h[key]]);
     const currentBusiness = String(outreachValue_(current, ["business", "business_name"]) || "").trim();
     const currentEmail = String(outreachValue_(current, ["email", "email_address"]) || "").trim();
+    const accountId = String(current.account_id || "").trim();
     const currentStage = String(outreachValue_(current, ["next_email", "stage"]) || "Initial").trim();
     if (currentBusiness !== String(p.business || "").trim()) throw new Error("Business row changed. Refresh and try again.");
     if (p.email && currentEmail !== String(p.email).trim()) throw new Error("Contact email changed. Refresh and try again.");
+    if (p.account_id && accountId !== String(p.account_id).trim()) throw new Error("Account identity changed. Refresh and try again.");
     if (currentStage.toLowerCase() !== String(p.message_stage || "").trim().toLowerCase()) {
       throw new Error("Email stage changed. Refresh before saving this draft.");
     }
 
     const sheet = getOutreachDraftSheet_(true);
     const headers = getHeaderMap_(sheet);
-    const key = outreachDraftKey_(rowNumber, currentStage);
+    const key = outreachDraftKey_(accountId || rowNumber, currentStage);
     const now = new Date();
     const updatedBy = Session.getActiveUser().getEmail() || "Sturgeon Distribution Hub";
     const rowValues = Array(sheet.getLastColumn()).fill("");
     const set = (name, value) => { if (headers[name] !== undefined) rowValues[headers[name]] = value; };
     set("draft_key", key);
+    set("account_id", accountId);
     set("source_row", rowNumber);
     set("business_name", currentBusiness);
     set("email", currentEmail);
@@ -1308,8 +1927,9 @@ function apiSaveOutreachDraft_(p) {
       if (match >= 0) targetRow = match + 2;
     }
     sheet.getRange(targetRow, 1, 1, rowValues.length).setValues([rowValues]);
-    appendOutreachDraftActivity_({ business:currentBusiness, email:currentEmail }, currentStage, subject);
-    return { message:"Email draft saved.", source_row:rowNumber, updated_at:now.toISOString() };
+    appendOutreachDraftActivity_({ account_id:accountId, business:currentBusiness, email:currentEmail }, currentStage, subject);
+    appendAudit_("SAVE_OUTREACH_DRAFT", "Account", accountId, accountId, updatedBy, OUTREACH_SHEET_NAME, OUTREACH_DRAFTS_SHEET_NAME, "Completed", currentStage);
+    return { message:"Email draft saved.", account_id:accountId, source_row:rowNumber, updated_at:now.toISOString() };
   } finally {
     lock.releaseLock();
   }
@@ -1326,32 +1946,42 @@ function apiUpdateOutreachOutcome_(p) {
   const rowNumber = Number(p.source_row);
   if (!Number.isInteger(rowNumber) || rowNumber < 2 || rowNumber > sheet.getLastRow()) throw new Error("Lead row not found.");
 
-  const h = getHeaderMap_(sheet);
-  const values = sheet.getRange(rowNumber, 1, 1, sheet.getLastColumn()).getValues()[0];
-  const current = {};
-  Object.keys(h).forEach(key => current[key] = values[h[key]]);
-  const currentBusiness = String(outreachValue_(current, ["business", "business_name"]) || "").trim();
-  const currentEmail = String(outreachValue_(current, ["email", "email_address"]) || "").trim();
-  if (currentBusiness !== String(p.business || "").trim()) throw new Error("Lead changed in the sheet. Refresh and try again.");
-  if (p.email && currentEmail !== String(p.email).trim()) throw new Error("Contact email changed in the sheet. Refresh and try again.");
+  const lock = LockService.getScriptLock();
+  if (!lock.tryLock(5000)) throw new Error("Another outreach update is in progress.");
+  try {
+    const h = getHeaderMap_(sheet);
+    const values = sheet.getRange(rowNumber, 1, 1, sheet.getLastColumn()).getValues()[0];
+    const current = {};
+    Object.keys(h).forEach(key => current[key] = values[h[key]]);
+    const currentBusiness = String(outreachValue_(current, ["business", "business_name"]) || "").trim();
+    const currentEmail = String(outreachValue_(current, ["email", "email_address"]) || "").trim();
+    const accountId = String(current.account_id || "").trim();
+    if (currentBusiness !== String(p.business || "").trim()) throw new Error("Lead changed in the sheet. Refresh and try again.");
+    if (p.email && currentEmail !== String(p.email).trim()) throw new Error("Contact email changed in the sheet. Refresh and try again.");
+    if (p.account_id && accountId !== String(p.account_id).trim()) throw new Error("Account identity changed. Refresh and try again.");
 
-  const setCell = (keys, value) => {
-    const key = keys.find(candidate => h[candidate] !== undefined);
-    if (key) sheet.getRange(rowNumber, h[key] + 1).setValue(value);
-  };
-  const outcome = String(p.outcome);
-  setCell(["status"], outreachStatusForOutcome_(outcome));
-  setCell(["outcome"], outcome);
-  if (p.next_follow_up) setCell(["next_follow-up", "next_follow_up"], new Date(`${p.next_follow_up}T12:00:00`));
-  if (outcome === "Not interested") setCell(["do_not_email", "do_not_contact"], true);
-  if (p.notes) {
-    const priorNotes = String(outreachValue_(current, ["notes"]) || "").trim();
-    const datedNote = `${Utilities.formatDate(new Date(), Session.getScriptTimeZone(), "yyyy-MM-dd")} - ${String(p.notes).trim()}`;
-    setCell(["notes"], priorNotes ? `${priorNotes}\n${datedNote}` : datedNote);
+    const setCell = (keys, value) => {
+      const key = keys.find(candidate => h[candidate] !== undefined);
+      if (key) sheet.getRange(rowNumber, h[key] + 1).setValue(value);
+    };
+    const outcome = String(p.outcome);
+    setCell(["status"], outreachStatusForOutcome_(outcome));
+    setCell(["outcome"], outcome);
+    setCell(["record_updated_at"], new Date());
+    if (p.next_follow_up) setCell(["next_follow-up", "next_follow_up"], new Date(`${p.next_follow_up}T12:00:00`));
+    if (outcome === "Not interested") setCell(["do_not_email", "do_not_contact"], true);
+    if (p.notes) {
+      const priorNotes = String(outreachValue_(current, ["notes"]) || "").trim();
+      const datedNote = `${Utilities.formatDate(new Date(), Session.getScriptTimeZone(), "yyyy-MM-dd")} - ${String(p.notes).trim()}`;
+      setCell(["notes"], priorNotes ? `${priorNotes}\n${datedNote}` : datedNote);
+    }
+
+    appendOutreachActivity_({ account_id:accountId, business:currentBusiness, email:currentEmail }, outcome, String(p.notes || ""));
+    appendAudit_("UPDATE_OUTREACH_OUTCOME", "Account", accountId, accountId, String(p.staff_name || "Staff"), OUTREACH_SHEET_NAME, OUTREACH_SHEET_NAME, "Completed", outcome);
+    return { message:"Outcome saved.", account_id:accountId, source_row:rowNumber, status:outreachStatusForOutcome_(outcome) };
+  } finally {
+    lock.releaseLock();
   }
-
-  appendOutreachActivity_({ business:currentBusiness, email:currentEmail }, outcome, String(p.notes || ""));
-  return { message:"Outcome saved.", source_row:rowNumber, status:outreachStatusForOutcome_(outcome) };
 }
 
 function apiUpdateOutreachBusiness_(p) {
@@ -1372,8 +2002,10 @@ function apiUpdateOutreachBusiness_(p) {
     Object.keys(h).forEach(key => current[key] = values[h[key]]);
     const currentBusiness = String(outreachValue_(current, ["business", "business_name"]) || "").trim();
     const currentEmail = String(outreachValue_(current, ["email", "email_address"]) || "").trim();
+    const accountId = String(current.account_id || "").trim();
     if (currentBusiness !== String(p.business || "").trim()) throw new Error("Business row changed. Refresh and try again.");
     if (p.original_email && currentEmail !== String(p.original_email).trim()) throw new Error("Contact information changed. Refresh and try again.");
+    if (p.account_id && accountId !== String(p.account_id).trim()) throw new Error("Account identity changed. Refresh and try again.");
 
     const changed = [];
     Object.keys(p.updates).forEach(canonical => {
@@ -1408,11 +2040,13 @@ function apiUpdateOutreachBusiness_(p) {
 
     if (!changed.length) return { message:"No contact changes to save.", source_row:rowNumber, changed:[] };
     appendOutreachActivity_(
-      { business:currentBusiness, email:String(p.updates.email || currentEmail) },
+      { account_id:accountId, business:currentBusiness, email:String(p.updates.email || currentEmail) },
       "CONTACT UPDATED",
       `Updated ${changed.join(", ")}`
     );
-    return { message:"Contact information saved.", source_row:rowNumber, changed:changed };
+    if (h.record_updated_at !== undefined) sheet.getRange(rowNumber, h.record_updated_at + 1).setValue(new Date());
+    appendAudit_("UPDATE_BUSINESS", "Account", accountId, accountId, String(p.staff_name || "Staff"), OUTREACH_SHEET_NAME, OUTREACH_SHEET_NAME, "Completed", changed.join(", "));
+    return { message:"Contact information saved.", account_id:accountId, source_row:rowNumber, changed:changed };
   } finally {
     lock.releaseLock();
   }
@@ -1448,17 +2082,20 @@ function apiUpdateOutreachPrograms_(p) {
     Object.keys(leadHeaders).forEach(key => current[key] = leadValues[leadHeaders[key]]);
     const currentBusiness = String(outreachValue_(current, ["business", "business_name"]) || "").trim();
     const currentEmail = String(outreachValue_(current, ["email", "email_address"]) || "").trim();
+    const accountId = String(current.account_id || "").trim();
     if (currentBusiness !== String(p.business || "").trim()) throw new Error("Business row changed. Refresh and try again.");
     if (p.email && currentEmail !== String(p.email).trim()) throw new Error("Contact email changed. Refresh and try again.");
+    if (p.account_id && accountId !== String(p.account_id).trim()) throw new Error("Account identity changed. Refresh and try again.");
 
     const sheet = getOutreachProgramSheet_(true);
     const h = getHeaderMap_(sheet);
-    const programKey = `account::${rowNumber}`;
+    const programKey = `account::${accountId || rowNumber}`;
     const now = new Date();
     const updatedBy = Session.getActiveUser().getEmail() || "Sturgeon Distribution Hub";
     const values = Array(sheet.getLastColumn()).fill("");
     const set = (key, value) => { if (h[key] !== undefined) values[h[key]] = value; };
     set("program_key", programKey);
+    set("account_id", accountId);
     set("source_row", rowNumber);
     set("business_name", currentBusiness);
     set("email", currentEmail);
@@ -1484,10 +2121,11 @@ function apiUpdateOutreachPrograms_(p) {
     sheet.getRange(targetRow, 1, 1, values.length).setValues([values]);
 
     const activitySheet = getOutreachSheet_(OUTREACH_ACTIVITY_SHEET_NAME);
-    const activityHeaders = getHeaderMap_(activitySheet);
+    const activityHeaders = ensureHeaderColumns_(activitySheet, [ACCOUNT_ID_HEADER]);
     const activityRow = Array(activitySheet.getLastColumn()).fill("");
     const setActivity = (key, value) => { if (activityHeaders[key] !== undefined) activityRow[activityHeaders[key]] = value; };
     setActivity("timestamp", now);
+    setActivity("account_id", accountId);
     setActivity("business", currentBusiness);
     setActivity("intended_recipient", currentEmail);
     setActivity("message_stage", "PROGRAMS");
@@ -1497,8 +2135,9 @@ function apiUpdateOutreachPrograms_(p) {
     setActivity("error_detail", `Newsletter: ${newsletterStatus}; Online ordering: ${orderingStatus}; no action sent.`);
     setActivity("mailer_version", APP_VERSION);
     activitySheet.appendRow(activityRow);
+    appendAudit_("UPDATE_ACCOUNT_PROGRAMS", "Account", accountId, accountId, updatedBy, OUTREACH_SHEET_NAME, OUTREACH_PROGRAMS_SHEET_NAME, "Completed", `Newsletter: ${newsletterStatus}; ordering: ${orderingStatus}`);
 
-    return { message:"Program plan saved.", source_row:rowNumber, updated_at:now.toISOString() };
+    return { message:"Program plan saved.", account_id:accountId, source_row:rowNumber, updated_at:now.toISOString() };
   } finally {
     lock.releaseLock();
   }
@@ -1507,9 +2146,13 @@ function apiUpdateOutreachPrograms_(p) {
 function getNewsletterContactsSheet_(createIfMissing) {
   const ss = getOutreachSs_();
   let sheet = ss.getSheetByName(NEWSLETTER_CONTACTS_SHEET_NAME);
-  if (sheet || !createIfMissing) return sheet;
+  if (sheet) {
+    ensureHeaderColumns_(sheet, [ACCOUNT_ID_HEADER]);
+    return sheet;
+  }
+  if (!createIfMissing) return sheet;
   sheet = ss.insertSheet(NEWSLETTER_CONTACTS_SHEET_NAME);
-  const headers = [["Contact ID", "Name", "Email", "Organization", "Relationship Type", "Status", "Consent Source", "Consent Date", "Source Row", "Source Business", "Topics", "Notes", "Updated At", "Updated By", "App Version"]];
+  const headers = [["Contact ID", "Account ID", "Name", "Email", "Organization", "Relationship Type", "Status", "Consent Source", "Consent Date", "Source Row", "Source Business", "Topics", "Notes", "Updated At", "Updated By", "App Version"]];
   sheet.getRange(1, 1, 1, headers[0].length).setValues(headers).setFontWeight("bold").setBackground("#e5e7eb").setHorizontalAlignment("center");
   sheet.setFrozenRows(1);
   return sheet;
@@ -1547,6 +2190,7 @@ function apiUpsertNewsletterContact_(p) {
     const values = Array(sheet.getLastColumn()).fill("");
     const set = (key, value) => { if (h[key] !== undefined) values[h[key]] = value; };
     set("contact_id", contactId);
+    set("account_id", String(p.account_id || "").trim());
     set("name", String(p.name || "").trim());
     set("email", email);
     set("organization", String(p.organization || "").trim());
@@ -1571,7 +2215,7 @@ function apiUpsertNewsletterContact_(p) {
 function publicText_(value, maxLength, label) {
   const text = String(value ?? "").trim();
   if (text.length > maxLength) throw new Error(`${label} is too long.`);
-  return text;
+  return /^[=+\-@]/.test(text) ? `'${text}` : text;
 }
 
 function publicEmail_(value, label, required) {
@@ -1590,7 +2234,11 @@ function publicSubmissionId_(prefix) {
 function getCustomerApplicationsSheet_(createIfMissing) {
   const ss = getOutreachSs_();
   let sheet = ss.getSheetByName(CUSTOMER_APPLICATIONS_SHEET_NAME);
-  if (sheet || !createIfMissing) return sheet;
+  if (sheet) {
+    ensureHeaderColumns_(sheet, [ACCOUNT_ID_HEADER, "Account Link Status", "Inventory Tracking", "Inventory Store ID", "Inventory Route", "Data Sync Status"]);
+    return sheet;
+  }
+  if (!createIfMissing) return sheet;
   sheet = ss.insertSheet(CUSTOMER_APPLICATIONS_SHEET_NAME);
   const headers = [[
     "Application ID", "Submitted At", "Workflow Status", "Legal Business Name", "Business Name", "Business Type", "Website",
@@ -1599,7 +2247,8 @@ function getCustomerApplicationsSheet_(createIfMissing) {
     "AP Contact Name", "AP Email", "Invoice Preference", "Delivery Address 1", "Delivery Address 2", "Delivery City",
     "Delivery State", "Delivery ZIP", "Delivery Window", "Delivery Instructions", "Billing Same", "Billing Address 1",
     "Billing City", "Billing State", "Billing ZIP", "Product Interests", "Expected Order Frequency", "Referral Source", "Notes",
-    "Authorized Name", "Authorized Title", "Attested", "Newsletter Opt In", "Newsletter Consent At", "Submission Token", "App Version"
+    "Authorized Name", "Authorized Title", "Attested", "Newsletter Opt In", "Newsletter Consent At", "Submission Token", "App Version",
+    "Account ID", "Account Link Status", "Inventory Tracking", "Inventory Store ID", "Inventory Route", "Data Sync Status"
   ]];
   sheet.getRange(1, 1, 1, headers[0].length).setValues(headers).setFontWeight("bold").setBackground("#44656b").setFontColor("#ffffff").setHorizontalAlignment("center");
   sheet.setFrozenRows(1);
@@ -1611,12 +2260,17 @@ function getCustomerApplicationsSheet_(createIfMissing) {
 function getOnlineOrderRequestsSheet_(createIfMissing) {
   const ss = getOutreachSs_();
   let sheet = ss.getSheetByName(ONLINE_ORDER_REQUESTS_SHEET_NAME);
-  if (sheet || !createIfMissing) return sheet;
+  if (sheet) {
+    ensureHeaderColumns_(sheet, [ACCOUNT_ID_HEADER, "Account Link Status", "Catalog Source", "Integration Status", "Badger Match Status", "Badger Customer Name", "Badger Invoice Date", "Badger Amount", "Delivered At"]);
+    return sheet;
+  }
+  if (!createIfMissing) return sheet;
   sheet = ss.insertSheet(ONLINE_ORDER_REQUESTS_SHEET_NAME);
   const headers = [[
     "Request ID", "Submitted At", "Workflow Status", "Verification Status", "Business Name", "Customer ID", "Contact Name",
     "Email", "Phone", "PO Number", "Requested Delivery Date", "Delivery Window", "Delivery Instructions", "Notes",
-    "Line Count", "Requested Cases", "Requested Bottles", "Bottle Equivalent", "Submission Token", "App Version"
+    "Line Count", "Requested Cases", "Requested Bottles", "Bottle Equivalent", "Submission Token", "App Version",
+    "Account ID", "Account Link Status", "Catalog Source", "Integration Status", "Badger Match Status", "Badger Customer Name", "Badger Invoice Date", "Badger Amount", "Delivered At"
   ]];
   sheet.getRange(1, 1, 1, headers[0].length).setValues(headers).setFontWeight("bold").setBackground("#44656b").setFontColor("#ffffff").setHorizontalAlignment("center");
   sheet.setFrozenRows(1);
@@ -1628,9 +2282,13 @@ function getOnlineOrderRequestsSheet_(createIfMissing) {
 function getOnlineOrderLinesSheet_(createIfMissing) {
   const ss = getOutreachSs_();
   let sheet = ss.getSheetByName(ONLINE_ORDER_LINES_SHEET_NAME);
-  if (sheet || !createIfMissing) return sheet;
+  if (sheet) {
+    ensureHeaderColumns_(sheet, [ACCOUNT_ID_HEADER, "Catalog Source", "External Item ID"]);
+    return sheet;
+  }
+  if (!createIfMissing) return sheet;
   sheet = ss.insertSheet(ONLINE_ORDER_LINES_SHEET_NAME);
-  const headers = [["Request ID", "Line Number", "SKU ID", "SKU Name", "Quantity", "Unit", "Units Per Case", "Bottle Equivalent", "App Version"]];
+  const headers = [["Request ID", "Account ID", "Line Number", "SKU ID", "SKU Name", "Quantity", "Unit", "Units Per Case", "Bottle Equivalent", "Catalog Source", "External Item ID", "App Version"]];
   sheet.getRange(1, 1, 1, headers[0].length).setValues(headers).setFontWeight("bold").setBackground("#44656b").setFontColor("#ffffff").setHorizontalAlignment("center");
   sheet.setFrozenRows(1);
   return sheet;
@@ -1657,6 +2315,7 @@ function upsertNewsletterFromApplication_(application) {
   const row = match >= 0 ? values[match].slice() : Array(sheet.getLastColumn()).fill("");
   const set = (key, value) => { if (h[key] !== undefined) row[h[key]] = value; };
   set("contact_id", match >= 0 ? String(row[h.contact_id] || Utilities.getUuid()) : Utilities.getUuid());
+  set("account_id", application.account_id || "");
   set("name", application.primary_contact_name);
   set("email", email);
   set("organization", application.business_name || application.legal_business_name);
@@ -1670,6 +2329,11 @@ function upsertNewsletterFromApplication_(application) {
   set("updated_by", "customer application form");
   set("app_version", APP_VERSION);
   sheet.getRange(match >= 0 ? match + 2 : sheet.getLastRow() + 1, 1, 1, row.length).setValues([row]);
+}
+
+function resolvePublicAccount_(claimedAccountId, business, email, city, lockHeld) {
+  const identity = ensureAccountIdentityModel_(!!lockHeld);
+  return findIdentityMatch_(identity, claimedAccountId, business, email, city);
 }
 
 function sendCustomerApplicationNotification_(application, sheet, rowNumber) {
@@ -1757,6 +2421,7 @@ function apiSubmitCustomerApplication_(p) {
     authorized_name:publicText_(p.authorized_name, 120, "Authorized name"),
     authorized_title:publicText_(p.authorized_title, 100, "Authorized title"),
     newsletter_opt_in:toBool_(p.newsletter_opt_in),
+    claimed_account_id:publicText_(p.account_id, 80, "Account ID"),
     submission_token:publicText_(p.submission_token, 120, "Submission token"),
   };
   if (!application.billing_same && (!application.billing_address_1 || !application.billing_city || !application.billing_state || !application.billing_zip)) {
@@ -1765,11 +2430,17 @@ function apiSubmitCustomerApplication_(p) {
 
   const lock = LockService.getScriptLock();
   if (!lock.tryLock(5000)) throw new Error("Another application is being recorded. Try again in a moment.");
+  let journal = null;
   try {
     const sheet = getCustomerApplicationsSheet_(true);
-    ensureHeaderColumns_(sheet, ["Notification Status", "Notification Sent At", "Notification Error"]);
+    ensureHeaderColumns_(sheet, ["Notification Status", "Notification Sent At", "Notification Error", ACCOUNT_ID_HEADER, "Account Link Status", "Data Sync Status"]);
     const priorId = existingSubmissionByToken_(sheet, application.submission_token, "Application ID");
     if (priorId) return { message:"Application already received.", application_id:priorId };
+    const link = resolvePublicAccount_(application.claimed_account_id, application.business_name || application.legal_business_name, application.primary_email, application.delivery_city, true);
+    application.account_id = link.record ? link.record.account_id : "";
+    application.account_link_status = link.status;
+    journal = startSubmissionJournal_("Customer application", application.submission_token, application.account_id, application.business_name || application.legal_business_name, p);
+    if (journal.prior_record_id) return { message:"Application already received.", application_id:journal.prior_record_id };
     const h = getHeaderMap_(sheet);
     const now = new Date();
     application.application_id = publicSubmissionId_("APP");
@@ -1779,19 +2450,33 @@ function apiSubmitCustomerApplication_(p) {
     set("submitted_at", now);
     set("workflow_status", "New");
     Object.keys(application).forEach(key => set(key, application[key]));
+    set("account_id", application.account_id);
+    set("account_link_status", application.account_link_status);
+    set("data_sync_status", "Normalized record saved");
     set("attested", true);
     set("newsletter_consent_at", application.newsletter_opt_in ? now : "");
     set("app_version", APP_VERSION);
     sheet.appendRow(row);
     upsertNewsletterFromApplication_(application);
     const applicationRow = sheet.getLastRow();
+    const notificationJob = enqueueIntegrationJob_("APPLICATION_NOTIFICATION", "Application", application.application_id, application.account_id, {
+      application_id:application.application_id,
+      business:application.business_name || application.legal_business_name,
+      email:application.primary_email,
+    });
     const notification = sendCustomerApplicationNotification_(application, sheet, applicationRow);
     sheet.getRange(applicationRow, h.notification_status + 1, 1, 3).setValues([[
       notification.status,
       notification.sent_at,
       notification.error,
     ]]);
-    return { message:"Application received for review.", application_id:application.application_id };
+    updateIntegrationJob_(notificationJob, notification.status === "Sent" ? "Completed" : "Retry", notification.error);
+    completeSubmissionJournal_(journal, "Completed", application.application_id, "");
+    appendAudit_("SUBMIT_APPLICATION", "Application", application.application_id, application.account_id, "Public customer form", "Customer application", CUSTOMER_APPLICATIONS_SHEET_NAME, "Completed", application.account_link_status);
+    return { message:"Application received for review.", application_id:application.application_id, account_link_status:application.account_link_status };
+  } catch (error) {
+    if (journal) completeSubmissionJournal_(journal, "Needs recovery", "", error.message || error);
+    throw error;
   } finally {
     lock.releaseLock();
   }
@@ -1813,6 +2498,8 @@ function customerApplicationRecord_(row) {
   return {
     source_row:row.source_row,
     application_id:String(row.application_id || ""),
+    account_id:String(row.account_id || ""),
+    account_link_status:String(row.account_link_status || "Needs staff match"),
     submitted_at:row.submitted_at || "",
     workflow_status:String(row.workflow_status || "New"),
     legal_business_name:String(row.legal_business_name || ""),
@@ -1853,6 +2540,10 @@ function customerApplicationRecord_(row) {
     staff_notes:String(row.staff_notes || ""),
     review_updated_at:row.review_updated_at || "",
     review_updated_by:String(row.review_updated_by || ""),
+    inventory_tracking:toBool_(row.inventory_tracking),
+    inventory_store_id:String(row.inventory_store_id || ""),
+    inventory_route:String(row.inventory_route || ""),
+    data_sync_status:String(row.data_sync_status || ""),
   };
 }
 
@@ -1861,6 +2552,8 @@ function onlineOrderRecord_(row, linesByRequest) {
   return {
     source_row:row.source_row,
     request_id:requestId,
+    account_id:String(row.account_id || ""),
+    account_link_status:String(row.account_link_status || "Needs staff match"),
     submitted_at:row.submitted_at || "",
     workflow_status:String(row.workflow_status || "New"),
     verification_status:String(row.verification_status || "Needs review"),
@@ -1886,6 +2579,13 @@ function onlineOrderRecord_(row, linesByRequest) {
     staff_notes:String(row.staff_notes || ""),
     review_updated_at:row.review_updated_at || "",
     review_updated_by:String(row.review_updated_by || ""),
+    catalog_source:String(row.catalog_source || ORDER_CATALOG_SOURCE),
+    integration_status:String(row.integration_status || "Pending review"),
+    badger_match_status:String(row.badger_match_status || "Not checked"),
+    badger_customer_name:String(row.badger_customer_name || ""),
+    badger_invoice_date:row.badger_invoice_date || "",
+    badger_amount:row.badger_amount || "",
+    delivered_at:row.delivered_at || "",
     lines:linesByRequest.get(requestId) || [],
   };
 }
@@ -1898,18 +2598,26 @@ function recordTimestamp_(value) {
 function getCustomerWorkflowLogSheet_() {
   const ss = getOutreachSs_();
   let sheet = ss.getSheetByName(CUSTOMER_WORKFLOW_LOG_SHEET_NAME);
-  if (sheet) return sheet;
+  if (sheet) {
+    ensureHeaderColumns_(sheet, [ACCOUNT_ID_HEADER]);
+    return sheet;
+  }
   sheet = ss.insertSheet(CUSTOMER_WORKFLOW_LOG_SHEET_NAME);
-  const headers = [["Timestamp", "Record Type", "Record ID", "Business", "Previous Status", "New Status", "Updated By", "Details", "App Version"]];
+  const headers = [["Timestamp", "Record Type", "Record ID", "Account ID", "Business", "Previous Status", "New Status", "Updated By", "Details", "App Version"]];
   sheet.getRange(1, 1, 1, headers[0].length).setValues(headers).setFontWeight("bold").setBackground("#44656b").setFontColor("#ffffff");
   sheet.setFrozenRows(1);
   return sheet;
 }
 
-function appendCustomerWorkflowLog_(recordType, recordId, business, previousStatus, newStatus, updatedBy, details) {
-  getCustomerWorkflowLogSheet_().appendRow([
-    new Date(), recordType, recordId, business, previousStatus, newStatus, updatedBy, details || "", APP_VERSION,
-  ]);
+function appendCustomerWorkflowLog_(recordType, recordId, accountId, business, previousStatus, newStatus, updatedBy, details) {
+  const sheet = getCustomerWorkflowLogSheet_();
+  const h = getHeaderMap_(sheet);
+  const row = Array(sheet.getLastColumn()).fill("");
+  const set = (key, value) => { if (h[key] !== undefined) row[h[key]] = value; };
+  set("timestamp", new Date()); set("record_type", recordType); set("record_id", recordId); set("account_id", accountId || "");
+  set("business", business); set("previous_status", previousStatus); set("new_status", newStatus); set("updated_by", updatedBy);
+  set("details", details || ""); set("app_version", APP_VERSION);
+  sheet.appendRow(row);
 }
 
 function findRecordRow_(sheet, idKey, idValue) {
@@ -1921,6 +2629,7 @@ function findRecordRow_(sheet, idKey, idValue) {
 }
 
 function apiGetCustomerWorkQueue_() {
+  ensureAccountIdentityModel_();
   const applicationSheet = getCustomerApplicationsSheet_(false);
   const orderSheet = getOnlineOrderRequestsSheet_(false);
   const lineSheet = getOnlineOrderLinesSheet_(false);
@@ -1935,12 +2644,15 @@ function apiGetCustomerWorkQueue_() {
     if (!linesByRequest.has(requestId)) linesByRequest.set(requestId, []);
     linesByRequest.get(requestId).push({
       line_number:Number(row.line_number || 0),
+      account_id:String(row.account_id || ""),
       sku_id:String(row.sku_id || ""),
       sku_name:String(row.sku_name || ""),
       quantity:Number(row.quantity || 0),
       unit:String(row.unit || ""),
       units_per_case:Number(row.units_per_case || 0),
       bottle_equivalent:Number(row.bottle_equivalent || 0),
+      catalog_source:String(row.catalog_source || ORDER_CATALOG_SOURCE),
+      external_item_id:String(row.external_item_id || ""),
     });
   });
 
@@ -1962,8 +2674,178 @@ function apiGetCustomerWorkQueue_() {
       new_orders:orders.filter(record => record.workflow_status === "New").length,
       active_orders:orders.filter(record => activeOrderStatuses.includes(record.workflow_status)).length,
       invoice_needed:orders.filter(record => ["Confirmed", "Invoicing"].includes(record.workflow_status) && ["Not started", "Ready for Badger"].includes(record.invoice_status)).length,
+      integration_attention:orders.filter(record => ["Needs retry", "Badger invoice not found", "Needs account match"].includes(record.integration_status)).length,
     },
   };
+}
+
+function makeStoreId_(business, accountId) {
+  const words = String(business || "STORE").toUpperCase().replace(/[^A-Z0-9 ]/g, " ").split(/\s+/).filter(Boolean);
+  const prefix = words.slice(0, 3).map(word => word.slice(0, 4)).join("-") || "STORE";
+  return `${prefix}-${String(accountId || "").replace(/[^A-Z0-9]/gi, "").slice(-6).toUpperCase()}`.slice(0, 40);
+}
+
+function ensureInventoryStoreForApplication_(application, customerId, trackInventory, requestedStoreId, route) {
+  if (!trackInventory) return "";
+  if (!isHubInventoryActive_()) throw new Error("Initialize the hardened staging Hub before enabling inventory tracking.");
+  const sheet = getSheet_(SHEET_NAMES.STORES);
+  const h = ensureHeaderColumns_(sheet, ["account_id", "customer_id", "manager_name", "assistant_manager_name"]);
+  const rows = getAllRowsAsObjects_(sheet);
+  const accountId = String(application.account_id || "");
+  const existingIndex = rows.findIndex(row => String(row.account_id || "") === accountId);
+  const storeId = publicText_(requestedStoreId || (existingIndex >= 0 ? rows[existingIndex].store_id : makeStoreId_(application.business_name, accountId)), 80, "Inventory store ID");
+  const conflict = rows.find(row => String(row.store_id || "") === storeId && String(row.account_id || "") !== accountId);
+  if (conflict) throw new Error("That inventory store ID is already used by another account.");
+  const target = existingIndex >= 0 ? existingIndex + 2 : sheet.getLastRow() + 1;
+  const values = existingIndex >= 0
+    ? sheet.getRange(target, 1, 1, sheet.getLastColumn()).getValues()[0]
+    : Array(sheet.getLastColumn()).fill("");
+  const set = (key, value) => { if (h[key] !== undefined) values[h[key]] = value; };
+  set("store_id", storeId);
+  set("store_name", application.business_name);
+  set("route", String(route || "Unassigned"));
+  set("active", true);
+  set("account_id", accountId);
+  set("customer_id", customerId);
+  sheet.getRange(target, 1, 1, values.length).setValues([values]);
+  return storeId;
+}
+
+function upsertActiveAccountProgram_(account, customerId, applicationId, staffName) {
+  const sheet = getOutreachProgramSheet_(true);
+  const h = getHeaderMap_(sheet);
+  const key = `account::${account.account_id}`;
+  const rows = sheet.getLastRow() < 2 ? [] : sheet.getRange(2, 1, sheet.getLastRow() - 1, sheet.getLastColumn()).getValues();
+  const index = rows.findIndex(row => String(row[h.program_key] || "") === key || String(row[h.account_id] || "") === account.account_id);
+  const values = index >= 0 ? rows[index].slice() : Array(sheet.getLastColumn()).fill("");
+  const set = (name, value) => { if (h[name] !== undefined) values[h[name]] = value; };
+  const now = new Date();
+  set("program_key", key); set("account_id", account.account_id); set("source_row", account.source_row);
+  set("business_name", account.business); set("email", account.email); set("ordering_status", "Active");
+  set("ordering_customer_id", customerId); set("ordering_invite_date", now);
+  set("ordering_portal_url", `https://distribution-hub.netlify.app/order.html?account_id=${encodeURIComponent(account.account_id)}&customer_id=${encodeURIComponent(customerId || "")}`);
+  set("updated_at", now); set("updated_by", staffName); set("notes", `Activated from application ${applicationId}`); set("app_version", APP_VERSION);
+  sheet.getRange(index >= 0 ? index + 2 : sheet.getLastRow() + 1, 1, 1, values.length).setValues([values]);
+}
+
+function synchronizeApplicationAccount_(application, p, staffName) {
+  const identity = ensureAccountIdentityModel_(true);
+  let account = String(p.account_id || application.account_id || "") ? identity.by_id.get(String(p.account_id || application.account_id || "")) : null;
+  if (!account) {
+    const match = findIdentityMatch_(identity, "", application.business_name, application.primary_email, application.delivery_city);
+    account = match.record;
+  }
+  if (!account) {
+    const directory = getOutreachSheet_(OUTREACH_SHEET_NAME);
+    const accountId = permanentId_("ACC");
+    directory.appendRow(directoryRowFromBusiness_(directory, {
+      business_name:application.business_name,
+      contact:application.primary_contact_name,
+      email:application.primary_email,
+      phone:application.primary_phone,
+      address:application.delivery_address_1,
+      city:application.delivery_city,
+      state:application.delivery_state,
+      postal_code:application.delivery_zip,
+      relationship:"Current customer",
+      status:"Existing customer",
+      do_not_email:true,
+      lead_source:`Customer application ${application.application_id}`,
+      notes:`Created from approved application ${application.application_id}`,
+    }, accountId, new Date()));
+    account = accountIdentityFromRows_(getAllRowsAsObjects_(directory)).by_id.get(accountId);
+  }
+  const directory = getOutreachSheet_(OUTREACH_SHEET_NAME);
+  const h = getHeaderMap_(directory);
+  const row = directory.getRange(account.source_row, 1, 1, directory.getLastColumn()).getValues()[0];
+  const set = (aliases, value, overwrite) => {
+    const key = aliases.map(normalizeHeader_).find(alias => h[alias] !== undefined);
+    if (key === undefined) return;
+    if (overwrite || !String(row[h[key]] || "").trim()) row[h[key]] = value;
+  };
+  set(["Business Name", "Business"], application.business_name, false);
+  set(["Contact Person", "Contact"], application.primary_contact_name, false);
+  set(["Email"], application.primary_email, false);
+  set(["Phone Number", "Phone"], application.primary_phone, false);
+  set(["Street Address", "Address"], application.delivery_address_1, false);
+  set(["City"], application.delivery_city, false); set(["State"], application.delivery_state, false); set(["Zip Code", "ZIP"], application.delivery_zip, false);
+  set(["Relationship"], "Current customer", true); set(["Status"], "Existing customer", true); set(["Do Not Email"], true, true);
+  set(["Customer Source"], `Application ${application.application_id}`, true); set(["Record Updated At"], new Date(), true);
+  directory.getRange(account.source_row, 1, 1, row.length).setValues([row]);
+  account = accountIdentityFromRows_(getAllRowsAsObjects_(directory)).by_id.get(account.account_id);
+  const customerId = publicText_(p.customer_id, 80, "Customer ID");
+  upsertActiveAccountProgram_(account, customerId, application.application_id, staffName);
+  const storeId = ensureInventoryStoreForApplication_(Object.assign({}, application, { account_id:account.account_id }), customerId, toBool_(p.inventory_tracking), p.inventory_store_id, p.inventory_route);
+  appendAudit_("ACTIVATE_ACCOUNT", "Application", application.application_id, account.account_id, staffName, CUSTOMER_APPLICATIONS_SHEET_NAME, OUTREACH_SHEET_NAME, "Completed", `Customer ID ${customerId}; inventory store ${storeId || "not enabled"}.`);
+  return { account_id:account.account_id, account_link_status:"Linked and active", inventory_store_id:storeId, data_sync_status:storeId ? "Directory, ordering and inventory store synchronized" : "Directory and ordering synchronized" };
+}
+
+function findBadgerInvoice_(invoiceNumber) {
+  const normalized = String(invoiceNumber || "").toUpperCase().replace(/[^A-Z0-9]/g, "");
+  if (!normalized) return null;
+  const sheet = SpreadsheetApp.openById(BADGER_TRACKER_SPREADSHEET_ID).getSheetByName("Invoices");
+  if (!sheet || sheet.getLastRow() < 2) return null;
+  const rows = getAllRowsAsObjects_(sheet);
+  const match = rows.find(row => String(firstPresent_(row, ["invoice_#", "invoice_number", "invoice_no"]) || "").toUpperCase().replace(/[^A-Z0-9]/g, "") === normalized);
+  if (!match) return null;
+  return {
+    invoice_number:String(firstPresent_(match, ["invoice_#", "invoice_number", "invoice_no"]) || ""),
+    invoice_date:firstPresent_(match, ["invoice_date", "date"]) || "",
+    customer_name:String(firstPresent_(match, ["customer_name", "customer"]) || ""),
+    amount:firstPresent_(match, ["amount_due", "amount", "total"]) || "",
+    paid:firstPresent_(match, ["paid_to_me", "paid"]) || "",
+    pdf_file_id:String(firstPresent_(match, ["pdf_file_id"]) || ""),
+  };
+}
+
+function reconcileBadgerForOrder_(sheet, rowNumber, h, invoiceNumber) {
+  const set = (key, value) => { if (h[key] !== undefined) sheet.getRange(rowNumber, h[key] + 1).setValue(value); };
+  if (!String(invoiceNumber || "").trim()) {
+    set("badger_match_status", "Not checked");
+    return { matched:false, status:"Not checked" };
+  }
+  const match = findBadgerInvoice_(invoiceNumber);
+  if (!match) {
+    set("badger_match_status", "Pending parser import");
+    set("integration_status", "Badger invoice not found");
+    return { matched:false, status:"Pending parser import" };
+  }
+  set("badger_match_status", "Matched"); set("badger_customer_name", match.customer_name);
+  set("badger_invoice_date", match.invoice_date); set("badger_amount", match.amount); set("integration_status", "Synchronized");
+  return { matched:true, status:"Matched", invoice:match };
+}
+
+function upsertDeliveryForOrder_(order, lines, staffName) {
+  ensureFoundationalSheets_();
+  const sheet = getOutreachSs_().getSheetByName(DELIVERIES_SHEET_NAME);
+  const h = getHeaderMap_(sheet);
+  const rows = sheet.getLastRow() < 2 ? [] : sheet.getRange(2, 1, sheet.getLastRow() - 1, sheet.getLastColumn()).getValues();
+  const index = rows.findIndex(row => String(row[h.request_id] || "") === order.request_id);
+  const values = index >= 0 ? rows[index].slice() : Array(sheet.getLastColumn()).fill("");
+  const deliveryId = index >= 0 ? String(values[h.delivery_id] || permanentId_("DLV")) : permanentId_("DLV");
+  const set = (key, value) => { if (h[key] !== undefined) values[h[key]] = value; };
+  const now = new Date();
+  set("delivery_id", deliveryId); set("request_id", order.request_id); set("account_id", order.account_id); set("store_id", order.store_id || "");
+  set("business_name", order.business_name); set("delivery_status", order.delivery_status); set("requested_date", order.requested_delivery_date || "");
+  if (order.delivery_status === "Delivered" && !values[h.delivered_at]) set("delivered_at", now);
+  set("assigned_to", order.assigned_to || staffName); set("badger_invoice_number", order.badger_invoice_number || "");
+  if (index < 0) set("created_at", now); set("updated_at", now); set("app_version", APP_VERSION);
+  sheet.getRange(index >= 0 ? index + 2 : sheet.getLastRow() + 1, 1, 1, values.length).setValues([values]);
+
+  const lineSheet = getOutreachSs_().getSheetByName(DELIVERY_LINES_SHEET_NAME);
+  const lh = getHeaderMap_(lineSheet);
+  const existing = lineSheet.getLastRow() < 2 ? [] : lineSheet.getRange(2, 1, lineSheet.getLastRow() - 1, lineSheet.getLastColumn()).getValues();
+  const existingKeys = new Set(existing.map(row => `${row[lh.request_id]}::${row[lh.line_number]}`));
+  const newRows = lines.filter(line => !existingKeys.has(`${order.request_id}::${line.line_number}`)).map(line => {
+    const row = Array(lineSheet.getLastColumn()).fill("");
+    const setLine = (key, value) => { if (lh[key] !== undefined) row[lh[key]] = value; };
+    setLine("delivery_id", deliveryId); setLine("request_id", order.request_id); setLine("account_id", order.account_id); setLine("line_number", line.line_number);
+    setLine("sku_id", line.sku_id); setLine("sku_name", line.sku_name); setLine("quantity", line.quantity); setLine("unit", line.unit);
+    setLine("bottle_equivalent", line.bottle_equivalent); setLine("created_at", now); setLine("app_version", APP_VERSION);
+    return row;
+  });
+  if (newRows.length) lineSheet.getRange(lineSheet.getLastRow() + 1, 1, newRows.length, newRows[0].length).setValues(newRows);
+  return deliveryId;
 }
 
 function apiUpdateCustomerApplication_(p) {
@@ -1980,22 +2862,48 @@ function apiUpdateCustomerApplication_(p) {
   try {
     const sheet = getCustomerApplicationsSheet_(false);
     if (!sheet) throw new Error("Customer Applications sheet is missing.");
-    ensureHeaderColumns_(sheet, ["Customer ID", "Assigned To", "Staff Notes", "Review Updated At", "Review Updated By"]);
+    ensureHeaderColumns_(sheet, ["Customer ID", "Assigned To", "Staff Notes", "Review Updated At", "Review Updated By", ACCOUNT_ID_HEADER, "Account Link Status", "Inventory Tracking", "Inventory Store ID", "Inventory Route", "Data Sync Status"]);
     const rowNumber = findRecordRow_(sheet, "application_id", applicationId);
     if (!rowNumber) throw new Error("Application not found.");
     const h = getHeaderMap_(sheet);
     const row = sheet.getRange(rowNumber, 1, 1, sheet.getLastColumn()).getValues()[0];
     const previousStatus = String(row[h.workflow_status] || "New");
     const business = String(row[h.business_name] || row[h.legal_business_name] || "");
+    const customerId = publicText_(p.customer_id, 80, "Customer ID");
+    if (status === "Account active" && !customerId) throw new Error("Customer ID is required before activating an account.");
     const set = (key, value) => { if (h[key] !== undefined) sheet.getRange(rowNumber, h[key] + 1).setValue(value); };
     set("workflow_status", status);
-    set("customer_id", publicText_(p.customer_id, 80, "Customer ID"));
+    set("customer_id", customerId);
     set("assigned_to", publicText_(p.assigned_to, 120, "Assigned to"));
     set("staff_notes", publicText_(p.staff_notes, 4000, "Staff notes"));
+    set("inventory_tracking", toBool_(p.inventory_tracking));
+    set("inventory_store_id", publicText_(p.inventory_store_id, 80, "Inventory store ID"));
+    set("inventory_route", publicText_(p.inventory_route, 120, "Inventory route"));
     set("review_updated_at", new Date());
     set("review_updated_by", staffName);
-    appendCustomerWorkflowLog_("Application", applicationId, business, previousStatus, status, staffName, `Customer ID: ${String(p.customer_id || "")}`);
-    return { message:"Application updated.", application_id:applicationId, workflow_status:status };
+    let accountId = publicText_(p.account_id || (h.account_id !== undefined ? row[h.account_id] : ""), 80, "Account ID");
+    let sync = null;
+    if (status === "Account active") {
+      const record = customerApplicationRecord_(Object.assign({ source_row:rowNumber }, Object.keys(h).reduce((item, key) => {
+        item[key] = row[h[key]];
+        return item;
+      }, {})));
+      sync = synchronizeApplicationAccount_(record, Object.assign({}, p, { customer_id:customerId, account_id:accountId }), staffName);
+      accountId = sync.account_id;
+      set("account_id", accountId);
+      set("account_link_status", sync.account_link_status);
+      set("inventory_store_id", sync.inventory_store_id || "");
+      set("data_sync_status", sync.data_sync_status);
+    } else if (accountId) {
+      const identity = ensureAccountIdentityModel_(true);
+      if (!identity.by_id.has(accountId)) throw new Error("The selected Account ID does not exist in the directory.");
+      set("account_id", accountId);
+      set("account_link_status", "Linked by staff");
+      set("data_sync_status", "Application linked; account not yet activated");
+    }
+    appendCustomerWorkflowLog_("Application", applicationId, accountId, business, previousStatus, status, staffName, `Customer ID: ${customerId}; inventory tracking: ${toBool_(p.inventory_tracking) ? "yes" : "no"}`);
+    appendAudit_("UPDATE_APPLICATION", "Application", applicationId, accountId, staffName, CUSTOMER_APPLICATIONS_SHEET_NAME, CUSTOMER_APPLICATIONS_SHEET_NAME, "Completed", `${previousStatus} to ${status}`);
+    return { message:"Application updated.", application_id:applicationId, account_id:accountId, workflow_status:status, synchronization:sync };
   } finally {
     lock.releaseLock();
   }
@@ -2021,13 +2929,18 @@ function apiUpdateOnlineOrderRequest_(p) {
   try {
     const sheet = getOnlineOrderRequestsSheet_(false);
     if (!sheet) throw new Error("Online Order Requests sheet is missing.");
-    ensureHeaderColumns_(sheet, ["Badger Invoice Number", "Invoice Status", "Delivery Status", "Assigned To", "Staff Notes", "Review Updated At", "Review Updated By"]);
+    ensureHeaderColumns_(sheet, ["Badger Invoice Number", "Invoice Status", "Delivery Status", "Assigned To", "Staff Notes", "Review Updated At", "Review Updated By", ACCOUNT_ID_HEADER, "Account Link Status", "Integration Status", "Delivered At"]);
     const rowNumber = findRecordRow_(sheet, "request_id", requestId);
     if (!rowNumber) throw new Error("Order request not found.");
     const h = getHeaderMap_(sheet);
     const row = sheet.getRange(rowNumber, 1, 1, sheet.getLastColumn()).getValues()[0];
     const previousStatus = String(row[h.workflow_status] || "New");
     const business = String(row[h.business_name] || "");
+    let accountId = publicText_(p.account_id || (h.account_id !== undefined ? row[h.account_id] : ""), 80, "Account ID");
+    if (accountId) {
+      const identity = ensureAccountIdentityModel_(true);
+      if (!identity.by_id.has(accountId)) throw new Error("The selected Account ID does not exist in the directory.");
+    }
     const set = (key, value) => { if (h[key] !== undefined) sheet.getRange(rowNumber, h[key] + 1).setValue(value); };
     set("workflow_status", status);
     set("badger_invoice_number", publicText_(p.badger_invoice_number, 80, "Badger invoice number"));
@@ -2040,26 +2953,41 @@ function apiUpdateOnlineOrderRequest_(p) {
     set("requested_delivery_date", requestedDeliveryDate ? new Date(`${requestedDeliveryDate}T12:00:00`) : "");
     set("review_updated_at", new Date());
     set("review_updated_by", staffName);
-    appendCustomerWorkflowLog_("Order", requestId, business, previousStatus, status, staffName, `Invoice: ${String(p.badger_invoice_number || "")}; ${invoiceStatus}; Delivery: ${deliveryStatus}`);
-    return { message:"Order updated.", request_id:requestId, workflow_status:status };
+    if (accountId) { set("account_id", accountId); set("account_link_status", "Linked by staff"); }
+    const badger = reconcileBadgerForOrder_(sheet, rowNumber, h, p.badger_invoice_number);
+    const freshRow = sheet.getRange(rowNumber, 1, 1, sheet.getLastColumn()).getValues()[0];
+    const fresh = Object.keys(h).reduce((item, key) => { item[key] = freshRow[h[key]]; return item; }, { source_row:rowNumber });
+    const order = onlineOrderRecord_(fresh, new Map());
+    order.account_id = accountId || order.account_id;
+    const orderLines = rowsWithSource_(getOnlineOrderLinesSheet_(false)).filter(line => String(line.request_id || "") === requestId);
+    let deliveryId = "";
+    if (deliveryStatus !== "Not scheduled") deliveryId = upsertDeliveryForOrder_(order, orderLines, staffName);
+    if (deliveryStatus === "Delivered") set("delivered_at", order.delivered_at || new Date());
+    set("integration_status", badger.matched ? "Synchronized" : (String(p.badger_invoice_number || "").trim() ? "Badger invoice not found" : (accountId ? "Account linked" : "Needs account match")));
+    appendCustomerWorkflowLog_("Order", requestId, accountId, business, previousStatus, status, staffName, `Invoice: ${String(p.badger_invoice_number || "")}; ${invoiceStatus}; Delivery: ${deliveryStatus}`);
+    appendAudit_("UPDATE_ORDER", "Order", requestId, accountId, staffName, ONLINE_ORDER_REQUESTS_SHEET_NAME, deliveryId ? DELIVERIES_SHEET_NAME : ONLINE_ORDER_REQUESTS_SHEET_NAME, "Completed", `${previousStatus} to ${status}; Badger ${badger.status}; delivery ${deliveryStatus}`);
+    return { message:"Order updated.", request_id:requestId, account_id:accountId, workflow_status:status, badger_match_status:badger.status, delivery_id:deliveryId };
   } finally {
     lock.releaseLock();
   }
 }
 
-function onlineOrderVerification_(businessName, customerId, email) {
+function onlineOrderVerification_(businessName, customerId, email, claimedAccountId, lockHeld) {
+  const directoryMatch = resolvePublicAccount_(claimedAccountId, businessName, email, "", !!lockHeld);
+  const matchedAccountId = directoryMatch.record ? directoryMatch.record.account_id : "";
   const sheet = getOutreachProgramSheet_(false);
   const normalizedBusiness = String(businessName || "").trim().toLowerCase();
   const normalizedEmail = String(email || "").trim().toLowerCase();
   const normalizedId = String(customerId || "").trim().toLowerCase();
   const programMatch = sheet && sheet.getLastRow() >= 2 && getAllRowsAsObjects_(sheet).find(row => {
     if (String(row.ordering_status || "").trim() !== "Active") return false;
+    const accountMatch = matchedAccountId && String(row.account_id || "") === matchedAccountId;
     const idMatch = normalizedId && String(row.ordering_customer_id || "").trim().toLowerCase() === normalizedId;
     const emailMatch = normalizedEmail && String(row.email || "").trim().toLowerCase() === normalizedEmail;
     const businessMatch = normalizedBusiness && String(row.business_name || "").trim().toLowerCase() === normalizedBusiness;
-    return idMatch || (emailMatch && businessMatch);
+    return accountMatch || idMatch || (emailMatch && businessMatch);
   });
-  if (programMatch) return "Active account matched";
+  if (programMatch) return { status:"Active account matched", account_id:String(programMatch.account_id || matchedAccountId), account_link_status:"Linked to active account" };
 
   const applicationSheet = getCustomerApplicationsSheet_(false);
   const applicationMatch = rowsWithSource_(applicationSheet).find(row => {
@@ -2069,7 +2997,8 @@ function onlineOrderVerification_(businessName, customerId, email) {
     const applicationBusiness = String(row.business_name || row.legal_business_name || "").trim().toLowerCase();
     return idMatch || (normalizedEmail && applicationEmail === normalizedEmail && normalizedBusiness && applicationBusiness === normalizedBusiness);
   });
-  return applicationMatch ? "Active account matched" : "Needs review";
+  if (applicationMatch) return { status:"Active account matched", account_id:String(applicationMatch.account_id || matchedAccountId), account_link_status:"Linked to active application" };
+  return { status:"Needs review", account_id:matchedAccountId, account_link_status:directoryMatch.status };
 }
 
 function sendOnlineOrderNotification_(request, lines, sheet, rowNumber) {
@@ -2130,6 +3059,7 @@ function apiSubmitOnlineOrderRequest_(p) {
   if (p.lines.length > 50) throw new Error("An order request can contain up to 50 products.");
 
   const businessName = publicText_(p.business_name, 160, "Business name");
+  const claimedAccountId = publicText_(p.account_id, 80, "Account ID");
   const customerId = publicText_(p.customer_id, 60, "Customer ID");
   const contactName = publicText_(p.contact_name, 120, "Contact name");
   const email = publicEmail_(p.email, "Ordering email", true);
@@ -2158,22 +3088,27 @@ function apiSubmitOnlineOrderRequest_(p) {
       unit:unit,
       units_per_case:unitsPerCase,
       bottle_equivalent:unit === "Cases" ? quantity * unitsPerCase : quantity,
+      catalog_source:String(sku.catalog_source || ORDER_CATALOG_SOURCE),
+      external_item_id:String(sku.external_item_id || ""),
     };
   });
 
   const lock = LockService.getScriptLock();
   if (!lock.tryLock(5000)) throw new Error("Another order request is being recorded. Try again in a moment.");
+  let journal = null;
   try {
     const requestSheet = getOnlineOrderRequestsSheet_(true);
     ensureHeaderColumns_(requestSheet, ["Notification Status", "Notification Sent At", "Notification Error"]);
     const priorId = existingSubmissionByToken_(requestSheet, submissionToken, "Request ID");
     if (priorId) return { message:"Order request already received.", request_id:priorId };
+    const verification = onlineOrderVerification_(businessName, customerId, email, claimedAccountId, true);
+    journal = startSubmissionJournal_("Online order", submissionToken, verification.account_id, businessName, p);
+    if (journal.prior_record_id) return { message:"Order request already received.", request_id:journal.prior_record_id };
     const lineSheet = getOnlineOrderLinesSheet_(true);
     const h = getHeaderMap_(requestSheet);
     const lineHeaders = getHeaderMap_(lineSheet);
     const requestId = publicSubmissionId_("ORD");
     const now = new Date();
-    const verification = onlineOrderVerification_(businessName, customerId, email);
     const totalCases = lines.filter(line => line.unit === "Cases").reduce((sum, line) => sum + line.quantity, 0);
     const totalBottles = lines.filter(line => line.unit === "Bottles").reduce((sum, line) => sum + line.quantity, 0);
     const bottleEquivalent = lines.reduce((sum, line) => sum + line.bottle_equivalent, 0);
@@ -2182,7 +3117,12 @@ function apiSubmitOnlineOrderRequest_(p) {
     set("request_id", requestId);
     set("submitted_at", now);
     set("workflow_status", "New");
-    set("verification_status", verification);
+    set("verification_status", verification.status);
+    set("account_id", verification.account_id);
+    set("account_link_status", verification.account_link_status);
+    set("catalog_source", ORDER_CATALOG_SOURCE);
+    set("integration_status", verification.account_id ? "Account linked; awaiting staff review" : "Needs account match");
+    set("badger_match_status", "Not checked");
     set("business_name", businessName);
     set("customer_id", customerId);
     set("contact_name", contactName);
@@ -2206,6 +3146,7 @@ function apiSubmitOnlineOrderRequest_(p) {
       const values = Array(lineSheet.getLastColumn()).fill("");
       const setLine = (key, value) => { if (lineHeaders[key] !== undefined) values[lineHeaders[key]] = value; };
       setLine("request_id", requestId);
+      setLine("account_id", verification.account_id);
       setLine("line_number", index + 1);
       setLine("sku_id", line.sku_id);
       setLine("sku_name", line.sku_name);
@@ -2213,10 +3154,15 @@ function apiSubmitOnlineOrderRequest_(p) {
       setLine("unit", line.unit);
       setLine("units_per_case", line.units_per_case);
       setLine("bottle_equivalent", line.bottle_equivalent);
+      setLine("catalog_source", line.catalog_source);
+      setLine("external_item_id", line.external_item_id);
       setLine("app_version", APP_VERSION);
       return values;
     });
     lineSheet.getRange(lineSheet.getLastRow() + 1, 1, lineRows.length, lineRows[0].length).setValues(lineRows);
+    const notificationJob = enqueueIntegrationJob_("ORDER_NOTIFICATION", "Order", requestId, verification.account_id, {
+      request_id:requestId, business:businessName, email:email,
+    });
     const notification = sendOnlineOrderNotification_({
       request_id:requestId,
       business_name:businessName,
@@ -2224,14 +3170,66 @@ function apiSubmitOnlineOrderRequest_(p) {
       email:email,
       phone:phone,
       requested_delivery_date:deliveryDate,
-      verification_status:verification,
+      verification_status:verification.status,
     }, lines, requestSheet, requestRow);
     requestSheet.getRange(requestRow, h.notification_status + 1, 1, 3).setValues([[
       notification.status,
       notification.sent_at,
       notification.error,
     ]]);
-    return { message:"Order request received for confirmation.", request_id:requestId, verification_status:verification };
+    updateIntegrationJob_(notificationJob, notification.status === "Sent" ? "Completed" : "Retry", notification.error);
+    completeSubmissionJournal_(journal, "Completed", requestId, "");
+    appendAudit_("SUBMIT_ORDER", "Order", requestId, verification.account_id, "Public order form", "Online order", ONLINE_ORDER_REQUESTS_SHEET_NAME, "Completed", verification.account_link_status);
+    return { message:"Order request received for confirmation.", request_id:requestId, account_id:verification.account_id, verification_status:verification.status };
+  } catch (error) {
+    if (journal) completeSubmissionJournal_(journal, "Needs recovery", "", error.message || error);
+    throw error;
+  } finally {
+    lock.releaseLock();
+  }
+}
+
+function apiReconcileIntegrations_(p) {
+  if (!p) throw new Error("Missing reconciliation request.");
+  requireFields_(p, ["staff_name"]);
+  const staffName = publicText_(p.staff_name, 120, "Staff name");
+  const lock = LockService.getScriptLock();
+  if (!lock.tryLock(30000)) throw new Error("Another reconciliation or write is in progress.");
+  try {
+    ensureFoundationalSheets_();
+    ensureAccountIdentityModel_(true);
+    const orderSheet = getOnlineOrderRequestsSheet_(false);
+    if (!orderSheet || orderSheet.getLastRow() < 2) return { message:"No orders need reconciliation.", checked:0, badger_matches:0, deliveries:0, attention:0 };
+    ensureHeaderColumns_(orderSheet, ["Badger Invoice Number", "Invoice Status", "Delivery Status", "Integration Status", "Badger Match Status", "Delivered At"]);
+    const h = getHeaderMap_(orderSheet);
+    const lineRows = rowsWithSource_(getOnlineOrderLinesSheet_(false));
+    const linesByRequest = new Map();
+    lineRows.forEach(line => {
+      const requestId = String(line.request_id || "");
+      if (!linesByRequest.has(requestId)) linesByRequest.set(requestId, []);
+      linesByRequest.get(requestId).push(line);
+    });
+    const rows = rowsWithSource_(orderSheet);
+    let badgerMatches = 0;
+    let deliveries = 0;
+    let attention = 0;
+    rows.forEach(raw => {
+      const order = onlineOrderRecord_(raw, linesByRequest);
+      if (!order.request_id) return;
+      const invoice = reconcileBadgerForOrder_(orderSheet, raw.source_row, h, order.badger_invoice_number);
+      if (invoice.matched) badgerMatches += 1;
+      if (order.delivery_status !== "Not scheduled") {
+        upsertDeliveryForOrder_(order, order.lines, staffName);
+        deliveries += 1;
+      }
+      const status = invoice.matched
+        ? "Synchronized"
+        : (order.badger_invoice_number ? "Badger invoice not found" : (order.account_id ? "Account linked" : "Needs account match"));
+      orderSheet.getRange(raw.source_row, h.integration_status + 1).setValue(status);
+      if (["Badger invoice not found", "Needs account match"].includes(status)) attention += 1;
+    });
+    appendAudit_("RECONCILE_INTEGRATIONS", "System", "orders", "", staffName, `${ONLINE_ORDER_REQUESTS_SHEET_NAME}; ${BADGER_TRACKER_SPREADSHEET_ID}`, `${DELIVERIES_SHEET_NAME}; ${ONLINE_ORDER_REQUESTS_SHEET_NAME}`, "Completed", `${rows.length} orders checked; ${badgerMatches} Badger matches; ${deliveries} delivery records; ${attention} need attention.`);
+    return { message:"Integration reconciliation completed.", checked:rows.length, badger_matches:badgerMatches, deliveries:deliveries, attention:attention };
   } finally {
     lock.releaseLock();
   }

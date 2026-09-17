@@ -1,5 +1,5 @@
-// App version: 2026.09.16.26
-const APP_VERSION = "2026.09.16.26";
+// App version: 2026.09.17.27
+const APP_VERSION = "2026.09.17.27";
 const ALLOWED_ACTIONS = new Set(["listSkus", "submitCustomerApplication", "submitOnlineOrderRequest"]);
 
 export async function handler(event) {
@@ -23,6 +23,9 @@ export async function handler(event) {
       return { statusCode:500, headers:cors, body:JSON.stringify({ ok:false, error:"Customer service is not configured." }) };
     }
 
+    if (event.body && event.body.length > 150000) {
+      return { statusCode:413, headers:{"Content-Type":"application/json",...cors}, body:JSON.stringify({ ok:false, error:"Request is too large." }) };
+    }
     const body = event.httpMethod === "POST" && event.body ? JSON.parse(event.body) : {};
     const params = new URLSearchParams(event.rawQuery || "");
     const action = String(body.action || params.get("action") || "");

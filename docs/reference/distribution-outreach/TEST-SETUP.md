@@ -1,6 +1,6 @@
 # Distribution Outreach Pilot Setup
 
-Package version: `2026.09.16.6-PILOT`
+Package version: `2026.09.17.7-PILOT`
 
 ## Staging Resources
 
@@ -66,7 +66,7 @@ hardcoding either URL in `Code.gs`.
 
 The footer sender is also editable. `Email Editor!B6` contains the sender name
 and `Email Editor!B7` contains the sender title. Karl's defaults are `Karl
-Loewenstein` and `President`. Every template leaves one blank line after the
+Loewenstein` and `Founder and Distiller`. Every template leaves one blank line after the
 closing. Change both fields before sending on behalf of a different employee.
 The title may be left blank. This does not change the
 authenticated Zoho mailbox or the visible `sales@sturgeonspirits.com` sender

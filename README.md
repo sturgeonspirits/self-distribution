@@ -1,6 +1,6 @@
 # Sturgeon Distribution Hub
 
-Version: `2026.09.16.26`
+Version: `2026.09.17.27`
 
 Repository: `sturgeonspirits/sturgeon-distribution-hub`
 
@@ -27,9 +27,13 @@ Future integrations are scaffolded with `Toast Item Map` and `Email Engagement` 
 
 The `Newsletter Contacts` staging tab and Newsletter app view support customers and non-customers, including vendors, bankers, partners and community contacts. Contacts marked `Subscribed` require both a consent source and date. Campaign sending remains disabled.
 
-The customer signup and order-request pages write only to the staging workbook. Signup submissions land in `Customer Applications`; order headers and products land in `Online Order Requests` and `Online Order Lines`. The pages explain that Sturgeon Spirits manages product selection, ordering, self-distribution, delivery, and the invoice. The invoice directs payment to Badger State Cooperative. Neither page approves an account, charges a customer, promises stock, or confirms delivery. Staff must review and confirm each request.
+The customer signup and order-request pages write only to the staging workbook. Signup submissions land in `Customer Applications`; order headers and products land in `Online Order Requests` and `Online Order Lines`. Permanent Account IDs preserve the email-to-application-to-order relationship even when spreadsheet rows are sorted. The pages explain that Sturgeon Spirits manages product selection, ordering, self-distribution, delivery, and the invoice. The invoice directs payment to Badger State Cooperative. Neither page approves an account, charges a customer, promises stock, or confirms delivery. Staff must review and confirm each request.
 
-The staff-only Customers section reviews those applications and orders without requiring direct spreadsheet work. Application review can assign staff, record a customer ID, add internal notes, and activate an ordering account. Order review tracks confirmation, Badger invoice number and status, delivery status, assignment, and internal notes. Changes are appended to `Customer Workflow Log`.
+The staff-only Customers section reviews those applications and orders without requiring direct spreadsheet work. Application review can link an account, assign staff, record a customer ID, activate ordering, and optionally create an inventory store. Order review tracks account linkage, Badger invoice matching, delivery status, assignment, and internal notes. Changes are appended to `Customer Workflow Log` and `Hub Audit Log`.
+
+The Outreach section can add a single business or import a CSV. Imports are staff-protected, duplicate checked, and recorded in `Import Batches` and `Import Rows`; they never overwrite an existing business. The Customers section exposes protected staging migration status and repeatable Badger/delivery reconciliation.
+
+The hardened Google Sheets model is documented in `docs/hardened-google-sheets-architecture-2026-09-17.md`. It consolidates operational tabs into the existing staging Distribution Hub workbook and keeps only the existing Badger Invoice Tracker separate because it owns the proven PDF parser. No new spreadsheet file is created.
 
 Netlify publishes `customer-signup.html` at `/customer-signup.html`. Distribution Outreach adds a short wholesale-application link to initial-email footers only when Campaign Settings contains a valid public `Customer application URL`. A missing URL suppresses the link so staging and local addresses are never emailed.
 
@@ -43,8 +47,8 @@ All deployable files are stamped with the same app version. When updating Apps S
 
 ## Deploy flow
 
-1. Create a new Apps Script project or update your existing backend.
-2. Paste `apps-script/Code.gs` into Apps Script.
+1. Open the **staging Inventory Backend** Apps Script project.
+2. Replace its complete `Code.gs` with `apps-script/Code.gs`; do not append snippets.
 3. Deploy Apps Script as a Web App.
 4. Copy the `/exec` URL.
 5. Create a GitHub repo from this folder.
@@ -53,7 +57,7 @@ All deployable files are stamped with the same app version. When updating Apps S
    - `APPS_SCRIPT_URL` = your Apps Script `/exec` URL
    - `API_KEY` = the same private key stored in Apps Script Properties
    - `STAFF_ACCESS_CODE` = a separate staff-entered code for customer records
-8. Redeploy Netlify.
+8. Redeploy Netlify only after the staging backend reports version `2026.09.17.27`.
 
 ## API auth
 
@@ -66,7 +70,7 @@ All deployable files are stamped with the same app version. When updating Apps S
 
 - The manager grid requires `apiGetManagerGrid_()` in the Apps Script backend.
 - The frontend uses `/api/inventory`, which is redirected to the Netlify function via `netlify.toml`.
-- The Outreach section reads and updates the staging Distribution Directory and Activity Log. It intentionally cannot send email until staff authentication is added to the web app.
+- The Outreach section reads and updates the staging Distribution Directory and Activity Log. Email sending remains in the separately controlled Distribution Outreach pilot script.
 - Outreach Directory returns every business row, supports searching across all nonblank spreadsheet fields, and shows each business's complete row plus recent activity.
 - Business details can update existing contact columns. New notes are appended with a date and logged as activity instead of replacing earlier notes.
 - Each business card has a Directions action that passes its address, or its business name and city when no street address is available, to Google Maps.

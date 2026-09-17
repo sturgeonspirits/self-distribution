@@ -1,9 +1,13 @@
 /**
  * Sturgeon Spirits Distribution Outreach
  *
- * VERSION: 2026.09.16.6-PILOT
+ * VERSION: 2026.09.17.7-PILOT
  *
  * CHANGES IN THIS VERSION
+ * - Added permanent Account IDs so sorting rows cannot detach drafts or activity.
+ * - Added verified account, business and email context to customer-application links.
+ * - Reads saved email drafts by Account ID first and keeps the row-key fallback.
+ * - Records Account ID in Activity Log while preserving its existing columns.
  * - Added a configurable wholesale customer-application link to initial emails.
  * - Placed the application link with the standard footer and sell-sheet link.
  * - Suppressed the link until Customer application URL is a public HTTPS URL.
@@ -23,7 +27,7 @@
  * - Kept queued and bulk sending disabled.
  * - Added a blank line between the email closing and sender name.
  * - Added an editable sender-title field to every email footer.
- * - Set Karl's default title to President.
+ * - Retained the editable sender title; Karl's configured title is Founder and Distiller.
  * - Kept the footer logo-only, with no separate text website link.
  * - Retained the renamed Distribution Directory and Leads sheet.
  * - Retained the staging workbook lock and Karl-only test delivery.
@@ -37,7 +41,7 @@
  * Sends through the authenticated Zoho Mail API account.
  */
 
-const OUTREACH_VERSION = '2026.09.16.6-PILOT';
+const OUTREACH_VERSION = '2026.09.17.7-PILOT';
 
 const OUTREACH = Object.freeze({
   ENVIRONMENT: 'STAGING_PILOT',
@@ -77,7 +81,8 @@ const OUTREACH = Object.freeze({
     ORDER_COUNT: 32,
     LIFETIME_INVOICED: 33,
     CUSTOMER_SOURCE: 34,
-    LAST_DATA_COLUMN: 34
+    ACCOUNT_ID: 35,
+    LAST_DATA_COLUMN: 35
   }),
   PILOT_COL: Object.freeze({
     SOURCE_ROW: 1,
@@ -491,7 +496,30 @@ function draftKey_(sourceRowNumber, stage) {
   return Number(sourceRowNumber) + '::' + String(stage || 'Initial').trim().toLowerCase();
 }
 
-function getSavedDraft_(sourceRowNumber, stage) {
+function accountDraftKey_(accountId, stage) {
+  return String(accountId || '').trim() + '::' + String(stage || 'Initial').trim().toLowerCase();
+}
+
+function ensureLeadAccountId_(sheet, rowNumber, row) {
+  const lastColumn = Math.max(sheet.getLastColumn(), OUTREACH.COL.ACCOUNT_ID);
+  const headers = sheet.getRange(1, 1, 1, lastColumn).getValues()[0];
+  let index = headers.map(function (value) { return String(value || '').trim().toLowerCase(); }).indexOf('account id');
+  if (index < 0) {
+    index = String(headers[OUTREACH.COL.ACCOUNT_ID - 1] || '').trim() ? lastColumn : OUTREACH.COL.ACCOUNT_ID - 1;
+    sheet.getRange(1, index + 1).setValue('Account ID');
+  }
+  while (row.length <= index) row.push('');
+  let accountId = String(row[index] || '').trim();
+  if (!accountId) {
+    accountId = 'ACC-' + Utilities.getUuid().replace(/-/g, '').toUpperCase();
+    row[index] = accountId;
+    sheet.getRange(rowNumber, index + 1).setValue(accountId);
+  }
+  row.__accountId = accountId;
+  return accountId;
+}
+
+function getSavedDraft_(accountId, sourceRowNumber, stage) {
   if (!sourceRowNumber) return null;
   const sheet = SpreadsheetApp.getActive().getSheetByName(OUTREACH.DRAFTS_SHEET);
   if (!sheet || sheet.getLastRow() < 2) return null;
@@ -500,14 +528,18 @@ function getSavedDraft_(sourceRowNumber, stage) {
     return String(value || '').trim().toLowerCase().replace(/\s+/g, '_');
   });
   const keyColumn = headers.indexOf('draft_key');
+  const accountColumn = headers.indexOf('account_id');
   const subjectColumn = headers.indexOf('subject');
   const bodyColumn = headers.indexOf('body_text');
   if (keyColumn < 0 || subjectColumn < 0 || bodyColumn < 0) {
     throw new Error('Outreach Drafts is missing required columns.');
   }
-  const expectedKey = draftKey_(sourceRowNumber, stage);
+  const expectedAccountKey = accountDraftKey_(accountId, stage);
+  const expectedRowKey = draftKey_(sourceRowNumber, stage);
   for (let index = values.length - 1; index >= 1; index -= 1) {
-    if (String(values[index][keyColumn] || '') !== expectedKey) continue;
+    const storedKey = String(values[index][keyColumn] || '');
+    const storedAccount = accountColumn >= 0 ? String(values[index][accountColumn] || '') : '';
+    if (storedKey !== expectedAccountKey && storedKey !== expectedRowKey && (!accountId || storedAccount !== accountId)) continue;
     const subject = String(values[index][subjectColumn] || '').trim();
     const bodyText = String(values[index][bodyColumn] || '').trim();
     return subject && bodyText ? { subject:subject, bodyText:bodyText } : null;
@@ -544,10 +576,12 @@ function buildMessage_(stage, row, settings, sourceRowNumber) {
     const segmentKey = segmentTemplateKey_(row[OUTREACH.COL.SEGMENT - 1]);
     keys = ['Segment ' + segmentKey + ' subject', 'Segment ' + segmentKey + ' HTML'];
   }
-  const values = templateValues_(row, settings, stage);
+  const leadSheet = SpreadsheetApp.getActive().getSheetByName(OUTREACH.LEADS_SHEET);
+  const accountId = ensureLeadAccountId_(leadSheet, sourceRowNumber, row);
+  const values = templateValues_(row, settings, stage, accountId);
   const template = String(settings[keys[1]] || '');
   const parts = splitMessageTemplate_(template);
-  const savedDraft = getSavedDraft_(sourceRowNumber, stage);
+  const savedDraft = getSavedDraft_(accountId, sourceRowNumber, stage);
   if (savedDraft) {
     return {
       subject:savedDraft.subject,
@@ -690,7 +724,7 @@ function validateCampaignSettings_(settings, isTest) {
   }
 }
 
-function templateValues_(row, settings, stage) {
+function templateValues_(row, settings, stage, accountId) {
   const contact = String(row[OUTREACH.COL.CONTACT - 1] || '').trim();
   const firstName = contact ? contact.split(/\s+/)[0] : 'there';
   const sellSheet = String(settings['Wholesale sell-sheet URL'] || '').trim();
@@ -698,8 +732,14 @@ function templateValues_(row, settings, stage) {
   const logo = String(settings['Logo URL'] || '').trim();
   const applicationUrl = String(settings['Customer application URL'] || '').trim();
   const sellSheetLink = sellSheet ? '<p><a href="' + escapeHtml_(sellSheet) + '">View our current wholesale sell sheet</a></p>' : '';
-  const applicationLink = stage === 'Initial' && /^https:\/\/\S+$/i.test(applicationUrl) ?
-    '<p>If you would like to get the account setup started, <a href="' + escapeHtml_(applicationUrl) + '">complete our short wholesale customer application</a>.</p>' : '';
+  const applicationHref = /^https:\/\/\S+$/i.test(applicationUrl)
+    ? applicationUrl + (applicationUrl.indexOf('?') >= 0 ? '&' : '?') +
+      'account_id=' + encodeURIComponent(accountId || '') +
+      '&business=' + encodeURIComponent(String(row[OUTREACH.COL.BUSINESS - 1] || '')) +
+      '&email=' + encodeURIComponent(String(row[OUTREACH.COL.EMAIL - 1] || ''))
+    : '';
+  const applicationLink = stage === 'Initial' && applicationHref ?
+    '<p>If you would like to get the account setup started, <a href="' + escapeHtml_(applicationHref) + '">complete our short wholesale customer application</a>.</p>' : '';
   return {
     'First Name': firstName,
     'Business Name': smartTitleCase_(String(row[OUTREACH.COL.BUSINESS - 1] || 'your business')),
@@ -754,18 +794,24 @@ function renderTemplate_(template, values, htmlMode) {
 }
 
 function appendLog_(row, deliveredTo, stage, subject, result, messageId, error) {
-  SpreadsheetApp.getActive().getSheetByName(OUTREACH.LOG_SHEET).appendRow([
-    new Date(),
-    row[OUTREACH.COL.BUSINESS - 1],
-    row[OUTREACH.COL.EMAIL - 1],
-    stage,
-    subject,
-    result,
-    messageId,
-    error,
-    deliveredTo,
-    OUTREACH_VERSION
-  ]);
+  const sheet = SpreadsheetApp.getActive().getSheetByName(OUTREACH.LOG_SHEET);
+  const headers = sheet.getRange(1, 1, 1, sheet.getLastColumn()).getValues()[0]
+    .map(function (value) { return String(value || '').trim().toLowerCase().replace(/\s+/g, '_'); });
+  if (headers.indexOf('account_id') < 0) {
+    sheet.getRange(1, sheet.getLastColumn() + 1).setValue('Account ID');
+    headers.push('account_id');
+  }
+  const values = Array(headers.length).fill('');
+  const set = function (keys, value) {
+    const index = keys.map(function (key) { return headers.indexOf(key); }).find(function (item) { return item >= 0; });
+    if (index >= 0) values[index] = value;
+  };
+  set(['timestamp'], new Date()); set(['business'], row[OUTREACH.COL.BUSINESS - 1]);
+  set(['intended_recipient', 'email'], row[OUTREACH.COL.EMAIL - 1]); set(['message_stage', 'stage'], stage);
+  set(['subject'], subject); set(['result'], result); set(['message_id'], messageId);
+  set(['error/detail', 'error_detail', 'error'], error); set(['delivered_to'], deliveredTo);
+  set(['mailer_version', 'app_version', 'version'], OUTREACH_VERSION); set(['account_id'], row.__accountId || row[OUTREACH.COL.ACCOUNT_ID - 1]);
+  sheet.appendRow(values);
 }
 
 function accountAddresses_(account) {
