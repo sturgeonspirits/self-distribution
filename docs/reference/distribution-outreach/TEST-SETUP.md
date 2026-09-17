@@ -1,6 +1,6 @@
 # Distribution Outreach Pilot Setup
 
-Package version: `2026.09.17.7-PILOT`
+Package version: `2026.09.17.8-APP`
 
 ## Staging Resources
 
@@ -15,7 +15,7 @@ The staging workbook is already configured with:
 - Authenticated Zoho mailbox: `karl@sturgeonspirits.com`
 - Visible sender alias: `sales@sturgeonspirits.com`
 - Karl-only test recipient: `karl@sturgeonspirits.com`
-- Three-candidate `Pilot Review` with separate approval and send-status fields
+- Read-only legacy `Pilot Review` archive with historical approval and send fields
 - Wholesale sell-sheet link in the Email Editor
 - Website footer link in the Email Editor
 - Editable footer sender name and title in the Email Editor
@@ -30,6 +30,10 @@ The staging workbook is already configured with:
    `Code.gs` from this directory. Do not append code.
 5. Save the Apps Script project and reload the spreadsheet.
 6. Choose **Distribution Outreach PILOT > Verify pilot configuration**.
+7. Add a random `OUTREACH_MAILER_SHARED_SECRET` of at least 24 characters in
+   Apps Script Properties, deploy the script as a Web App, and copy its `/exec`
+   URL into the Inventory Backend `OUTREACH_MAILER_URL` property. Set the same
+   shared secret in the Inventory Backend.
 
 ## Connect Karl's Zoho Mailbox
 
@@ -79,37 +83,35 @@ the application link.
 The selected prospect is not marked as contacted by a test send. This build
 cannot send queued or bulk email.
 
-## Send The Three-Email Pilot
+## Send One Reviewed App Email
 
-1. Review each candidate on `Pilot Review`. Confirm the business, contact,
-   email address and intended message.
-2. Change `Pilot Approval` from `Pending review` to `Approved` only for the
-   candidate you are ready to contact.
-3. Choose **Distribution Outreach PILOT > Enable PILOT mode (real email)** and
-   confirm the warning. This enables delivery but sends nothing.
-4. Keep the approved candidate's row selected and choose **Send approved pilot
-   for selected row**.
-5. Read the final dialog, which shows the real business, recipient and subject.
-   Choose **Yes** only when they are correct.
-6. Confirm `Pilot Review`, the source lead and `Activity Log` all record the
-   message ID and send time. Use **Disable pilot mode** whenever real delivery
-   should be paused.
+1. Keep `Pilot Review` unchanged; it is a read-only legacy audit archive.
+2. Set Campaign Settings Mode to `PILOT` and add
+   `OUTREACH_APP_SENDS_ENABLED=true` in this mailer project's Script Properties
+   only after the Karl-only test succeeds.
+3. In Sturgeon Distribution Hub, open Outreach, review the business and draft,
+   edit it if needed, and press **Save draft**.
+4. Press **Send email**. Read the final confirmation containing the business,
+   recipient, and subject, then confirm only when all three are correct.
+5. Confirm the source lead and `Activity Log` record the message ID, send time,
+   next stage, and follow-up date. Refresh the Hub and confirm the history entry.
 
-The pilot allows no more than three successful real sends. It blocks duplicate
+The app sends one reviewed recipient at a time. It blocks duplicate
 recipients, non-prospects, unverified addresses, prior-contact rows, do-not-email
 records and any row that cannot be matched uniquely to its source lead. If the
 lead sheet is sorted, the script re-resolves the current row by exact business
 and email before sending.
 
-If Zoho accepts an email but a later sheet update fails, `Send Status` becomes
-`SENT - REVIEW` with **DO NOT RESEND** in the notes and the Zoho message ID is
-preserved.
+If Zoho accepts an email but later recording fails, the idempotency receipt is
+preserved and the Hub reports a partial failure with **do not resend** guidance.
+Retry from the same review window so the same token repairs state without a
+second delivery.
 
-The source lead uses the existing validated `Sent` status after a successful
-pilot delivery. Pilot-specific details remain in `Pilot Review` and `Activity
-Log`.
+The source lead uses the existing validated `Sent` or follow-up status after a
+successful delivery. Historical pilot details remain in `Pilot Review` and
+`Activity Log`.
 
-## Before Each Pilot Send
+## Before Each App Send
 
 The current sell-sheet PDF was verified with an **Anyone with the link can
 view** reader permission on 2026-09-15. When the sell sheet changes, replace the

@@ -1,6 +1,6 @@
 # Sturgeon Distribution Hub
 
-Version: `2026.09.17.27`
+Version: `2026.09.17.28`
 
 Repository: `sturgeonspirits/sturgeon-distribution-hub`
 
@@ -19,7 +19,9 @@ This repo contains:
 - `apps-script/Code.gs` — JSON API backend for Google Apps Script
 - `netlify.toml` — Netlify configuration
 
-The staging outreach review screen can save a personalized subject and message body. Drafts are stored in the staging workbook's `Outreach Drafts` tab; saving a draft does not approve or send an email. The Distribution Outreach script in `docs/reference/distribution-outreach/Code.gs` uses the saved draft when one exists and adds the standard branded and compliance footer at send time. Zoho Mail is the delivery service, not the name of the system.
+The staging outreach review screen saves a personalized subject and message body in `Outreach Drafts`, then supports a final-confirmed, one-recipient-at-a-time send through the separately deployed Distribution Outreach Apps Script. Zoho credentials stay only in that mailer project's Script Properties; the Inventory Backend receives only the mailer web-app URL and a shared service secret. The send path locks server-side, uses an idempotency token, rechecks recipient eligibility and prior sends, records Zoho acceptance/message ID, updates the next stage and follow-up date, and never marks a message sent unless Zoho accepted it.
+
+`Pilot Review` is retained unchanged as a read-only legacy audit/archive. Historical rows, approvals, send state, timestamps, Zoho message IDs, and notes remain duplicate-protection and history inputs. The tab is eligible for later retirement only after direct app sending is deployed and verified.
 
 Business Details also includes planning fields for a possible consent-aware newsletter and customer online ordering. These values are stored in the staging workbook's `Account Programs` tab. The scaffold records status and setup information only; it cannot send newsletter invitations, create ordering accounts, or place orders.
 
@@ -29,7 +31,7 @@ The `Newsletter Contacts` staging tab and Newsletter app view support customers 
 
 The customer signup and order-request pages write only to the staging workbook. Signup submissions land in `Customer Applications`; order headers and products land in `Online Order Requests` and `Online Order Lines`. Permanent Account IDs preserve the email-to-application-to-order relationship even when spreadsheet rows are sorted. The pages explain that Sturgeon Spirits manages product selection, ordering, self-distribution, delivery, and the invoice. The invoice directs payment to Badger State Cooperative. Neither page approves an account, charges a customer, promises stock, or confirms delivery. Staff must review and confirm each request.
 
-The staff-only Customers section reviews those applications and orders without requiring direct spreadsheet work. Application review can link an account, assign staff, record a customer ID, activate ordering, and optionally create an inventory store. Order review tracks account linkage, Badger invoice matching, delivery status, assignment, and internal notes. Changes are appended to `Customer Workflow Log` and `Hub Audit Log`.
+The staff-only Orders & Accounts section reviews applications and orders without requiring direct spreadsheet work. Its Accounts view shows every active customer account with complete order, invoice, delivery, outreach, workflow, and inventory-reorder history. Filters cover New, Awaiting invoice, Ready, Delivered, Reorder due, and Inventory-counted. Application review can link an account, assign staff, record a customer ID, activate ordering, and optionally create an inventory store. Customers remain outside Inventory and Counts unless Inventory Tracking is explicitly enabled; disabling it preserves history but deactivates the store record.
 
 The Outreach section can add a single business or import a CSV. Imports are staff-protected, duplicate checked, and recorded in `Import Batches` and `Import Rows`; they never overwrite an existing business. The Customers section exposes protected staging migration status and repeatable Badger/delivery reconciliation.
 
@@ -47,17 +49,19 @@ All deployable files are stamped with the same app version. When updating Apps S
 
 ## Deploy flow
 
-1. Open the **staging Inventory Backend** Apps Script project.
-2. Replace its complete `Code.gs` with `apps-script/Code.gs`; do not append snippets.
-3. Deploy Apps Script as a Web App.
-4. Copy the `/exec` URL.
-5. Create a GitHub repo from this folder.
-6. Connect the repo to Netlify.
-7. Add environment variable:
+1. Open the **staging Distribution Outreach** Apps Script project attached to the staging Hub workbook.
+2. Replace its complete `Code.gs` with `docs/reference/distribution-outreach/Code.gs`; do not append snippets.
+3. Add Script Properties `OUTREACH_MAILER_SHARED_SECRET` (a new random value at least 24 characters) and, after a Karl-only test succeeds, `OUTREACH_APP_SENDS_ENABLED=true`. Keep the existing `ZOHO_CLIENT_ID`, `ZOHO_CLIENT_SECRET`, and `ZOHO_REFRESH_TOKEN` only in this project.
+4. Deploy Distribution Outreach as a Web App and copy its `/exec` URL.
+5. Open the **staging Inventory Backend** Apps Script project.
+6. Replace its complete `Code.gs` with `apps-script/Code.gs`; do not append snippets.
+7. Add Inventory Backend Script Properties `OUTREACH_MAILER_URL` (the Distribution Outreach `/exec` URL) and the same `OUTREACH_MAILER_SHARED_SECRET`. Do not copy Zoho credentials here.
+8. Deploy the Inventory Backend as a Web App and verify its root JSON reports version `2026.09.17.28`.
+9. Keep the existing GitHub-to-Netlify connection and environment variables:
    - `APPS_SCRIPT_URL` = your Apps Script `/exec` URL
    - `API_KEY` = the same private key stored in Apps Script Properties
    - `STAFF_ACCESS_CODE` = a separate staff-entered code for customer records
-8. Redeploy Netlify only after the staging backend reports version `2026.09.17.27`.
+10. Redeploy Netlify only after both staging Apps Script web apps are deployed and the Inventory Backend reports version `2026.09.17.28`.
 
 ## API auth
 
@@ -70,7 +74,8 @@ All deployable files are stamped with the same app version. When updating Apps S
 
 - The manager grid requires `apiGetManagerGrid_()` in the Apps Script backend.
 - The frontend uses `/api/inventory`, which is redirected to the Netlify function via `netlify.toml`.
-- The Outreach section reads and updates the staging Distribution Directory and Activity Log. Email sending remains in the separately controlled Distribution Outreach pilot script.
+- Inventory, Outreach, and Orders & Accounts share one session-scoped staff code. No inventory endpoint or inventory data fetch is allowed before unlock.
+- The Outreach section reads and updates the staging Distribution Directory and Activity Log. Real delivery is proxied to the separately controlled Distribution Outreach mailer; queued and bulk sends remain disabled.
 - Outreach Directory returns every business row, supports searching across all nonblank spreadsheet fields, and shows each business's complete row plus recent activity.
 - Business details can update existing contact columns. New notes are appended with a date and logged as activity instead of replacing earlier notes.
 - Each business card has a Directions action that passes its address, or its business name and city when no street address is available, to Google Maps.

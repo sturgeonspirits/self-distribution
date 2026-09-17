@@ -1,10 +1,10 @@
 <!doctype html>
-<!-- App version: 2026.09.17.27 -->
+<!-- App version: 2026.09.17.28 -->
 <html>
 <head>
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover"/>
-  <meta name="app-version" content="2026.09.17.27" />
+  <meta name="app-version" content="2026.09.17.28" />
   <title>Sturgeon Distribution Hub</title>
   <style>
     :root{
@@ -568,6 +568,8 @@
       border-radius:8px;
       background:#fff;
       padding:12px;
+      min-width:0;
+      overflow-wrap:anywhere;
     }
     .workflowCard.newRecord{border-left:4px solid var(--blue)}
     .workflowCardTop{
@@ -576,6 +578,9 @@
       align-items:flex-start;
       gap:10px;
     }
+    .workflowCardTop > div:first-child,
+    .workflowMeta,
+    .workflowActions{min-width:0}
     .workflowCard h3{margin:0;font-size:17px;line-height:1.2}
     .workflowCard p{margin:5px 0 0;color:var(--muted);font-size:12px;line-height:1.4}
     .workflowMeta{display:flex;flex-wrap:wrap;gap:6px;margin-top:9px}
@@ -1325,6 +1330,10 @@
       }
       .appNavBtn{
         min-height:38px;
+        min-width:0;
+        padding-left:5px;
+        padding-right:5px;
+        font-size:12px;
       }
       .titleWrap h1{
         font-size:14px;
@@ -1723,13 +1732,22 @@
       <i data-lucide="send"></i><span>Outreach</span>
     </button>
     <button class="appNavBtn" id="customersNavBtn" type="button">
-      <i data-lucide="users-round"></i><span>Customers</span>
+      <i data-lucide="users-round"></i><span>Orders & Accounts</span>
     </button>
   </nav>
 </header>
 
 <main>
   <section id="inventoryScreen">
+  <div class="customerAccess" id="inventoryAccessPanel">
+    <div>
+      <label for="inventoryStaffAccessCode">Staff access code</label>
+      <input id="inventoryStaffAccessCode" type="password" autocomplete="current-password" inputmode="text" />
+    </div>
+    <button class="primary" id="unlockInventoryBtn" type="button"><i data-lucide="unlock-keyhole"></i><span>Unlock</span></button>
+    <div class="status" id="inventoryAccessStatus"></div>
+  </div>
+  <div id="inventoryWorkspace" hidden>
   <details class="card managerSummary" id="managerSummaryCard">
     <summary style="display:flex;justify-content:space-between;gap:10px;align-items:center;">
       <span>Manager Summary Grid</span>
@@ -1904,6 +1922,7 @@
   </div>
 
   <div class="list" id="list"></div>
+  </div>
   </section>
 
   <section id="outreachScreen" hidden>
@@ -1948,6 +1967,12 @@
     <div class="modeNotice" id="outreachModeNotice">
       <i data-lucide="shield-check"></i>
       <span>Email review and outcome tracking are available here. Sending remains in the controlled Zoho mailer during testing.</span>
+    </div>
+    <div class="grid2" style="margin-bottom:12px">
+      <div>
+        <label for="outreachStaffName">Staff name</label>
+        <input id="outreachStaffName" placeholder="Your name" autocomplete="name" />
+      </div>
     </div>
 
     <div class="customerLinks" aria-label="Customer links">
@@ -1997,8 +2022,8 @@
   <section id="customersScreen" hidden>
     <div class="screenHeading">
       <div>
-        <h2>Customers</h2>
-        <p>Review applications, orders, invoices, and delivery progress.</p>
+        <h2>Orders & Accounts</h2>
+        <p>See every customer account and its complete order, invoice, delivery, outreach, and reorder history.</p>
       </div>
       <div class="tinyRow">
         <button class="iconBtn" id="refreshCustomersBtn" type="button" aria-label="Refresh customers" title="Refresh customers">
@@ -2028,8 +2053,9 @@
 
       <div class="workflowControls">
         <div class="workflowTabs" aria-label="Customer work views">
-          <button class="workflowTab active" id="applicationsViewBtn" type="button">Applications</button>
+          <button class="workflowTab active" id="accountsViewBtn" type="button">Accounts</button>
           <button class="workflowTab" id="ordersViewBtn" type="button">Orders</button>
+          <button class="workflowTab" id="applicationsViewBtn" type="button">Applications</button>
         </div>
         <div>
           <label for="customerStatusFilter">Status</label>
@@ -2202,11 +2228,13 @@
       </div>
       <div class="reviewSaveRow" id="outreachReviewSaveRow">
         <span class="status" id="outreachDraftStatus"></span>
+        <button id="sendOutreachTestBtn" type="button" disabled>Send test</button>
         <button class="primary" id="saveOutreachDraftBtn" type="button" disabled>Save draft</button>
+        <button class="primary" id="sendOutreachEmailBtn" type="button" disabled>Send email</button>
       </div>
       <div class="modeNotice" id="outreachReviewNotice" style="margin-top:12px;margin-bottom:0">
         <i data-lucide="lock-keyhole"></i>
-        <span>Saving does not send or approve this email. The saved draft will be available to the controlled Zoho mailer.</span>
+        <span>Save the reviewed draft first. Send email always asks for final confirmation and sends one recipient at a time.</span>
       </div>
     </div>
   </dialog>
@@ -2366,7 +2394,7 @@
 
   <footer style="max-width:1200px;margin:18px auto 120px;padding:0 12px;text-align:center;color:#6b7280;font-size:12px;">
     Designed by <a href="https://scriptspirit.dev" target="_blank" rel="noopener noreferrer" style="color:#1d4ed8;text-decoration:none;font-weight:700;">Script Spirit</a>
-    <span id="appVersionFooter"> • Version 2026.09.17.27</span>
+    <span id="appVersionFooter"> • Version 2026.09.17.28</span>
   </footer>
 
 
@@ -2386,8 +2414,10 @@
 <script src="https://unpkg.com/lucide@0.468.0/dist/umd/lucide.min.js"></script>
 <script>
 (() => {
+  window.addEventListener("unhandledrejection", e => console.error("Unhandled promise rejection:", e.reason));
+  window.addEventListener("error", e => console.error("Unhandled error:", e.error || e.message));
   const $ = (id) => document.getElementById(id);
-  const APP_VERSION = "2026.09.17.27";
+  const APP_VERSION = "2026.09.17.28";
   $("appVersionFooter").textContent = ` • Version ${APP_VERSION}`;
 
   let cache = { stores: [], lines: [] };
@@ -2418,13 +2448,17 @@
   let outreachDraftOriginal = { subject:"", body:"" };
   let selectedNewsletterContact = null;
 
-  let customerData = { applications:[], orders:[], summary:{ new_applications:0, active_applications:0, new_orders:0, active_orders:0, invoice_needed:0 } };
-  let customerView = localStorage.getItem("customer_work_view") === "orders" ? "orders" : "applications";
+  let customerData = { accounts:[], applications:[], orders:[], summary:{ new_applications:0, active_applications:0, new_orders:0, active_orders:0, invoice_needed:0 } };
+  let customerView = ["accounts", "orders", "applications"].includes(localStorage.getItem("customer_work_view")) ? localStorage.getItem("customer_work_view") : "accounts";
   let customerFilterText = "";
-  let customerStatusFilter = "active";
+  let customerStatusFilter = customerView === "accounts" ? "all" : "active";
   let customerLoaded = false;
   let selectedCustomerRecord = null;
   let staffAccessCode = sessionStorage.getItem("distribution_staff_access") || "";
+  let inventoryLoaded = false;
+  let outreachCanSend = false;
+  let outreachTestSendAvailable = false;
+  let selectedOutreachSendToken = "";
   let pendingBusinessImport = [];
 
   let managerGridData = { stores: [], skus: [] };
@@ -2448,27 +2482,24 @@
     if (el) el.textContent = msg || "";
   }
 
-  async function apiGet(params){
-    const qs = new URLSearchParams(params).toString();
-    const res = await fetch(`/api/inventory?${qs}`);
-    return res.json();
-  }
-
-  async function apiPost(body){
-    const res = await fetch(`/api/inventory`, {
-      method:"POST",
-      headers:{ "Content-Type":"application/json" },
-      body: JSON.stringify(body)
-    });
-    return res.json();
+  async function readApiJson(res){
+    const text = await res.text();
+    let json;
+    try { json = JSON.parse(text); }
+    catch (error) { throw new Error("The server returned an unreadable response. Check your connection and try again."); }
+    if (!res.ok) {
+      const failure = Object.assign(new Error(json.error || `Request failed (${res.status}).`), { code:json.code || "" });
+      if (res.status === 401 || json.code === "STAFF_AUTH_REQUIRED") failure.staffAuth = true;
+      throw failure;
+    }
+    return json;
   }
 
   async function staffApiGet(params){
     const qs = new URLSearchParams(params).toString();
     const res = await fetch(`/api/inventory?${qs}`, { headers:{ "X-Staff-Code":staffAccessCode } });
-    const json = await res.json();
-    if (res.status === 401 || json.code === "STAFF_AUTH_REQUIRED") throw Object.assign(new Error(json.error || "Enter the staff access code."), { staffAuth:true });
-    return json;
+    try { return await readApiJson(res); }
+    catch (error) { if (error.staffAuth) handleCustomerError(error); throw error; }
   }
 
   async function staffApiPost(body){
@@ -2477,9 +2508,8 @@
       headers:{ "Content-Type":"application/json", "X-Staff-Code":staffAccessCode },
       body:JSON.stringify(body),
     });
-    const json = await res.json();
-    if (res.status === 401 || json.code === "STAFF_AUTH_REQUIRED") throw Object.assign(new Error(json.error || "Enter the staff access code."), { staffAuth:true });
-    return json;
+    try { return await readApiJson(res); }
+    catch (error) { if (error.staffAuth) handleCustomerError(error); throw error; }
   }
 
   function refreshIcons(){
@@ -2506,11 +2536,11 @@
     $("inventoryNavBtn").toggleAttribute("aria-current", isInventory);
     $("outreachNavBtn").toggleAttribute("aria-current", isOutreach);
     $("customersNavBtn").toggleAttribute("aria-current", isCustomers);
-    $("appTitle").textContent = isOutreach ? "Outreach" : isCustomers ? "Customers" : "Inventory";
+    $("appTitle").textContent = isOutreach ? "Outreach" : isCustomers ? "Orders & Accounts" : "Inventory";
     $("appSubtitle").textContent = isOutreach
       ? "Lead to follow-up, in one place"
       : isCustomers
-        ? "Applications, orders, invoices, and delivery"
+        ? "Accounts, orders, invoices, delivery, and reorder follow-up"
         : "Count shelf and back stock without losing your place";
 
     if (isOutreach) {
@@ -2525,8 +2555,12 @@
       showCustomerAccessState();
       if (staffAccessCode && !customerLoaded) loadCustomerWorkQueue().catch(handleCustomerError);
     } else {
-      updateSummaryUi();
-      updateViewChrome();
+      showInventoryAccessState();
+      if (staffAccessCode && !inventoryLoaded) loadStartup().catch(handleCustomerError);
+      if (inventoryLoaded) {
+        updateSummaryUi();
+        updateViewChrome();
+      }
     }
     window.scrollTo({ top:0, behavior:"auto" });
     refreshIcons();
@@ -2536,6 +2570,22 @@
   const ORDER_STATUSES = ["New", "Reviewing", "Confirmed", "Invoicing", "Ready for delivery", "Completed", "Cancelled"];
   const INVOICE_STATUSES = ["Not started", "Ready for Badger", "Invoice requested", "Invoice received", "Invoice delivered", "Paid", "Cancelled"];
   const DELIVERY_STATUSES = ["Not scheduled", "Scheduled", "Delivered", "Issue"];
+
+  function showInventoryAccessState(){
+    const unlocked = !!staffAccessCode && inventoryLoaded;
+    $("inventoryAccessPanel").hidden = unlocked;
+    $("inventoryWorkspace").hidden = !unlocked;
+    if (!unlocked) {
+      $("inventoryStaffAccessCode").value = "";
+      if (activeAppSection === "inventory") {
+        $("hdrStore").textContent = "Locked";
+        $("hdrChanged").textContent = "Staff only";
+        $("bottomBar").hidden = true;
+      }
+    } else if (activeAppSection === "inventory") {
+      $("bottomBar").hidden = activeView !== "count";
+    }
+  }
 
   function showOutreachAccessState(){
     const unlocked = !!staffAccessCode;
@@ -2566,9 +2616,14 @@
       sessionStorage.removeItem("distribution_staff_access");
       customerLoaded = false;
       outreachLoaded = false;
+      inventoryLoaded = false;
       showCustomerAccessState();
       showOutreachAccessState();
-      if (activeAppSection === "outreach") {
+      showInventoryAccessState();
+      if (activeAppSection === "inventory") {
+        $("inventoryAccessStatus").textContent = message;
+        $("inventoryStaffAccessCode").focus();
+      } else if (activeAppSection === "outreach") {
         $("outreachAccessStatus").textContent = message;
         $("outreachStaffAccessCode").focus();
       } else {
@@ -2598,6 +2653,8 @@
     try {
       await loadCustomerWorkQueue();
       showOutreachAccessState();
+      if (!inventoryLoaded) await loadStartup();
+      showInventoryAccessState();
     } catch (error) {
       handleCustomerError(error);
     } finally {
@@ -2609,11 +2666,13 @@
     staffAccessCode = "";
     customerLoaded = false;
     outreachLoaded = false;
+    inventoryLoaded = false;
     selectedCustomerRecord = null;
     sessionStorage.removeItem("distribution_staff_access");
-    customerData = { applications:[], orders:[], summary:{} };
+    customerData = { accounts:[], applications:[], orders:[], summary:{} };
     showCustomerAccessState();
     showOutreachAccessState();
+    showInventoryAccessState();
     $("customerAccessStatus").textContent = "Customer records locked.";
   }
 
@@ -2627,6 +2686,8 @@
     try {
       await loadOutreach();
       showOutreachAccessState();
+      if (!inventoryLoaded) await loadStartup();
+      showInventoryAccessState();
     } catch (error) {
       handleCustomerError(error);
       $("outreachAccessStatus").textContent = error.message || String(error);
@@ -2635,9 +2696,30 @@
     }
   }
 
+  async function unlockInventoryWorkspace(){
+    const code = $("inventoryStaffAccessCode").value.trim();
+    if (!code) return $("inventoryAccessStatus").textContent = "Enter the staff access code.";
+    staffAccessCode = code;
+    sessionStorage.setItem("distribution_staff_access", code);
+    $("unlockInventoryBtn").disabled = true;
+    $("inventoryAccessStatus").textContent = "Unlocking...";
+    try {
+      await loadStartup();
+      showInventoryAccessState();
+      showOutreachAccessState();
+    } catch (error) {
+      handleCustomerError(error);
+      $("inventoryAccessStatus").textContent = error.message || String(error);
+    } finally {
+      $("unlockInventoryBtn").disabled = false;
+    }
+  }
+
   function customerStatusOptions(){
-    const statuses = customerView === "orders" ? ORDER_STATUSES : APPLICATION_STATUSES;
+    const statuses = customerView === "orders" ? ORDER_STATUSES : customerView === "applications" ? APPLICATION_STATUSES : [];
+    const operational = (customerView === "accounts" ? ["New"] : []).concat(["Awaiting invoice", "Ready", "Delivered", "Reorder due", "Inventory-counted"]);
     return [{ value:"active", label:"Active work" }, { value:"all", label:"All statuses" }]
+      .concat(operational.map(status => ({ value:`operational:${status}`, label:status })))
       .concat(statuses.map(status => ({ value:status, label:status })));
   }
 
@@ -2653,14 +2735,19 @@
     const records = [...(customerData[customerView] || [])];
     const activeStatuses = customerView === "orders"
       ? ["New", "Reviewing", "Confirmed", "Invoicing", "Ready for delivery"]
-      : ["New", "Reviewing", "Needs information"];
+      : customerView === "applications" ? ["New", "Reviewing", "Needs information"] : [];
     const query = customerFilterText.trim().toLowerCase();
     return records.filter(record => {
+      const operational = Array.isArray(record.operational_statuses) ? record.operational_statuses : [];
       const statusMatch = customerStatusFilter === "all"
-        || (customerStatusFilter === "active" ? activeStatuses.includes(record.workflow_status) : record.workflow_status === customerStatusFilter);
+        || (customerStatusFilter === "active"
+          ? (customerView === "accounts" ? operational.some(status => !["Delivered", "Inventory-counted"].includes(status)) : activeStatuses.includes(record.workflow_status))
+          : customerStatusFilter.startsWith("operational:")
+            ? operational.includes(customerStatusFilter.slice("operational:".length))
+            : record.workflow_status === customerStatusFilter);
       if (!statusMatch) return false;
       if (!query) return true;
-      return Object.values(record).some(value => typeof value !== "object" && String(value || "").toLowerCase().includes(query));
+      return JSON.stringify(record).toLowerCase().includes(query);
     });
   }
 
@@ -2681,6 +2768,7 @@
       $("hdrStore").textContent = `${Number(summary.new_applications || 0)} applications`;
       $("hdrChanged").textContent = `${Number(summary.new_orders || 0)} orders`;
     }
+    $("accountsViewBtn").classList.toggle("active", customerView === "accounts");
     $("applicationsViewBtn").classList.toggle("active", customerView === "applications");
     $("ordersViewBtn").classList.toggle("active", customerView === "orders");
     updateCustomerStatusOptions();
@@ -2694,32 +2782,37 @@
     }
 
     list.innerHTML = records.map(record => {
+      const isAccount = customerView === "accounts";
       const isOrder = customerView === "orders";
-      const id = isOrder ? record.request_id : record.application_id;
-      const contact = isOrder ? record.contact_name : record.primary_contact_name;
-      const email = isOrder ? record.email : record.primary_email;
-      const orderSummary = isOrder
+      const id = isAccount ? record.account_id : isOrder ? record.request_id : record.application_id;
+      const contact = isAccount ? record.contact_name : isOrder ? record.contact_name : record.primary_contact_name;
+      const email = isAccount ? record.email : isOrder ? record.email : record.primary_email;
+      const orderSummary = isAccount
+        ? `${Number(record.orders?.length || 0)} orders • ${Number(record.invoices?.length || 0)} invoices • ${Number(record.deliveries?.length || 0)} deliveries • ${Number(record.history?.length || 0)} history events`
+        : isOrder
         ? `${Number(record.line_count || record.lines?.length || 0)} product${Number(record.line_count || record.lines?.length || 0) === 1 ? "" : "s"} • ${Number(record.bottle_equivalent || 0)} bottle equivalent`
         : [record.business_type, record.delivery_city, record.delivery_state].filter(Boolean).join(" • ");
+      const displayStatus = isAccount ? record.primary_status : record.workflow_status;
       return `
-        <article class="workflowCard ${record.workflow_status === "New" ? "newRecord" : ""}" data-customer-kind="${isOrder ? "order" : "application"}" data-customer-id="${escapeHtml(id)}">
+        <article class="workflowCard ${displayStatus === "New" ? "newRecord" : ""}" data-customer-kind="${isAccount ? "account" : isOrder ? "order" : "application"}" data-customer-id="${escapeHtml(id)}">
           <div class="workflowCardTop">
             <div>
               <h3>${escapeHtml(record.business_name || record.legal_business_name || "Unnamed business")}</h3>
               <p>${escapeHtml([contact, email].filter(Boolean).join(" • ") || "Contact not recorded")}</p>
             </div>
-            <span class="badge ${customerStatusBadge(record.workflow_status)}">${escapeHtml(record.workflow_status || "New")}</span>
+            <span class="badge ${customerStatusBadge(displayStatus)}">${escapeHtml(displayStatus || "Account active")}</span>
           </div>
           <div class="workflowMeta">
-            <span class="badge">${escapeHtml(formatOutreachDate(record.submitted_at) || "No date")}</span>
+            ${!isAccount ? `<span class="badge">${escapeHtml(formatOutreachDate(record.submitted_at) || "No date")}</span>` : ""}
             <span class="badge">${escapeHtml(id)}</span>
             ${isOrder && record.verification_status ? `<span class="badge ${record.verification_status === "Active account matched" ? "green" : "amber"}">${escapeHtml(record.verification_status)}</span>` : ""}
             ${isOrder && record.badger_invoice_number ? `<span class="badge blue">Invoice ${escapeHtml(record.badger_invoice_number)}</span>` : ""}
             ${record.assigned_to ? `<span class="badge">${escapeHtml(record.assigned_to)}</span>` : ""}
+            ${isAccount ? (record.operational_statuses || []).map(status => `<span class="badge">${escapeHtml(status)}</span>`).join("") : ""}
           </div>
           <p>${escapeHtml(orderSummary || "Details available")}</p>
           <div class="workflowActions">
-            <button class="actionBtn primary" type="button" data-customer-action="open"><i data-lucide="clipboard-check"></i><span>Review</span></button>
+            <button class="actionBtn primary" type="button" data-customer-action="open"><i data-lucide="clipboard-check"></i><span>${isAccount ? "History" : "Review"}</span></button>
             <a class="actionBtn" href="mailto:${escapeHtml(email || "sales@sturgeonspirits.com")}"><i data-lucide="mail"></i><span>Email</span></a>
           </div>
         </article>`;
@@ -2732,6 +2825,7 @@
     const result = await staffApiGet({ action:"customerWorkQueue" });
     if (!result.ok) throw new Error(result.error || "Customer work could not be loaded.");
     customerData = {
+      accounts:result.accounts || [],
       applications:result.applications || [],
       orders:result.orders || [],
       summary:result.summary || {},
@@ -2745,8 +2839,8 @@
   function findCustomerRecord(element){
     const card = element.closest("[data-customer-id]");
     if (!card) return null;
-    const collection = card.dataset.customerKind === "order" ? customerData.orders : customerData.applications;
-    const key = card.dataset.customerKind === "order" ? "request_id" : "application_id";
+    const collection = card.dataset.customerKind === "account" ? customerData.accounts : card.dataset.customerKind === "order" ? customerData.orders : customerData.applications;
+    const key = card.dataset.customerKind === "account" ? "account_id" : card.dataset.customerKind === "order" ? "request_id" : "application_id";
     return collection.find(record => String(record[key]) === card.dataset.customerId) || null;
   }
 
@@ -2763,6 +2857,36 @@
 
   function openCustomerRecord(record){
     selectedCustomerRecord = record;
+    if (record.account_id && Array.isArray(record.history) && !record.request_id && !record.application_id) {
+      $("customerRecordTitle").textContent = record.business_name || "Customer account";
+      $("customerRecordSubtitle").textContent = `Account • ${record.account_id}`;
+      const history = record.history || [];
+      const historyHtml = history.length ? `<div class="activityTimeline">${history.map(item => `
+        <div class="activityItem">
+          <strong>${escapeHtml(item.type || "Activity")} · ${escapeHtml(item.title || item.status || "Recorded")}</strong>
+          <span>${escapeHtml(formatOutreachDate(item.timestamp) || "Date not recorded")}${item.id ? ` • ${escapeHtml(item.id)}` : ""}</span>
+          ${item.detail ? `<span>${escapeHtml(item.detail)}</span>` : ""}
+        </div>`).join("")}</div>` : `<div class="smallMuted">No account history has been recorded.</div>`;
+      $("customerRecordBody").innerHTML = `
+        <div class="businessDetailGrid">
+          <section class="detailSection"><h4>Account</h4>${detailRowsHtml([
+            { label:"Account ID", value:record.account_id }, { label:"Contact", value:record.contact_name },
+            { label:"Email", value:record.email }, { label:"Phone", value:record.phone },
+            { label:"City", value:record.city }, { label:"Relationship", value:record.relationship },
+            { label:"Directory status", value:record.directory_status }, { label:"Next reorder follow-up", value:record.next_follow_up },
+            { label:"Inventory tracking", value:record.inventory_tracking ? `Enabled${record.inventory_store_id ? ` • ${record.inventory_store_id}` : ""}` : "Not enabled" },
+          ])}</section>
+          <section class="detailSection"><h4>Complete totals</h4>${detailRowsHtml([
+            { label:"Applications", value:record.applications?.length || 0 }, { label:"Orders", value:record.orders?.length || 0 },
+            { label:"Invoices", value:record.invoices?.length || 0 }, { label:"Deliveries", value:record.deliveries?.length || 0 },
+            { label:"Inventory reorders", value:record.reorders?.length || 0 }, { label:"History events", value:history.length },
+          ])}</section>
+          <section class="detailSection full"><h4>Order, invoice, delivery, outreach, and reorder history</h4>${historyHtml}</section>
+        </div>`;
+      $("customerRecordDialog").showModal();
+      refreshIcons();
+      return;
+    }
     const isOrder = !!record.request_id;
     const id = isOrder ? record.request_id : record.application_id;
     $("customerRecordTitle").textContent = record.business_name || record.legal_business_name || "Customer record";
@@ -3071,10 +3195,14 @@
       summary: res.summary || { due_today:0, total_businesses:0, waiting:0, weekly_ready:0 },
     };
     outreachLoaded = true;
+    outreachCanSend = !!res.can_send && !res.is_mock;
+    outreachTestSendAvailable = !!res.test_send_available && !res.is_mock;
     const noticeText = $("outreachModeNotice").querySelector("span");
     noticeText.textContent = res.is_mock
       ? `Local mock data: ${Number(res.summary?.total_businesses || 0)} sample businesses. The staging connection will load the complete spreadsheet directory.`
-      : "Email review and outcome tracking are available here. Sending remains in the controlled Zoho mailer during testing.";
+      : outreachCanSend
+        ? "One-at-a-time sending is enabled. Review and save each draft before sending."
+        : `Email review is available, but real sending is disabled. ${res.send_configuration_detail || "Configure the Distribution Outreach mailer to enable it."}`;
     $("outreachModeNotice").hidden = !!res.can_send && !res.is_mock;
     renderOutreach();
     setOutreachStatus(`Updated ${new Date().toLocaleTimeString([], { hour:"numeric", minute:"2-digit" })}.`);
@@ -3091,6 +3219,7 @@
 
   function openOutreachReview(record, showActivity){
     selectedOutreachRecord = record;
+    selectedOutreachSendToken = (window.crypto?.randomUUID?.() || `${Date.now()}-${Math.random()}`).replace(/[^A-Za-z0-9_-]/g, "");
     $("outreachReviewTitle").textContent = showActivity ? "Activity" : "Review email";
     $("outreachReviewRecipient").textContent = [outreachBusinessName(record), record.email].filter(Boolean).join(" • ");
     $("outreachReviewSubject").value = showActivity ? "Recent contact history" : (record.subject || `A Wisconsin spirits option for ${outreachBusinessName(record)}`);
@@ -3115,6 +3244,7 @@
       $("outreachDraftStatus").textContent = record.has_saved_draft
         ? `Saved ${formatOutreachDate(record.draft_updated_at) || "as a draft"}`
         : "Not saved as a custom draft";
+      updateOutreachSendState();
     }
     $("outreachReviewDialog").showModal();
     refreshIcons();
@@ -3134,6 +3264,15 @@
         ? `Saved ${formatOutreachDate(selectedOutreachRecord.draft_updated_at) || "as a draft"}`
         : "Not saved as a custom draft"
     );
+    updateOutreachSendState();
+  }
+
+  function updateOutreachSendState(){
+    const saved = !!selectedOutreachRecord?.has_saved_draft && !outreachDraftIsDirty() && !$("outreachReviewBody").readOnly;
+    $("sendOutreachEmailBtn").disabled = !(saved && outreachCanSend);
+    $("sendOutreachTestBtn").disabled = !(saved && outreachTestSendAvailable);
+    $("sendOutreachEmailBtn").title = outreachCanSend ? (saved ? "Send this saved draft" : "Save the reviewed draft first") : "Real sending is not configured";
+    $("sendOutreachTestBtn").title = outreachTestSendAvailable ? (saved ? "Send this draft to the configured test recipient" : "Save the reviewed draft first") : "Test sending is not configured";
   }
 
   async function saveOutreachDraft(){
@@ -3166,10 +3305,54 @@
       $("outreachReviewSubject").value = subject;
       $("outreachReviewBody").value = bodyText;
       $("outreachDraftStatus").textContent = "Draft saved";
+      updateOutreachSendState();
       toast("Email draft saved");
     } catch (err) {
       $("outreachDraftStatus").textContent = err.message || String(err);
       button.disabled = false;
+    }
+  }
+
+  async function sendOutreachEmail(testMode){
+    if (!selectedOutreachRecord || outreachDraftIsDirty() || !selectedOutreachRecord.has_saved_draft) return toast("Save the reviewed draft first");
+    const staffName = $("outreachStaffName").value.trim();
+    if (!staffName) return toast("Enter your staff name before sending");
+    const subject = $("outreachReviewSubject").value.trim();
+    const bodyText = $("outreachReviewBody").value.trim();
+    const business = outreachBusinessName(selectedOutreachRecord);
+    const recipient = selectedOutreachRecord.email;
+    const question = testMode
+      ? `Send a TEST of this saved draft?\n\nBusiness: ${business}\nProspect recipient (not contacted): ${recipient}\nSubject: ${subject}\n\nThe message goes only to the configured Karl test address.`
+      : `Send this REAL email?\n\nBusiness: ${business}\nRecipient: ${recipient}\nSubject: ${subject}\n\nZoho will send one email and the account history will be updated.`;
+    if (!confirm(question)) return;
+    $("sendOutreachEmailBtn").disabled = true;
+    $("sendOutreachTestBtn").disabled = true;
+    $("outreachDraftStatus").textContent = testMode ? "Sending test..." : "Sending email...";
+    try {
+      const res = await staffApiPost({
+        action:testMode ? "sendOutreachTestEmail" : "sendOutreachEmail",
+        account_id:selectedOutreachRecord.account_id,
+        source_row:selectedOutreachRecord.source_row,
+        business:selectedOutreachRecord.business,
+        email:recipient,
+        message_stage:selectedOutreachRecord.next_email || "Initial",
+        subject:subject,
+        body_text:bodyText,
+        idempotency_token:testMode ? `${selectedOutreachSendToken}-test` : selectedOutreachSendToken,
+        staff_name:staffName,
+      });
+      if (!res.ok) throw new Error(res.error || "Email could not be sent.");
+      $("outreachDraftStatus").textContent = res.message || "Zoho accepted the email.";
+      toast(testMode ? "Test email accepted" : "Email sent");
+      if (!testMode) {
+        $("outreachReviewDialog").close();
+        await loadOutreach();
+      }
+    } catch (error) {
+      $("outreachDraftStatus").textContent = error.message || String(error);
+      updateOutreachSendState();
+    } finally {
+      if (testMode) updateOutreachSendState();
     }
   }
 
@@ -3832,7 +4015,7 @@
     $("storeContactsStatus").textContent = "Saving...";
 
     try {
-      const res = await apiPost({
+      const res = await staffApiPost({
         action:"updateStoreContacts",
         store_id: storeId,
         manager_name: managerName,
@@ -4422,7 +4605,7 @@
 
   async function loadManagerGrid() {
     try {
-      const res = await apiGet({ action:"managerGrid" });
+      const res = await staffApiGet({ action:"managerGrid" });
       if (!res.ok) throw new Error(res.error || "Failed to load manager grid");
       managerGridData = {
         stores: res.stores || [],
@@ -4438,7 +4621,7 @@
     if (!storeId) return;
     setStatus("Loading sold since count...");
     try {
-      const res = await apiGet({ action:"salesSinceCount", store_id: storeId });
+      const res = await staffApiGet({ action:"salesSinceCount", store_id: storeId });
       if (!res.ok) throw new Error(res.error || "Failed to load sold since count");
       salesData = {
         lines: res.lines || [],
@@ -4456,7 +4639,7 @@
 
   async function loadStore(storeId){
     setStatus("Loading inventory...");
-    const res = await apiGet({ action:"initData", store_id: storeId });
+    const res = await staffApiGet({ action:"initData", store_id: storeId });
     if (!res.ok) throw new Error("Load failed.");
 
     cache.stores = res.stores || cache.stores;
@@ -4479,12 +4662,14 @@
   async function loadStartup(){
     loadPrefs();
     setStatus("Loading stores...");
-    const res = await apiGet({ action:"initData" });
+    const res = await staffApiGet({ action:"initData" });
     cache.stores = res.stores || [];
     renderStores(cache.stores);
 
     const first = $("storeSelect").value || cache.stores[0]?.store_id || "";
     if (!first) {
+      inventoryLoaded = true;
+      showInventoryAccessState();
       setStatus("No active stores found.");
       render();
       return;
@@ -4493,6 +4678,8 @@
     $("storeSelect").value = first;
     await loadStore(first);
     await loadManagerGrid();
+    inventoryLoaded = true;
+    showInventoryAccessState();
   }
 
   function resetCounts(){
@@ -4526,21 +4713,25 @@
     if (!items.length) return toast("No changed items to submit");
 
     const updateInventory = $("updateInventory").checked;
-
-    setStatus(`Submitting ${items.length} changed item(s)...`);
-    const res = await apiPost({
-      action:"submitCounts",
-      store_id: storeId,
-      rep,
-      updateInventory,
-      items
-    });
-
-    setStatus(res.message || "Submitted");
-    toast("Submitted");
-
-    await loadStore(storeId);
-    await loadManagerGrid();
+    const button = $("submitBtn");
+    button.disabled = true;
+    try {
+      setStatus(`Submitting ${items.length} changed item(s)...`);
+      const res = await staffApiPost({
+        action:"submitCounts",
+        store_id: storeId,
+        rep,
+        updateInventory,
+        items
+      });
+      if (!res.ok) throw new Error(res.error || "Submit failed. Check your connection and try again.");
+      setStatus(res.message || "Submitted");
+      toast("Submitted");
+      await loadStore(storeId);
+      await loadManagerGrid();
+    } finally {
+      button.disabled = false;
+    }
   }
 
   async function createReorder(){
@@ -4551,21 +4742,27 @@
     if (!storeId) return toast("Pick a store");
     if (!rep) return toast("Enter your name");
 
-    setStatus("Creating reorder...");
-    const res = await apiPost({
-      action:"createReorder",
-      store_id: storeId,
-      rep,
-      notes
-    });
-
-    setStatus(`Created ${res.created || 0} reorder lines.`);
-    toast(`Reorder: ${res.created || 0}`);
-    await loadManagerGrid();
+    const button = $("reorderBtn");
+    button.disabled = true;
+    try {
+      setStatus("Creating reorder...");
+      const res = await staffApiPost({
+        action:"createReorder",
+        store_id: storeId,
+        rep,
+        notes
+      });
+      if (!res.ok) throw new Error(res.error || "Reorder failed. Check your connection and try again.");
+      setStatus(`Created ${res.created || 0} reorder lines.`);
+      toast(`Reorder: ${res.created || 0}`);
+      await loadManagerGrid();
+    } finally {
+      button.disabled = false;
+    }
   }
 
   async function fetchSkusLive(){
-    const res = await apiPost({ action:"listSkus" });
+    const res = await staffApiPost({ action:"listSkus" });
     return (res.skus || [])
       .sort((a,b) => String(a.sku_name || "").localeCompare(String(b.sku_name || "")));
   }
@@ -4619,7 +4816,7 @@
     $("addSkuStatus").textContent = "Adding...";
 
     try {
-      const res = await apiPost({
+      const res = await staffApiPost({
         action:"addSkuToStore",
         store_id: storeId,
         sku_id: skuId,
@@ -4678,7 +4875,7 @@
     $("addProductStatus").textContent = "Saving...";
 
     try {
-      const res = await apiPost({
+      const res = await staffApiPost({
         action:"upsertProduct",
         sku: { sku_id, upc, sku_name, size, units_per_case, active },
         addToStore,
@@ -4853,8 +5050,14 @@
   });
 
   $("resetBtn").addEventListener("click", resetCounts);
-  $("submitBtn").addEventListener("click", submitCounts);
-  $("reorderBtn").addEventListener("click", createReorder);
+  $("submitBtn").addEventListener("click", () => submitCounts().catch(err => {
+    handleCustomerError(err);
+    setStatus(err.message || "Submit failed. Check your connection and try again.");
+  }));
+  $("reorderBtn").addEventListener("click", () => createReorder().catch(err => {
+    handleCustomerError(err);
+    setStatus(err.message || "Reorder failed. Check your connection and try again.");
+  }));
 
   $("scanBtn").addEventListener("click", startScan);
   $("bbScan").addEventListener("click", startScan);
@@ -4873,6 +5076,8 @@
   $("inventoryNavBtn").addEventListener("click", () => setAppSection("inventory"));
   $("outreachNavBtn").addEventListener("click", () => setAppSection("outreach"));
   $("customersNavBtn").addEventListener("click", () => setAppSection("customers"));
+  $("unlockInventoryBtn").addEventListener("click", unlockInventoryWorkspace);
+  $("inventoryStaffAccessCode").addEventListener("keydown", event => { if (event.key === "Enter") unlockInventoryWorkspace(); });
   $("unlockOutreachBtn").addEventListener("click", unlockOutreachWorkspace);
   $("outreachStaffAccessCode").addEventListener("keydown", event => { if (event.key === "Enter") unlockOutreachWorkspace(); });
   $("refreshOutreachBtn").addEventListener("click", () => loadOutreach().catch(err => setOutreachStatus(err.message)));
@@ -4884,6 +5089,12 @@
   $("unlockCustomersBtn").addEventListener("click", unlockCustomerWorkspace);
   $("staffAccessCode").addEventListener("keydown", event => {
     if (event.key === "Enter") unlockCustomerWorkspace();
+  });
+  $("accountsViewBtn").addEventListener("click", () => {
+    customerView = "accounts";
+    customerStatusFilter = "all";
+    localStorage.setItem("customer_work_view", customerView);
+    renderCustomerWorkflow();
   });
   $("applicationsViewBtn").addEventListener("click", () => {
     customerView = "applications";
@@ -4914,6 +5125,11 @@
     $("customerSearch").focus();
   });
   $("customerStaffName").addEventListener("change", () => localStorage.setItem("customer_staff_name", $("customerStaffName").value.trim()));
+  $("outreachStaffName").addEventListener("change", () => {
+    const value = $("outreachStaffName").value.trim();
+    localStorage.setItem("customer_staff_name", value);
+    $("customerStaffName").value = value;
+  });
   $("customerWorkflowList").addEventListener("click", event => {
     const button = event.target.closest("[data-customer-action='open']");
     if (!button) return;
@@ -5019,6 +5235,8 @@
   $("outreachReviewSubject").addEventListener("input", updateOutreachDraftState);
   $("outreachReviewBody").addEventListener("input", updateOutreachDraftState);
   $("saveOutreachDraftBtn").addEventListener("click", saveOutreachDraft);
+  $("sendOutreachEmailBtn").addEventListener("click", () => sendOutreachEmail(false));
+  $("sendOutreachTestBtn").addEventListener("click", () => sendOutreachEmail(true));
   $("closeOutreachReviewBtn").addEventListener("click", closeOutreachReview);
   $("closeBusinessDetailBtn").addEventListener("click", () => $("businessDetailDialog").close());
   $("closeNewsletterContactBtn").addEventListener("click", () => $("newsletterContactDialog").close());
@@ -5029,9 +5247,9 @@
   });
 
   $("customerStaffName").value = localStorage.getItem("customer_staff_name") || "";
+  $("outreachStaffName").value = localStorage.getItem("customer_staff_name") || "";
   refreshIcons();
   setAppSection(activeAppSection);
-  loadStartup().catch(err => setStatus(err.message));
 })();
 </script>
 </body>

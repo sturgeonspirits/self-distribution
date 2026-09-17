@@ -1,5 +1,5 @@
-// App version: 2026.09.17.27
-const APP_VERSION = "2026.09.17.27";
+// App version: 2026.09.17.28
+const APP_VERSION = "2026.09.17.28";
 const STAFF_ACTIONS = new Set([
   "outreachDashboard",
   "saveOutreachDraft",
@@ -15,7 +15,22 @@ const STAFF_ACTIONS = new Set([
   "hubSystemStatus",
   "initializeHardenedHub",
   "reconcileIntegrations",
+  "sendOutreachEmail",
+  "sendOutreachTestEmail",
+  "initData",
+  "listSkus",
+  "addSkuToStore",
+  "upsertProduct",
+  "submitCounts",
+  "createReorder",
+  "managerGrid",
+  "salesSinceCount",
+  "updateStoreContacts",
 ]);
+
+const FAILED_ATTEMPT_LIMIT = 5;
+const FAILED_ATTEMPT_WINDOW_MS = 15 * 60 * 1000;
+const failedStaffAttempts = new Map();
 
 function response(statusCode, headers, body) {
   return { statusCode, headers, body: JSON.stringify(body) };
@@ -28,6 +43,37 @@ function staffActionFor(event, body) {
 
 function staffCodeFor(event) {
   return event.headers?.["x-staff-code"] || event.headers?.["X-Staff-Code"] || "";
+}
+
+function requestSourceFor(event) {
+  return String(
+    event.headers?.["x-nf-client-connection-ip"] ||
+    event.headers?.["x-forwarded-for"] ||
+    event.headers?.["client-ip"] ||
+    "unknown"
+  ).split(",")[0].trim().slice(0, 120);
+}
+
+function activeFailureState(source, now = Date.now()) {
+  const state = failedStaffAttempts.get(source);
+  if (!state || now - state.startedAt >= FAILED_ATTEMPT_WINDOW_MS) {
+    failedStaffAttempts.delete(source);
+    return null;
+  }
+  return state;
+}
+
+function registerFailedStaffAttempt(source, action, now = Date.now()) {
+  const current = activeFailureState(source, now) || { count:0, startedAt:now };
+  current.count += 1;
+  failedStaffAttempts.set(source, current);
+  console.warn("Rejected staff-code attempt", {
+    action:String(action || "").slice(0, 80),
+    source,
+    attempts:current.count,
+    windowStartedAt:new Date(current.startedAt).toISOString(),
+  });
+  return current;
 }
 
 export async function handler(event) {
@@ -55,9 +101,16 @@ export async function handler(event) {
       if (!expectedStaffCode) {
         return response(503, cors, { ok:false, error:"Staff customer access is not configured.", code:"STAFF_AUTH_NOT_CONFIGURED" });
       }
+      const requestSource = requestSourceFor(event);
+      const failureState = activeFailureState(requestSource);
+      if (failureState?.count >= FAILED_ATTEMPT_LIMIT) {
+        return response(429, { ...cors, "Retry-After":"900" }, { ok:false, error:"Too many incorrect staff-code attempts. Try again later.", code:"STAFF_AUTH_THROTTLED" });
+      }
       if (staffCodeFor(event) !== expectedStaffCode) {
+        registerFailedStaffAttempt(requestSource, action);
         return response(401, cors, { ok:false, error:"Enter the staff access code.", code:"STAFF_AUTH_REQUIRED" });
       }
+      failedStaffAttempts.delete(requestSource);
     }
 
     if (!APPS_SCRIPT_URL) {

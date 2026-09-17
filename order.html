@@ -1,12 +1,12 @@
 <!doctype html>
-<!-- App version: 2026.09.17.27 -->
+<!-- App version: 2026.09.17.28 -->
 <html lang="en">
 <head>
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
-  <meta name="app-version" content="2026.09.17.27" />
+  <meta name="app-version" content="2026.09.17.28" />
   <title>Order request | Sturgeon Distribution Hub</title>
-  <link rel="stylesheet" href="/assets/customer-portal.css?v=2026.09.17.27" />
+  <link rel="stylesheet" href="/assets/customer-portal.css?v=2026.09.17.28" />
 </head>
 <body>
   <header class="siteHeader">
@@ -117,7 +117,9 @@
   <script>
   (() => {
     "use strict";
-    const APP_VERSION = "2026.09.17.27";
+    window.addEventListener("unhandledrejection", e => console.error("Unhandled promise rejection:", e.reason));
+    window.addEventListener("error", e => console.error("Unhandled error:", e.error || e.message));
+    const APP_VERSION = "2026.09.17.28";
     const form = document.getElementById("orderForm");
     const linesEl = document.getElementById("orderLines");
     const loadingEl = document.getElementById("productLoading");

@@ -1,8 +1,19 @@
 /*********************************
  * Inventory API (JSON) for Netlify
- * App version: 2026.09.17.27
+ * App version: 2026.09.17.28
  *
  * CHANGES IN THIS VERSION
+ * - Required the shared staff code for every inventory read and write at the Netlify boundary.
+ * - Added an Inventory unlock gate that prevents data loading before authentication.
+ * - Neutralized spreadsheet formulas in staff-written product, contact and count fields.
+ * - Restored usable count and reorder controls after network or response failures.
+ * - Added account-centric order, invoice, delivery, activity and reorder history.
+ * - Kept non-counted customer accounts out of active Inventory stores by default.
+ * - Added locked, one-at-a-time app email delivery through the separate Zoho mailer.
+ * - Preserved Pilot Review as a read-only legacy archive and duplicate-send source.
+ * - Added global browser error visibility and staff-code throttling.
+ *
+ * EARLIER STAGING CHANGES
  * - Added a guarded, verified migration into one staging Distribution Hub workbook.
  * - Kept the existing staging Inventory Backend as a rollback source until cutover.
  * - Replaced spreadsheet-row identity with permanent account IDs.
@@ -14,7 +25,6 @@
  * - Added a disabled Toast catalog adapter boundary without adding credentials.
  * - Preserved all existing inventory, count, reorder and outreach workflows.
  *
- * EARLIER STAGING CHANGES
  * - Replaced the browser-autofill-prone company_website spam trap.
  * - Prevented legitimate customer applications and orders from being discarded.
  * - Added an immediate staff email for each new online order request.
@@ -88,7 +98,7 @@
  * - Use only in the staging inventory backend until testing is complete.
  *********************************/
 
-const APP_VERSION = "2026.09.17.27";
+const APP_VERSION = "2026.09.17.28";
 
 const SHEET_NAMES = {
   STORES: "Stores",
@@ -105,6 +115,7 @@ const BADGER_TRACKER_SPREADSHEET_ID = "10KM-L-iAXJ4WQ1HfLWWoGkINsi9tEvVs6J5XiHBs
 const OUTREACH_SHEET_NAME = "Distribution Directory and Leads";
 const OUTREACH_ACTIVITY_SHEET_NAME = "Activity Log";
 const OUTREACH_DRAFTS_SHEET_NAME = "Outreach Drafts";
+const OUTREACH_PILOT_SHEET_NAME = "Pilot Review";
 const OUTREACH_PROGRAMS_SHEET_NAME = "Account Programs";
 const OUTREACH_ENGAGEMENT_SHEET_NAME = "Email Engagement";
 const TOAST_ITEM_MAP_SHEET_NAME = "Toast Item Map";
@@ -149,6 +160,27 @@ function getSs_() {
   if (__OPERATIONAL_SS) return __OPERATIONAL_SS;
   __OPERATIONAL_SS = isHubInventoryActive_() ? getOutreachSs_() : getLegacyInventorySs_();
   return __OPERATIONAL_SS;
+}
+
+function inventoryTrackedAccountIds_() {
+  const sheet = getCustomerApplicationsSheet_(false);
+  if (!sheet || sheet.getLastRow() < 2) return new Set();
+  return new Set(getAllRowsAsObjects_(sheet)
+    .filter(row => toBool_(row.inventory_tracking) && row.account_id)
+    .map(row => String(row.account_id || "").trim()));
+}
+
+function inventoryStoreAllowed_(store, trackedAccountIds) {
+  if (!toBool_(store.active)) return false;
+  const accountId = String(store.account_id || "").trim();
+  return !accountId || trackedAccountIds.has(accountId);
+}
+
+function assertInventoryStoreAllowed_(storeId) {
+  const tracked = inventoryTrackedAccountIds_();
+  const store = getAllRowsAsObjects_(getSheet_(SHEET_NAMES.STORES)).find(row => String(row.store_id || "") === String(storeId || ""));
+  if (!store || !inventoryStoreAllowed_(store, tracked)) throw new Error("Inventory Tracking is not enabled for this customer account.");
+  return store;
 }
 function getSheet_(name) {
   const sh = getSs_().getSheetByName(name);
@@ -449,7 +481,7 @@ function handle_(e, body) {
     assertAuthorized_(e, body);
     const action = (e?.parameter?.action) || (body?.action) || "";
     if (!action) {
-      return json_({ ok:true, service:"sturgeon-distribution-hub", version:APP_VERSION, actions:["initData","listSkus","addSkuToStore","upsertProduct","submitCounts","createReorder","managerGrid","salesSinceCount","updateStoreContacts","outreachDashboard","saveOutreachDraft","updateOutreachOutcome","updateOutreachBusiness","updateOutreachPrograms","createOutreachBusiness","importOutreachBusinesses","upsertNewsletterContact","submitCustomerApplication","submitOnlineOrderRequest","customerWorkQueue","updateCustomerApplication","updateOnlineOrderRequest","hubSystemStatus","initializeHardenedHub","reconcileIntegrations"] });
+      return json_({ ok:true, service:"sturgeon-distribution-hub", version:APP_VERSION, actions:["initData","listSkus","addSkuToStore","upsertProduct","submitCounts","createReorder","managerGrid","salesSinceCount","updateStoreContacts","outreachDashboard","saveOutreachDraft","sendOutreachEmail","sendOutreachTestEmail","updateOutreachOutcome","updateOutreachBusiness","updateOutreachPrograms","createOutreachBusiness","importOutreachBusinesses","upsertNewsletterContact","submitCustomerApplication","submitOnlineOrderRequest","customerWorkQueue","updateCustomerApplication","updateOnlineOrderRequest","hubSystemStatus","initializeHardenedHub","reconcileIntegrations"] });
     }
 
     let res;
@@ -465,6 +497,8 @@ function handle_(e, body) {
       case "updateStoreContacts": res = apiUpdateStoreContacts_(body); break;
       case "outreachDashboard": res = apiGetOutreachDashboard_(); break;
       case "saveOutreachDraft": res = apiSaveOutreachDraft_(body); break;
+      case "sendOutreachEmail": res = apiSendOutreachEmail_(body, false); break;
+      case "sendOutreachTestEmail": res = apiSendOutreachEmail_(body, true); break;
       case "updateOutreachOutcome": res = apiUpdateOutreachOutcome_(body); break;
       case "updateOutreachBusiness": res = apiUpdateOutreachBusiness_(body); break;
       case "updateOutreachPrograms": res = apiUpdateOutreachPrograms_(body); break;
@@ -489,8 +523,9 @@ function handle_(e, body) {
 }
 
 function apiGetInitData_(store_id) {
+  const trackedAccountIds = inventoryTrackedAccountIds_();
   const stores = getAllRowsAsObjects_(getSheet_(SHEET_NAMES.STORES))
-    .filter(s => toBool_(s.active))
+    .filter(s => inventoryStoreAllowed_(s, trackedAccountIds))
     .map(s => Object.assign({
       store_id:String(s.store_id || ""),
       store_name:String(s.store_name || ""),
@@ -499,6 +534,7 @@ function apiGetInitData_(store_id) {
     .sort((a,b)=>a.store_name.localeCompare(b.store_name));
 
   if (!store_id) return { stores, lines: [] };
+  assertInventoryStoreAllowed_(store_id);
 
   const skuRows = getAllRowsAsObjects_(getSheet_(SHEET_NAMES.SKUS));
   const skuMap = new Map();
@@ -575,6 +611,7 @@ function apiListSkus_() {
 function apiAddSkuToStoreUnlocked_(p) {
   if (!p) throw new Error("Missing body");
   requireFields_(p, ["store_id","sku_id"]);
+  assertInventoryStoreAllowed_(p.store_id);
 
   const sh = getSheet_(SHEET_NAMES.INVENTORY);
   const h = getHeaderMap_(sh);
@@ -608,8 +645,8 @@ function apiUpsertProductUnlocked_(p) {
   const row = Array(sh.getLastColumn()).fill("");
   row[h.sku_id]=id;
   row[h.upc]=digitsOnly_(p.sku.upc);
-  row[h.sku_name]=p.sku.sku_name;
-  row[h.size]=p.sku.size || "";
+  row[h.sku_name]=sheetSafeText_(p.sku.sku_name, 150, "SKU name");
+  row[h.size]=sheetSafeText_(p.sku.size, 50, "Size");
   row[h.units_per_case]=Number(p.sku.units_per_case||12);
   row[h.active]=!!p.sku.active;
 
@@ -632,6 +669,7 @@ function apiUpsertProductUnlocked_(p) {
 function apiSubmitCountsUnlocked_(p) {
   if (!p) throw new Error("Missing body");
   requireFields_(p, ["store_id","rep"]);
+  assertInventoryStoreAllowed_(p.store_id);
   if (!Array.isArray(p.items) || !p.items.length) throw new Error("Missing items[]");
 
   const inv = getSheet_(SHEET_NAMES.INVENTORY);
@@ -647,7 +685,7 @@ function apiSubmitCountsUnlocked_(p) {
     const before = r ? Number(r.on_hand_units||0) : 0;
     const after = Number(it.counted||0);
 
-    out.push([ts,p.store_id,p.rep,it.sku_id,before,after,after-before,it.notes||""]);
+    out.push([ts, p.store_id, sheetSafeText_(p.rep, 100, "Rep"), it.sku_id, before, after, after-before, sheetSafeText_(it.notes, 500, "Notes")]);
 
     if (r && p.updateInventory) {
       const rowNum = rows.indexOf(r)+2;
@@ -666,6 +704,7 @@ function apiSubmitCountsUnlocked_(p) {
 function apiCreateReorderUnlocked_(p) {
   if (!p) throw new Error("Missing body");
   requireFields_(p, ["store_id","rep"]);
+  assertInventoryStoreAllowed_(p.store_id);
 
   const inv = getAllRowsAsObjects_(getSheet_(SHEET_NAMES.INVENTORY))
     .filter(r => String(r.store_id)===String(p.store_id));
@@ -701,6 +740,7 @@ function apiCreateReorderUnlocked_(p) {
 function apiUpdateStoreContactsUnlocked_(p) {
   if (!p) throw new Error("Missing body");
   requireFields_(p, ["store_id"]);
+  assertInventoryStoreAllowed_(p.store_id);
 
   const sh = getSheet_(SHEET_NAMES.STORES);
   const h = ensureHeaderColumns_(sh, ["manager_name", "assistant_manager_name"]);
@@ -709,8 +749,8 @@ function apiUpdateStoreContactsUnlocked_(p) {
   const idx = rows.findIndex(r => String(r.store_id) === storeId);
   if (idx < 0) throw new Error("Store not found.");
 
-  const managerName = String(p.manager_name || "").trim();
-  const assistantManagerName = String(p.assistant_manager_name || "").trim();
+  const managerName = sheetSafeText_(p.manager_name, 100, "Manager name");
+  const assistantManagerName = sheetSafeText_(p.assistant_manager_name, 100, "Assistant manager name");
   const rowNum = idx + 2;
   sh.getRange(rowNum, h.manager_name + 1).setValue(managerName);
   sh.getRange(rowNum, h.assistant_manager_name + 1).setValue(assistantManagerName);
@@ -740,8 +780,9 @@ function apiCreateReorder_(p) { return withInventoryWriteLock_(() => apiCreateRe
 function apiUpdateStoreContacts_(p) { return withInventoryWriteLock_(() => apiUpdateStoreContactsUnlocked_(p)); }
 
 function apiGetManagerGrid_() {
+  const trackedAccountIds = inventoryTrackedAccountIds_();
   const stores = getAllRowsAsObjects_(getSheet_(SHEET_NAMES.STORES))
-    .filter(s => toBool_(s.active))
+    .filter(s => inventoryStoreAllowed_(s, trackedAccountIds))
     .map(s => Object.assign({
       store_id: String(s.store_id || ""),
       store_name: String(s.store_name || ""),
@@ -884,6 +925,7 @@ function getLatestCountMap_() {
 
 function apiGetSalesSinceCount_(store_id) {
   requireFields_({ store_id }, ["store_id"]);
+  assertInventoryStoreAllowed_(store_id);
 
   const skuRows = getAllRowsAsObjects_(getSheet_(SHEET_NAMES.SKUS));
   const skuMap = new Map();
@@ -1345,6 +1387,10 @@ function outreachActivityMap_() {
       stage: String(outreachValue_(row, ["message_stage", "stage"]) || ""),
       result: String(outreachValue_(row, ["result"]) || ""),
       detail: String(outreachValue_(row, ["error/detail", "error_detail", "detail"]) || ""),
+      subject: String(outreachValue_(row, ["subject"]) || ""),
+      message_id: String(outreachValue_(row, ["message_id"]) || ""),
+      delivered_to: String(outreachValue_(row, ["delivered_to"]) || ""),
+      idempotency_token: String(outreachValue_(row, ["idempotency_token"]) || ""),
     };
     keys.forEach(key => {
       if (!activity.has(key)) activity.set(key, []);
@@ -1702,6 +1748,20 @@ function outreachRecord_(row, sourceRow, activityMap, settings, draftMap, progra
   const postalCode = String(outreachValue_(row, ["zip", "zip_code", "postal_code"]) || "").trim();
   const street = String(outreachValue_(row, ["address", "street", "street_address", "address_1"]) || "").trim();
   const address = [street, city, state, postalCode].filter(Boolean).join(", ");
+  const loggedActivity = (activityMap.get(`account:${accountId}`) || activityMap.get(`business:${business.toLowerCase()}`) || []).slice();
+  const sourceMessageId = String(outreachValue_(row, ["message_id", "zoho_message_id"]) || "").trim();
+  const sourceLastEmailed = outreachValue_(row, ["last_emailed", "last_email"]);
+  if (sourceLastEmailed && !loggedActivity.some(item => item.message_id && item.message_id === sourceMessageId)) {
+    loggedActivity.push({
+      timestamp:sourceLastEmailed,
+      stage:messageStage === "Initial" ? "Initial" : "Prior outreach",
+      result:"SOURCE LEAD SENT",
+      detail:"Historical send recorded on the source lead.",
+      message_id:sourceMessageId,
+      delivered_to:String(outreachValue_(row, ["email", "email_address"]) || "").trim(),
+    });
+  }
+  loggedActivity.sort((a, b) => recordTimestamp_(b.timestamp) - recordTimestamp_(a.timestamp));
   const record = {
     account_id: accountId,
     source_row: sourceRow,
@@ -1720,6 +1780,7 @@ function outreachRecord_(row, sourceRow, activityMap, settings, draftMap, progra
     status: status,
     priority: String(outreachValue_(row, ["priority"]) || "").trim(),
     last_emailed: outreachValue_(row, ["last_emailed", "last_email"]),
+    message_id: sourceMessageId,
     next_follow_up: outreachValue_(row, ["next_follow-up", "next_follow_up"]),
     outcome: String(outreachValue_(row, ["outcome"]) || "").trim(),
     notes: String(outreachValue_(row, ["notes"]) || "").trim(),
@@ -1767,7 +1828,7 @@ function outreachRecord_(row, sourceRow, activityMap, settings, draftMap, progra
       bounce_count:0,
       source:"Not connected",
     },
-    activity: (activityMap.get(`account:${accountId}`) || activityMap.get(`business:${business.toLowerCase()}`) || []).slice(0, 5),
+    activity: loggedActivity.slice(0, 50),
   };
   record.weekly_exclusion_reasons = outreachWeeklyExclusionReasons_(record);
   record.weekly_eligible = record.weekly_exclusion_reasons.length === 0;
@@ -1803,9 +1864,12 @@ function apiGetOutreachDashboard_() {
   const today = due.concat(ready.filter(record => !due.some(item => item.source_row === record.source_row)))
     .slice(0, 30);
   const directory = records.slice().sort((a, b) => String(a.business).localeCompare(String(b.business)));
+  const mailer = outreachMailerStatus_();
 
   return {
-    can_send: false,
+    can_send: mailer.can_send,
+    test_send_available: mailer.test_send_available,
+    send_configuration_detail: mailer.detail,
     today: today,
     directory: directory,
     sent: sent.slice(0, 50),
@@ -1930,6 +1994,217 @@ function apiSaveOutreachDraft_(p) {
     appendOutreachDraftActivity_({ account_id:accountId, business:currentBusiness, email:currentEmail }, currentStage, subject);
     appendAudit_("SAVE_OUTREACH_DRAFT", "Account", accountId, accountId, updatedBy, OUTREACH_SHEET_NAME, OUTREACH_DRAFTS_SHEET_NAME, "Completed", currentStage);
     return { message:"Email draft saved.", account_id:accountId, source_row:rowNumber, updated_at:now.toISOString() };
+  } finally {
+    lock.releaseLock();
+  }
+}
+
+function outreachMailerProperties_() {
+  const properties = PropertiesService.getScriptProperties();
+  return {
+    url:String(properties.getProperty("OUTREACH_MAILER_URL") || "").trim(),
+    secret:String(properties.getProperty("OUTREACH_MAILER_SHARED_SECRET") || "").trim(),
+  };
+}
+
+function outreachMailerConfigured_() {
+  const config = outreachMailerProperties_();
+  return /^https:\/\/script\.google\.com\/macros\/s\/[A-Za-z0-9_-]+\/exec$/.test(config.url) && config.secret.length >= 24;
+}
+
+function outreachMailerStatus_() {
+  if (!outreachMailerConfigured_()) return { can_send:false, test_send_available:false, detail:"Mailer URL or shared secret is not configured." };
+  try {
+    const result = callOutreachMailer_({ action:"appMailerStatus" });
+    return {
+      can_send:!!result.can_send,
+      test_send_available:!!result.test_send_available,
+      detail:String(result.detail || ""),
+    };
+  } catch (error) {
+    return { can_send:false, test_send_available:false, detail:String(error.message || error) };
+  }
+}
+
+function callOutreachMailer_(payload) {
+  const config = outreachMailerProperties_();
+  if (!outreachMailerConfigured_()) throw new Error("Direct sending is not configured. Set OUTREACH_MAILER_URL and OUTREACH_MAILER_SHARED_SECRET in the Inventory Backend Script Properties.");
+  const response = UrlFetchApp.fetch(config.url, {
+    method:"post",
+    contentType:"application/json",
+    payload:JSON.stringify(Object.assign({}, payload, { service_token:config.secret })),
+    muteHttpExceptions:true,
+    followRedirects:true,
+  });
+  let result;
+  try { result = JSON.parse(response.getContentText() || "{}"); }
+  catch (error) { throw new Error("The Distribution Outreach mailer returned an unreadable response."); }
+  if (response.getResponseCode() < 200 || response.getResponseCode() >= 300 || !result.ok) {
+    throw new Error(result?.error || `The Distribution Outreach mailer failed with HTTP ${response.getResponseCode()}.`);
+  }
+  return result;
+}
+
+function outreachActivityRows_() {
+  const sheet = getOutreachSheet_(OUTREACH_ACTIVITY_SHEET_NAME);
+  ensureHeaderColumns_(sheet, [ACCOUNT_ID_HEADER, "Message ID", "Idempotency Token"]);
+  return getAllRowsAsObjects_(sheet);
+}
+
+function acceptedOutreachSendForToken_(token) {
+  const normalized = String(token || "").trim();
+  if (!normalized) return null;
+  const row = outreachActivityRows_().slice().reverse().find(item => {
+    const result = String(item.result || "").toUpperCase();
+    return String(item.idempotency_token || "") === normalized && result.indexOf("SENT") >= 0 && result.indexOf("TEST") < 0;
+  });
+  return row ? {
+    accepted:true,
+    message_id:String(row.message_id || ""),
+    sent_at:row.timestamp || new Date(),
+    idempotent:true,
+  } : null;
+}
+
+function legacyPilotSent_(record) {
+  const sheet = getOutreachSs_().getSheetByName(OUTREACH_PILOT_SHEET_NAME);
+  if (!sheet || sheet.getLastRow() < 2) return false;
+  return getAllRowsAsObjects_(sheet).some(row => {
+    const email = String(outreachValue_(row, ["email", "intended_recipient"]) || "").trim().toLowerCase();
+    const business = String(outreachValue_(row, ["business", "business_name"]) || "").trim().toLowerCase();
+    const status = String(outreachValue_(row, ["send_status", "status"]) || "").trim().toUpperCase();
+    const messageId = String(outreachValue_(row, ["message_id", "zoho_message_id"]) || "").trim();
+    const sentAt = outreachValue_(row, ["sent_at", "sent_timestamp"]);
+    return email === String(record.email || "").trim().toLowerCase()
+      && (!business || business === String(record.business || "").trim().toLowerCase())
+      && (status.indexOf("SENT") === 0 || !!messageId || !!sentAt);
+  });
+}
+
+function outreachSendEligibility_(record) {
+  const reasons = [];
+  const email = String(record.email || "").trim().toLowerCase();
+  const stage = String(record.next_email || "Initial").trim();
+  const status = outreachStatusLower_(record);
+  const outcome = String(record.outcome || "").trim().toLowerCase();
+  const confidence = String(record.email_confidence || "").trim().toLowerCase();
+  if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) reasons.push("Recipient email is invalid");
+  if (record.do_not_email || ["do not contact", "not interested", "unsubscribed"].includes(status) || ["bad address", "unsubscribed", "not interested", "do not contact"].includes(outcome)) reasons.push("Business is excluded from email");
+  if (confidence && !["confirmed", "published", "supplied"].includes(confidence)) reasons.push("Recipient email is not verified");
+  const sentForStage = (record.activity || []).some(item => {
+    const result = String(item.result || "").toUpperCase();
+    return String(item.stage || "").trim().toLowerCase() === stage.toLowerCase() && result.indexOf("SENT") >= 0 && result.indexOf("TEST") < 0;
+  });
+  if (sentForStage) reasons.push(`${stage} was already sent`);
+  if (stage === "Initial") {
+    if (record.last_emailed || record.message_id || legacyPilotSent_(record)) reasons.push("An initial email was already sent");
+    if (!["not contacted", "review", "approved"].includes(status)) reasons.push("Business is not eligible for initial outreach");
+  } else if (stage === "Follow-up 1" || stage === "Follow-up 2") {
+    if (!["follow-up due", "sent", "follow-up sent"].includes(status)) reasons.push("Follow-up is not due");
+  } else if (stage === "Reactivation") {
+    if (!["reactivation due", "use reactivation"].includes(status)) reasons.push("Reactivation is not due");
+  } else {
+    reasons.push("Email stage is not sendable");
+  }
+  return Array.from(new Set(reasons));
+}
+
+function outreachNextStage_(stage) {
+  if (stage === "Initial") return "Follow-up 1";
+  if (stage === "Follow-up 1") return "Follow-up 2";
+  return "Complete";
+}
+
+function outreachAddDays_(date, days) {
+  const value = new Date(date.getTime());
+  value.setDate(value.getDate() + Number(days || 0));
+  return value;
+}
+
+function finalizeOutreachSend_(sheet, rowNumber, record, stage, messageId, sentAt, staffName, idempotencyToken) {
+  const h = getHeaderMap_(sheet);
+  const setCell = (keys, value) => {
+    const key = keys.find(candidate => h[candidate] !== undefined);
+    if (key) sheet.getRange(rowNumber, h[key] + 1).setValue(value);
+  };
+  const settings = getOutreachCampaignSettings_();
+  const nextStage = outreachNextStage_(stage);
+  const followUpDays = stage === "Initial"
+    ? Number(settings["Follow-up days"] || 7)
+    : Number(settings["Second follow-up days"] || 7);
+  setCell(["queue", "queue?"], false);
+  setCell(["next_email", "stage"], nextStage);
+  setCell(["status"], stage === "Initial" ? "Sent" : stage === "Reactivation" ? "Reactivation sent" : "Follow-up sent");
+  setCell(["last_emailed", "last_email"], sentAt);
+  setCell(["next_follow-up", "next_follow_up"], nextStage === "Complete" ? "" : outreachAddDays_(sentAt, followUpDays));
+  setCell(["message_id", "zoho_message_id"], messageId || "");
+  setCell(["record_updated_at"], new Date());
+  appendAudit_("SEND_OUTREACH_EMAIL", "Account", record.account_id, record.account_id, staffName, OUTREACH_DRAFTS_SHEET_NAME, OUTREACH_ACTIVITY_SHEET_NAME, "Completed", `${stage}; message ${messageId || "accepted without message ID"}; token ${idempotencyToken}`);
+  return nextStage;
+}
+
+function apiSendOutreachEmail_(p, testMode) {
+  if (!p) throw new Error("Missing send request.");
+  requireFields_(p, ["source_row", "business", "message_stage", "idempotency_token", "staff_name"]);
+  const token = publicText_(p.idempotency_token, 160, "Idempotency token");
+  if (!/^[A-Za-z0-9_-]{20,160}$/.test(token)) throw new Error("A valid idempotency token is required.");
+  const rowNumber = Number(p.source_row);
+  const sheet = getOutreachSheet_(OUTREACH_SHEET_NAME);
+  if (!Number.isInteger(rowNumber) || rowNumber < 2 || rowNumber > sheet.getLastRow()) throw new Error("Business row not found.");
+  const lock = LockService.getScriptLock();
+  if (!lock.tryLock(10000)) throw new Error("Another outreach send is in progress. Wait a moment and try again.");
+  let accepted = false;
+  let acceptedMessageId = "";
+  try {
+    const h = getHeaderMap_(sheet);
+    const values = sheet.getRange(rowNumber, 1, 1, sheet.getLastColumn()).getValues()[0];
+    const current = {};
+    Object.keys(h).forEach(key => current[key] = values[h[key]]);
+    const activityMap = outreachActivityMap_();
+    const settings = getOutreachCampaignSettings_();
+    const draftMap = outreachDraftMap_();
+    const record = outreachRecord_(current, rowNumber, activityMap, settings, draftMap, outreachProgramMap_(), outreachEngagementMap_());
+    const stage = String(record.next_email || "Initial").trim();
+    if (record.business !== String(p.business || "").trim()) throw new Error("Business row changed. Refresh and try again.");
+    if (p.email && record.email.toLowerCase() !== String(p.email).trim().toLowerCase()) throw new Error("Recipient changed. Refresh and try again.");
+    if (p.account_id && record.account_id !== String(p.account_id).trim()) throw new Error("Account identity changed. Refresh and try again.");
+    if (stage.toLowerCase() !== String(p.message_stage || "").trim().toLowerCase()) throw new Error("Email stage changed. Refresh and try again.");
+    if (!record.has_saved_draft) throw new Error("Save the reviewed subject and message before sending.");
+    if (String(p.subject || "").trim() !== record.subject || String(p.body_text || "").trim() !== record.body_text) throw new Error("The reviewed draft changed. Save it again before sending.");
+
+    let result = !testMode ? acceptedOutreachSendForToken_(token) : null;
+    if (!result) {
+      const reasons = outreachSendEligibility_(record);
+      if (reasons.length) throw new Error(reasons.join("; ") + ".");
+      result = callOutreachMailer_({
+        action:testMode ? "sendAppTestEmail" : "sendAppEmail",
+        idempotency_token:token,
+        account_id:record.account_id,
+        source_row:rowNumber,
+        business:record.business,
+        recipient:record.email,
+        message_stage:stage,
+        subject:record.subject,
+        html:record.preview_html,
+        requested_by:publicText_(p.staff_name, 120, "Staff name"),
+      });
+    }
+    if (!result.accepted) throw new Error("Zoho did not accept the email.");
+    accepted = true;
+    acceptedMessageId = String(result.message_id || "");
+    if (result.partial_failure) {
+      appendAudit_("SEND_OUTREACH_EMAIL_PARTIAL", "Account", record.account_id, record.account_id, String(p.staff_name || "Staff"), "Distribution Outreach", OUTREACH_ACTIVITY_SHEET_NAME, "Needs recovery", String(result.partial_failure));
+    }
+    if (testMode) return { message:"Test email accepted by Zoho. The business was not marked sent.", test:true, message_id:acceptedMessageId, idempotent:!!result.idempotent };
+    const sentAt = result.sent_at ? new Date(result.sent_at) : new Date();
+    const nextStage = finalizeOutreachSend_(sheet, rowNumber, record, stage, acceptedMessageId, isNaN(sentAt.getTime()) ? new Date() : sentAt, publicText_(p.staff_name, 120, "Staff name"), token);
+    return { message:"Email accepted by Zoho and recorded.", accepted:true, message_id:acceptedMessageId, next_stage:nextStage, idempotent:!!result.idempotent };
+  } catch (error) {
+    if (accepted) {
+      appendAudit_("SEND_OUTREACH_EMAIL_PARTIAL", "Account", String(p.account_id || ""), String(p.account_id || ""), String(p.staff_name || "Staff"), OUTREACH_ACTIVITY_SHEET_NAME, OUTREACH_SHEET_NAME, "Needs recovery", `Zoho accepted message ${acceptedMessageId || "without ID"}; ${String(error.message || error)}`);
+      throw new Error(`Zoho accepted the email${acceptedMessageId ? ` (${acceptedMessageId})` : ""}, but follow-up recording needs recovery. Do not resend; retry with the same review window.`);
+    }
+    throw error;
   } finally {
     lock.releaseLock();
   }
@@ -2628,6 +2903,136 @@ function findRecordRow_(sheet, idKey, idValue) {
   return index < 0 ? 0 : index + 2;
 }
 
+function orderOperationalStatuses_(order) {
+  const statuses = [];
+  if (String(order.workflow_status || "") === "New") statuses.push("New");
+  if (!["New", "Cancelled", "Completed"].includes(String(order.workflow_status || ""))
+      && !["Invoice received", "Invoice delivered", "Paid", "Cancelled"].includes(String(order.invoice_status || ""))) statuses.push("Awaiting invoice");
+  if (String(order.workflow_status || "") === "Ready for delivery"
+      || (["Invoice received", "Invoice delivered"].includes(String(order.invoice_status || "")) && String(order.delivery_status || "") !== "Delivered")) statuses.push("Ready");
+  if (String(order.delivery_status || "") === "Delivered" || String(order.workflow_status || "") === "Completed") statuses.push("Delivered");
+  return statuses;
+}
+
+function accountHistoryItem_(timestamp, type, title, detail, id, status) {
+  return { timestamp:timestamp || "", type:type, title:title, detail:detail || "", id:id || "", status:status || "" };
+}
+
+function buildCustomerAccounts_(applications, orders) {
+  const identity = ensureAccountIdentityModel_();
+  const programs = outreachProgramMap_();
+  const activityRows = outreachActivityRows_();
+  const workflowRows = rowsWithSource_(getOutreachSs_().getSheetByName(CUSTOMER_WORKFLOW_LOG_SHEET_NAME));
+  const deliveryRows = rowsWithSource_(getOutreachSs_().getSheetByName(DELIVERIES_SHEET_NAME));
+  const deliveryLineRows = rowsWithSource_(getOutreachSs_().getSheetByName(DELIVERY_LINES_SHEET_NAME));
+  const trackedAccountIds = inventoryTrackedAccountIds_();
+  const activeStores = isHubInventoryActive_()
+    ? getAllRowsAsObjects_(getSheet_(SHEET_NAMES.STORES)).filter(row => inventoryStoreAllowed_(row, trackedAccountIds) && row.account_id)
+    : [];
+  const storeByAccount = new Map(activeStores.map(row => [String(row.account_id || ""), row]));
+  const reorderRows = isHubInventoryActive_() ? getAllRowsAsObjects_(getSheet_(SHEET_NAMES.REORDERS)) : [];
+  let badgerInvoices = [];
+  try {
+    const badgerSheet = SpreadsheetApp.openById(BADGER_TRACKER_SPREADSHEET_ID).getSheetByName("Invoices");
+    badgerInvoices = badgerSheet ? getAllRowsAsObjects_(badgerSheet).map(row => ({
+      invoice_number:String(firstPresent_(row, ["invoice_#", "invoice_number", "invoice_no"]) || ""),
+      invoice_date:firstPresent_(row, ["invoice_date", "date"]) || "",
+      customer_name:String(firstPresent_(row, ["customer_name", "customer"]) || ""),
+      amount:firstPresent_(row, ["amount_due", "amount", "total"]) || "",
+      paid:firstPresent_(row, ["paid_to_me", "paid"]) || "",
+      pdf_file_id:String(firstPresent_(row, ["pdf_file_id"]) || ""),
+    })) : [];
+  } catch (err) {
+    console.warn("Badger invoice history was unavailable: " + String(err && err.message || err));
+  }
+  const now = new Date();
+  const accounts = [];
+
+  identity.rows.forEach((row, index) => {
+    const accountId = String(row.account_id || "").trim();
+    if (!accountId) return;
+    const business = String(outreachValue_(row, ["business", "business_name"]) || "").trim();
+    const email = String(outreachValue_(row, ["email", "email_address"]) || "").trim();
+    const relationship = String(outreachValue_(row, ["relationship"]) || "").trim();
+    const directoryStatus = String(outreachValue_(row, ["status"]) || "").trim();
+    const accountApplications = applications.filter(item => item.account_id === accountId);
+    const accountOrders = orders.filter(item => item.account_id === accountId);
+    const program = programs.get(accountId) || programs.get(index + 2) || {};
+    const isCustomer = accountApplications.some(item => ["Approved", "Account active"].includes(item.workflow_status))
+      || accountOrders.length > 0
+      || String(program.ordering_status || "") === "Active"
+      || /customer/i.test(relationship)
+      || /existing customer/i.test(directoryStatus);
+    if (!isCustomer) return;
+
+    const store = storeByAccount.get(accountId) || null;
+    const accountDeliveries = deliveryRows.filter(item => String(item.account_id || "") === accountId).map(delivery => Object.assign({}, delivery, {
+      lines:deliveryLineRows.filter(line => String(line.delivery_id || "") === String(delivery.delivery_id || "")),
+    }));
+    const accountActivity = activityRows.filter(item => String(item.account_id || "") === accountId
+      || (!item.account_id && String(item.business || "").trim().toLowerCase() === business.toLowerCase()));
+    const accountWorkflow = workflowRows.filter(item => String(item.account_id || "") === accountId);
+    const accountReorders = store ? reorderRows.filter(item => String(item.store_id || "") === String(store.store_id || "")) : [];
+    const orderInvoices = accountOrders.filter(order => order.badger_invoice_number || order.invoice_status !== "Not started").map(order => ({
+      request_id:order.request_id,
+      invoice_number:order.badger_invoice_number,
+      invoice_status:order.invoice_status,
+      badger_match_status:order.badger_match_status,
+      invoice_date:order.badger_invoice_date,
+      amount:order.badger_amount,
+      customer_name:order.badger_customer_name,
+    }));
+    const accountInvoiceNumbers = new Set(orderInvoices.map(item => String(item.invoice_number || "").toUpperCase().replace(/[^A-Z0-9]/g, "")).filter(Boolean));
+    const invoices = badgerInvoices.filter(item => {
+      const invoiceKey = String(item.invoice_number || "").toUpperCase().replace(/[^A-Z0-9]/g, "");
+      return accountInvoiceNumbers.has(invoiceKey) || normalizeBusinessKey_(item.customer_name) === normalizeBusinessKey_(business);
+    }).map(item => Object.assign({ invoice_status:/^(true|yes|y|paid|1)$/i.test(String(item.paid || "")) ? "Paid" : "Invoice received", badger_match_status:"Matched" }, item));
+    orderInvoices.forEach(item => {
+      const invoiceKey = String(item.invoice_number || "").toUpperCase().replace(/[^A-Z0-9]/g, "");
+      if (!invoiceKey || !invoices.some(invoice => String(invoice.invoice_number || "").toUpperCase().replace(/[^A-Z0-9]/g, "") === invoiceKey)) invoices.push(item);
+    });
+    const operational = new Set();
+    accountApplications.forEach(item => { if (item.workflow_status === "New") operational.add("New"); });
+    accountOrders.forEach(order => orderOperationalStatuses_(order).forEach(status => operational.add(status)));
+    const followUp = outreachDate_(outreachValue_(row, ["next_follow-up", "next_follow_up"]));
+    if ((followUp && followUp.getTime() <= now.getTime()) || directoryStatus.toLowerCase() === "follow-up due" || accountReorders.some(item => String(item.status || "OPEN").toUpperCase() === "OPEN")) operational.add("Reorder due");
+    if (store) operational.add("Inventory-counted");
+    const history = [];
+    accountApplications.forEach(item => history.push(accountHistoryItem_(item.submitted_at, "Application", `Application ${item.workflow_status}`, item.staff_notes || item.customer_notes, item.application_id, item.workflow_status)));
+    accountOrders.forEach(item => history.push(accountHistoryItem_(item.submitted_at, "Order", `Order ${item.workflow_status}`, `${item.line_count || item.lines.length} products; invoice ${item.invoice_status}; delivery ${item.delivery_status}`, item.request_id, item.workflow_status)));
+    invoices.forEach(item => history.push(accountHistoryItem_(item.invoice_date, "Invoice", `Invoice ${item.invoice_number || "recorded"}`, `Amount ${item.amount || "not recorded"}; ${item.invoice_status || "status not recorded"}`, item.invoice_number, item.invoice_status)));
+    accountDeliveries.forEach(item => history.push(accountHistoryItem_(item.delivered_at || item.updated_at || item.created_at, "Delivery", `Delivery ${item.delivery_status || "recorded"}`, `${item.lines.length} product lines; invoice ${item.badger_invoice_number || "not recorded"}`, item.delivery_id, item.delivery_status)));
+    accountActivity.forEach(item => history.push(accountHistoryItem_(item.timestamp, "Outreach", String(item.result || item.message_stage || "Activity"), String(item.error_detail || item["error/detail"] || ""), item.message_id, item.result)));
+    accountWorkflow.forEach(item => history.push(accountHistoryItem_(item.timestamp, String(item.record_type || "Workflow"), `${item.previous_status || ""} → ${item.new_status || ""}`, item.details, item.record_id, item.new_status)));
+    accountReorders.forEach(item => history.push(accountHistoryItem_(item.timestamp || item.created_at, "Inventory reorder", `Reorder ${item.status || "OPEN"}`, `${item.sku_id || "SKU"}: ${item.needed_units || item.need || ""} units`, item.sku_id, item.status || "OPEN")));
+    history.sort((a, b) => recordTimestamp_(b.timestamp) - recordTimestamp_(a.timestamp));
+    accounts.push({
+      account_id:accountId,
+      source_row:index + 2,
+      business_name:business,
+      contact_name:String(outreachValue_(row, ["contact", "contact_name", "contact_person"]) || ""),
+      email:email,
+      phone:String(outreachValue_(row, ["phone", "phone_number"]) || ""),
+      city:String(outreachValue_(row, ["city"]) || ""),
+      relationship:relationship,
+      directory_status:directoryStatus,
+      next_follow_up:outreachValue_(row, ["next_follow-up", "next_follow_up"]),
+      last_emailed:outreachValue_(row, ["last_emailed", "last_email"]),
+      inventory_tracking:!!store,
+      inventory_store_id:store ? String(store.store_id || "") : "",
+      operational_statuses:Array.from(operational),
+      primary_status:["New", "Awaiting invoice", "Ready", "Delivered", "Reorder due", "Inventory-counted"].find(status => operational.has(status)) || "Account active",
+      applications:accountApplications,
+      orders:accountOrders,
+      invoices:invoices,
+      deliveries:accountDeliveries,
+      reorders:accountReorders,
+      history:history,
+    });
+  });
+  return accounts.sort((a, b) => String(a.business_name || "").localeCompare(String(b.business_name || "")));
+}
+
 function apiGetCustomerWorkQueue_() {
   ensureAccountIdentityModel_();
   const applicationSheet = getCustomerApplicationsSheet_(false);
@@ -2662,12 +3067,16 @@ function apiGetCustomerWorkQueue_() {
   const orders = rowsWithSource_(orderSheet).map(row => onlineOrderRecord_(row, linesByRequest))
     .filter(record => record.request_id)
     .sort((a, b) => recordTimestamp_(b.submitted_at) - recordTimestamp_(a.submitted_at));
+  orders.forEach(order => order.operational_statuses = orderOperationalStatuses_(order));
+  applications.forEach(application => application.operational_statuses = application.workflow_status === "New" ? ["New"] : (application.inventory_tracking ? ["Inventory-counted"] : []));
+  const accounts = buildCustomerAccounts_(applications, orders);
   const activeApplicationStatuses = ["New", "Reviewing", "Needs information"];
   const activeOrderStatuses = ["New", "Reviewing", "Confirmed", "Invoicing", "Ready for delivery"];
 
   return {
     applications:applications,
     orders:orders,
+    accounts:accounts,
     summary:{
       new_applications:applications.filter(record => record.workflow_status === "New").length,
       active_applications:applications.filter(record => activeApplicationStatuses.includes(record.workflow_status)).length,
@@ -2675,6 +3084,8 @@ function apiGetCustomerWorkQueue_() {
       active_orders:orders.filter(record => activeOrderStatuses.includes(record.workflow_status)).length,
       invoice_needed:orders.filter(record => ["Confirmed", "Invoicing"].includes(record.workflow_status) && ["Not started", "Ready for Badger"].includes(record.invoice_status)).length,
       integration_attention:orders.filter(record => ["Needs retry", "Badger invoice not found", "Needs account match"].includes(record.integration_status)).length,
+      customer_accounts:accounts.length,
+      reorder_due:accounts.filter(record => record.operational_statuses.includes("Reorder due")).length,
     },
   };
 }
@@ -2686,12 +3097,20 @@ function makeStoreId_(business, accountId) {
 }
 
 function ensureInventoryStoreForApplication_(application, customerId, trackInventory, requestedStoreId, route) {
-  if (!trackInventory) return "";
+  const accountId = String(application.account_id || "");
+  if (!trackInventory) {
+    if (!isHubInventoryActive_()) return "";
+    const inactiveSheet = getSheet_(SHEET_NAMES.STORES);
+    const inactiveHeaders = ensureHeaderColumns_(inactiveSheet, ["account_id", "customer_id", "manager_name", "assistant_manager_name"]);
+    const inactiveRows = getAllRowsAsObjects_(inactiveSheet);
+    const inactiveIndex = inactiveRows.findIndex(row => accountId && String(row.account_id || "") === accountId);
+    if (inactiveIndex >= 0) inactiveSheet.getRange(inactiveIndex + 2, inactiveHeaders.active + 1).setValue(false);
+    return "";
+  }
   if (!isHubInventoryActive_()) throw new Error("Initialize the hardened staging Hub before enabling inventory tracking.");
   const sheet = getSheet_(SHEET_NAMES.STORES);
   const h = ensureHeaderColumns_(sheet, ["account_id", "customer_id", "manager_name", "assistant_manager_name"]);
   const rows = getAllRowsAsObjects_(sheet);
-  const accountId = String(application.account_id || "");
   const existingIndex = rows.findIndex(row => String(row.account_id || "") === accountId);
   const storeId = publicText_(requestedStoreId || (existingIndex >= 0 ? rows[existingIndex].store_id : makeStoreId_(application.business_name, accountId)), 80, "Inventory store ID");
   const conflict = rows.find(row => String(row.store_id || "") === storeId && String(row.account_id || "") !== accountId);

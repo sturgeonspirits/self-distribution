@@ -1,6 +1,6 @@
 # Distribution Outreach Pilot Package
 
-Current complete version: `2026.09.17.7-PILOT`
+Current complete version: `2026.09.17.8-APP`
 
 Paste target: the full contents of `Code.gs` into the Apps Script `Code.gs`
 file attached to the staging Distribution Directory workbook only.
@@ -13,20 +13,31 @@ file attached to the staging Distribution Directory workbook only.
 - The owner is never asked to merge or add snippets manually.
 - Zoho credentials remain in Apps Script Properties and are never committed.
 
-## Pilot Safety
+## App Send Safety
 
 - The code is locked to staging spreadsheet
   `1tWJ2ZnFT15cjuk7qvCWbJUJX1pAQYYsbSy5owWa8Uzo`.
 - Zoho authentication must use `karl@sturgeonspirits.com`.
 - Messages display `sales@sturgeonspirits.com` as the sender alias.
 - Karl-only test messages may still be delivered to `karl@sturgeonspirits.com`.
-- Real pilot email is disabled until **Enable PILOT mode** is confirmed.
-- Only individually `Approved` rows on `Pilot Review` can receive a real email.
-- Every real pilot email requires a separate confirmation and the build stops
-  after three successful pilot sends.
-- The sender re-resolves the source lead by exact business and email if row
-  sorting changes its row number, then requires a unique match.
-- Duplicate-recipient, queued and bulk sends are disabled.
+- Real app email is disabled until `OUTREACH_APP_SENDS_ENABLED=true` is set in
+  this mailer project's Script Properties and Campaign Settings Mode is `PILOT`.
+- The Hub sends one saved, reviewed draft at a time after a final confirmation.
+- Server-side locking, idempotency receipts, source-lead checks, Activity Log,
+  and historical Pilot Review records prevent duplicate delivery.
+- `Pilot Review` is a read-only legacy archive. Do not clear, delete, or edit it
+  during the transition.
+- Queued and bulk sends remain disabled. Karl-only tests remain available.
+
+## Web App Properties
+
+- `ZOHO_CLIENT_ID`, `ZOHO_CLIENT_SECRET`, and `ZOHO_REFRESH_TOKEN` stay only in
+  this Distribution Outreach project.
+- `OUTREACH_MAILER_SHARED_SECRET` authenticates calls from the Inventory Backend
+  and must match that project's property. Use a random value of at least 24
+  characters.
+- `OUTREACH_APP_SENDS_ENABLED=true` enables real one-at-a-time app delivery only
+  after the test-send and duplicate-protection checks pass.
 
 ## Updating The Sell Sheet
 

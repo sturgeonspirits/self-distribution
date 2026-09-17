@@ -1,9 +1,17 @@
 /**
  * Sturgeon Spirits Distribution Outreach
  *
- * VERSION: 2026.09.17.7-PILOT
+ * VERSION: 2026.09.17.8-APP
  *
  * CHANGES IN THIS VERSION
+ * - Added a secret-authenticated web endpoint for one-at-a-time sends from the Hub.
+ * - Kept Zoho credentials exclusively in this Distribution Outreach project.
+ * - Added server-side locking, idempotency receipts and duplicate-send checks.
+ * - Records Zoho acceptance and partial failures in Activity Log without false sent states.
+ * - Disabled legacy Pilot Review sending and retained the tab as a read-only audit archive.
+ * - Preserved Karl-only test sends and kept bulk or queued delivery disabled.
+ *
+ * EARLIER PILOT CHANGES
  * - Added permanent Account IDs so sorting rows cannot detach drafts or activity.
  * - Added verified account, business and email context to customer-application links.
  * - Reads saved email drafts by Account ID first and keeps the row-key fallback.
@@ -41,7 +49,7 @@
  * Sends through the authenticated Zoho Mail API account.
  */
 
-const OUTREACH_VERSION = '2026.09.17.7-PILOT';
+const OUTREACH_VERSION = '2026.09.17.8-APP';
 
 const OUTREACH = Object.freeze({
   ENVIRONMENT: 'STAGING_PILOT',
@@ -51,7 +59,6 @@ const OUTREACH = Object.freeze({
   EXPECTED_TEST_RECIPIENT: 'karl@sturgeonspirits.com',
   ALLOW_LIVE_SENDS: false,
   ALLOW_PILOT_SENDS: true,
-  PILOT_SEND_LIMIT: 3,
   LEADS_SHEET: 'Distribution Directory and Leads',
   PILOT_SHEET: 'Pilot Review',
   SETTINGS_SHEET: 'Campaign Settings',
@@ -108,9 +115,7 @@ function onOpen() {
     .addSeparator()
     .addItem('Send Karl-only test for active lead', 'sendTestForActiveRow')
     .addSeparator()
-    .addItem('Enable PILOT mode (real email)', 'enablePilotMode')
-    .addItem('Send approved pilot for selected row', 'sendApprovedPilotForActiveRow')
-    .addItem('Disable pilot mode', 'disablePilotMode')
+    .addItem('App sending configuration', 'showAppSendingConfiguration')
     .addItem('Refresh follow-up statuses', 'refreshFollowupStatuses')
     .addToUi();
 }
@@ -126,27 +131,29 @@ function showPilotConfiguration() {
       'Zoho mailbox: ' + OUTREACH.AUTHENTICATED_MAILBOX + '\n' +
       'Visible sender: ' + OUTREACH.EXPECTED_SENDER_ALIAS + '\n' +
       'Current mode: ' + mode + '\n' +
-      'Pilot limit: ' + OUTREACH.PILOT_SEND_LIMIT + ' real emails\n' +
-      'Approved Pilot Review rows only\n' +
+      'App sending: ' + (isAppSendingEnabled_() ? 'enabled' : 'disabled') + '\n' +
+      'Pilot Review: read-only legacy archive\n' +
       'Queued/bulk sends: disabled',
     SpreadsheetApp.getUi().ButtonSet.OK
   );
 }
 
-function enablePilotMode() {
+function showAppSendingConfiguration() {
   assertStagingEnvironment_();
-  validateCampaignSettings_(getSettings_(), false);
-  const ui = SpreadsheetApp.getUi();
-  const confirmation = ui.alert(
-    'Enable real pilot email?',
-    'PILOT mode permits real delivery only for individually Approved rows on Pilot Review. ' +
-      'Every send still requires a separate confirmation, and the total is capped at ' +
-      OUTREACH.PILOT_SEND_LIMIT + '.',
-    ui.ButtonSet.YES_NO
+  const status = appMailerStatus_();
+  SpreadsheetApp.getUi().alert(
+    'Distribution Hub app sending',
+    'Version: ' + OUTREACH_VERSION + '\n' +
+      'Real app sends: ' + (status.can_send ? 'enabled' : 'disabled') + '\n' +
+      'Karl-only test sends: ' + (status.test_send_available ? 'available' : 'unavailable') + '\n' +
+      status.detail + '\n\n' +
+      'Pilot Review remains a read-only legacy archive.',
+    SpreadsheetApp.getUi().ButtonSet.OK
   );
-  if (confirmation !== ui.Button.YES) return;
-  setSetting_('Mode', 'PILOT');
-  ui.alert('PILOT mode enabled. No email has been sent.');
+}
+
+function enablePilotMode() {
+  throw new Error('Pilot Review is a read-only legacy archive. Enable app sending through Script Properties and send one reviewed draft at a time from Sturgeon Distribution Hub.');
 }
 
 function disablePilotMode() {
@@ -156,17 +163,238 @@ function disablePilotMode() {
 }
 
 function assertStagingEnvironment_() {
-  const ss = SpreadsheetApp.getActive();
+  const active = SpreadsheetApp.getActive();
   if (OUTREACH.ENVIRONMENT !== 'STAGING_PILOT') {
     throw new Error('This build is not configured as STAGING_PILOT.');
   }
-  if (ss.getId() !== OUTREACH.EXPECTED_SPREADSHEET_ID) {
+  if (active && active.getId() !== OUTREACH.EXPECTED_SPREADSHEET_ID) {
     throw new Error(
       'Safety stop: this pilot build may run only in spreadsheet ' +
       OUTREACH.EXPECTED_SPREADSHEET_ID + '.'
     );
   }
-  return ss;
+  return SpreadsheetApp.openById(OUTREACH.EXPECTED_SPREADSHEET_ID);
+}
+
+function doPost(e) {
+  try {
+    assertStagingEnvironment_();
+    const body = JSON.parse((e && e.postData && e.postData.contents) || '{}');
+    assertAppServiceToken_(body.service_token);
+    const action = String(body.action || '');
+    if (action === 'appMailerStatus') return appJson_(Object.assign({ ok:true, version:OUTREACH_VERSION }, appMailerStatus_()));
+    if (action === 'sendAppEmail') return appJson_(Object.assign({ ok:true, version:OUTREACH_VERSION }, sendAppEmailRequest_(body, false)));
+    if (action === 'sendAppTestEmail') return appJson_(Object.assign({ ok:true, version:OUTREACH_VERSION }, sendAppEmailRequest_(body, true)));
+    throw new Error('Unsupported app mailer action.');
+  } catch (error) {
+    return appJson_({ ok:false, version:OUTREACH_VERSION, error:String(error.message || error) });
+  }
+}
+
+function appJson_(value) {
+  return ContentService.createTextOutput(JSON.stringify(value)).setMimeType(ContentService.MimeType.JSON);
+}
+
+function appScriptProperties_() {
+  return PropertiesService.getScriptProperties().getProperties();
+}
+
+function assertAppServiceToken_(value) {
+  const expected = String(appScriptProperties_().OUTREACH_MAILER_SHARED_SECRET || '');
+  if (expected.length < 24) throw new Error('App mailer shared secret is not configured.');
+  if (String(value || '') !== expected) throw new Error('Unauthorized app mailer request.');
+}
+
+function isAppSendingEnabled_() {
+  return String(appScriptProperties_().OUTREACH_APP_SENDS_ENABLED || '').toLowerCase() === 'true';
+}
+
+function appMailerStatus_() {
+  const properties = appScriptProperties_();
+  const settings = getSettings_();
+  const zohoReady = ['ZOHO_CLIENT_ID', 'ZOHO_CLIENT_SECRET', 'ZOHO_REFRESH_TOKEN'].every(function (key) { return !!properties[key]; })
+    && !!settings['Zoho account ID']
+    && String(settings['Sender address'] || '').toLowerCase() === OUTREACH.EXPECTED_SENDER_ALIAS;
+  const testReady = zohoReady && String(settings['Test recipient'] || '').toLowerCase() === OUTREACH.EXPECTED_TEST_RECIPIENT;
+  const realReady = testReady && isAppSendingEnabled_() && String(settings['Mode'] || '').toUpperCase() === 'PILOT';
+  return {
+    can_send:realReady,
+    test_send_available:testReady,
+    detail:realReady
+      ? 'One-at-a-time Hub sending is configured.'
+      : !zohoReady
+        ? 'Zoho credentials or the sender account are not configured.'
+        : !isAppSendingEnabled_()
+          ? 'Set OUTREACH_APP_SENDS_ENABLED=true in this project after verification.'
+          : 'Campaign Settings Mode must be PILOT for staging app sends.',
+  };
+}
+
+function appReceiptKey_(token) {
+  const bytes = Utilities.computeDigest(Utilities.DigestAlgorithm.SHA_256, String(token || ''), Utilities.Charset.UTF_8);
+  return 'APP_SEND_RECEIPT_' + bytes.map(function (value) { return (value + 256).toString(16).slice(-2); }).join('').slice(0, 40);
+}
+
+function getAppReceipt_(token) {
+  const value = PropertiesService.getScriptProperties().getProperty(appReceiptKey_(token));
+  if (!value) return null;
+  try { return JSON.parse(value); } catch (error) { return null; }
+}
+
+function setAppReceipt_(token, receipt) {
+  PropertiesService.getScriptProperties().setProperty(appReceiptKey_(token), JSON.stringify(receipt));
+}
+
+function clearAppReceipt_(token) {
+  PropertiesService.getScriptProperties().deleteProperty(appReceiptKey_(token));
+}
+
+function appHeaderKey_(value) {
+  return String(value || '').trim().toLowerCase().replace(/[^a-z0-9]+/g, '_').replace(/^_+|_+$/g, '');
+}
+
+function ensureAppLogHeaders_(sheet) {
+  const required = ['Account ID', 'Message ID', 'Idempotency Token'];
+  const headers = sheet.getRange(1, 1, 1, Math.max(1, sheet.getLastColumn())).getValues()[0];
+  const keys = headers.map(appHeaderKey_);
+  required.forEach(function (label) {
+    const key = appHeaderKey_(label);
+    if (keys.indexOf(key) >= 0) return;
+    headers.push(label);
+    keys.push(key);
+    sheet.getRange(1, headers.length).setValue(label);
+  });
+  return keys;
+}
+
+function appSentHistory_() {
+  const ss = assertStagingEnvironment_();
+  const sheet = ss.getSheetByName(OUTREACH.LOG_SHEET);
+  if (!sheet || sheet.getLastRow() < 2) return [];
+  const keys = ensureAppLogHeaders_(sheet);
+  return sheet.getRange(2, 1, sheet.getLastRow() - 1, keys.length).getValues().map(function (row) {
+    const item = {};
+    keys.forEach(function (key, index) { item[key] = row[index]; });
+    return item;
+  });
+}
+
+function priorAcceptedAppSend_(token) {
+  const receipt = getAppReceipt_(token);
+  if (receipt && receipt.accepted) return receipt;
+  const row = appSentHistory_().slice().reverse().find(function (item) {
+    return String(item.idempotency_token || '') === String(token || '') && String(item.result || '').toUpperCase().indexOf('SENT') >= 0;
+  });
+  return row ? { accepted:true, message_id:String(row.message_id || ''), sent_at:row.timestamp || new Date(), idempotent:true } : null;
+}
+
+function legacyPilotSentFor_(business, email) {
+  const sheet = assertStagingEnvironment_().getSheetByName(OUTREACH.PILOT_SHEET);
+  if (!sheet || sheet.getLastRow() < 2) return false;
+  const values = sheet.getRange(2, 1, sheet.getLastRow() - 1, Math.max(sheet.getLastColumn(), OUTREACH.PILOT_COL.LAST_DATA_COLUMN)).getValues();
+  return values.some(function (row) {
+    const rowBusiness = String(row[OUTREACH.PILOT_COL.BUSINESS - 1] || '').trim().toLowerCase();
+    const rowEmail = String(row[OUTREACH.PILOT_COL.EMAIL - 1] || '').trim().toLowerCase();
+    const status = String(row[OUTREACH.PILOT_COL.SEND_STATUS - 1] || '').trim().toUpperCase();
+    return rowBusiness === String(business || '').trim().toLowerCase()
+      && rowEmail === String(email || '').trim().toLowerCase()
+      && (status.indexOf('SENT') === 0 || !!row[OUTREACH.PILOT_COL.SENT_AT - 1] || !!row[OUTREACH.PILOT_COL.MESSAGE_ID - 1]);
+  });
+}
+
+function validateAppLead_(body, testMode) {
+  const sheet = assertStagingEnvironment_().getSheetByName(OUTREACH.LEADS_SHEET);
+  const rowNumber = Number(body.source_row);
+  if (!Number.isInteger(rowNumber) || rowNumber < OUTREACH.FIRST_DATA_ROW || rowNumber > sheet.getLastRow()) throw new Error('Source lead was not found.');
+  const row = sheet.getRange(rowNumber, 1, 1, Math.max(sheet.getLastColumn(), OUTREACH.COL.LAST_DATA_COLUMN)).getValues()[0];
+  const business = String(row[OUTREACH.COL.BUSINESS - 1] || '').trim();
+  const email = String(row[OUTREACH.COL.EMAIL - 1] || '').trim().toLowerCase();
+  const stage = String(row[OUTREACH.COL.STAGE - 1] || 'Initial').trim();
+  const status = String(row[OUTREACH.COL.STATUS - 1] || '').trim().toLowerCase();
+  const outcome = String(row[OUTREACH.COL.OUTCOME - 1] || '').trim().toLowerCase();
+  if (business !== String(body.business || '').trim() || email !== String(body.recipient || '').trim().toLowerCase()) throw new Error('Source lead changed. Refresh the Hub before sending.');
+  if (stage.toLowerCase() !== String(body.message_stage || '').trim().toLowerCase()) throw new Error('Email stage changed. Refresh the Hub before sending.');
+  if (!isValidEmail_(email)) throw new Error('Recipient email is invalid.');
+  if (row[OUTREACH.COL.DO_NOT_EMAIL - 1] === true || ['do not contact', 'not interested', 'unsubscribed'].indexOf(status) >= 0 || ['bad address', 'not interested', 'unsubscribed', 'do not contact'].indexOf(outcome) >= 0) {
+    throw new Error('The source lead is blocked from email.');
+  }
+  const duplicate = appSentHistory_().some(function (item) {
+    const result = String(item.result || '').toUpperCase();
+    const sent = result.indexOf('SENT') >= 0 && result.indexOf('TEST') < 0;
+    const intended = String(item.intended_recipient || item.email || '').trim().toLowerCase();
+    return sent && intended === email && String(item.message_stage || item.stage || '').trim().toLowerCase() === stage.toLowerCase();
+  });
+  if (!testMode && (duplicate || (stage === 'Initial' && (row[OUTREACH.COL.LAST_EMAILED - 1] || legacyPilotSentFor_(business, email))))) {
+    throw new Error('This email stage has already been sent to the recipient.');
+  }
+  return { sheet:sheet, row:row, rowNumber:rowNumber, business:business, email:email, stage:stage };
+}
+
+function appendAppLog_(lead, body, deliveredTo, result, messageId, errorDetail) {
+  const sheet = assertStagingEnvironment_().getSheetByName(OUTREACH.LOG_SHEET);
+  if (!sheet) throw new Error('Activity Log sheet is missing.');
+  const keys = ensureAppLogHeaders_(sheet);
+  const values = Array(keys.length).fill('');
+  const set = function (names, value) {
+    const index = names.map(appHeaderKey_).map(function (name) { return keys.indexOf(name); }).find(function (item) { return item >= 0; });
+    if (index >= 0) values[index] = value;
+  };
+  set(['timestamp'], new Date());
+  set(['account_id'], String(body.account_id || lead.row[OUTREACH.COL.ACCOUNT_ID - 1] || ''));
+  set(['business'], lead.business);
+  set(['intended_recipient', 'email'], lead.email);
+  set(['message_stage', 'stage'], lead.stage);
+  set(['subject'], String(body.subject || ''));
+  set(['result'], result);
+  set(['message_id'], messageId);
+  set(['error/detail', 'error_detail', 'error'], errorDetail || '');
+  set(['delivered_to'], deliveredTo);
+  set(['mailer_version', 'app_version', 'version'], OUTREACH_VERSION);
+  set(['idempotency_token'], String(body.idempotency_token || ''));
+  sheet.appendRow(values);
+}
+
+function sendAppEmailRequest_(body, testMode) {
+  const token = String(body.idempotency_token || '').trim();
+  if (!/^[A-Za-z0-9_-]{20,160}$/.test(token)) throw new Error('A valid idempotency token is required.');
+  const prior = priorAcceptedAppSend_(token);
+  if (prior) return Object.assign({}, prior, { idempotent:true });
+  const subject = String(body.subject || '').trim();
+  const html = String(body.html || '').trim();
+  if (!subject || subject.length > 200) throw new Error('A valid saved subject is required.');
+  if (!html || html.length > 100000) throw new Error('A valid saved message is required.');
+  const status = appMailerStatus_();
+  if (testMode ? !status.test_send_available : !status.can_send) throw new Error(status.detail);
+  const lock = LockService.getScriptLock();
+  if (!lock.tryLock(10000)) throw new Error('Another app send is in progress. Wait a moment and try again.');
+  let accepted = null;
+  try {
+    const replay = priorAcceptedAppSend_(token);
+    if (replay) return Object.assign({}, replay, { idempotent:true });
+    const lead = validateAppLead_(body, testMode);
+    const settings = getSettings_();
+    const deliveredTo = testMode ? String(settings['Test recipient'] || '').trim().toLowerCase() : lead.email;
+    const zoho = sendZohoEmail_(deliveredTo, subject, html, settings, testMode ? 'APP_TEST' : 'APP');
+    accepted = { accepted:true, message_id:String(zoho.messageId || ''), sent_at:new Date().toISOString(), idempotent:false };
+    setAppReceipt_(token, accepted);
+    try {
+      appendAppLog_(lead, body, deliveredTo, testMode ? 'APP TEST SENT' : 'APP SENT', accepted.message_id, 'Zoho accepted delivery.');
+      clearAppReceipt_(token);
+    } catch (logError) {
+      accepted.partial_failure = 'Zoho accepted delivery, but Activity Log recording needs recovery: ' + String(logError.message || logError);
+    }
+    return accepted;
+  } catch (error) {
+    if (!accepted) {
+      try {
+        const lead = validateAppLead_(body, true);
+        appendAppLog_(lead, body, '', testMode ? 'APP TEST ERROR' : 'APP SEND ERROR', '', String(error.message || error));
+      } catch (ignored) {}
+    }
+    throw error;
+  } finally {
+    lock.releaseLock();
+  }
 }
 
 function connectZoho() {
@@ -264,123 +492,12 @@ function sendTestForActiveRow() {
 }
 
 function sendApprovedPilotForActiveRow() {
-  assertStagingEnvironment_();
-  if (!OUTREACH.ALLOW_PILOT_SENDS) {
-    throw new Error('Pilot sends are disabled in this build.');
-  }
-
-  const pilotSheet = SpreadsheetApp.getActiveSheet();
-  const pilotRowNumber = pilotSheet.getActiveRange().getRow();
-  if (pilotSheet.getName() !== OUTREACH.PILOT_SHEET || pilotRowNumber < OUTREACH.FIRST_DATA_ROW) {
-    throw new Error('Select an approved prospect row on Pilot Review first.');
-  }
-
-  const settings = getSettings_();
-  validateCampaignSettings_(settings, false);
-  if (String(settings['Mode']).toUpperCase() !== 'PILOT') {
-    throw new Error('Campaign Settings Mode must be PILOT before a real pilot email can be sent.');
-  }
-
-  const review = pilotSheet
-    .getRange(pilotRowNumber, 1, 1, OUTREACH.PILOT_COL.LAST_DATA_COLUMN)
-    .getValues()[0];
-  if (String(review[OUTREACH.PILOT_COL.APPROVAL - 1] || '').trim() !== 'Approved') {
-    throw new Error('Pilot Approval must be Approved for the selected row.');
-  }
-  if (String(review[OUTREACH.PILOT_COL.SEND_STATUS - 1] || '').trim().toUpperCase().indexOf('SENT') === 0) {
-    throw new Error('This Pilot Review row has already been sent.');
-  }
-
-  const leadsSheet = SpreadsheetApp.getActive().getSheetByName(OUTREACH.LEADS_SHEET);
-  const source = resolvePilotSource_(leadsSheet, review);
-  const sourceRowNumber = source.rowNumber;
-  const row = source.values;
-  const email = String(row[OUTREACH.COL.EMAIL - 1] || '').trim().toLowerCase();
-  const business = String(row[OUTREACH.COL.BUSINESS - 1] || '').trim();
-  pilotSheet.getRange(pilotRowNumber, OUTREACH.PILOT_COL.SOURCE_ROW).setValue(sourceRowNumber);
-  assertPilotLeadEligible_(row);
-
-  const stage = String(row[OUTREACH.COL.STAGE - 1] || 'Initial');
-  const message = buildMessage_(stage, row, settings, sourceRowNumber);
-  const ui = SpreadsheetApp.getUi();
-  const confirmation = ui.alert(
-    'Send REAL pilot email?',
-    'Business: ' + business + '\n' +
-      'Recipient: ' + email + '\n' +
-      'Subject: ' + message.subject + '\n\n' +
-      'Saved app draft: ' + (message.usesSavedDraft ? 'Yes' : 'No') + '\n\n' +
-      'This sends a real email from ' + settings['Sender address'] + '.',
-    ui.ButtonSet.YES_NO
-  );
-  if (confirmation !== ui.Button.YES) return;
-
-  const lock = LockService.getScriptLock();
-  if (!lock.tryLock(5000)) {
-    throw new Error('Another pilot send is in progress. Wait a moment and try again.');
-  }
-
-  let delivered = false;
-  let deliveredMessageId = '';
-  try {
-    const history = getPilotHistory_();
-    if (history.length >= OUTREACH.PILOT_SEND_LIMIT) {
-      throw new Error('Pilot limit reached. No more than ' + OUTREACH.PILOT_SEND_LIMIT + ' real emails may be sent.');
-    }
-    if (history.some(function (item) { return item.email === email; })) {
-      throw new Error('A pilot email has already been sent to ' + email + '.');
-    }
-
-    const result = sendZohoEmail_(email, message.subject, message.html, settings, 'PILOT');
-    delivered = true;
-    deliveredMessageId = result.messageId;
-    const now = new Date();
-    const nextStage = stage === 'Initial' ? 'Follow-up 1' : stage === 'Follow-up 1' ? 'Follow-up 2' : 'Complete';
-    const followupDelay = stage === 'Initial'
-      ? Number(settings['Follow-up days']) || 7
-      : Number(settings['Second follow-up days']) || 7;
-
-    const approvedBy = String(review[OUTREACH.PILOT_COL.APPROVED_BY - 1] || '').trim() ||
-      Session.getEffectiveUser().getEmail() || 'Sturgeon Spirits';
-    pilotSheet.getRange(pilotRowNumber, OUTREACH.PILOT_COL.APPROVED_BY, 1, 5).setValues([[
-      approvedBy,
-      'SENT',
-      now,
-      result.messageId,
-      'Zoho accepted delivery to ' + email
-    ]]);
-
-    appendLog_(row, email, stage, message.subject, 'PILOT SENT', result.messageId, 'Approved pilot send');
-
-    row[OUTREACH.COL.QUEUE - 1] = false;
-    row[OUTREACH.COL.STAGE - 1] = nextStage;
-    row[OUTREACH.COL.STATUS - 1] = 'Sent';
-    row[OUTREACH.COL.LAST_EMAILED - 1] = now;
-    row[OUTREACH.COL.FOLLOWUP_DUE - 1] = nextStage === 'Complete' ? '' : addDays_(now, followupDelay);
-    row[OUTREACH.COL.MESSAGE_ID - 1] = result.messageId;
-    leadsSheet.getRange(sourceRowNumber, 1, 1, OUTREACH.COL.LAST_DATA_COLUMN).setValues([row]);
-
-    SpreadsheetApp.flush();
-    ui.alert('Pilot email sent to ' + email + '. ' + (OUTREACH.PILOT_SEND_LIMIT - history.length - 1) + ' pilot send(s) remain.');
-  } catch (error) {
-    const detail = String(error.message || error);
-    if (delivered) {
-      pilotSheet.getRange(pilotRowNumber, OUTREACH.PILOT_COL.SEND_STATUS).setValue('SENT - REVIEW');
-      pilotSheet.getRange(pilotRowNumber, OUTREACH.PILOT_COL.MESSAGE_ID).setValue(deliveredMessageId);
-      pilotSheet.getRange(pilotRowNumber, OUTREACH.PILOT_COL.NOTES)
-        .setValue('Zoho accepted this email. DO NOT RESEND. Post-send recording error: ' + detail);
-    } else {
-      pilotSheet.getRange(pilotRowNumber, OUTREACH.PILOT_COL.SEND_STATUS).setValue('ERROR');
-      pilotSheet.getRange(pilotRowNumber, OUTREACH.PILOT_COL.NOTES).setValue(detail);
-    }
-    throw error;
-  } finally {
-    lock.releaseLock();
-  }
+  throw new Error('Pilot Review is a read-only legacy archive. Send one reviewed draft at a time from Sturgeon Distribution Hub.');
 }
 
 function sendQueuedEmails() {
   assertStagingEnvironment_();
-  throw new Error('Queued and bulk sends are disabled in the pilot build. Use Pilot Review one row at a time.');
+  throw new Error('Queued and bulk sends are disabled. Send one reviewed draft at a time from Sturgeon Distribution Hub.');
 }
 
 function refreshFollowupStatuses() {
@@ -599,9 +716,13 @@ function buildMessage_(stage, row, settings, sourceRowNumber) {
 function sendZohoEmail_(recipient, subject, html, settings, deliveryMode) {
   const normalizedRecipient = String(recipient || '').trim().toLowerCase();
   const normalizedMode = String(deliveryMode || '').trim().toUpperCase();
-  if (normalizedMode === 'TEST') {
+  if (normalizedMode === 'TEST' || normalizedMode === 'APP_TEST') {
     if (normalizedRecipient !== OUTREACH.EXPECTED_TEST_RECIPIENT) {
       throw new Error('Safety stop: test email may be sent only to ' + OUTREACH.EXPECTED_TEST_RECIPIENT + '.');
+    }
+  } else if (normalizedMode === 'APP') {
+    if (!isAppSendingEnabled_() || String(settings['Mode'] || '').trim().toUpperCase() !== 'PILOT') {
+      throw new Error('Safety stop: one-at-a-time app delivery is not enabled.');
     }
   } else if (normalizedMode === 'PILOT') {
     if (
@@ -665,7 +786,7 @@ function getAccessToken_() {
 }
 
 function getSettings_() {
-  const sheet = SpreadsheetApp.getActive().getSheetByName(OUTREACH.SETTINGS_SHEET);
+  const sheet = assertStagingEnvironment_().getSheetByName(OUTREACH.SETTINGS_SHEET);
   if (!sheet) throw new Error('Campaign Settings sheet is missing.');
   const values = sheet.getRange(2, 1, Math.max(1, sheet.getLastRow() - 1), 2).getValues();
   return values.reduce(function (map, row) {
@@ -675,7 +796,7 @@ function getSettings_() {
 }
 
 function setSetting_(key, value) {
-  const sheet = SpreadsheetApp.getActive().getSheetByName(OUTREACH.SETTINGS_SHEET);
+  const sheet = assertStagingEnvironment_().getSheetByName(OUTREACH.SETTINGS_SHEET);
   const keys = sheet.getRange(2, 1, Math.max(1, sheet.getLastRow() - 1), 1).getValues().flat();
   const index = keys.indexOf(key);
   if (index === -1) throw new Error('Missing Campaign Settings key: ' + key);
