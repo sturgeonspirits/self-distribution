@@ -1,10 +1,10 @@
 <!doctype html>
-<!-- App version: 2026.09.16.22 -->
+<!-- App version: 2026.09.16.26 -->
 <html>
 <head>
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover"/>
-  <meta name="app-version" content="2026.09.16.22" />
+  <meta name="app-version" content="2026.09.16.26" />
   <title>Sturgeon Distribution Hub</title>
   <style>
     :root{
@@ -101,7 +101,7 @@
       max-width:1200px;
       margin:9px auto 0;
       display:grid;
-      grid-template-columns:1fr 1fr;
+      grid-template-columns:repeat(3,1fr);
       gap:4px;
       padding:4px;
       border:1px solid rgba(255,255,255,.16);
@@ -520,6 +520,90 @@
       gap:10px;
       grid-column:1 / -1;
     }
+
+    .customerAccess{
+      display:grid;
+      grid-template-columns:minmax(0,1fr) auto;
+      gap:10px;
+      align-items:end;
+      margin-bottom:12px;
+      padding:12px;
+      border:1px solid var(--blue-line);
+      border-radius:8px;
+      background:var(--blue-bg);
+    }
+    .customerAccess label{margin-top:0}
+    .customerAccess .status{grid-column:1 / -1;margin:0}
+    .workflowControls{
+      display:grid;
+      grid-template-columns:minmax(260px,.8fr) minmax(180px,.5fr) minmax(0,1fr);
+      gap:10px;
+      align-items:end;
+      margin-bottom:10px;
+    }
+    .workflowControls label{margin-top:0}
+    .workflowTabs{
+      display:grid;
+      grid-template-columns:1fr 1fr;
+      gap:4px;
+      padding:4px;
+      border:1px solid var(--line);
+      border-radius:8px;
+      background:#f9fafb;
+    }
+    .workflowTab{
+      min-height:48px;
+      padding:8px;
+      border:0;
+      border-radius:6px;
+      background:transparent;
+    }
+    .workflowTab.active{background:var(--primary);color:#fff}
+    .workflowList{display:grid;gap:8px}
+    .workflowCard{
+      border:1px solid var(--line);
+      border-radius:8px;
+      background:#fff;
+      padding:12px;
+    }
+    .workflowCard.newRecord{border-left:4px solid var(--blue)}
+    .workflowCardTop{
+      display:flex;
+      justify-content:space-between;
+      align-items:flex-start;
+      gap:10px;
+    }
+    .workflowCard h3{margin:0;font-size:17px;line-height:1.2}
+    .workflowCard p{margin:5px 0 0;color:var(--muted);font-size:12px;line-height:1.4}
+    .workflowMeta{display:flex;flex-wrap:wrap;gap:6px;margin-top:9px}
+    .workflowActions{
+      display:grid;
+      grid-template-columns:minmax(0,1fr) minmax(0,1fr);
+      gap:8px;
+      margin-top:10px;
+    }
+    .workflowLineList{
+      margin-top:10px;
+      border-top:1px solid var(--line);
+    }
+    .workflowLine{
+      display:flex;
+      justify-content:space-between;
+      gap:10px;
+      padding:8px 0;
+      border-bottom:1px solid var(--line);
+      font-size:13px;
+    }
+    .workflowLine strong{text-align:right;white-space:nowrap}
+    .workflowEditGrid{
+      display:grid;
+      grid-template-columns:1fr 1fr;
+      gap:8px 12px;
+      margin-top:14px;
+      padding-top:12px;
+      border-top:1px solid var(--line);
+    }
+    .workflowEditGrid .full{grid-column:1 / -1}
 
     .grid2{display:grid;grid-template-columns:1fr 1fr;gap:10px}
     .grid3{display:grid;grid-template-columns:1fr 1fr 1fr;gap:10px}
@@ -1326,6 +1410,9 @@
       .outreachActions{
         grid-template-columns:1fr 1fr;
       }
+      .workflowControls{grid-template-columns:1fr 1fr}
+      .workflowControls .searchWrap{grid-column:1 / -1}
+      .customerAccess{grid-template-columns:1fr auto}
       .actionBtn{
         min-height:52px;
       }
@@ -1556,6 +1643,12 @@
       .audienceCount{
         grid-column:auto;
       }
+      .workflowControls{grid-template-columns:1fr}
+      .workflowControls .searchWrap{grid-column:auto}
+      .workflowEditGrid{grid-template-columns:1fr}
+      .workflowEditGrid .full{grid-column:auto}
+      .customerAccess{grid-template-columns:1fr}
+      .customerAccess .status{grid-column:auto}
     }
 
     @media (max-width:320px){
@@ -1613,6 +1706,9 @@
     </button>
     <button class="appNavBtn" id="outreachNavBtn" type="button">
       <i data-lucide="send"></i><span>Outreach</span>
+    </button>
+    <button class="appNavBtn" id="customersNavBtn" type="button">
+      <i data-lucide="users-round"></i><span>Customers</span>
     </button>
   </nav>
 </header>
@@ -1861,6 +1957,65 @@
 
     <div class="status" id="outreachStatus"></div>
     <div class="outreachList" id="outreachList"></div>
+  </section>
+
+  <section id="customersScreen" hidden>
+    <div class="screenHeading">
+      <div>
+        <h2>Customers</h2>
+        <p>Review applications, orders, invoices, and delivery progress.</p>
+      </div>
+      <div class="tinyRow">
+        <button class="iconBtn" id="refreshCustomersBtn" type="button" aria-label="Refresh customers" title="Refresh customers">
+          <i data-lucide="refresh-cw"></i>
+        </button>
+        <button class="iconBtn" id="lockCustomersBtn" type="button" aria-label="Lock customer records" title="Lock customer records" hidden>
+          <i data-lucide="lock-keyhole"></i>
+        </button>
+      </div>
+    </div>
+
+    <div class="customerAccess" id="customerAccessPanel">
+      <div>
+        <label for="staffAccessCode">Staff access code</label>
+        <input id="staffAccessCode" type="password" autocomplete="current-password" inputmode="text" />
+      </div>
+      <button class="primary" id="unlockCustomersBtn" type="button"><i data-lucide="unlock-keyhole"></i><span>Unlock</span></button>
+      <div class="status" id="customerAccessStatus"></div>
+    </div>
+
+    <div id="customerWorkspace" hidden>
+      <div class="outreachSummary" aria-label="Customer workflow summary">
+        <div class="outreachMetric"><strong id="newApplicationsCount">0</strong><span>New applications</span></div>
+        <div class="outreachMetric"><strong id="newOrdersCount">0</strong><span>New orders</span></div>
+        <div class="outreachMetric"><strong id="invoiceNeededCount">0</strong><span>Need invoice work</span></div>
+      </div>
+
+      <div class="workflowControls">
+        <div class="workflowTabs" aria-label="Customer work views">
+          <button class="workflowTab active" id="applicationsViewBtn" type="button">Applications</button>
+          <button class="workflowTab" id="ordersViewBtn" type="button">Orders</button>
+        </div>
+        <div>
+          <label for="customerStatusFilter">Status</label>
+          <select id="customerStatusFilter"></select>
+        </div>
+        <div class="searchWrap">
+          <label for="customerSearch">Search</label>
+          <input id="customerSearch" placeholder="Business, contact, email, or reference" autocomplete="off" enterkeyhint="search" />
+          <button class="searchClear" id="clearCustomerSearchBtn" type="button" aria-label="Clear customer search" hidden>×</button>
+        </div>
+      </div>
+
+      <div class="grid2" style="margin-bottom:10px">
+        <div>
+          <label for="customerStaffName">Staff name</label>
+          <input id="customerStaffName" placeholder="Your name" autocomplete="name" />
+        </div>
+      </div>
+      <div class="status" id="customerWorkflowStatus"></div>
+      <div class="workflowList" id="customerWorkflowList"></div>
+    </div>
   </section>
 
   <dialog id="scanDialog">
@@ -2112,11 +2267,22 @@
       </div>
     </div>
   </dialog>
+
+  <dialog id="customerRecordDialog">
+    <div class="dlgHeader">
+      <div>
+        <div class="dlgTitle" id="customerRecordTitle">Customer record</div>
+        <div class="smallMuted" id="customerRecordSubtitle"></div>
+      </div>
+      <button id="closeCustomerRecordBtn" type="button">Close</button>
+    </div>
+    <div class="dlgBody" id="customerRecordBody"></div>
+  </dialog>
 </main>
 
   <footer style="max-width:1200px;margin:18px auto 120px;padding:0 12px;text-align:center;color:#6b7280;font-size:12px;">
     Designed by <a href="https://scriptspirit.dev" target="_blank" rel="noopener noreferrer" style="color:#1d4ed8;text-decoration:none;font-weight:700;">Script Spirit</a>
-    <span id="appVersionFooter"> • Version 2026.09.16.22</span>
+    <span id="appVersionFooter"> • Version 2026.09.16.26</span>
   </footer>
 
 
@@ -2137,7 +2303,7 @@
 <script>
 (() => {
   const $ = (id) => document.getElementById(id);
-  const APP_VERSION = "2026.09.16.22";
+  const APP_VERSION = "2026.09.16.26";
   $("appVersionFooter").textContent = ` • Version ${APP_VERSION}`;
 
   let cache = { stores: [], lines: [] };
@@ -2146,7 +2312,9 @@
   let filterText = "";
   let activeLocation = localStorage.getItem("inv_count_location") === "back" ? "back" : "shelf";
   let activeView = localStorage.getItem("inv_active_view") === "sold" ? "sold" : "count";
-  let activeAppSection = localStorage.getItem("distribution_section") === "outreach" ? "outreach" : "inventory";
+  let activeAppSection = ["inventory", "outreach", "customers"].includes(localStorage.getItem("distribution_section"))
+    ? localStorage.getItem("distribution_section")
+    : "inventory";
   let salesData = { lines: [], summary: { total_sold_units: 0, counted_skus: 0, total_skus: 0 } };
   let salesLoadedStoreId = "";
 
@@ -2165,6 +2333,14 @@
   let selectedOutcome = "";
   let outreachDraftOriginal = { subject:"", body:"" };
   let selectedNewsletterContact = null;
+
+  let customerData = { applications:[], orders:[], summary:{ new_applications:0, active_applications:0, new_orders:0, active_orders:0, invoice_needed:0 } };
+  let customerView = localStorage.getItem("customer_work_view") === "orders" ? "orders" : "applications";
+  let customerFilterText = "";
+  let customerStatusFilter = "active";
+  let customerLoaded = false;
+  let selectedCustomerRecord = null;
+  let staffAccessCode = sessionStorage.getItem("distribution_staff_access") || "";
 
   let managerGridData = { stores: [], skus: [] };
   let managerFilterText = "";
@@ -2202,6 +2378,25 @@
     return res.json();
   }
 
+  async function staffApiGet(params){
+    const qs = new URLSearchParams(params).toString();
+    const res = await fetch(`/api/inventory?${qs}`, { headers:{ "X-Staff-Code":staffAccessCode } });
+    const json = await res.json();
+    if (res.status === 401 || json.code === "STAFF_AUTH_REQUIRED") throw Object.assign(new Error(json.error || "Enter the staff access code."), { staffAuth:true });
+    return json;
+  }
+
+  async function staffApiPost(body){
+    const res = await fetch(`/api/inventory`, {
+      method:"POST",
+      headers:{ "Content-Type":"application/json", "X-Staff-Code":staffAccessCode },
+      body:JSON.stringify(body),
+    });
+    const json = await res.json();
+    if (res.status === 401 || json.code === "STAFF_AUTH_REQUIRED") throw Object.assign(new Error(json.error || "Enter the staff access code."), { staffAuth:true });
+    return json;
+  }
+
   function refreshIcons(){
     if (window.lucide) window.lucide.createIcons({ attrs: { "aria-hidden":"true" } });
   }
@@ -2211,20 +2406,27 @@
   }
 
   function setAppSection(section){
-    activeAppSection = section === "outreach" ? "outreach" : "inventory";
+    activeAppSection = ["inventory", "outreach", "customers"].includes(section) ? section : "inventory";
     localStorage.setItem("distribution_section", activeAppSection);
     const isOutreach = activeAppSection === "outreach";
+    const isCustomers = activeAppSection === "customers";
+    const isInventory = activeAppSection === "inventory";
 
-    $("inventoryScreen").hidden = isOutreach;
+    $("inventoryScreen").hidden = !isInventory;
     $("outreachScreen").hidden = !isOutreach;
-    $("inventoryNavBtn").classList.toggle("active", !isOutreach);
+    $("customersScreen").hidden = !isCustomers;
+    $("inventoryNavBtn").classList.toggle("active", isInventory);
     $("outreachNavBtn").classList.toggle("active", isOutreach);
-    $("inventoryNavBtn").toggleAttribute("aria-current", !isOutreach);
+    $("customersNavBtn").classList.toggle("active", isCustomers);
+    $("inventoryNavBtn").toggleAttribute("aria-current", isInventory);
     $("outreachNavBtn").toggleAttribute("aria-current", isOutreach);
-    $("appTitle").textContent = isOutreach ? "Outreach" : "Inventory";
+    $("customersNavBtn").toggleAttribute("aria-current", isCustomers);
+    $("appTitle").textContent = isOutreach ? "Outreach" : isCustomers ? "Customers" : "Inventory";
     $("appSubtitle").textContent = isOutreach
       ? "Lead to follow-up, in one place"
-      : "Count shelf and back stock without losing your place";
+      : isCustomers
+        ? "Applications, orders, invoices, and delivery"
+        : "Count shelf and back stock without losing your place";
 
     if (isOutreach) {
       const summary = outreachData.summary || {};
@@ -2232,12 +2434,310 @@
       $("hdrChanged").textContent = `${Number(summary.waiting || 0)} waiting`;
       $("bottomBar").hidden = true;
       if (!outreachLoaded) loadOutreach().catch(err => setOutreachStatus(err.message));
+    } else if (isCustomers) {
+      $("bottomBar").hidden = true;
+      showCustomerAccessState();
+      if (staffAccessCode && !customerLoaded) loadCustomerWorkQueue().catch(handleCustomerError);
     } else {
       updateSummaryUi();
       updateViewChrome();
     }
     window.scrollTo({ top:0, behavior:"auto" });
     refreshIcons();
+  }
+
+  const APPLICATION_STATUSES = ["New", "Reviewing", "Needs information", "Approved", "Account active", "Declined"];
+  const ORDER_STATUSES = ["New", "Reviewing", "Confirmed", "Invoicing", "Ready for delivery", "Completed", "Cancelled"];
+  const INVOICE_STATUSES = ["Not started", "Ready for Badger", "Invoice requested", "Invoice received", "Invoice delivered", "Paid", "Cancelled"];
+  const DELIVERY_STATUSES = ["Not scheduled", "Scheduled", "Delivered", "Issue"];
+
+  function showCustomerAccessState(){
+    $("customerAccessPanel").hidden = customerLoaded;
+    $("customerWorkspace").hidden = !customerLoaded;
+    $("lockCustomersBtn").hidden = !customerLoaded;
+    if (!customerLoaded) {
+      $("staffAccessCode").value = "";
+      $("hdrStore").textContent = "Locked";
+      $("hdrChanged").textContent = "Staff only";
+    }
+  }
+
+  function handleCustomerError(error){
+    const message = error?.message || String(error);
+    if (error?.staffAuth) {
+      staffAccessCode = "";
+      sessionStorage.removeItem("distribution_staff_access");
+      customerLoaded = false;
+      showCustomerAccessState();
+      $("customerAccessStatus").textContent = message;
+      $("staffAccessCode").focus();
+      return;
+    }
+    if (!customerLoaded) {
+      $("customerAccessStatus").textContent = message;
+      showCustomerAccessState();
+    } else {
+      $("customerWorkflowStatus").textContent = message;
+    }
+  }
+
+  async function unlockCustomerWorkspace(){
+    const code = $("staffAccessCode").value.trim();
+    if (!code) {
+      $("customerAccessStatus").textContent = "Enter the staff access code.";
+      return;
+    }
+    staffAccessCode = code;
+    sessionStorage.setItem("distribution_staff_access", code);
+    $("unlockCustomersBtn").disabled = true;
+    $("customerAccessStatus").textContent = "Unlocking...";
+    try {
+      await loadCustomerWorkQueue();
+    } catch (error) {
+      handleCustomerError(error);
+    } finally {
+      $("unlockCustomersBtn").disabled = false;
+    }
+  }
+
+  function lockCustomerWorkspace(){
+    staffAccessCode = "";
+    customerLoaded = false;
+    selectedCustomerRecord = null;
+    sessionStorage.removeItem("distribution_staff_access");
+    customerData = { applications:[], orders:[], summary:{} };
+    showCustomerAccessState();
+    $("customerAccessStatus").textContent = "Customer records locked.";
+  }
+
+  function customerStatusOptions(){
+    const statuses = customerView === "orders" ? ORDER_STATUSES : APPLICATION_STATUSES;
+    return [{ value:"active", label:"Active work" }, { value:"all", label:"All statuses" }]
+      .concat(statuses.map(status => ({ value:status, label:status })));
+  }
+
+  function updateCustomerStatusOptions(){
+    const options = customerStatusOptions();
+    if (!options.some(option => option.value === customerStatusFilter)) customerStatusFilter = "active";
+    $("customerStatusFilter").innerHTML = options.map(option =>
+      `<option value="${escapeHtml(option.value)}" ${option.value === customerStatusFilter ? "selected" : ""}>${escapeHtml(option.label)}</option>`
+    ).join("");
+  }
+
+  function customerRecordsForView(){
+    const records = [...(customerData[customerView] || [])];
+    const activeStatuses = customerView === "orders"
+      ? ["New", "Reviewing", "Confirmed", "Invoicing", "Ready for delivery"]
+      : ["New", "Reviewing", "Needs information"];
+    const query = customerFilterText.trim().toLowerCase();
+    return records.filter(record => {
+      const statusMatch = customerStatusFilter === "all"
+        || (customerStatusFilter === "active" ? activeStatuses.includes(record.workflow_status) : record.workflow_status === customerStatusFilter);
+      if (!statusMatch) return false;
+      if (!query) return true;
+      return Object.values(record).some(value => typeof value !== "object" && String(value || "").toLowerCase().includes(query));
+    });
+  }
+
+  function customerStatusBadge(status){
+    const value = String(status || "").toLowerCase();
+    if (["account active", "completed"].includes(value)) return "green";
+    if (["declined", "cancelled", "issue"].includes(value)) return "red";
+    if (["new"].includes(value)) return "blue";
+    return "amber";
+  }
+
+  function renderCustomerWorkflow(){
+    const summary = customerData.summary || {};
+    $("newApplicationsCount").textContent = Number(summary.new_applications || 0);
+    $("newOrdersCount").textContent = Number(summary.new_orders || 0);
+    $("invoiceNeededCount").textContent = Number(summary.invoice_needed || 0);
+    if (activeAppSection === "customers") {
+      $("hdrStore").textContent = `${Number(summary.new_applications || 0)} applications`;
+      $("hdrChanged").textContent = `${Number(summary.new_orders || 0)} orders`;
+    }
+    $("applicationsViewBtn").classList.toggle("active", customerView === "applications");
+    $("ordersViewBtn").classList.toggle("active", customerView === "orders");
+    updateCustomerStatusOptions();
+
+    const records = customerRecordsForView();
+    const list = $("customerWorkflowList");
+    if (!records.length) {
+      list.innerHTML = `<div class="outreachEmpty"><strong>No matching ${customerView}</strong><span>Change the status filter or clear the search.</span></div>`;
+      refreshIcons();
+      return;
+    }
+
+    list.innerHTML = records.map(record => {
+      const isOrder = customerView === "orders";
+      const id = isOrder ? record.request_id : record.application_id;
+      const contact = isOrder ? record.contact_name : record.primary_contact_name;
+      const email = isOrder ? record.email : record.primary_email;
+      const orderSummary = isOrder
+        ? `${Number(record.line_count || record.lines?.length || 0)} product${Number(record.line_count || record.lines?.length || 0) === 1 ? "" : "s"} • ${Number(record.bottle_equivalent || 0)} bottle equivalent`
+        : [record.business_type, record.delivery_city, record.delivery_state].filter(Boolean).join(" • ");
+      return `
+        <article class="workflowCard ${record.workflow_status === "New" ? "newRecord" : ""}" data-customer-kind="${isOrder ? "order" : "application"}" data-customer-id="${escapeHtml(id)}">
+          <div class="workflowCardTop">
+            <div>
+              <h3>${escapeHtml(record.business_name || record.legal_business_name || "Unnamed business")}</h3>
+              <p>${escapeHtml([contact, email].filter(Boolean).join(" • ") || "Contact not recorded")}</p>
+            </div>
+            <span class="badge ${customerStatusBadge(record.workflow_status)}">${escapeHtml(record.workflow_status || "New")}</span>
+          </div>
+          <div class="workflowMeta">
+            <span class="badge">${escapeHtml(formatOutreachDate(record.submitted_at) || "No date")}</span>
+            <span class="badge">${escapeHtml(id)}</span>
+            ${isOrder && record.verification_status ? `<span class="badge ${record.verification_status === "Active account matched" ? "green" : "amber"}">${escapeHtml(record.verification_status)}</span>` : ""}
+            ${isOrder && record.badger_invoice_number ? `<span class="badge blue">Invoice ${escapeHtml(record.badger_invoice_number)}</span>` : ""}
+            ${record.assigned_to ? `<span class="badge">${escapeHtml(record.assigned_to)}</span>` : ""}
+          </div>
+          <p>${escapeHtml(orderSummary || "Details available")}</p>
+          <div class="workflowActions">
+            <button class="actionBtn primary" type="button" data-customer-action="open"><i data-lucide="clipboard-check"></i><span>Review</span></button>
+            <a class="actionBtn" href="mailto:${escapeHtml(email || "sales@sturgeonspirits.com")}"><i data-lucide="mail"></i><span>Email</span></a>
+          </div>
+        </article>`;
+    }).join("");
+    refreshIcons();
+  }
+
+  async function loadCustomerWorkQueue(){
+    $("customerWorkflowStatus").textContent = "Loading customer work...";
+    const result = await staffApiGet({ action:"customerWorkQueue" });
+    if (!result.ok) throw new Error(result.error || "Customer work could not be loaded.");
+    customerData = {
+      applications:result.applications || [],
+      orders:result.orders || [],
+      summary:result.summary || {},
+    };
+    customerLoaded = true;
+    showCustomerAccessState();
+    renderCustomerWorkflow();
+    $("customerWorkflowStatus").textContent = `Updated ${new Date().toLocaleTimeString([], { hour:"numeric", minute:"2-digit" })}.`;
+  }
+
+  function findCustomerRecord(element){
+    const card = element.closest("[data-customer-id]");
+    if (!card) return null;
+    const collection = card.dataset.customerKind === "order" ? customerData.orders : customerData.applications;
+    const key = card.dataset.customerKind === "order" ? "request_id" : "application_id";
+    return collection.find(record => String(record[key]) === card.dataset.customerId) || null;
+  }
+
+  function selectOptionsHtml(options, selected){
+    return options.map(option => `<option value="${escapeHtml(option)}" ${option === selected ? "selected" : ""}>${escapeHtml(option)}</option>`).join("");
+  }
+
+  function customerInputDate(value){
+    if (!value) return "";
+    const date = new Date(value);
+    if (isNaN(date.getTime())) return String(value).slice(0, 10);
+    return `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, "0")}-${String(date.getDate()).padStart(2, "0")}`;
+  }
+
+  function openCustomerRecord(record){
+    selectedCustomerRecord = record;
+    const isOrder = !!record.request_id;
+    const id = isOrder ? record.request_id : record.application_id;
+    $("customerRecordTitle").textContent = record.business_name || record.legal_business_name || "Customer record";
+    $("customerRecordSubtitle").textContent = `${isOrder ? "Order" : "Application"} • ${id}`;
+
+    const contactRows = isOrder ? [
+      { label:"Contact", value:record.contact_name }, { label:"Email", value:record.email }, { label:"Phone", value:record.phone },
+      { label:"Customer ID", value:record.customer_id }, { label:"PO number", value:record.po_number }, { label:"Verification", value:record.verification_status },
+      { label:"Requested delivery", value:formatOutreachDate(record.requested_delivery_date) }, { label:"Delivery window", value:record.delivery_window },
+      { label:"Delivery instructions", value:record.delivery_instructions }, { label:"Customer notes", value:record.customer_notes },
+    ] : [
+      { label:"Legal business", value:record.legal_business_name }, { label:"Business type", value:record.business_type }, { label:"Website", value:record.website },
+      { label:"Seller permit", value:record.seller_permit_number }, { label:"Contact", value:record.primary_contact_name }, { label:"Title", value:record.primary_contact_title },
+      { label:"Email", value:record.primary_email }, { label:"Phone", value:record.primary_phone }, { label:"Ordering email", value:record.ordering_email },
+      { label:"Accounts payable", value:[record.ap_contact_name, record.ap_email].filter(Boolean).join(" • ") }, { label:"Invoice preference", value:record.invoice_preference },
+    ];
+    const detailRows = isOrder ? [] : [
+      { label:"Delivery address", value:[record.delivery_address_1, record.delivery_address_2, record.delivery_city, record.delivery_state, record.delivery_zip].filter(Boolean).join(", ") },
+      { label:"Delivery window", value:record.delivery_window }, { label:"Delivery instructions", value:record.delivery_instructions },
+      { label:"Product interests", value:record.product_interests }, { label:"Expected frequency", value:record.expected_order_frequency },
+      { label:"Referral source", value:record.referral_source }, { label:"Customer notes", value:record.customer_notes },
+      { label:"Newsletter", value:record.newsletter_opt_in ? "Yes" : "No" },
+    ];
+    const orderLines = isOrder ? `
+      <section class="detailSection full"><h4>Products</h4>
+        <div class="workflowLineList">${(record.lines || []).map(line => `<div class="workflowLine"><span>${escapeHtml(line.sku_name || line.sku_id)}</span><strong>${escapeHtml(line.quantity)} ${escapeHtml(String(line.unit || "").toLowerCase())}</strong></div>`).join("") || `<div class="smallMuted">No product lines found.</div>`}</div>
+      </section>` : "";
+    const editor = isOrder ? `
+      <div class="workflowEditGrid">
+        <div><label for="customerRecordStatus">Order status</label><select id="customerRecordStatus">${selectOptionsHtml(ORDER_STATUSES, record.workflow_status || "New")}</select></div>
+        <div><label for="customerRecordAssigned">Assigned to</label><input id="customerRecordAssigned" value="${escapeHtml(record.assigned_to || "")}" /></div>
+        <div><label for="customerRecordInvoiceStatus">Badger invoice status</label><select id="customerRecordInvoiceStatus">${selectOptionsHtml(INVOICE_STATUSES, record.invoice_status || "Not started")}</select></div>
+        <div><label for="customerRecordInvoiceNumber">Badger invoice number</label><input id="customerRecordInvoiceNumber" value="${escapeHtml(record.badger_invoice_number || "")}" /></div>
+        <div><label for="customerRecordDeliveryStatus">Delivery status</label><select id="customerRecordDeliveryStatus">${selectOptionsHtml(DELIVERY_STATUSES, record.delivery_status || "Not scheduled")}</select></div>
+        <div><label for="customerRecordDeliveryDate">Requested delivery date</label><input id="customerRecordDeliveryDate" type="date" value="${escapeHtml(customerInputDate(record.requested_delivery_date))}" /></div>
+        <div class="full"><label for="customerRecordStaffNotes">Staff notes</label><textarea id="customerRecordStaffNotes" maxlength="4000">${escapeHtml(record.staff_notes || "")}</textarea></div>
+        <div class="full"><div class="status" id="customerRecordStatusMessage"></div><div class="dlgActions"><button class="primary" id="saveCustomerRecordBtn" type="button">Save order</button></div></div>
+      </div>` : `
+      <div class="workflowEditGrid">
+        <div><label for="customerRecordStatus">Application status</label><select id="customerRecordStatus">${selectOptionsHtml(APPLICATION_STATUSES, record.workflow_status || "New")}</select></div>
+        <div><label for="customerRecordAssigned">Assigned to</label><input id="customerRecordAssigned" value="${escapeHtml(record.assigned_to || "")}" /></div>
+        <div><label for="customerRecordCustomerId">Customer ID</label><input id="customerRecordCustomerId" value="${escapeHtml(record.customer_id || "")}" /></div>
+        <div class="full"><label for="customerRecordStaffNotes">Staff notes</label><textarea id="customerRecordStaffNotes" maxlength="4000">${escapeHtml(record.staff_notes || "")}</textarea></div>
+        <div class="full"><div class="status" id="customerRecordStatusMessage"></div><div class="dlgActions"><button class="primary" id="saveCustomerRecordBtn" type="button">Save application</button></div></div>
+      </div>`;
+
+    $("customerRecordBody").innerHTML = `
+      <div class="businessDetailGrid">
+        <section class="detailSection"><h4>${isOrder ? "Customer and delivery" : "Business and contact"}</h4>${detailRowsHtml(contactRows)}</section>
+        ${detailRows.length ? `<section class="detailSection"><h4>Delivery and preferences</h4>${detailRowsHtml(detailRows)}</section>` : ""}
+        ${orderLines}
+      </div>${editor}`;
+    $("customerRecordDialog").showModal();
+    refreshIcons();
+  }
+
+  async function saveCustomerRecord(){
+    if (!selectedCustomerRecord) return;
+    const staffName = $("customerStaffName").value.trim();
+    if (!staffName) {
+      $("customerRecordStatusMessage").textContent = "Enter your staff name before saving.";
+      return;
+    }
+    localStorage.setItem("customer_staff_name", staffName);
+    const button = $("saveCustomerRecordBtn");
+    button.disabled = true;
+    $("customerRecordStatusMessage").textContent = "Saving...";
+    const isOrder = !!selectedCustomerRecord.request_id;
+    const payload = isOrder ? {
+      action:"updateOnlineOrderRequest",
+      request_id:selectedCustomerRecord.request_id,
+      workflow_status:$("customerRecordStatus").value,
+      badger_invoice_number:$("customerRecordInvoiceNumber").value.trim(),
+      invoice_status:$("customerRecordInvoiceStatus").value,
+      delivery_status:$("customerRecordDeliveryStatus").value,
+      requested_delivery_date:$("customerRecordDeliveryDate").value,
+      assigned_to:$("customerRecordAssigned").value.trim(),
+      staff_notes:$("customerRecordStaffNotes").value.trim(),
+      staff_name:staffName,
+    } : {
+      action:"updateCustomerApplication",
+      application_id:selectedCustomerRecord.application_id,
+      workflow_status:$("customerRecordStatus").value,
+      customer_id:$("customerRecordCustomerId").value.trim(),
+      assigned_to:$("customerRecordAssigned").value.trim(),
+      staff_notes:$("customerRecordStaffNotes").value.trim(),
+      staff_name:staffName,
+    };
+    try {
+      const result = await staffApiPost(payload);
+      if (!result.ok) throw new Error(result.error || "The record could not be saved.");
+      $("customerRecordStatusMessage").textContent = "Saved";
+      await loadCustomerWorkQueue();
+      $("customerRecordDialog").close();
+      toast(isOrder ? "Order updated" : "Application updated");
+    } catch (error) {
+      $("customerRecordStatusMessage").textContent = error?.message || String(error);
+      if (error?.staffAuth) handleCustomerError(error);
+      button.disabled = false;
+    }
   }
 
   function formatOutreachDate(value){
@@ -4086,7 +4586,56 @@
 
   $("inventoryNavBtn").addEventListener("click", () => setAppSection("inventory"));
   $("outreachNavBtn").addEventListener("click", () => setAppSection("outreach"));
+  $("customersNavBtn").addEventListener("click", () => setAppSection("customers"));
   $("refreshOutreachBtn").addEventListener("click", () => loadOutreach().catch(err => setOutreachStatus(err.message)));
+  $("refreshCustomersBtn").addEventListener("click", () => {
+    if (!staffAccessCode) return showCustomerAccessState();
+    loadCustomerWorkQueue().catch(handleCustomerError);
+  });
+  $("lockCustomersBtn").addEventListener("click", lockCustomerWorkspace);
+  $("unlockCustomersBtn").addEventListener("click", unlockCustomerWorkspace);
+  $("staffAccessCode").addEventListener("keydown", event => {
+    if (event.key === "Enter") unlockCustomerWorkspace();
+  });
+  $("applicationsViewBtn").addEventListener("click", () => {
+    customerView = "applications";
+    customerStatusFilter = "active";
+    localStorage.setItem("customer_work_view", customerView);
+    renderCustomerWorkflow();
+  });
+  $("ordersViewBtn").addEventListener("click", () => {
+    customerView = "orders";
+    customerStatusFilter = "active";
+    localStorage.setItem("customer_work_view", customerView);
+    renderCustomerWorkflow();
+  });
+  $("customerStatusFilter").addEventListener("change", () => {
+    customerStatusFilter = $("customerStatusFilter").value;
+    renderCustomerWorkflow();
+  });
+  $("customerSearch").addEventListener("input", () => {
+    customerFilterText = $("customerSearch").value || "";
+    $("clearCustomerSearchBtn").hidden = !customerFilterText;
+    renderCustomerWorkflow();
+  });
+  $("clearCustomerSearchBtn").addEventListener("click", () => {
+    customerFilterText = "";
+    $("customerSearch").value = "";
+    $("clearCustomerSearchBtn").hidden = true;
+    renderCustomerWorkflow();
+    $("customerSearch").focus();
+  });
+  $("customerStaffName").addEventListener("change", () => localStorage.setItem("customer_staff_name", $("customerStaffName").value.trim()));
+  $("customerWorkflowList").addEventListener("click", event => {
+    const button = event.target.closest("[data-customer-action='open']");
+    if (!button) return;
+    const record = findCustomerRecord(button);
+    if (record) openCustomerRecord(record);
+  });
+  $("closeCustomerRecordBtn").addEventListener("click", () => $("customerRecordDialog").close());
+  $("customerRecordBody").addEventListener("click", event => {
+    if (event.target.closest("#saveCustomerRecordBtn")) saveCustomerRecord();
+  });
 
   $("outreachAudiencePreset").addEventListener("change", () => {
     outreachAudiencePreset = ["weekly", "distance_needed"].includes($("outreachAudiencePreset").value)
@@ -4173,6 +4722,7 @@
     if (event.target.closest("#saveProgramSettingsBtn")) saveProgramSettings();
   });
 
+  $("customerStaffName").value = localStorage.getItem("customer_staff_name") || "";
   refreshIcons();
   setAppSection(activeAppSection);
   loadStartup().catch(err => setStatus(err.message));

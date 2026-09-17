@@ -1,6 +1,6 @@
 # Sturgeon Distribution Hub
 
-Version: `2026.09.16.22`
+Version: `2026.09.16.26`
 
 Repository: `sturgeonspirits/sturgeon-distribution-hub`
 
@@ -29,6 +29,8 @@ The `Newsletter Contacts` staging tab and Newsletter app view support customers 
 
 The customer signup and order-request pages write only to the staging workbook. Signup submissions land in `Customer Applications`; order headers and products land in `Online Order Requests` and `Online Order Lines`. The pages explain that Sturgeon Spirits manages product selection, ordering, self-distribution, delivery, and the invoice. The invoice directs payment to Badger State Cooperative. Neither page approves an account, charges a customer, promises stock, or confirms delivery. Staff must review and confirm each request.
 
+The staff-only Customers section reviews those applications and orders without requiring direct spreadsheet work. Application review can assign staff, record a customer ID, add internal notes, and activate an ordering account. Order review tracks confirmation, Badger invoice number and status, delivery status, assignment, and internal notes. Changes are appended to `Customer Workflow Log`.
+
 Netlify publishes `customer-signup.html` at `/customer-signup.html`. Distribution Outreach adds a short wholesale-application link to initial-email footers only when Campaign Settings contains a valid public `Customer application URL`. A missing URL suppresses the link so staging and local addresses are never emailed.
 
 New customer applications collect the Wisconsin seller's permit number. They do not collect alcohol license type, license number, or issuing municipality. Existing staging-sheet columns and historical values are retained but are no longer populated by the application.
@@ -49,15 +51,16 @@ All deployable files are stamped with the same app version. When updating Apps S
 6. Connect the repo to Netlify.
 7. Add environment variable:
    - `APPS_SCRIPT_URL` = your Apps Script `/exec` URL
+   - `API_KEY` = the same private key stored in Apps Script Properties
+   - `STAFF_ACCESS_CODE` = a separate staff-entered code for customer records
 8. Redeploy Netlify.
 
-## Optional auth
+## API auth
 
-If you want API key protection:
-
-- In `apps-script/Code.gs`, set `REQUIRE_API_KEY = true`
+- In `apps-script/Code.gs`, keep `REQUIRE_API_KEY = true`
 - Add Script Property `API_KEY` in Apps Script
 - Add Netlify env var `API_KEY`
+- Never use the API key as the staff access code
 
 ## Notes
 

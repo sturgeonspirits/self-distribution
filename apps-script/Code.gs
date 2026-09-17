@@ -1,15 +1,21 @@
 /*********************************
  * Inventory API (JSON) for Netlify
- * App version: 2026.09.16.25
+ * App version: 2026.09.16.26
  *
  * CHANGES IN THIS VERSION
+ * - Added staff work queues for customer applications and online orders.
+ * - Added reviewed status, assignment, customer ID and staff notes to applications.
+ * - Added order status, Badger invoice, delivery and staff-note controls.
+ * - Added an append-only Customer Workflow Log for staff changes.
+ * - Recognized approved active applications as verified online-ordering accounts.
+ * - Kept customer records available only through staff-protected Netlify actions.
+ *
+ * EARLIER STAGING CHANGES
  * - Replaced the browser-autofill-prone company_website spam trap.
  * - Prevented legitimate customer applications and orders from being discarded.
  * - Added an immediate staff email for each new online order request.
  * - Included ordered products and a direct staging-row link in the notice.
  * - Recorded order-notification success or failure without losing the order.
- *
- * EARLIER STAGING CHANGES
  * - Added an immediate staff email for each new wholesale customer application.
  * - Sent application notices to sales@sturgeonspirits.com with a direct review link.
  * - Set the applicant as the reply-to address for efficient follow-up.
@@ -78,7 +84,7 @@
  * - Use only in the staging inventory backend until testing is complete.
  *********************************/
 
-const APP_VERSION = "2026.09.16.25";
+const APP_VERSION = "2026.09.16.26";
 
 const SHEET_NAMES = {
   STORES: "Stores",
@@ -102,6 +108,7 @@ const CUSTOMER_APPLICATIONS_SHEET_NAME = "Customer Applications";
 const CUSTOMER_APPLICATION_NOTIFICATION_EMAIL = "sales@sturgeonspirits.com";
 const ONLINE_ORDER_REQUESTS_SHEET_NAME = "Online Order Requests";
 const ONLINE_ORDER_LINES_SHEET_NAME = "Online Order Lines";
+const CUSTOMER_WORKFLOW_LOG_SHEET_NAME = "Customer Workflow Log";
 
 function getSs_() {
   return SPREADSHEET_ID ? SpreadsheetApp.openById(SPREADSHEET_ID) : SpreadsheetApp.getActiveSpreadsheet();
@@ -192,7 +199,7 @@ function handle_(e, body) {
     assertAuthorized_(e, body);
     const action = (e?.parameter?.action) || (body?.action) || "";
     if (!action) {
-      return json_({ ok:true, service:"sturgeon-distribution-hub", version:APP_VERSION, actions:["initData","listSkus","addSkuToStore","upsertProduct","submitCounts","createReorder","managerGrid","salesSinceCount","updateStoreContacts","outreachDashboard","saveOutreachDraft","updateOutreachOutcome","updateOutreachBusiness","updateOutreachPrograms","upsertNewsletterContact","submitCustomerApplication","submitOnlineOrderRequest"] });
+      return json_({ ok:true, service:"sturgeon-distribution-hub", version:APP_VERSION, actions:["initData","listSkus","addSkuToStore","upsertProduct","submitCounts","createReorder","managerGrid","salesSinceCount","updateStoreContacts","outreachDashboard","saveOutreachDraft","updateOutreachOutcome","updateOutreachBusiness","updateOutreachPrograms","upsertNewsletterContact","submitCustomerApplication","submitOnlineOrderRequest","customerWorkQueue","updateCustomerApplication","updateOnlineOrderRequest"] });
     }
 
     let res;
@@ -214,6 +221,9 @@ function handle_(e, body) {
       case "upsertNewsletterContact": res = apiUpsertNewsletterContact_(body); break;
       case "submitCustomerApplication": res = apiSubmitCustomerApplication_(body); break;
       case "submitOnlineOrderRequest": res = apiSubmitOnlineOrderRequest_(body); break;
+      case "customerWorkQueue": res = apiGetCustomerWorkQueue_(); break;
+      case "updateCustomerApplication": res = apiUpdateCustomerApplication_(body); break;
+      case "updateOnlineOrderRequest": res = apiUpdateOnlineOrderRequest_(body); break;
       default: throw new Error(`Unknown action: ${action}`);
     }
 
@@ -1787,20 +1797,279 @@ function apiSubmitCustomerApplication_(p) {
   }
 }
 
+function rowsWithSource_(sheet) {
+  if (!sheet || sheet.getLastRow() < 2) return [];
+  const h = getHeaderMap_(sheet);
+  const keys = Object.keys(h);
+  return sheet.getRange(2, 1, sheet.getLastRow() - 1, sheet.getLastColumn()).getValues().map((row, index) => {
+    const record = { source_row:index + 2 };
+    keys.forEach(key => { record[key] = row[h[key]]; });
+    return record;
+  });
+}
+
+function customerApplicationRecord_(row) {
+  const businessName = String(row.business_name || row.legal_business_name || "").trim();
+  return {
+    source_row:row.source_row,
+    application_id:String(row.application_id || ""),
+    submitted_at:row.submitted_at || "",
+    workflow_status:String(row.workflow_status || "New"),
+    legal_business_name:String(row.legal_business_name || ""),
+    business_name:businessName,
+    business_type:String(row.business_type || ""),
+    website:String(row.website || ""),
+    seller_permit_number:String(row.seller_permit_number || ""),
+    primary_contact_name:String(row.primary_contact_name || ""),
+    primary_contact_title:String(row.primary_contact_title || ""),
+    primary_email:String(row.primary_email || ""),
+    primary_phone:String(row.primary_phone || ""),
+    ordering_email:String(row.ordering_email || ""),
+    ap_contact_name:String(row.ap_contact_name || ""),
+    ap_email:String(row.ap_email || ""),
+    invoice_preference:String(row.invoice_preference || ""),
+    delivery_address_1:String(row.delivery_address_1 || ""),
+    delivery_address_2:String(row.delivery_address_2 || ""),
+    delivery_city:String(row.delivery_city || ""),
+    delivery_state:String(row.delivery_state || ""),
+    delivery_zip:String(row.delivery_zip || ""),
+    delivery_window:String(row.delivery_window || ""),
+    delivery_instructions:String(row.delivery_instructions || ""),
+    billing_same:toBool_(row.billing_same),
+    billing_address_1:String(row.billing_address_1 || ""),
+    billing_city:String(row.billing_city || ""),
+    billing_state:String(row.billing_state || ""),
+    billing_zip:String(row.billing_zip || ""),
+    product_interests:String(row.product_interests || ""),
+    expected_order_frequency:String(row.expected_order_frequency || ""),
+    referral_source:String(row.referral_source || ""),
+    customer_notes:String(row.notes || ""),
+    authorized_name:String(row.authorized_name || ""),
+    authorized_title:String(row.authorized_title || ""),
+    newsletter_opt_in:toBool_(row.newsletter_opt_in),
+    notification_status:String(row.notification_status || ""),
+    customer_id:String(row.customer_id || ""),
+    assigned_to:String(row.assigned_to || ""),
+    staff_notes:String(row.staff_notes || ""),
+    review_updated_at:row.review_updated_at || "",
+    review_updated_by:String(row.review_updated_by || ""),
+  };
+}
+
+function onlineOrderRecord_(row, linesByRequest) {
+  const requestId = String(row.request_id || "");
+  return {
+    source_row:row.source_row,
+    request_id:requestId,
+    submitted_at:row.submitted_at || "",
+    workflow_status:String(row.workflow_status || "New"),
+    verification_status:String(row.verification_status || "Needs review"),
+    business_name:String(row.business_name || ""),
+    customer_id:String(row.customer_id || ""),
+    contact_name:String(row.contact_name || ""),
+    email:String(row.email || ""),
+    phone:String(row.phone || ""),
+    po_number:String(row.po_number || ""),
+    requested_delivery_date:row.requested_delivery_date || "",
+    delivery_window:String(row.delivery_window || ""),
+    delivery_instructions:String(row.delivery_instructions || ""),
+    customer_notes:String(row.notes || ""),
+    line_count:Number(row.line_count || 0),
+    requested_cases:Number(row.requested_cases || 0),
+    requested_bottles:Number(row.requested_bottles || 0),
+    bottle_equivalent:Number(row.bottle_equivalent || 0),
+    notification_status:String(row.notification_status || ""),
+    badger_invoice_number:String(row.badger_invoice_number || ""),
+    invoice_status:String(row.invoice_status || "Not started"),
+    delivery_status:String(row.delivery_status || "Not scheduled"),
+    assigned_to:String(row.assigned_to || ""),
+    staff_notes:String(row.staff_notes || ""),
+    review_updated_at:row.review_updated_at || "",
+    review_updated_by:String(row.review_updated_by || ""),
+    lines:linesByRequest.get(requestId) || [],
+  };
+}
+
+function recordTimestamp_(value) {
+  const date = value ? new Date(value) : null;
+  return date && !isNaN(date.getTime()) ? date.getTime() : 0;
+}
+
+function getCustomerWorkflowLogSheet_() {
+  const ss = getOutreachSs_();
+  let sheet = ss.getSheetByName(CUSTOMER_WORKFLOW_LOG_SHEET_NAME);
+  if (sheet) return sheet;
+  sheet = ss.insertSheet(CUSTOMER_WORKFLOW_LOG_SHEET_NAME);
+  const headers = [["Timestamp", "Record Type", "Record ID", "Business", "Previous Status", "New Status", "Updated By", "Details", "App Version"]];
+  sheet.getRange(1, 1, 1, headers[0].length).setValues(headers).setFontWeight("bold").setBackground("#44656b").setFontColor("#ffffff");
+  sheet.setFrozenRows(1);
+  return sheet;
+}
+
+function appendCustomerWorkflowLog_(recordType, recordId, business, previousStatus, newStatus, updatedBy, details) {
+  getCustomerWorkflowLogSheet_().appendRow([
+    new Date(), recordType, recordId, business, previousStatus, newStatus, updatedBy, details || "", APP_VERSION,
+  ]);
+}
+
+function findRecordRow_(sheet, idKey, idValue) {
+  const h = getHeaderMap_(sheet);
+  if (h[idKey] === undefined || sheet.getLastRow() < 2) return 0;
+  const values = sheet.getRange(2, h[idKey] + 1, sheet.getLastRow() - 1, 1).getValues();
+  const index = values.findIndex(row => String(row[0] || "") === String(idValue || ""));
+  return index < 0 ? 0 : index + 2;
+}
+
+function apiGetCustomerWorkQueue_() {
+  const applicationSheet = getCustomerApplicationsSheet_(false);
+  const orderSheet = getOnlineOrderRequestsSheet_(false);
+  const lineSheet = getOnlineOrderLinesSheet_(false);
+
+  if (applicationSheet) ensureHeaderColumns_(applicationSheet, ["Customer ID", "Assigned To", "Staff Notes", "Review Updated At", "Review Updated By"]);
+  if (orderSheet) ensureHeaderColumns_(orderSheet, ["Badger Invoice Number", "Invoice Status", "Delivery Status", "Assigned To", "Staff Notes", "Review Updated At", "Review Updated By"]);
+
+  const linesByRequest = new Map();
+  rowsWithSource_(lineSheet).forEach(row => {
+    const requestId = String(row.request_id || "");
+    if (!requestId) return;
+    if (!linesByRequest.has(requestId)) linesByRequest.set(requestId, []);
+    linesByRequest.get(requestId).push({
+      line_number:Number(row.line_number || 0),
+      sku_id:String(row.sku_id || ""),
+      sku_name:String(row.sku_name || ""),
+      quantity:Number(row.quantity || 0),
+      unit:String(row.unit || ""),
+      units_per_case:Number(row.units_per_case || 0),
+      bottle_equivalent:Number(row.bottle_equivalent || 0),
+    });
+  });
+
+  const applications = rowsWithSource_(applicationSheet).map(customerApplicationRecord_)
+    .filter(record => record.application_id)
+    .sort((a, b) => recordTimestamp_(b.submitted_at) - recordTimestamp_(a.submitted_at));
+  const orders = rowsWithSource_(orderSheet).map(row => onlineOrderRecord_(row, linesByRequest))
+    .filter(record => record.request_id)
+    .sort((a, b) => recordTimestamp_(b.submitted_at) - recordTimestamp_(a.submitted_at));
+  const activeApplicationStatuses = ["New", "Reviewing", "Needs information"];
+  const activeOrderStatuses = ["New", "Reviewing", "Confirmed", "Invoicing", "Ready for delivery"];
+
+  return {
+    applications:applications,
+    orders:orders,
+    summary:{
+      new_applications:applications.filter(record => record.workflow_status === "New").length,
+      active_applications:applications.filter(record => activeApplicationStatuses.includes(record.workflow_status)).length,
+      new_orders:orders.filter(record => record.workflow_status === "New").length,
+      active_orders:orders.filter(record => activeOrderStatuses.includes(record.workflow_status)).length,
+      invoice_needed:orders.filter(record => ["Confirmed", "Invoicing"].includes(record.workflow_status) && ["Not started", "Ready for Badger"].includes(record.invoice_status)).length,
+    },
+  };
+}
+
+function apiUpdateCustomerApplication_(p) {
+  if (!p) throw new Error("Missing application update.");
+  requireFields_(p, ["application_id", "workflow_status", "staff_name"]);
+  const statuses = ["New", "Reviewing", "Needs information", "Approved", "Account active", "Declined"];
+  const status = String(p.workflow_status || "");
+  if (!statuses.includes(status)) throw new Error("Choose a listed application status.");
+  const staffName = publicText_(p.staff_name, 120, "Staff name");
+  const applicationId = publicText_(p.application_id, 80, "Application ID");
+
+  const lock = LockService.getScriptLock();
+  if (!lock.tryLock(5000)) throw new Error("Another customer update is in progress. Try again in a moment.");
+  try {
+    const sheet = getCustomerApplicationsSheet_(false);
+    if (!sheet) throw new Error("Customer Applications sheet is missing.");
+    ensureHeaderColumns_(sheet, ["Customer ID", "Assigned To", "Staff Notes", "Review Updated At", "Review Updated By"]);
+    const rowNumber = findRecordRow_(sheet, "application_id", applicationId);
+    if (!rowNumber) throw new Error("Application not found.");
+    const h = getHeaderMap_(sheet);
+    const row = sheet.getRange(rowNumber, 1, 1, sheet.getLastColumn()).getValues()[0];
+    const previousStatus = String(row[h.workflow_status] || "New");
+    const business = String(row[h.business_name] || row[h.legal_business_name] || "");
+    const set = (key, value) => { if (h[key] !== undefined) sheet.getRange(rowNumber, h[key] + 1).setValue(value); };
+    set("workflow_status", status);
+    set("customer_id", publicText_(p.customer_id, 80, "Customer ID"));
+    set("assigned_to", publicText_(p.assigned_to, 120, "Assigned to"));
+    set("staff_notes", publicText_(p.staff_notes, 4000, "Staff notes"));
+    set("review_updated_at", new Date());
+    set("review_updated_by", staffName);
+    appendCustomerWorkflowLog_("Application", applicationId, business, previousStatus, status, staffName, `Customer ID: ${String(p.customer_id || "")}`);
+    return { message:"Application updated.", application_id:applicationId, workflow_status:status };
+  } finally {
+    lock.releaseLock();
+  }
+}
+
+function apiUpdateOnlineOrderRequest_(p) {
+  if (!p) throw new Error("Missing order update.");
+  requireFields_(p, ["request_id", "workflow_status", "staff_name"]);
+  const statuses = ["New", "Reviewing", "Confirmed", "Invoicing", "Ready for delivery", "Completed", "Cancelled"];
+  const invoiceStatuses = ["Not started", "Ready for Badger", "Invoice requested", "Invoice received", "Invoice delivered", "Paid", "Cancelled"];
+  const deliveryStatuses = ["Not scheduled", "Scheduled", "Delivered", "Issue"];
+  const status = String(p.workflow_status || "");
+  const invoiceStatus = String(p.invoice_status || "Not started");
+  const deliveryStatus = String(p.delivery_status || "Not scheduled");
+  if (!statuses.includes(status)) throw new Error("Choose a listed order status.");
+  if (!invoiceStatuses.includes(invoiceStatus)) throw new Error("Choose a listed invoice status.");
+  if (!deliveryStatuses.includes(deliveryStatus)) throw new Error("Choose a listed delivery status.");
+  const staffName = publicText_(p.staff_name, 120, "Staff name");
+  const requestId = publicText_(p.request_id, 80, "Request ID");
+
+  const lock = LockService.getScriptLock();
+  if (!lock.tryLock(5000)) throw new Error("Another order update is in progress. Try again in a moment.");
+  try {
+    const sheet = getOnlineOrderRequestsSheet_(false);
+    if (!sheet) throw new Error("Online Order Requests sheet is missing.");
+    ensureHeaderColumns_(sheet, ["Badger Invoice Number", "Invoice Status", "Delivery Status", "Assigned To", "Staff Notes", "Review Updated At", "Review Updated By"]);
+    const rowNumber = findRecordRow_(sheet, "request_id", requestId);
+    if (!rowNumber) throw new Error("Order request not found.");
+    const h = getHeaderMap_(sheet);
+    const row = sheet.getRange(rowNumber, 1, 1, sheet.getLastColumn()).getValues()[0];
+    const previousStatus = String(row[h.workflow_status] || "New");
+    const business = String(row[h.business_name] || "");
+    const set = (key, value) => { if (h[key] !== undefined) sheet.getRange(rowNumber, h[key] + 1).setValue(value); };
+    set("workflow_status", status);
+    set("badger_invoice_number", publicText_(p.badger_invoice_number, 80, "Badger invoice number"));
+    set("invoice_status", invoiceStatus);
+    set("delivery_status", deliveryStatus);
+    set("assigned_to", publicText_(p.assigned_to, 120, "Assigned to"));
+    set("staff_notes", publicText_(p.staff_notes, 4000, "Staff notes"));
+    const requestedDeliveryDate = String(p.requested_delivery_date || "").trim();
+    if (requestedDeliveryDate && !/^\d{4}-\d{2}-\d{2}$/.test(requestedDeliveryDate)) throw new Error("Enter a valid requested delivery date.");
+    set("requested_delivery_date", requestedDeliveryDate ? new Date(`${requestedDeliveryDate}T12:00:00`) : "");
+    set("review_updated_at", new Date());
+    set("review_updated_by", staffName);
+    appendCustomerWorkflowLog_("Order", requestId, business, previousStatus, status, staffName, `Invoice: ${String(p.badger_invoice_number || "")}; ${invoiceStatus}; Delivery: ${deliveryStatus}`);
+    return { message:"Order updated.", request_id:requestId, workflow_status:status };
+  } finally {
+    lock.releaseLock();
+  }
+}
+
 function onlineOrderVerification_(businessName, customerId, email) {
   const sheet = getOutreachProgramSheet_(false);
-  if (!sheet || sheet.getLastRow() < 2) return "Needs review";
   const normalizedBusiness = String(businessName || "").trim().toLowerCase();
   const normalizedEmail = String(email || "").trim().toLowerCase();
   const normalizedId = String(customerId || "").trim().toLowerCase();
-  const match = getAllRowsAsObjects_(sheet).find(row => {
+  const programMatch = sheet && sheet.getLastRow() >= 2 && getAllRowsAsObjects_(sheet).find(row => {
     if (String(row.ordering_status || "").trim() !== "Active") return false;
     const idMatch = normalizedId && String(row.ordering_customer_id || "").trim().toLowerCase() === normalizedId;
     const emailMatch = normalizedEmail && String(row.email || "").trim().toLowerCase() === normalizedEmail;
     const businessMatch = normalizedBusiness && String(row.business_name || "").trim().toLowerCase() === normalizedBusiness;
     return idMatch || (emailMatch && businessMatch);
   });
-  return match ? "Active account matched" : "Needs review";
+  if (programMatch) return "Active account matched";
+
+  const applicationSheet = getCustomerApplicationsSheet_(false);
+  const applicationMatch = rowsWithSource_(applicationSheet).find(row => {
+    if (String(row.workflow_status || "").trim() !== "Account active") return false;
+    const idMatch = normalizedId && String(row.customer_id || "").trim().toLowerCase() === normalizedId;
+    const applicationEmail = String(row.ordering_email || row.primary_email || "").trim().toLowerCase();
+    const applicationBusiness = String(row.business_name || row.legal_business_name || "").trim().toLowerCase();
+    return idMatch || (normalizedEmail && applicationEmail === normalizedEmail && normalizedBusiness && applicationBusiness === normalizedBusiness);
+  });
+  return applicationMatch ? "Active account matched" : "Needs review";
 }
 
 function sendOnlineOrderNotification_(request, lines, sheet, rowNumber) {
