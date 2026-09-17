@@ -1,8 +1,14 @@
 /*********************************
  * Inventory API (JSON) for Netlify
- * App version: 2026.09.16.22
+ * App version: 2026.09.16.23
  *
  * CHANGES IN THIS VERSION
+ * - Enabled API-key authentication for every Inventory API request.
+ * - Required the same API_KEY in Apps Script Properties and Netlify.
+ * - Rejected direct requests that omit the key or provide the wrong key.
+ * - Preserved all inventory, outreach, customer and ordering behavior from .22.
+ *
+ * EARLIER STAGING CHANGES
  * - Selected newsletter participation by default on the customer application.
  * - Added explicit instructions for applicants who do not want newsletter email.
  * - Recorded that the newsletter option was preselected on the form.
@@ -62,7 +68,7 @@
  * - Use only in the staging inventory backend until testing is complete.
  *********************************/
 
-const APP_VERSION = "2026.09.16.22";
+const APP_VERSION = "2026.09.16.23";
 
 const SHEET_NAMES = {
   STORES: "Stores",
@@ -73,7 +79,7 @@ const SHEET_NAMES = {
 };
 
 const SPREADSHEET_ID = "1asGSIuz65hhbXbanDSuLdgsasDKqAyVWgu7DGi42Il8"; // staging Inventory Backend only
-const REQUIRE_API_KEY = false; // set true when ready
+const REQUIRE_API_KEY = true;
 const OUTREACH_SPREADSHEET_ID = "1tWJ2ZnFT15cjuk7qvCWbJUJX1pAQYYsbSy5owWa8Uzo"; // staging only
 const OUTREACH_SHEET_NAME = "Distribution Directory and Leads";
 const OUTREACH_ACTIVITY_SHEET_NAME = "Activity Log";
