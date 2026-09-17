@@ -1,15 +1,20 @@
 /*********************************
  * Inventory API (JSON) for Netlify
- * App version: 2026.09.16.24
+ * App version: 2026.09.16.25
  *
  * CHANGES IN THIS VERSION
+ * - Replaced the browser-autofill-prone company_website spam trap.
+ * - Prevented legitimate customer applications and orders from being discarded.
+ * - Added an immediate staff email for each new online order request.
+ * - Included ordered products and a direct staging-row link in the notice.
+ * - Recorded order-notification success or failure without losing the order.
+ *
+ * EARLIER STAGING CHANGES
  * - Added an immediate staff email for each new wholesale customer application.
  * - Sent application notices to sales@sturgeonspirits.com with a direct review link.
  * - Set the applicant as the reply-to address for efficient follow-up.
  * - Recorded notification success or failure beside the saved application.
  * - Kept application storage successful even if the notification email fails.
- *
- * EARLIER STAGING CHANGES
  * - Enabled API-key authentication for every Inventory API request.
  * - Required the same API_KEY in Apps Script Properties and Netlify.
  * - Rejected direct requests that omit the key or provide the wrong key.
@@ -73,7 +78,7 @@
  * - Use only in the staging inventory backend until testing is complete.
  *********************************/
 
-const APP_VERSION = "2026.09.16.24";
+const APP_VERSION = "2026.09.16.25";
 
 const SHEET_NAMES = {
   STORES: "Stores",
@@ -1705,7 +1710,7 @@ function sendCustomerApplicationNotification_(application, sheet, rowNumber) {
 
 function apiSubmitCustomerApplication_(p) {
   if (!p) throw new Error("Missing form data.");
-  if (String(p.company_website || "").trim()) return { message:"Application received.", application_id:"RECEIVED" };
+  if (String(p.form_trap || "").trim()) return { message:"Application received.", application_id:"RECEIVED" };
   requireFields_(p, ["legal_business_name", "business_type", "seller_permit_number", "primary_contact_name", "primary_email", "primary_phone", "delivery_address_1", "delivery_city", "delivery_state", "delivery_zip", "authorized_name", "authorized_title", "submission_token"]);
   if (!toBool_(p.attested)) throw new Error("Authorization is required.");
 
@@ -1798,9 +1803,59 @@ function onlineOrderVerification_(businessName, customerId, email) {
   return match ? "Active account matched" : "Needs review";
 }
 
+function sendOnlineOrderNotification_(request, lines, sheet, rowNumber) {
+  const reviewUrl = `https://docs.google.com/spreadsheets/d/${OUTREACH_SPREADSHEET_ID}/edit#gid=${sheet.getSheetId()}&range=A${rowNumber}`;
+  const subject = `New order request: ${request.business_name}`;
+  const productLines = lines.map(line => `${line.quantity} ${line.unit.toLowerCase()} - ${line.sku_name}`);
+  const plainText = [
+    "A new customer order request is ready for review.",
+    "",
+    `Request ID: ${request.request_id}`,
+    `Business: ${request.business_name}`,
+    `Contact: ${request.contact_name}`,
+    `Email: ${request.email}`,
+    `Phone: ${request.phone || "Not provided"}`,
+    `Requested delivery date: ${request.requested_delivery_date || "Not specified"}`,
+    `Verification: ${request.verification_status}`,
+    "",
+    "Products:",
+  ].concat(productLines, ["", `Review the order: ${reviewUrl}`]);
+  const htmlProducts = lines.map(line =>
+    `<li>${escapeOutreachHtml_(line.quantity)} ${escapeOutreachHtml_(line.unit.toLowerCase())} - ${escapeOutreachHtml_(line.sku_name)}</li>`
+  ).join("");
+  const html = [
+    "<p>A new customer order request is ready for review.</p>",
+    "<ul>",
+    `<li><strong>Request ID:</strong> ${escapeOutreachHtml_(request.request_id)}</li>`,
+    `<li><strong>Business:</strong> ${escapeOutreachHtml_(request.business_name)}</li>`,
+    `<li><strong>Contact:</strong> ${escapeOutreachHtml_(request.contact_name)}</li>`,
+    `<li><strong>Email:</strong> ${escapeOutreachHtml_(request.email)}</li>`,
+    `<li><strong>Phone:</strong> ${escapeOutreachHtml_(request.phone || "Not provided")}</li>`,
+    `<li><strong>Requested delivery date:</strong> ${escapeOutreachHtml_(request.requested_delivery_date || "Not specified")}</li>`,
+    `<li><strong>Verification:</strong> ${escapeOutreachHtml_(request.verification_status)}</li>`,
+    "</ul>",
+    `<p><strong>Products</strong></p><ul>${htmlProducts}</ul>`,
+    `<p><a href="${escapeOutreachHtml_(reviewUrl)}">Review this order in the staging sheet</a></p>`,
+  ].join("");
+
+  try {
+    MailApp.sendEmail({
+      to: CUSTOMER_APPLICATION_NOTIFICATION_EMAIL,
+      replyTo: request.email,
+      name: "Sturgeon Distribution Hub",
+      subject: subject,
+      body: plainText.join("\n"),
+      htmlBody: html,
+    });
+    return { status:"Sent", sent_at:new Date(), error:"" };
+  } catch (error) {
+    return { status:"Send error", sent_at:"", error:String(error).slice(0, 500) };
+  }
+}
+
 function apiSubmitOnlineOrderRequest_(p) {
   if (!p) throw new Error("Missing order data.");
-  if (String(p.company_website || "").trim()) return { message:"Order request received.", request_id:"RECEIVED" };
+  if (String(p.form_trap || "").trim()) return { message:"Order request received.", request_id:"RECEIVED" };
   requireFields_(p, ["business_name", "contact_name", "email", "submission_token"]);
   if (!Array.isArray(p.lines) || !p.lines.length) throw new Error("Choose at least one product.");
   if (p.lines.length > 50) throw new Error("An order request can contain up to 50 products.");
@@ -1841,6 +1896,7 @@ function apiSubmitOnlineOrderRequest_(p) {
   if (!lock.tryLock(5000)) throw new Error("Another order request is being recorded. Try again in a moment.");
   try {
     const requestSheet = getOnlineOrderRequestsSheet_(true);
+    ensureHeaderColumns_(requestSheet, ["Notification Status", "Notification Sent At", "Notification Error"]);
     const priorId = existingSubmissionByToken_(requestSheet, submissionToken, "Request ID");
     if (priorId) return { message:"Order request already received.", request_id:priorId };
     const lineSheet = getOnlineOrderLinesSheet_(true);
@@ -1875,6 +1931,7 @@ function apiSubmitOnlineOrderRequest_(p) {
     set("submission_token", submissionToken);
     set("app_version", APP_VERSION);
     requestSheet.appendRow(row);
+    const requestRow = requestSheet.getLastRow();
 
     const lineRows = lines.map((line, index) => {
       const values = Array(lineSheet.getLastColumn()).fill("");
@@ -1891,6 +1948,20 @@ function apiSubmitOnlineOrderRequest_(p) {
       return values;
     });
     lineSheet.getRange(lineSheet.getLastRow() + 1, 1, lineRows.length, lineRows[0].length).setValues(lineRows);
+    const notification = sendOnlineOrderNotification_({
+      request_id:requestId,
+      business_name:businessName,
+      contact_name:contactName,
+      email:email,
+      phone:phone,
+      requested_delivery_date:deliveryDate,
+      verification_status:verification,
+    }, lines, requestSheet, requestRow);
+    requestSheet.getRange(requestRow, h.notification_status + 1, 1, 3).setValues([[
+      notification.status,
+      notification.sent_at,
+      notification.error,
+    ]]);
     return { message:"Order request received for confirmation.", request_id:requestId, verification_status:verification };
   } finally {
     lock.releaseLock();

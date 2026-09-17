@@ -1,10 +1,10 @@
 <!doctype html>
-<!-- App version: 2026.09.16.22 -->
+<!-- App version: 2026.09.16.25 -->
 <html lang="en">
 <head>
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
-  <meta name="app-version" content="2026.09.16.22" />
+  <meta name="app-version" content="2026.09.16.25" />
   <title>Order request | Sturgeon Distribution Hub</title>
   <link rel="stylesheet" href="/assets/customer-portal.css?v=2026.09.16.22" />
 </head>
@@ -27,7 +27,7 @@
     </div>
 
     <form id="orderForm" novalidate>
-      <input class="honeypot" name="company_website" type="text" tabindex="-1" autocomplete="off" aria-hidden="true" />
+      <input class="honeypot" name="form_trap" type="text" tabindex="-1" autocomplete="one-time-code" aria-hidden="true" />
       <fieldset>
         <legend>Customer</legend>
         <div class="grid">
@@ -116,7 +116,7 @@
   <script>
   (() => {
     "use strict";
-    const APP_VERSION = "2026.09.16.22";
+    const APP_VERSION = "2026.09.16.25";
     const form = document.getElementById("orderForm");
     const linesEl = document.getElementById("orderLines");
     const loadingEl = document.getElementById("productLoading");

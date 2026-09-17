@@ -1,10 +1,10 @@
 <!doctype html>
-<!-- App version: 2026.09.16.22 -->
+<!-- App version: 2026.09.16.25 -->
 <html lang="en">
 <head>
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
-  <meta name="app-version" content="2026.09.16.22" />
+  <meta name="app-version" content="2026.09.16.25" />
   <title>Wholesale application | Sturgeon Distribution Hub</title>
   <link rel="stylesheet" href="/assets/customer-portal.css?v=2026.09.16.22" />
 </head>
@@ -34,7 +34,7 @@
     </div>
 
     <form id="customerForm" novalidate>
-      <input class="honeypot" id="companyWebsite" name="company_website" type="text" tabindex="-1" autocomplete="off" aria-hidden="true" />
+      <input class="honeypot" name="form_trap" type="text" tabindex="-1" autocomplete="one-time-code" aria-hidden="true" />
       <fieldset>
         <legend>Business</legend>
         <p class="sectionHelp">Use the legal name shown on the seller's permit. Add the public-facing name if it is different.</p>
@@ -218,7 +218,7 @@
   <script>
   (() => {
     "use strict";
-    const APP_VERSION = "2026.09.16.22";
+    const APP_VERSION = "2026.09.16.25";
     const form = document.getElementById("customerForm");
     const status = document.getElementById("customerStatus");
     const submit = document.getElementById("submitCustomerBtn");
