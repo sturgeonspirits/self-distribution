@@ -1,4 +1,4 @@
-// App version: 2026.09.18.2
+// App version: 2026.09.18.3-WEB
 import test from "node:test";
 import assert from "node:assert/strict";
 import { readFile } from "node:fs/promises";
@@ -48,7 +48,7 @@ test("authenticated inventory GET and POST preserve action payload and API key",
   const calls = [];
   globalThis.fetch = async (url, options = {}) => {
     calls.push({ url:String(url), options });
-    return new Response(JSON.stringify({ ok:true, version:"2026.09.18.2" }), { status:200 });
+    return new Response(JSON.stringify({ ok:true, version:"2026.09.18.3-WEB" }), { status:200 });
   };
   const getResponse = await handler(event("managerGrid", { method:"GET", code:"staff-code", ip:"198.51.100.1" }));
   const postResponse = await handler(event("submitCounts", { code:"staff-code", ip:"198.51.100.1", body:{ store_id:"S1", rep:"Karl", items:[{ sku_id:"SKU", counted:1 }] } }));
@@ -70,17 +70,36 @@ test("inventory proxy follows Apps Script redirects explicitly and rejects HTML"
   globalThis.fetch = async () => {
     calls += 1;
     if (calls === 1) return new Response("", { status:302, headers:{ location:"https://script-content.google.test/response" } });
-    return new Response(JSON.stringify({ ok:true, version:"2026.09.18.2" }), { status:200 });
+    return new Response(JSON.stringify({ ok:true, version:"2026.09.18.3-WEB" }), { status:200 });
   };
   const redirected = await handler(event("managerGrid", { method:"GET", code:"staff-code" }));
   assert.equal(redirected.statusCode, 200);
-  assert.equal(JSON.parse(redirected.body).version, "2026.09.18.2");
+  assert.equal(JSON.parse(redirected.body).version, "2026.09.18.3-WEB");
   assert.equal(calls, 2);
 
   globalThis.fetch = async () => new Response("<!doctype html><title>Page Not Found</title>", { status:200, headers:{ "content-type":"text/html" } });
   const invalid = await handler(event("managerGrid", { method:"GET", code:"staff-code" }));
   assert.equal(invalid.statusCode, 502);
   assert.match(JSON.parse(invalid.body).error, /non-JSON response/);
+});
+
+test("email sends use one non-retrying upstream attempt", async () => {
+  const { handler } = await loadFunction("netlify/functions/inventory.js", "send-no-retry");
+  process.env.APPS_SCRIPT_URL = "https://script.google.test/exec";
+  process.env.API_KEY = "backend-key";
+  process.env.STAFF_ACCESS_CODE = "staff-code";
+  let calls = 0;
+  globalThis.fetch = async () => {
+    calls += 1;
+    throw new Error("connection ended");
+  };
+  const result = await handler(event("sendOutreachEmail", {
+    code:"staff-code",
+    body:{ business:"Cellars Wines & Spirits", idempotency_token:"12345678901234567890" },
+  }));
+  assert.equal(calls, 1);
+  assert.equal(result.statusCode, 500);
+  assert.match(JSON.parse(result.body).error, /send connection failed before Zoho confirmation/i);
 });
 
 test("wrong staff codes are logged and throttled by source", async () => {
@@ -146,6 +165,9 @@ test("source contains formula protection, global error listeners, and recoverabl
   assert.doesNotMatch(sendStateSource, /saved && outreachCanSend/);
   assert.doesNotMatch(sendStateSource, /saved && outreachTestSendAvailable/);
   assert.match(sendStateSource, /const canAttempt = saved && !outreachIsMock/);
+  const sendActionSource = index.slice(index.indexOf("async function sendOutreachEmail"), index.indexOf("$(\"locBackBtn\")"));
+  assert.match(sendActionSource, /res\.accepted === true && !!String\(res\.message_id/);
+  assert.match(sendActionSource, /res\.test === true && !!String\(res\.message_id/);
   assert.match(backend, /CacheService\.getScriptCache\(\)/);
   assert.match(backend, /if \(!__OUTREACH_SS\) __OUTREACH_SS = SpreadsheetApp\.openById/);
   assert.match(mailer, /function sendApprovedPilotForActiveRow\(\) \{\s*throw new Error\('Pilot Review is a read-only legacy archive/);

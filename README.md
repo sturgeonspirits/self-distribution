@@ -1,6 +1,7 @@
 # Sturgeon Distribution Hub
 
-Version: `2026.09.18.2`
+- Web version: `2026.09.18.3-WEB`
+- Inventory API version: `2026.09.18.2`
 
 Repository: `sturgeonspirits/sturgeon-distribution-hub`
 

@@ -1,5 +1,5 @@
-// App version: 2026.09.18.2
-const APP_VERSION = "2026.09.18.2";
+// App version: 2026.09.18.3-WEB
+const APP_VERSION = "2026.09.18.3-WEB";
 const STAFF_ACTIONS = new Set([
   "outreachDashboard",
   "outreachSendStatus",
@@ -34,17 +34,22 @@ const FAILED_ATTEMPT_LIMIT = 5;
 const FAILED_ATTEMPT_WINDOW_MS = 15 * 60 * 1000;
 const UPSTREAM_ATTEMPTS = 2;
 const UPSTREAM_TIMEOUT_MS = 11000;
+const SEND_UPSTREAM_ATTEMPTS = 1;
+const SEND_UPSTREAM_TIMEOUT_MS = 24000;
+const SEND_ACTIONS = new Set(["sendOutreachEmail", "sendOutreachTestEmail"]);
 const failedStaffAttempts = new Map();
 
 function response(statusCode, headers, body) {
   return { statusCode, headers, body: JSON.stringify(body) };
 }
 
-async function fetchAppsScript(url, options = {}) {
+async function fetchAppsScript(url, options = {}, policy = {}) {
+  const attempts = Number(policy.attempts || UPSTREAM_ATTEMPTS);
+  const timeoutMs = Number(policy.timeoutMs || UPSTREAM_TIMEOUT_MS);
   let lastError;
-  for (let attempt = 1; attempt <= UPSTREAM_ATTEMPTS; attempt += 1) {
+  for (let attempt = 1; attempt <= attempts; attempt += 1) {
     const controller = new AbortController();
-    const timer = setTimeout(() => controller.abort(), UPSTREAM_TIMEOUT_MS);
+    const timer = setTimeout(() => controller.abort(), timeoutMs);
     try {
       let upstream = await fetch(url, { ...options, redirect:"manual", signal:controller.signal });
       if (upstream.status >= 300 && upstream.status < 400) {
@@ -65,9 +70,14 @@ async function fetchAppsScript(url, options = {}) {
       console.warn("Inventory API upstream attempt failed", { attempt, error:String(error) });
     }
   }
+  if (policy.send) {
+    throw new Error(lastError?.name === "AbortError"
+      ? "Zoho did not confirm the send before the connection timed out. The outcome is unknown; check Activity Log and Zoho before retrying."
+      : `The send connection failed before Zoho confirmation: ${String(lastError)}`);
+  }
   throw new Error(lastError?.name === "AbortError"
-    ? "Google Sheets took too long to answer after two attempts."
-    : `Inventory API connection failed after two attempts: ${String(lastError)}`);
+    ? `Google Sheets took too long to answer after ${attempts} attempts.`
+    : `Inventory API connection failed after ${attempts} attempts: ${String(lastError)}`);
 }
 
 async function proxyResult(upstream, cors) {
@@ -176,10 +186,18 @@ export async function handler(event) {
 
     if (API_KEY) body.api_key = API_KEY;
 
+    const sendRequest = SEND_ACTIONS.has(action);
     const resp = await fetchAppsScript(APPS_SCRIPT_URL, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify(body),
+    }, sendRequest ? {
+      attempts:SEND_UPSTREAM_ATTEMPTS,
+      timeoutMs:SEND_UPSTREAM_TIMEOUT_MS,
+      send:true,
+    } : {
+      attempts:UPSTREAM_ATTEMPTS,
+      timeoutMs:UPSTREAM_TIMEOUT_MS,
     });
     return proxyResult(resp, cors);
   } catch (err) {

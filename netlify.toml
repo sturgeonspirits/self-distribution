@@ -1,4 +1,4 @@
-# App version: 2026.09.18.2
+# App version: 2026.09.18.3-WEB
 [build]
   publish = "."
   functions = "netlify/functions"
