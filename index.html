@@ -1,10 +1,10 @@
 <!doctype html>
-<!-- App version: 2026.09.17.28 -->
+<!-- App version: 2026.09.18.1 -->
 <html>
 <head>
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover"/>
-  <meta name="app-version" content="2026.09.17.28" />
+  <meta name="app-version" content="2026.09.18.1" />
   <title>Sturgeon Distribution Hub</title>
   <style>
     :root{
@@ -2396,7 +2396,7 @@
 
   <footer style="max-width:1200px;margin:18px auto 120px;padding:0 12px;text-align:center;color:#6b7280;font-size:12px;">
     Designed by <a href="https://scriptspirit.dev" target="_blank" rel="noopener noreferrer" style="color:#1d4ed8;text-decoration:none;font-weight:700;">Script Spirit</a>
-    <span id="appVersionFooter"> • Version 2026.09.17.28</span>
+    <span id="appVersionFooter"> • Version 2026.09.18.1</span>
   </footer>
 
 
@@ -2419,7 +2419,7 @@
   window.addEventListener("unhandledrejection", e => console.error("Unhandled promise rejection:", e.reason));
   window.addEventListener("error", e => console.error("Unhandled error:", e.error || e.message));
   const $ = (id) => document.getElementById(id);
-  const APP_VERSION = "2026.09.17.28";
+  const APP_VERSION = "2026.09.18.1";
   $("appVersionFooter").textContent = ` • Version ${APP_VERSION}`;
 
   let cache = { stores: [], lines: [] };
@@ -2445,6 +2445,7 @@
     : "recommended";
   let outreachFilterText = "";
   let outreachLoaded = false;
+  let outreachNewsletterLoaded = false;
   let selectedOutreachRecord = null;
   let selectedOutcome = "";
   let outreachDraftOriginal = { subject:"", body:"" };
@@ -2629,6 +2630,7 @@
       sessionStorage.removeItem("distribution_staff_access");
       customerLoaded = false;
       outreachLoaded = false;
+      outreachNewsletterLoaded = false;
       inventoryLoaded = false;
       showCustomerAccessState();
       showOutreachAccessState();
@@ -2679,6 +2681,7 @@
     staffAccessCode = "";
     customerLoaded = false;
     outreachLoaded = false;
+    outreachNewsletterLoaded = false;
     inventoryLoaded = false;
     selectedCustomerRecord = null;
     sessionStorage.removeItem("distribution_staff_access");
@@ -3194,6 +3197,38 @@
     refreshIcons();
   }
 
+  function applyOutreachSendStatus(res){
+    outreachCanSend = !!res.can_send && !res.is_mock;
+    outreachTestSendAvailable = !!res.test_send_available && !res.is_mock;
+    const noticeText = $("outreachModeNotice").querySelector("span");
+    noticeText.textContent = res.is_mock
+      ? `Local mock data: ${Number(res.summary?.total_businesses || 0)} sample businesses. The staging connection will load the complete spreadsheet directory.`
+      : res.send_status_pending
+        ? "Outreach is loaded. Checking whether test and real sending are available..."
+        : outreachCanSend
+          ? "One-at-a-time sending is enabled. Review and save each draft before sending."
+          : `Email review is available, but real sending is disabled. ${res.send_configuration_detail || res.detail || "Configure the Distribution Outreach mailer to enable it."}`;
+    $("outreachModeNotice").hidden = outreachCanSend && !res.is_mock;
+    updateOutreachSendState();
+  }
+
+  async function loadOutreachSendStatus(){
+    const res = await staffApiGet({ action:"outreachSendStatus" });
+    if (!res.ok) throw new Error(res.error || "Sending status could not be checked.");
+    applyOutreachSendStatus(res);
+  }
+
+  async function loadOutreachNewsletterContacts(){
+    if (outreachNewsletterLoaded) return;
+    setOutreachStatus("Loading newsletter contacts...");
+    const res = await staffApiGet({ action:"outreachNewsletterContacts" });
+    if (!res.ok) throw new Error(res.error || "Newsletter contacts could not be loaded.");
+    outreachData.newsletter = res.newsletter_contacts || [];
+    outreachNewsletterLoaded = true;
+    renderOutreach();
+    setOutreachStatus(`Updated ${new Date().toLocaleTimeString([], { hour:"numeric", minute:"2-digit" })}.`);
+  }
+
   async function loadOutreach(){
     setOutreachStatus("Loading outreach...");
     const res = await staffApiGet({ action:"outreachDashboard" });
@@ -3202,21 +3237,19 @@
       today: res.today || [],
       directory: res.directory || [],
       sent: res.sent || [],
-      newsletter: res.newsletter_contacts || [],
+      newsletter: outreachData.newsletter || [],
       summary: res.summary || { due_today:0, total_businesses:0, waiting:0, weekly_ready:0 },
     };
     outreachLoaded = true;
-    outreachCanSend = !!res.can_send && !res.is_mock;
-    outreachTestSendAvailable = !!res.test_send_available && !res.is_mock;
-    const noticeText = $("outreachModeNotice").querySelector("span");
-    noticeText.textContent = res.is_mock
-      ? `Local mock data: ${Number(res.summary?.total_businesses || 0)} sample businesses. The staging connection will load the complete spreadsheet directory.`
-      : outreachCanSend
-        ? "One-at-a-time sending is enabled. Review and save each draft before sending."
-        : `Email review is available, but real sending is disabled. ${res.send_configuration_detail || "Configure the Distribution Outreach mailer to enable it."}`;
-    $("outreachModeNotice").hidden = !!res.can_send && !res.is_mock;
+    if (res.is_mock) outreachNewsletterLoaded = true;
+    applyOutreachSendStatus(res);
     renderOutreach();
-    setOutreachStatus(`Updated ${new Date().toLocaleTimeString([], { hour:"numeric", minute:"2-digit" })}.`);
+    const elapsed = Number(res.performance?.total_ms || 0);
+    setOutreachStatus(`Updated ${new Date().toLocaleTimeString([], { hour:"numeric", minute:"2-digit" })}${elapsed ? ` in ${(elapsed / 1000).toFixed(1)}s` : ""}.`);
+    if (!res.is_mock) loadOutreachSendStatus().catch(error => {
+      setOutreachStatus(`Outreach loaded. Sending-status check failed: ${error.message || String(error)}`);
+    });
+    if (outreachView === "newsletter") loadOutreachNewsletterContacts().catch(handleOutreachLoadError);
   }
 
   function findOutreachRecordFromElement(element){
@@ -3703,7 +3736,8 @@
       if (!res.ok) throw new Error(res.error || "Newsletter contact could not be saved.");
       $("newsletterContactDialog").close();
       toast("Newsletter contact saved");
-      await loadOutreach();
+      outreachNewsletterLoaded = false;
+      await loadOutreachNewsletterContacts();
     } catch (err) {
       $("newsletterContactStatus").textContent = err.message || String(err);
     } finally {
@@ -5200,6 +5234,7 @@
     outreachView = "newsletter";
     localStorage.setItem("outreach_view", outreachView);
     renderOutreach();
+    loadOutreachNewsletterContacts().catch(handleOutreachLoadError);
   });
   $("addNewsletterContactBtn").addEventListener("click", () => openNewsletterContact(null));
   $("addBusinessBtn").addEventListener("click", openAddBusiness);

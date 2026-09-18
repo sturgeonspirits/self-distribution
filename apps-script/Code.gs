@@ -1,8 +1,15 @@
 /*********************************
  * Inventory API (JSON) for Netlify
- * App version: 2026.09.17.28
+ * App version: 2026.09.18.1
  *
  * CHANGES IN THIS VERSION
+ * - Removed account migration and cross-tab backfills from the Outreach dashboard read path.
+ * - Reused one workbook handle per request instead of reopening the Outreach workbook repeatedly.
+ * - Moved mailer-status and newsletter reads behind small dedicated endpoints.
+ * - Cached mailer status briefly and logged per-stage dashboard timing.
+ * - Reduced repeated activity payload while preserving recent history in the app.
+ *
+ * EARLIER STAGING CHANGES
  * - Required the shared staff code for every inventory read and write at the Netlify boundary.
  * - Added an Inventory unlock gate that prevents data loading before authentication.
  * - Neutralized spreadsheet formulas in staff-written product, contact and count fields.
@@ -13,7 +20,6 @@
  * - Preserved Pilot Review as a read-only legacy archive and duplicate-send source.
  * - Added global browser error visibility and staff-code throttling.
  *
- * EARLIER STAGING CHANGES
  * - Added a guarded, verified migration into one staging Distribution Hub workbook.
  * - Kept the existing staging Inventory Backend as a rollback source until cutover.
  * - Replaced spreadsheet-row identity with permanent account IDs.
@@ -98,7 +104,7 @@
  * - Use only in the staging inventory backend until testing is complete.
  *********************************/
 
-const APP_VERSION = "2026.09.17.28";
+const APP_VERSION = "2026.09.18.1";
 
 const SHEET_NAMES = {
   STORES: "Stores",
@@ -139,6 +145,7 @@ const HUB_MIGRATION_ACTIVE = "ACTIVE";
 const ORDER_CATALOG_SOURCE = "SHEETS"; // Toast remains disabled until a reviewed integration is configured.
 
 let __OPERATIONAL_SS = null;
+let __OUTREACH_SS = null;
 
 function getLegacyInventorySs_() {
   return SpreadsheetApp.openById(LEGACY_INVENTORY_SPREADSHEET_ID);
@@ -188,7 +195,8 @@ function getSheet_(name) {
   return sh;
 }
 function getOutreachSs_() {
-  return SpreadsheetApp.openById(OUTREACH_SPREADSHEET_ID);
+  if (!__OUTREACH_SS) __OUTREACH_SS = SpreadsheetApp.openById(OUTREACH_SPREADSHEET_ID);
+  return __OUTREACH_SS;
 }
 function getOutreachSheet_(name) {
   const sh = getOutreachSs_().getSheetByName(name);
@@ -481,7 +489,7 @@ function handle_(e, body) {
     assertAuthorized_(e, body);
     const action = (e?.parameter?.action) || (body?.action) || "";
     if (!action) {
-      return json_({ ok:true, service:"sturgeon-distribution-hub", version:APP_VERSION, actions:["initData","listSkus","addSkuToStore","upsertProduct","submitCounts","createReorder","managerGrid","salesSinceCount","updateStoreContacts","outreachDashboard","saveOutreachDraft","sendOutreachEmail","sendOutreachTestEmail","updateOutreachOutcome","updateOutreachBusiness","updateOutreachPrograms","createOutreachBusiness","importOutreachBusinesses","upsertNewsletterContact","submitCustomerApplication","submitOnlineOrderRequest","customerWorkQueue","updateCustomerApplication","updateOnlineOrderRequest","hubSystemStatus","initializeHardenedHub","reconcileIntegrations"] });
+      return json_({ ok:true, service:"sturgeon-distribution-hub", version:APP_VERSION, actions:["initData","listSkus","addSkuToStore","upsertProduct","submitCounts","createReorder","managerGrid","salesSinceCount","updateStoreContacts","outreachDashboard","outreachSendStatus","outreachNewsletterContacts","saveOutreachDraft","sendOutreachEmail","sendOutreachTestEmail","updateOutreachOutcome","updateOutreachBusiness","updateOutreachPrograms","createOutreachBusiness","importOutreachBusinesses","upsertNewsletterContact","submitCustomerApplication","submitOnlineOrderRequest","customerWorkQueue","updateCustomerApplication","updateOnlineOrderRequest","hubSystemStatus","initializeHardenedHub","reconcileIntegrations"] });
     }
 
     let res;
@@ -496,6 +504,8 @@ function handle_(e, body) {
       case "salesSinceCount": res = apiGetSalesSinceCount_((e?.parameter?.store_id) || (body?.store_id) || ""); break;
       case "updateStoreContacts": res = apiUpdateStoreContacts_(body); break;
       case "outreachDashboard": res = apiGetOutreachDashboard_(); break;
+      case "outreachSendStatus": res = apiGetOutreachSendStatus_(); break;
+      case "outreachNewsletterContacts": res = { newsletter_contacts:newsletterContacts_() }; break;
       case "saveOutreachDraft": res = apiSaveOutreachDraft_(body); break;
       case "sendOutreachEmail": res = apiSendOutreachEmail_(body, false); break;
       case "sendOutreachTestEmail": res = apiSendOutreachEmail_(body, true); break;
@@ -1828,7 +1838,7 @@ function outreachRecord_(row, sourceRow, activityMap, settings, draftMap, progra
       bounce_count:0,
       source:"Not connected",
     },
-    activity: loggedActivity.slice(0, 50),
+    activity: loggedActivity.slice(0, 10),
   };
   record.weekly_exclusion_reasons = outreachWeeklyExclusionReasons_(record);
   record.weekly_eligible = record.weekly_exclusion_reasons.length === 0;
@@ -1836,16 +1846,27 @@ function outreachRecord_(row, sourceRow, activityMap, settings, draftMap, progra
 }
 
 function apiGetOutreachDashboard_() {
-  ensureAccountIdentityModel_();
+  const startedAt = Date.now();
+  const timings = {};
+  let stageStartedAt = startedAt;
+  const mark = name => {
+    const now = Date.now();
+    timings[name] = now - stageStartedAt;
+    stageStartedAt = now;
+  };
   const sheet = getOutreachSheet_(OUTREACH_SHEET_NAME);
   const rows = getAllRowsAsObjects_(sheet);
+  mark("directory_read_ms");
   const activityMap = outreachActivityMap_();
+  mark("activity_read_ms");
   const settings = getOutreachCampaignSettings_();
   const draftMap = outreachDraftMap_();
   const programMap = outreachProgramMap_();
   const engagementMap = outreachEngagementMap_();
+  mark("supporting_tabs_ms");
   const records = rows.map((row, index) => outreachRecord_(row, index + 2, activityMap, settings, draftMap, programMap, engagementMap))
     .filter(record => record.business);
+  mark("record_build_ms");
 
   const endOfToday = new Date();
   endOfToday.setHours(23, 59, 59, 999);
@@ -1864,16 +1885,33 @@ function apiGetOutreachDashboard_() {
   const today = due.concat(ready.filter(record => !due.some(item => item.source_row === record.source_row)))
     .slice(0, 30);
   const directory = records.slice().sort((a, b) => String(a.business).localeCompare(String(b.business)));
-  const mailer = outreachMailerStatus_();
+  const mailer = cachedOutreachMailerStatus_() || {
+    can_send:false,
+    test_send_available:false,
+    detail:"Sending status is loading separately.",
+    pending:true,
+  };
+  mark("summary_build_ms");
+
+  const totalMs = Date.now() - startedAt;
+  console.log(JSON.stringify({
+    event:"outreach_dashboard_timing",
+    total_ms:totalMs,
+    stages:timings,
+    directory_rows:rows.length,
+    activity_businesses:activityMap.size,
+  }));
 
   return {
     can_send: mailer.can_send,
     test_send_available: mailer.test_send_available,
     send_configuration_detail: mailer.detail,
+    send_status_pending:!!mailer.pending,
     today: today,
     directory: directory,
     sent: sent.slice(0, 50),
-    newsletter_contacts: newsletterContacts_(),
+    newsletter_contacts: [],
+    performance: { total_ms:totalMs },
     summary: {
       due_today: due.length,
       total_businesses: directory.length,
@@ -2012,18 +2050,40 @@ function outreachMailerConfigured_() {
   return /^https:\/\/script\.google\.com\/macros\/s\/[A-Za-z0-9_-]+\/exec$/.test(config.url) && config.secret.length >= 24;
 }
 
+const OUTREACH_MAILER_STATUS_CACHE_KEY = "outreach_mailer_status_v1";
+
+function cachedOutreachMailerStatus_() {
+  const cached = CacheService.getScriptCache().get(OUTREACH_MAILER_STATUS_CACHE_KEY);
+  if (!cached) return null;
+  try { return JSON.parse(cached); }
+  catch (error) { return null; }
+}
+
 function outreachMailerStatus_() {
-  if (!outreachMailerConfigured_()) return { can_send:false, test_send_available:false, detail:"Mailer URL or shared secret is not configured." };
+  const cached = cachedOutreachMailerStatus_();
+  if (cached) return cached;
+  let status;
+  if (!outreachMailerConfigured_()) {
+    status = { can_send:false, test_send_available:false, detail:"Mailer URL or shared secret is not configured." };
+    CacheService.getScriptCache().put(OUTREACH_MAILER_STATUS_CACHE_KEY, JSON.stringify(status), 60);
+    return status;
+  }
   try {
     const result = callOutreachMailer_({ action:"appMailerStatus" });
-    return {
+    status = {
       can_send:!!result.can_send,
       test_send_available:!!result.test_send_available,
       detail:String(result.detail || ""),
     };
   } catch (error) {
-    return { can_send:false, test_send_available:false, detail:String(error.message || error) };
+    status = { can_send:false, test_send_available:false, detail:String(error.message || error) };
   }
+  CacheService.getScriptCache().put(OUTREACH_MAILER_STATUS_CACHE_KEY, JSON.stringify(status), status.can_send || status.test_send_available ? 60 : 15);
+  return status;
+}
+
+function apiGetOutreachSendStatus_() {
+  return outreachMailerStatus_();
 }
 
 function callOutreachMailer_(payload) {

@@ -1,4 +1,4 @@
-// App version: 2026.09.17.28
+// App version: 2026.09.18.1
 import test from "node:test";
 import assert from "node:assert/strict";
 import { readFile } from "node:fs/promises";
@@ -31,9 +31,9 @@ test("every inventory action rejects missing staff auth before proxying", async 
   process.env.STAFF_ACCESS_CODE = "staff-code";
   let fetches = 0;
   globalThis.fetch = async () => { fetches += 1; throw new Error("should not proxy"); };
-  const actions = ["initData", "listSkus", "addSkuToStore", "upsertProduct", "submitCounts", "createReorder", "managerGrid", "salesSinceCount", "updateStoreContacts"];
+  const actions = ["initData", "listSkus", "addSkuToStore", "upsertProduct", "submitCounts", "createReorder", "managerGrid", "salesSinceCount", "updateStoreContacts", "outreachSendStatus", "outreachNewsletterContacts"];
   for (const action of actions) {
-    const response = await handler(event(action, { method:action === "managerGrid" ? "GET" : "POST", ip:`192.0.2.${actions.indexOf(action) + 10}` }));
+    const response = await handler(event(action, { method:["managerGrid", "outreachSendStatus", "outreachNewsletterContacts"].includes(action) ? "GET" : "POST", ip:`192.0.2.${actions.indexOf(action) + 10}` }));
     assert.equal(response.statusCode, 401, action);
     assert.equal(JSON.parse(response.body).code, "STAFF_AUTH_REQUIRED", action);
   }
@@ -48,7 +48,7 @@ test("authenticated inventory GET and POST preserve action payload and API key",
   const calls = [];
   globalThis.fetch = async (url, options = {}) => {
     calls.push({ url:String(url), options });
-    return new Response(JSON.stringify({ ok:true, version:"2026.09.17.28" }), { status:200 });
+    return new Response(JSON.stringify({ ok:true, version:"2026.09.18.1" }), { status:200 });
   };
   const getResponse = await handler(event("managerGrid", { method:"GET", code:"staff-code", ip:"198.51.100.1" }));
   const postResponse = await handler(event("submitCounts", { code:"staff-code", ip:"198.51.100.1", body:{ store_id:"S1", rep:"Karl", items:[{ sku_id:"SKU", counted:1 }] } }));
@@ -109,6 +109,14 @@ test("source contains formula protection, global error listeners, and recoverabl
   assert.match(index, /finally \{\s*button\.disabled = false;\s*\}/);
   assert.match(index, /staffApiGet\(\{ action:"initData"/);
   assert.doesNotMatch(index, /\bapi(?:Get|Post)\(/);
+  assert.match(index, /action:"outreachSendStatus"/);
+  assert.match(index, /action:"outreachNewsletterContacts"/);
+  const dashboardSource = backend.match(/function apiGetOutreachDashboard_\(\) \{[\s\S]*?\n\}/)?.[0];
+  assert.ok(dashboardSource);
+  assert.doesNotMatch(dashboardSource, /ensureAccountIdentityModel_/);
+  assert.doesNotMatch(dashboardSource, /newsletterContacts_/);
+  assert.match(backend, /CacheService\.getScriptCache\(\)/);
+  assert.match(backend, /if \(!__OUTREACH_SS\) __OUTREACH_SS = SpreadsheetApp\.openById/);
   assert.match(mailer, /function sendApprovedPilotForActiveRow\(\) \{\s*throw new Error\('Pilot Review is a read-only legacy archive/);
   assert.doesNotMatch(mailer, /PILOT_SEND_LIMIT/);
 });

@@ -1,6 +1,6 @@
 # Sturgeon Distribution Hub
 
-Version: `2026.09.17.28`
+Version: `2026.09.18.1`
 
 Repository: `sturgeonspirits/sturgeon-distribution-hub`
 
@@ -60,12 +60,12 @@ All deployable files are stamped with the same app version. When updating Apps S
 5. Open the **staging Inventory Backend** Apps Script project.
 6. Replace its complete `Code.gs` with `apps-script/Code.gs`; do not append snippets.
 7. Add Inventory Backend Script Properties `OUTREACH_MAILER_URL` (the Distribution Outreach `/exec` URL) and the same `OUTREACH_MAILER_SHARED_SECRET`. Do not copy Zoho credentials here.
-8. Deploy the Inventory Backend as a Web App and verify its root JSON reports version `2026.09.17.28`.
+8. Deploy the Inventory Backend as a Web App and verify its root JSON reports version `2026.09.18.1`.
 9. Keep the existing GitHub-to-Netlify connection and environment variables:
    - `APPS_SCRIPT_URL` = your Apps Script `/exec` URL
    - `API_KEY` = the same private key stored in Apps Script Properties
    - `STAFF_ACCESS_CODE` = a separate staff-entered code for customer records
-10. Redeploy Netlify only after both staging Apps Script web apps are deployed and the Inventory Backend reports version `2026.09.17.28`.
+10. Redeploy Netlify only after both staging Apps Script web apps are deployed and the Inventory Backend reports version `2026.09.18.1`.
 
 ## API auth
 
