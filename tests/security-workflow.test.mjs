@@ -61,6 +61,28 @@ test("authenticated inventory GET and POST preserve action payload and API key",
   assert.equal(JSON.parse(postResponse.body).ok, true);
 });
 
+test("inventory proxy follows Apps Script redirects explicitly and rejects HTML", async () => {
+  const { handler } = await loadFunction("netlify/functions/inventory.js", "redirect-regression");
+  process.env.APPS_SCRIPT_URL = "https://script.google.test/exec";
+  process.env.API_KEY = "backend-key";
+  process.env.STAFF_ACCESS_CODE = "staff-code";
+  let calls = 0;
+  globalThis.fetch = async () => {
+    calls += 1;
+    if (calls === 1) return new Response("", { status:302, headers:{ location:"https://script-content.google.test/response" } });
+    return new Response(JSON.stringify({ ok:true, version:"2026.09.18.1" }), { status:200 });
+  };
+  const redirected = await handler(event("managerGrid", { method:"GET", code:"staff-code" }));
+  assert.equal(redirected.statusCode, 200);
+  assert.equal(JSON.parse(redirected.body).version, "2026.09.18.1");
+  assert.equal(calls, 2);
+
+  globalThis.fetch = async () => new Response("<!doctype html><title>Page Not Found</title>", { status:200, headers:{ "content-type":"text/html" } });
+  const invalid = await handler(event("managerGrid", { method:"GET", code:"staff-code" }));
+  assert.equal(invalid.statusCode, 502);
+  assert.match(JSON.parse(invalid.body).error, /non-JSON response/);
+});
+
 test("wrong staff codes are logged and throttled by source", async () => {
   const { handler } = await loadFunction("netlify/functions/inventory.js", "throttle");
   process.env.APPS_SCRIPT_URL = "https://example.test/exec";

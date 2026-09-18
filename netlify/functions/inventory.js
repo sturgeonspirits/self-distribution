@@ -32,10 +32,51 @@ const STAFF_ACTIONS = new Set([
 
 const FAILED_ATTEMPT_LIMIT = 5;
 const FAILED_ATTEMPT_WINDOW_MS = 15 * 60 * 1000;
+const UPSTREAM_ATTEMPTS = 2;
+const UPSTREAM_TIMEOUT_MS = 11000;
 const failedStaffAttempts = new Map();
 
 function response(statusCode, headers, body) {
   return { statusCode, headers, body: JSON.stringify(body) };
+}
+
+async function fetchAppsScript(url, options = {}) {
+  let lastError;
+  for (let attempt = 1; attempt <= UPSTREAM_ATTEMPTS; attempt += 1) {
+    const controller = new AbortController();
+    const timer = setTimeout(() => controller.abort(), UPSTREAM_TIMEOUT_MS);
+    try {
+      let upstream = await fetch(url, { ...options, redirect:"manual", signal:controller.signal });
+      if (upstream.status >= 300 && upstream.status < 400) {
+        const location = upstream.headers.get("location");
+        if (!location) throw new Error("Inventory API redirect was missing its destination.");
+        upstream = await fetch(location, {
+          method:"GET",
+          headers:{ "Accept":"application/json" },
+          redirect:"follow",
+          signal:controller.signal,
+        });
+      }
+      clearTimeout(timer);
+      return upstream;
+    } catch (error) {
+      clearTimeout(timer);
+      lastError = error;
+      console.warn("Inventory API upstream attempt failed", { attempt, error:String(error) });
+    }
+  }
+  throw new Error(lastError?.name === "AbortError"
+    ? "Google Sheets took too long to answer after two attempts."
+    : `Inventory API connection failed after two attempts: ${String(lastError)}`);
+}
+
+async function proxyResult(upstream, cors) {
+  const text = await upstream.text();
+  try { JSON.parse(text); }
+  catch (error) {
+    return response(502, cors, { ok:false, error:"The Inventory API returned a non-JSON response. Refresh and try again." });
+  }
+  return { statusCode:upstream.ok ? 200 : 502, headers:cors, body:text };
 }
 
 function staffActionFor(event, body) {
@@ -129,27 +170,18 @@ export async function handler(event) {
       if (qs) url += `?${qs}`;
       if (API_KEY) url += (url.includes("?") ? "&" : "?") + `api_key=${encodeURIComponent(API_KEY)}`;
 
-      const resp = await fetch(url, { method: "GET" });
-      return {
-        statusCode: 200,
-        headers: { "Content-Type": "application/json", ...cors },
-        body: await resp.text(),
-      };
+      const resp = await fetchAppsScript(url, { method:"GET", headers:{ "Accept":"application/json" } });
+      return proxyResult(resp, cors);
     }
 
     if (API_KEY) body.api_key = API_KEY;
 
-    const resp = await fetch(APPS_SCRIPT_URL, {
+    const resp = await fetchAppsScript(APPS_SCRIPT_URL, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify(body),
     });
-
-    return {
-      statusCode: 200,
-      headers: { "Content-Type": "application/json", ...cors },
-      body: await resp.text(),
-    };
+    return proxyResult(resp, cors);
   } catch (err) {
     return {
       statusCode: 500,
