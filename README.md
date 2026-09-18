@@ -43,6 +43,10 @@ New customer applications collect the Wisconsin seller's permit number. They do 
 
 The newsletter option is selected by default and tells applicants to uncheck it if they do not want marketing email. Stored consent-source text records that the option was preselected rather than describing it as a manually selected opt-in.
 
+## Future improvement: individual staff accounts
+
+Deferred until the current Inventory, Outreach, and Orders & Accounts workflows are functioning reliably. Replace the shared staff access code with a separate login for each staff member. Each account should provide its own display name and approved email signature, automatically attribute outreach and operational changes to that user, support role-based permissions, and allow one staff member to be disabled without changing access for everyone else. Preserve the current audit history during migration. Do not implement this during pilot stabilization.
+
 ## Versioning
 
 All deployable files are stamped with the same app version. When updating Apps Script, confirm the `APP_VERSION` value in `apps-script/Code.gs` matches the version shown in this README and the Netlify-hosted app footer.
