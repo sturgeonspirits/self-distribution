@@ -1,4 +1,4 @@
-// App version: 2026.09.18.1
+// App version: 2026.09.18.2
 import test from "node:test";
 import assert from "node:assert/strict";
 import { readFile } from "node:fs/promises";
@@ -48,7 +48,7 @@ test("authenticated inventory GET and POST preserve action payload and API key",
   const calls = [];
   globalThis.fetch = async (url, options = {}) => {
     calls.push({ url:String(url), options });
-    return new Response(JSON.stringify({ ok:true, version:"2026.09.18.1" }), { status:200 });
+    return new Response(JSON.stringify({ ok:true, version:"2026.09.18.2" }), { status:200 });
   };
   const getResponse = await handler(event("managerGrid", { method:"GET", code:"staff-code", ip:"198.51.100.1" }));
   const postResponse = await handler(event("submitCounts", { code:"staff-code", ip:"198.51.100.1", body:{ store_id:"S1", rep:"Karl", items:[{ sku_id:"SKU", counted:1 }] } }));
@@ -70,11 +70,11 @@ test("inventory proxy follows Apps Script redirects explicitly and rejects HTML"
   globalThis.fetch = async () => {
     calls += 1;
     if (calls === 1) return new Response("", { status:302, headers:{ location:"https://script-content.google.test/response" } });
-    return new Response(JSON.stringify({ ok:true, version:"2026.09.18.1" }), { status:200 });
+    return new Response(JSON.stringify({ ok:true, version:"2026.09.18.2" }), { status:200 });
   };
   const redirected = await handler(event("managerGrid", { method:"GET", code:"staff-code" }));
   assert.equal(redirected.statusCode, 200);
-  assert.equal(JSON.parse(redirected.body).version, "2026.09.18.1");
+  assert.equal(JSON.parse(redirected.body).version, "2026.09.18.2");
   assert.equal(calls, 2);
 
   globalThis.fetch = async () => new Response("<!doctype html><title>Page Not Found</title>", { status:200, headers:{ "content-type":"text/html" } });
@@ -137,6 +137,15 @@ test("source contains formula protection, global error listeners, and recoverabl
   assert.ok(dashboardSource);
   assert.doesNotMatch(dashboardSource, /ensureAccountIdentityModel_/);
   assert.doesNotMatch(dashboardSource, /newsletterContacts_/);
+  const accountBuilderSource = backend.slice(backend.indexOf("function buildCustomerAccounts_"), backend.indexOf("function apiGetCustomerWorkQueue_"));
+  const customerQueueSource = backend.slice(backend.indexOf("function apiGetCustomerWorkQueue_"), backend.indexOf("function makeStoreId_"));
+  assert.doesNotMatch(accountBuilderSource, /ensureAccountIdentityModel_/);
+  assert.doesNotMatch(customerQueueSource, /ensureAccountIdentityModel_/);
+  assert.match(index, /function showCustomerAccessState\(\)\{\s*const unlocked = !!staffAccessCode;/);
+  const sendStateSource = index.slice(index.indexOf("function updateOutreachSendState"), index.indexOf("async function saveOutreachDraft"));
+  assert.doesNotMatch(sendStateSource, /saved && outreachCanSend/);
+  assert.doesNotMatch(sendStateSource, /saved && outreachTestSendAvailable/);
+  assert.match(sendStateSource, /const canAttempt = saved && !outreachIsMock/);
   assert.match(backend, /CacheService\.getScriptCache\(\)/);
   assert.match(backend, /if \(!__OUTREACH_SS\) __OUTREACH_SS = SpreadsheetApp\.openById/);
   assert.match(mailer, /function sendApprovedPilotForActiveRow\(\) \{\s*throw new Error\('Pilot Review is a read-only legacy archive/);

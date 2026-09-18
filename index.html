@@ -1,10 +1,10 @@
 <!doctype html>
-<!-- App version: 2026.09.18.1 -->
+<!-- App version: 2026.09.18.2 -->
 <html>
 <head>
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover"/>
-  <meta name="app-version" content="2026.09.18.1" />
+  <meta name="app-version" content="2026.09.18.2" />
   <title>Sturgeon Distribution Hub</title>
   <style>
     :root{
@@ -2396,7 +2396,7 @@
 
   <footer style="max-width:1200px;margin:18px auto 120px;padding:0 12px;text-align:center;color:#6b7280;font-size:12px;">
     Designed by <a href="https://scriptspirit.dev" target="_blank" rel="noopener noreferrer" style="color:#1d4ed8;text-decoration:none;font-weight:700;">Script Spirit</a>
-    <span id="appVersionFooter"> • Version 2026.09.18.1</span>
+    <span id="appVersionFooter"> • Version 2026.09.18.2</span>
   </footer>
 
 
@@ -2419,7 +2419,7 @@
   window.addEventListener("unhandledrejection", e => console.error("Unhandled promise rejection:", e.reason));
   window.addEventListener("error", e => console.error("Unhandled error:", e.error || e.message));
   const $ = (id) => document.getElementById(id);
-  const APP_VERSION = "2026.09.18.1";
+  const APP_VERSION = "2026.09.18.2";
   $("appVersionFooter").textContent = ` • Version ${APP_VERSION}`;
 
   let cache = { stores: [], lines: [] };
@@ -2461,6 +2461,7 @@
   let inventoryLoaded = false;
   let outreachCanSend = false;
   let outreachTestSendAvailable = false;
+  let outreachIsMock = false;
   let selectedOutreachSendToken = "";
   let pendingBusinessImport = [];
 
@@ -2613,10 +2614,11 @@
   }
 
   function showCustomerAccessState(){
-    $("customerAccessPanel").hidden = customerLoaded;
-    $("customerWorkspace").hidden = !customerLoaded;
-    $("lockCustomersBtn").hidden = !customerLoaded;
-    if (!customerLoaded) {
+    const unlocked = !!staffAccessCode;
+    $("customerAccessPanel").hidden = unlocked;
+    $("customerWorkspace").hidden = !unlocked;
+    $("lockCustomersBtn").hidden = !unlocked;
+    if (!unlocked) {
       $("staffAccessCode").value = "";
       $("hdrStore").textContent = "Locked";
       $("hdrChanged").textContent = "Staff only";
@@ -2647,12 +2649,15 @@
       }
       return;
     }
-    if (!customerLoaded) {
-      $("customerAccessStatus").textContent = message;
+    if (staffAccessCode) {
+      $("customerWorkflowStatus").textContent = message.includes("took too long")
+        ? "Google Sheets took too long to load Orders & Accounts. Your staff access remains unlocked; click Refresh in a moment."
+        : message;
       showCustomerAccessState();
-    } else {
-      $("customerWorkflowStatus").textContent = message;
+      return;
     }
+    $("customerAccessStatus").textContent = message;
+    showCustomerAccessState();
   }
 
   async function unlockCustomerWorkspace(){
@@ -2664,12 +2669,11 @@
     staffAccessCode = code;
     sessionStorage.setItem("distribution_staff_access", code);
     $("unlockCustomersBtn").disabled = true;
-    $("customerAccessStatus").textContent = "Unlocking...";
+    $("customerAccessStatus").textContent = "Checking staff access...";
+    showCustomerAccessState();
     try {
       await loadCustomerWorkQueue();
-      showOutreachAccessState();
-      if (!inventoryLoaded) await loadStartup();
-      showInventoryAccessState();
+      $("customerAccessStatus").textContent = "";
     } catch (error) {
       handleCustomerError(error);
     } finally {
@@ -2847,7 +2851,8 @@
     customerLoaded = true;
     showCustomerAccessState();
     renderCustomerWorkflow();
-    $("customerWorkflowStatus").textContent = `Updated ${new Date().toLocaleTimeString([], { hour:"numeric", minute:"2-digit" })}.`;
+    const elapsed = Number(result.performance?.total_ms || 0);
+    $("customerWorkflowStatus").textContent = `Updated ${new Date().toLocaleTimeString([], { hour:"numeric", minute:"2-digit" })}${elapsed ? ` in ${(elapsed / 1000).toFixed(1)}s` : ""}.`;
   }
 
   function findCustomerRecord(element){
@@ -3198,8 +3203,9 @@
   }
 
   function applyOutreachSendStatus(res){
-    outreachCanSend = !!res.can_send && !res.is_mock;
-    outreachTestSendAvailable = !!res.test_send_available && !res.is_mock;
+    if (Object.prototype.hasOwnProperty.call(res, "is_mock")) outreachIsMock = !!res.is_mock;
+    outreachCanSend = !!res.can_send && !outreachIsMock;
+    outreachTestSendAvailable = !!res.test_send_available && !outreachIsMock;
     const noticeText = $("outreachModeNotice").querySelector("span");
     noticeText.textContent = res.is_mock
       ? `Local mock data: ${Number(res.summary?.total_businesses || 0)} sample businesses. The staging connection will load the complete spreadsheet directory.`
@@ -3240,6 +3246,7 @@
       newsletter: outreachData.newsletter || [],
       summary: res.summary || { due_today:0, total_businesses:0, waiting:0, weekly_ready:0 },
     };
+    outreachIsMock = !!res.is_mock;
     outreachLoaded = true;
     if (res.is_mock) outreachNewsletterLoaded = true;
     applyOutreachSendStatus(res);
@@ -3315,10 +3322,17 @@
 
   function updateOutreachSendState(){
     const saved = !!selectedOutreachRecord?.has_saved_draft && !outreachDraftIsDirty() && !$("outreachReviewBody").readOnly;
-    $("sendOutreachEmailBtn").disabled = !(saved && outreachCanSend);
-    $("sendOutreachTestBtn").disabled = !(saved && outreachTestSendAvailable);
-    $("sendOutreachEmailBtn").title = outreachCanSend ? (saved ? "Send this saved draft" : "Save the reviewed draft first") : "Real sending is not configured";
-    $("sendOutreachTestBtn").title = outreachTestSendAvailable ? (saved ? "Send this draft to the configured test recipient" : "Save the reviewed draft first") : "Test sending is not configured";
+    const canAttempt = saved && !outreachIsMock;
+    // The browser health check is advisory. The Apps Script mailer remains the
+    // authoritative send gate and returns the exact reason if it rejects a send.
+    $("sendOutreachEmailBtn").disabled = !canAttempt;
+    $("sendOutreachTestBtn").disabled = !canAttempt;
+    $("sendOutreachEmailBtn").title = !saved
+      ? "Save the reviewed draft first"
+      : outreachCanSend ? "Send this saved draft" : "Try sending; the mailer will verify live-send configuration";
+    $("sendOutreachTestBtn").title = !saved
+      ? "Save the reviewed draft first"
+      : outreachTestSendAvailable ? "Send this draft to the configured test recipient" : "Try a test; the mailer will verify test-send configuration";
   }
 
   async function saveOutreachDraft(){

@@ -1,15 +1,18 @@
 /*********************************
  * Inventory API (JSON) for Netlify
- * App version: 2026.09.18.1
+ * App version: 2026.09.18.2
  *
  * CHANGES IN THIS VERSION
+ * - Removed duplicate account migration and cross-tab backfills from the customer work-queue read path.
+ * - Added customer work-queue timing diagnostics without changing customer records.
+ *
+ * EARLIER STAGING CHANGES
  * - Removed account migration and cross-tab backfills from the Outreach dashboard read path.
  * - Reused one workbook handle per request instead of reopening the Outreach workbook repeatedly.
  * - Moved mailer-status and newsletter reads behind small dedicated endpoints.
  * - Cached mailer status briefly and logged per-stage dashboard timing.
  * - Reduced repeated activity payload while preserving recent history in the app.
  *
- * EARLIER STAGING CHANGES
  * - Required the shared staff code for every inventory read and write at the Netlify boundary.
  * - Added an Inventory unlock gate that prevents data loading before authentication.
  * - Neutralized spreadsheet formulas in staff-written product, contact and count fields.
@@ -104,7 +107,7 @@
  * - Use only in the staging inventory backend until testing is complete.
  *********************************/
 
-const APP_VERSION = "2026.09.18.1";
+const APP_VERSION = "2026.09.18.2";
 
 const SHEET_NAMES = {
   STORES: "Stores",
@@ -2979,7 +2982,7 @@ function accountHistoryItem_(timestamp, type, title, detail, id, status) {
 }
 
 function buildCustomerAccounts_(applications, orders) {
-  const identity = ensureAccountIdentityModel_();
+  const identity = accountIdentityFromRows_(getAllRowsAsObjects_(getOutreachSheet_(OUTREACH_SHEET_NAME)));
   const programs = outreachProgramMap_();
   const activityRows = outreachActivityRows_();
   const workflowRows = rowsWithSource_(getOutreachSs_().getSheetByName(CUSTOMER_WORKFLOW_LOG_SHEET_NAME));
@@ -3094,7 +3097,7 @@ function buildCustomerAccounts_(applications, orders) {
 }
 
 function apiGetCustomerWorkQueue_() {
-  ensureAccountIdentityModel_();
+  const startedAt = Date.now();
   const applicationSheet = getCustomerApplicationsSheet_(false);
   const orderSheet = getOnlineOrderRequestsSheet_(false);
   const lineSheet = getOnlineOrderLinesSheet_(false);
@@ -3133,6 +3136,15 @@ function apiGetCustomerWorkQueue_() {
   const activeApplicationStatuses = ["New", "Reviewing", "Needs information"];
   const activeOrderStatuses = ["New", "Reviewing", "Confirmed", "Invoicing", "Ready for delivery"];
 
+  const totalMs = Date.now() - startedAt;
+  console.log(JSON.stringify({
+    event:"customer_work_queue_timing",
+    total_ms:totalMs,
+    applications:applications.length,
+    orders:orders.length,
+    accounts:accounts.length,
+  }));
+
   return {
     applications:applications,
     orders:orders,
@@ -3147,6 +3159,7 @@ function apiGetCustomerWorkQueue_() {
       customer_accounts:accounts.length,
       reorder_due:accounts.filter(record => record.operational_statuses.includes("Reorder due")).length,
     },
+    performance:{ total_ms:totalMs },
   };
 }
 
