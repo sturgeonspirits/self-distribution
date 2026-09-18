@@ -2218,6 +2218,8 @@
       <button id="closeOutreachReviewBtn" type="button">Close</button>
     </div>
     <div class="dlgBody">
+      <label for="outreachReviewStaffName">Staff name</label>
+      <input id="outreachReviewStaffName" placeholder="Karl" autocomplete="name" />
       <label for="outreachReviewSubject">Subject</label>
       <input id="outreachReviewSubject" maxlength="200" />
       <label for="outreachReviewBody">Message</label>
@@ -2520,6 +2522,17 @@
     $("outreachStatus").textContent = message || "";
   }
 
+  function handleOutreachLoadError(error){
+    if (error?.staffAuth) {
+      handleCustomerError(error);
+      return;
+    }
+    const message = error?.message || String(error);
+    setOutreachStatus(message.includes("unreadable response")
+      ? "Google Sheets took too long to answer. Your staff access remains unlocked; click Refresh Outreach in a moment."
+      : message);
+  }
+
   function setAppSection(section){
     activeAppSection = ["inventory", "outreach", "customers"].includes(section) ? section : "inventory";
     localStorage.setItem("distribution_section", activeAppSection);
@@ -2549,7 +2562,7 @@
       $("hdrChanged").textContent = `${Number(summary.waiting || 0)} waiting`;
       $("bottomBar").hidden = true;
       showOutreachAccessState();
-      if (staffAccessCode && !outreachLoaded) loadOutreach().catch(handleCustomerError);
+      if (staffAccessCode && !outreachLoaded) loadOutreach().catch(handleOutreachLoadError);
     } else if (isCustomers) {
       $("bottomBar").hidden = true;
       showCustomerAccessState();
@@ -2682,15 +2695,13 @@
     staffAccessCode = code;
     sessionStorage.setItem("distribution_staff_access", code);
     $("unlockOutreachBtn").disabled = true;
-    $("outreachAccessStatus").textContent = "Unlocking...";
+    $("outreachAccessStatus").textContent = "Checking staff access...";
+    showOutreachAccessState();
     try {
       await loadOutreach();
-      showOutreachAccessState();
-      if (!inventoryLoaded) await loadStartup();
-      showInventoryAccessState();
+      $("outreachAccessStatus").textContent = "";
     } catch (error) {
-      handleCustomerError(error);
-      $("outreachAccessStatus").textContent = error.message || String(error);
+      handleOutreachLoadError(error);
     } finally {
       $("unlockOutreachBtn").disabled = false;
     }
@@ -3220,6 +3231,8 @@
   function openOutreachReview(record, showActivity){
     selectedOutreachRecord = record;
     selectedOutreachSendToken = (window.crypto?.randomUUID?.() || `${Date.now()}-${Math.random()}`).replace(/[^A-Za-z0-9_-]/g, "");
+    $("outreachReviewStaffName").value = $("outreachStaffName").value.trim() || localStorage.getItem("customer_staff_name") || "";
+    $("outreachReviewStaffName").readOnly = !!showActivity;
     $("outreachReviewTitle").textContent = showActivity ? "Activity" : "Review email";
     $("outreachReviewRecipient").textContent = [outreachBusinessName(record), record.email].filter(Boolean).join(" • ");
     $("outreachReviewSubject").value = showActivity ? "Recent contact history" : (record.subject || `A Wisconsin spirits option for ${outreachBusinessName(record)}`);
@@ -3315,8 +3328,15 @@
 
   async function sendOutreachEmail(testMode){
     if (!selectedOutreachRecord || outreachDraftIsDirty() || !selectedOutreachRecord.has_saved_draft) return toast("Save the reviewed draft first");
-    const staffName = $("outreachStaffName").value.trim();
-    if (!staffName) return toast("Enter your staff name before sending");
+    const staffName = $("outreachReviewStaffName").value.trim();
+    if (!staffName) {
+      $("outreachDraftStatus").textContent = "Enter your staff name above before sending.";
+      $("outreachReviewStaffName").focus();
+      return;
+    }
+    localStorage.setItem("customer_staff_name", staffName);
+    $("outreachStaffName").value = staffName;
+    $("customerStaffName").value = staffName;
     const subject = $("outreachReviewSubject").value.trim();
     const bodyText = $("outreachReviewBody").value.trim();
     const business = outreachBusinessName(selectedOutreachRecord);
@@ -5080,7 +5100,7 @@
   $("inventoryStaffAccessCode").addEventListener("keydown", event => { if (event.key === "Enter") unlockInventoryWorkspace(); });
   $("unlockOutreachBtn").addEventListener("click", unlockOutreachWorkspace);
   $("outreachStaffAccessCode").addEventListener("keydown", event => { if (event.key === "Enter") unlockOutreachWorkspace(); });
-  $("refreshOutreachBtn").addEventListener("click", () => loadOutreach().catch(err => setOutreachStatus(err.message)));
+  $("refreshOutreachBtn").addEventListener("click", () => loadOutreach().catch(handleOutreachLoadError));
   $("refreshCustomersBtn").addEventListener("click", () => {
     if (!staffAccessCode) return showCustomerAccessState();
     loadCustomerWorkQueue().catch(handleCustomerError);
