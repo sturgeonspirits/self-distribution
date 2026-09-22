@@ -1,10 +1,10 @@
 <!doctype html>
-<!-- App version: 2026.09.22.4-WEB -->
+<!-- App version: 2026.09.22.5-WEB -->
 <html>
 <head>
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover"/>
-  <meta name="app-version" content="2026.09.22.4-WEB" />
+  <meta name="app-version" content="2026.09.22.5-WEB" />
   <title>Sturgeon Distribution Hub</title>
   <style>
     :root{
@@ -442,6 +442,22 @@
       line-height:1.4;
     }
     .reviewFooterNote svg{width:16px;height:16px;flex:0 0 auto}
+    .reviewRecipientAlert{
+      display:flex;
+      align-items:flex-start;
+      gap:8px;
+      margin-bottom:14px;
+      padding:10px 12px;
+      border:1px solid var(--amber-line);
+      border-radius:8px;
+      background:var(--amber-bg);
+      color:#92400e;
+      font-size:13px;
+      font-weight:900;
+      line-height:1.35;
+    }
+    .reviewRecipientAlert[hidden]{display:none}
+    .reviewRecipientAlert svg{width:17px;height:17px;flex:0 0 auto}
     .reviewSaveRow{
       display:flex;
       align-items:center;
@@ -2250,6 +2266,10 @@
       <button id="closeOutreachReviewBtn" type="button">Close</button>
     </div>
     <div class="dlgBody">
+      <div class="reviewRecipientAlert" id="outreachReviewRecipientAlert" role="alert" hidden>
+        <i data-lucide="mail-x"></i>
+        <span>No email is associated with this account. A Karl-only test can be sent, but a real email cannot be sent until an address is added.</span>
+      </div>
       <label for="outreachReviewStaffName">Staff name</label>
       <input id="outreachReviewStaffName" placeholder="Karl" autocomplete="name" />
       <label for="outreachReviewSubject">Subject</label>
@@ -2428,7 +2448,7 @@
 
   <footer style="max-width:1200px;margin:18px auto 120px;padding:0 12px;text-align:center;color:#6b7280;font-size:12px;">
     Designed by <a href="https://scriptspirit.dev" target="_blank" rel="noopener noreferrer" style="color:#1d4ed8;text-decoration:none;font-weight:700;">Script Spirit</a>
-    <span id="appVersionFooter"> • Version 2026.09.22.4-WEB</span>
+    <span id="appVersionFooter"> • Version 2026.09.22.5-WEB</span>
   </footer>
 
 
@@ -2451,7 +2471,7 @@
   window.addEventListener("unhandledrejection", e => console.error("Unhandled promise rejection:", e.reason));
   window.addEventListener("error", e => console.error("Unhandled error:", e.error || e.message));
   const $ = (id) => document.getElementById(id);
-  const APP_VERSION = "2026.09.22.4-WEB";
+  const APP_VERSION = "2026.09.22.5-WEB";
   $("appVersionFooter").textContent = ` • Version ${APP_VERSION}`;
 
   let cache = { stores: [], lines: [] };
@@ -3312,7 +3332,11 @@
     $("outreachReviewStaffName").value = $("outreachStaffName").value.trim() || localStorage.getItem("customer_staff_name") || "";
     $("outreachReviewStaffName").readOnly = !!showActivity;
     $("outreachReviewTitle").textContent = showActivity ? "Activity" : "Review email";
-    $("outreachReviewRecipient").textContent = [outreachBusinessName(record), record.email].filter(Boolean).join(" • ");
+    const recipientEmail = String(record.email || "").trim();
+    $("outreachReviewRecipient").textContent = recipientEmail
+      ? `${outreachBusinessName(record)} • Email: ${recipientEmail}`
+      : `${outreachBusinessName(record)} • No email`;
+    $("outreachReviewRecipientAlert").hidden = !!showActivity || !!recipientEmail;
     $("outreachReviewSubject").value = showActivity ? "Recent contact history" : (record.subject || `A Wisconsin spirits option for ${outreachBusinessName(record)}`);
     $("outreachReviewSubject").readOnly = !!showActivity;
     $("outreachReviewNotice").hidden = !!showActivity;
@@ -3361,12 +3385,15 @@
   function updateOutreachSendState(){
     const saved = !!selectedOutreachRecord?.has_saved_draft && !outreachDraftIsDirty() && !$("outreachReviewBody").readOnly;
     const canAttempt = saved && !outreachIsMock;
+    const hasRecipientEmail = !!String(selectedOutreachRecord?.email || "").trim();
     // The browser health check is advisory. The Apps Script mailer remains the
     // authoritative send gate and returns the exact reason if it rejects a send.
-    $("sendOutreachEmailBtn").disabled = !canAttempt;
+    $("sendOutreachEmailBtn").disabled = !canAttempt || !hasRecipientEmail;
     $("sendOutreachTestBtn").disabled = !canAttempt;
     $("sendOutreachEmailBtn").title = !saved
       ? "Save the reviewed draft first"
+      : !hasRecipientEmail
+        ? "Add an email address to this account before sending a real email"
       : outreachCanSend ? "Send this saved draft" : "Try sending; the mailer will verify live-send configuration";
     $("sendOutreachTestBtn").title = !saved
       ? "Save the reviewed draft first"

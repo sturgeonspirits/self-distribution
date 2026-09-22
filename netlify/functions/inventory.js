@@ -1,5 +1,5 @@
-// App version: 2026.09.22.4-WEB
-const APP_VERSION = "2026.09.22.4-WEB";
+// App version: 2026.09.22.5-WEB
+const APP_VERSION = "2026.09.22.5-WEB";
 const STAFF_ACTIONS = new Set([
   "outreachDashboard",
   "outreachSendStatus",
