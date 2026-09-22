@@ -1,4 +1,4 @@
-// App version: 2026.09.18.3-WEB
+// App version: 2026.09.22.4-WEB
 import test from "node:test";
 import assert from "node:assert/strict";
 import { readFile } from "node:fs/promises";
@@ -168,6 +168,9 @@ test("source contains formula protection, global error listeners, and recoverabl
   const sendActionSource = index.slice(index.indexOf("async function sendOutreachEmail"), index.indexOf("$(\"locBackBtn\")"));
   assert.match(sendActionSource, /res\.accepted === true && !!String\(res\.message_id/);
   assert.match(sendActionSource, /res\.test === true && !!String\(res\.message_id/);
+  assert.match(index, /class="contactAvailability" aria-label="Contact availability"/);
+  assert.match(index, /"No email"/);
+  assert.match(index, /"No phone"/);
   assert.match(backend, /CacheService\.getScriptCache\(\)/);
   assert.match(backend, /if \(!__OUTREACH_SS\) __OUTREACH_SS = SpreadsheetApp\.openById/);
   assert.match(backend, /const reasons = testMode \? \[\] : outreachSendEligibility_\(record\)/);

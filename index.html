@@ -1,10 +1,10 @@
 <!doctype html>
-<!-- App version: 2026.09.18.3-WEB -->
+<!-- App version: 2026.09.22.4-WEB -->
 <html>
 <head>
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover"/>
-  <meta name="app-version" content="2026.09.18.3-WEB" />
+  <meta name="app-version" content="2026.09.22.4-WEB" />
   <title>Sturgeon Distribution Hub</title>
   <style>
     :root{
@@ -289,6 +289,38 @@
       font-size:12px;
       line-height:1.35;
     }
+    .contactAvailability{
+      display:flex;
+      flex-wrap:wrap;
+      gap:6px;
+      margin-top:7px;
+    }
+    .contactMethod{
+      display:inline-flex;
+      align-items:center;
+      gap:5px;
+      max-width:100%;
+      padding:4px 7px;
+      border:1px solid var(--line);
+      border-radius:6px;
+      background:#f9fafb;
+      color:#374151;
+      font-size:12px;
+      font-weight:800;
+      line-height:1.2;
+      overflow-wrap:anywhere;
+    }
+    .contactMethod.available{
+      border-color:#bbf7d0;
+      background:#f0fdf4;
+      color:var(--green-2);
+    }
+    .contactMethod.missing{
+      border-color:var(--amber-line);
+      background:var(--amber-bg);
+      color:#92400e;
+    }
+    .contactMethod svg{width:14px;height:14px;flex:0 0 auto}
     .outreachMeta{
       display:flex;
       flex-wrap:wrap;
@@ -2396,7 +2428,7 @@
 
   <footer style="max-width:1200px;margin:18px auto 120px;padding:0 12px;text-align:center;color:#6b7280;font-size:12px;">
     Designed by <a href="https://scriptspirit.dev" target="_blank" rel="noopener noreferrer" style="color:#1d4ed8;text-decoration:none;font-weight:700;">Script Spirit</a>
-    <span id="appVersionFooter"> • Version 2026.09.18.3-WEB</span>
+    <span id="appVersionFooter"> • Version 2026.09.22.4-WEB</span>
   </footer>
 
 
@@ -2419,7 +2451,7 @@
   window.addEventListener("unhandledrejection", e => console.error("Unhandled promise rejection:", e.reason));
   window.addEventListener("error", e => console.error("Unhandled error:", e.error || e.message));
   const $ = (id) => document.getElementById(id);
-  const APP_VERSION = "2026.09.18.3-WEB";
+  const APP_VERSION = "2026.09.22.4-WEB";
   $("appVersionFooter").textContent = ` • Version ${APP_VERSION}`;
 
   let cache = { stores: [], lines: [] };
@@ -3170,13 +3202,19 @@
         : record.last_emailed
           ? `Sent ${formatOutreachDate(record.last_emailed)}`
           : "Not contacted";
-      const contact = [record.contact, record.email].filter(Boolean).join(" • ") || "Contact details needed";
+      const contact = String(record.contact || "").trim();
+      const email = String(record.email || "").trim();
+      const phone = String(record.phone || "").trim();
       return `
         <article class="outreachCard ${priority.toLowerCase().includes("high") ? "priority" : ""}" data-record-key="${escapeHtml(outreachRecordKey(record))}">
           <div class="outreachCardTop">
             <div>
               <div class="businessName">${escapeHtml(outreachBusinessName(record))}</div>
-              <div class="contactLine">${escapeHtml(contact)}</div>
+              <div class="contactLine">${escapeHtml(contact || "Contact name needed")}</div>
+              <div class="contactAvailability" aria-label="Contact availability">
+                <span class="contactMethod ${email ? "available" : "missing"}"><i data-lucide="${email ? "mail" : "mail-x"}"></i><span>${email ? `Email: ${escapeHtml(email)}` : "No email"}</span></span>
+                <span class="contactMethod ${phone ? "available" : "missing"}"><i data-lucide="${phone ? "phone" : "phone-off"}"></i><span>${phone ? `Phone: ${escapeHtml(phone)}` : "No phone"}</span></span>
+              </div>
             </div>
             <span class="badge ${outreachBadgeClass(status)}">${escapeHtml(status)}</span>
           </div>
