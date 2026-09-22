@@ -1,12 +1,14 @@
 /*********************************
  * Inventory API (JSON) for Netlify
- * App version: 2026.09.18.2
+ * App version: 2026.09.22.3
  *
  * CHANGES IN THIS VERSION
- * - Removed duplicate account migration and cross-tab backfills from the customer work-queue read path.
- * - Added customer work-queue timing diagnostics without changing customer records.
+ * - Allowed Karl-only test sends for saved drafts whose prospect email is missing or unverified.
+ * - Kept every real-send recipient, exclusion, stage and duplicate safety check unchanged.
  *
  * EARLIER STAGING CHANGES
+ * - Removed duplicate account migration and cross-tab backfills from the customer work-queue read path.
+ * - Added customer work-queue timing diagnostics without changing customer records.
  * - Removed account migration and cross-tab backfills from the Outreach dashboard read path.
  * - Reused one workbook handle per request instead of reopening the Outreach workbook repeatedly.
  * - Moved mailer-status and newsletter reads behind small dedicated endpoints.
@@ -107,7 +109,7 @@
  * - Use only in the staging inventory backend until testing is complete.
  *********************************/
 
-const APP_VERSION = "2026.09.18.2";
+const APP_VERSION = "2026.09.22.3";
 
 const SHEET_NAMES = {
   STORES: "Stores",
@@ -2237,7 +2239,9 @@ function apiSendOutreachEmail_(p, testMode) {
 
     let result = !testMode ? acceptedOutreachSendForToken_(token) : null;
     if (!result) {
-      const reasons = outreachSendEligibility_(record);
+      // A test is delivered only to Karl and never changes the prospect's send
+      // status. Real sends still require a valid, verified, eligible recipient.
+      const reasons = testMode ? [] : outreachSendEligibility_(record);
       if (reasons.length) throw new Error(reasons.join("; ") + ".");
       result = callOutreachMailer_({
         action:testMode ? "sendAppTestEmail" : "sendAppEmail",

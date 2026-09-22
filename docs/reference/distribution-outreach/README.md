@@ -1,6 +1,6 @@
 # Distribution Outreach Pilot Package
 
-Current complete version: `2026.09.17.8-APP`
+Current complete version: `2026.09.22.9-APP`
 
 Paste target: the full contents of `Code.gs` into the Apps Script `Code.gs`
 file attached to the staging Distribution Directory workbook only.
@@ -19,7 +19,8 @@ file attached to the staging Distribution Directory workbook only.
   `1tWJ2ZnFT15cjuk7qvCWbJUJX1pAQYYsbSy5owWa8Uzo`.
 - Zoho authentication must use `karl@sturgeonspirits.com`.
 - Messages display `sales@sturgeonspirits.com` as the sender alias.
-- Karl-only test messages may still be delivered to `karl@sturgeonspirits.com`.
+- Karl-only test messages may still be delivered to `karl@sturgeonspirits.com`,
+  including saved drafts whose prospect email is not yet available or verified.
 - Real app email is disabled until `OUTREACH_APP_SENDS_ENABLED=true` is set in
   this mailer project's Script Properties and Campaign Settings Mode is `PILOT`.
 - The Hub sends one saved, reviewed draft at a time after a final confirmation.

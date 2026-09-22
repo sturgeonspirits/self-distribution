@@ -1,9 +1,13 @@
 /**
  * Sturgeon Spirits Distribution Outreach
  *
- * VERSION: 2026.09.17.8-APP
+ * VERSION: 2026.09.22.9-APP
  *
  * CHANGES IN THIS VERSION
+ * - Allowed Karl-only app tests to render saved drafts before a prospect email is available or verified.
+ * - Kept source-row identity checks and every real-recipient safety check unchanged.
+ *
+ * EARLIER APP CHANGES
  * - Added a secret-authenticated web endpoint for one-at-a-time sends from the Hub.
  * - Kept Zoho credentials exclusively in this Distribution Outreach project.
  * - Added server-side locking, idempotency receipts and duplicate-send checks.
@@ -49,7 +53,7 @@
  * Sends through the authenticated Zoho Mail API account.
  */
 
-const OUTREACH_VERSION = '2026.09.17.8-APP';
+const OUTREACH_VERSION = '2026.09.22.9-APP';
 
 const OUTREACH = Object.freeze({
   ENVIRONMENT: 'STAGING_PILOT',
@@ -314,8 +318,8 @@ function validateAppLead_(body, testMode) {
   const outcome = String(row[OUTREACH.COL.OUTCOME - 1] || '').trim().toLowerCase();
   if (business !== String(body.business || '').trim() || email !== String(body.recipient || '').trim().toLowerCase()) throw new Error('Source lead changed. Refresh the Hub before sending.');
   if (stage.toLowerCase() !== String(body.message_stage || '').trim().toLowerCase()) throw new Error('Email stage changed. Refresh the Hub before sending.');
-  if (!isValidEmail_(email)) throw new Error('Recipient email is invalid.');
-  if (row[OUTREACH.COL.DO_NOT_EMAIL - 1] === true || ['do not contact', 'not interested', 'unsubscribed'].indexOf(status) >= 0 || ['bad address', 'not interested', 'unsubscribed', 'do not contact'].indexOf(outcome) >= 0) {
+  if (!testMode && !isValidEmail_(email)) throw new Error('Recipient email is invalid.');
+  if (!testMode && (row[OUTREACH.COL.DO_NOT_EMAIL - 1] === true || ['do not contact', 'not interested', 'unsubscribed'].indexOf(status) >= 0 || ['bad address', 'not interested', 'unsubscribed', 'do not contact'].indexOf(outcome) >= 0)) {
     throw new Error('The source lead is blocked from email.');
   }
   const duplicate = appSentHistory_().some(function (item) {

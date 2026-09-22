@@ -170,6 +170,9 @@ test("source contains formula protection, global error listeners, and recoverabl
   assert.match(sendActionSource, /res\.test === true && !!String\(res\.message_id/);
   assert.match(backend, /CacheService\.getScriptCache\(\)/);
   assert.match(backend, /if \(!__OUTREACH_SS\) __OUTREACH_SS = SpreadsheetApp\.openById/);
+  assert.match(backend, /const reasons = testMode \? \[\] : outreachSendEligibility_\(record\)/);
+  assert.match(mailer, /if \(!testMode && !isValidEmail_\(email\)\)/);
+  assert.match(mailer, /if \(!testMode && \(row\[OUTREACH\.COL\.DO_NOT_EMAIL/);
   assert.match(mailer, /function sendApprovedPilotForActiveRow\(\) \{\s*throw new Error\('Pilot Review is a read-only legacy archive/);
   assert.doesNotMatch(mailer, /PILOT_SEND_LIMIT/);
 });
