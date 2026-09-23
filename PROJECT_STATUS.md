@@ -8,7 +8,7 @@ Read this file before inspecting the repository or changing the application. Upd
 
 | Component | Source version | Deployment state |
 | --- | --- | --- |
-| Netlify web app and staff proxy | `2026.09.23.2-WEB` | Source updated on 2026-09-23; deployment pending. Zoho sign-in is verified for Karl, while anonymous `/api/auth?action=session` requests correctly report `STAFF_AUTH_REQUIRED`. |
+| Netlify web app and staff proxy | `2026.09.23.3-WEB` | Source updated on 2026-09-23; deployment pending. Zoho sign-in is verified for Karl, while anonymous `/api/auth?action=session` requests correctly report `STAFF_AUTH_REQUIRED`. |
 | Inventory API Apps Script | `2026.09.23.2` | Source updated on 2026-09-23; deployment pending. Campaign snapshot creation now prefilters to initial prospects before rendering messages. |
 | Distribution Outreach Apps Script | `2026.09.22.9-APP` | Source is committed; owner has not yet confirmed this exact version is deployed |
 | Public customer Netlify proxy | `2026.09.18.3-WEB` | Deployed with Netlify; unchanged by the latest staff-app UI work |
@@ -26,7 +26,7 @@ Latest completed changes:
 - Karl-only test sends may use a saved draft even when the prospect email is missing or unverified.
 - The browser requires a verified Zoho message ID before showing send success.
 - Orders & Accounts and Outreach reads were shortened to reduce Google Sheets timeouts.
-- Campaign snapshots use one 24-second proxy attempt rather than a retry, so a delayed create cannot make duplicate recipient lists; a timeout instructs the user to refresh Campaigns before retrying.
+- Campaign creation and review use one 24-second proxy attempt rather than short retries, so a delayed create cannot make duplicate recipient lists; a timeout instructs the user to refresh Campaigns before retrying.
 
 ## Direct links
 

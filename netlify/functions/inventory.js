@@ -1,7 +1,7 @@
-// App version: 2026.09.23.2-WEB
+// App version: 2026.09.23.3-WEB
 import { requireStaffSession } from "./auth.js";
 
-const APP_VERSION = "2026.09.23.2-WEB";
+const APP_VERSION = "2026.09.23.3-WEB";
 const STAFF_ACTIONS = new Set([
   "outreachDashboard",
   "outreachSendStatus",
@@ -43,6 +43,7 @@ const SEND_UPSTREAM_ATTEMPTS = 1;
 const SEND_UPSTREAM_TIMEOUT_MS = 24000;
 const SEND_ACTIONS = new Set(["sendOutreachEmail", "sendOutreachTestEmail", "sendOutreachCampaignBatch"]);
 const SNAPSHOT_ACTIONS = new Set(["createOutreachCampaign"]);
+const CAMPAIGN_READ_ACTIONS = new Set(["outreachCampaigns", "outreachCampaign"]);
 const ADMIN_ACTIONS = new Set(["initializeHardenedHub", "reconcileIntegrations", "upsertProduct", "addSkuToStore"]);
 const ACTION_AREAS = new Map([
   ["outreachDashboard", "outreach"], ["outreachSendStatus", "outreach"], ["outreachNewsletterContacts", "outreach"],
@@ -97,6 +98,11 @@ async function fetchAppsScript(url, options = {}, policy = {}) {
     throw new Error(lastError?.name === "AbortError"
       ? "Campaign creation did not finish before the connection timed out. Do not create another campaign yet; refresh Campaigns after one minute to check whether the snapshot completed."
       : `Campaign creation connection failed: ${String(lastError)}`);
+  }
+  if (policy.campaignRead) {
+    throw new Error(lastError?.name === "AbortError"
+      ? "Campaign review took too long to load. The campaign remains unchanged; wait a minute and refresh Campaigns."
+      : `Campaign review connection failed: ${String(lastError)}`);
   }
   throw new Error(lastError?.name === "AbortError"
     ? `Google Sheets took too long to answer after ${attempts} attempts.`
@@ -172,7 +178,11 @@ export async function handler(event) {
       if (qs) url += `?${qs}`;
       if (API_KEY) url += (url.includes("?") ? "&" : "?") + `api_key=${encodeURIComponent(API_KEY)}`;
 
-      const resp = await fetchAppsScript(url, { method:"GET", headers:{ "Accept":"application/json" } });
+      const resp = await fetchAppsScript(url, { method:"GET", headers:{ "Accept":"application/json" } }, CAMPAIGN_READ_ACTIONS.has(action) ? {
+        attempts:1,
+        timeoutMs:SEND_UPSTREAM_TIMEOUT_MS,
+        campaignRead:true,
+      } : {});
       return proxyResult(resp, cors);
     }
 
@@ -192,6 +202,10 @@ export async function handler(event) {
       attempts:1,
       timeoutMs:SEND_UPSTREAM_TIMEOUT_MS,
       snapshot:true,
+    } : CAMPAIGN_READ_ACTIONS.has(action) ? {
+      attempts:1,
+      timeoutMs:SEND_UPSTREAM_TIMEOUT_MS,
+      campaignRead:true,
     } : {
       attempts:UPSTREAM_ATTEMPTS,
       timeoutMs:UPSTREAM_TIMEOUT_MS,

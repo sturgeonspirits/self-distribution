@@ -1,4 +1,4 @@
-// App version: 2026.09.23.2-WEB
+// App version: 2026.09.23.3-WEB
 import test from "node:test";
 import assert from "node:assert/strict";
 import { readFile } from "node:fs/promises";
@@ -139,6 +139,23 @@ test("campaign snapshots use one controlled upstream attempt", async () => {
   assert.equal(calls, 1);
   assert.equal(result.statusCode, 500);
   assert.match(JSON.parse(result.body).error, /campaign creation connection failed/i);
+});
+
+test("campaign review reads use one extended upstream attempt", async () => {
+  const { handler } = await loadFunction("netlify/functions/inventory.js", "campaign-review-no-retry");
+  process.env.APPS_SCRIPT_URL = "https://script.google.test/exec";
+  process.env.API_KEY = "backend-key";
+  process.env.APP_SESSION_SECRET = "test-session-secret-that-is-long-enough";
+  process.env.STAFF_ROLES_JSON = '{"staff@sturgeonspirits.com":"staff"}';
+  let calls = 0;
+  globalThis.fetch = async () => {
+    calls += 1;
+    throw new Error("connection ended");
+  };
+  const result = await handler(event("outreachCampaigns", { method:"GET", session:staffSession() }));
+  assert.equal(calls, 1);
+  assert.equal(result.statusCode, 500);
+  assert.match(JSON.parse(result.body).error, /campaign review connection failed/i);
 });
 
 test("roles and workspace areas are enforced server-side and revoked users lose access immediately", async () => {
