@@ -1,7 +1,7 @@
-// App version: 2026.09.23.1-WEB
+// App version: 2026.09.23.2-WEB
 import { requireStaffSession } from "./auth.js";
 
-const APP_VERSION = "2026.09.23.1-WEB";
+const APP_VERSION = "2026.09.23.2-WEB";
 const STAFF_ACTIONS = new Set([
   "outreachDashboard",
   "outreachSendStatus",
@@ -42,6 +42,7 @@ const UPSTREAM_TIMEOUT_MS = 11000;
 const SEND_UPSTREAM_ATTEMPTS = 1;
 const SEND_UPSTREAM_TIMEOUT_MS = 24000;
 const SEND_ACTIONS = new Set(["sendOutreachEmail", "sendOutreachTestEmail", "sendOutreachCampaignBatch"]);
+const SNAPSHOT_ACTIONS = new Set(["createOutreachCampaign"]);
 const ADMIN_ACTIONS = new Set(["initializeHardenedHub", "reconcileIntegrations", "upsertProduct", "addSkuToStore"]);
 const ACTION_AREAS = new Map([
   ["outreachDashboard", "outreach"], ["outreachSendStatus", "outreach"], ["outreachNewsletterContacts", "outreach"],
@@ -91,6 +92,11 @@ async function fetchAppsScript(url, options = {}, policy = {}) {
     throw new Error(lastError?.name === "AbortError"
       ? "Zoho did not confirm the send before the connection timed out. The outcome is unknown; check Activity Log and Zoho before retrying."
       : `The send connection failed before Zoho confirmation: ${String(lastError)}`);
+  }
+  if (policy.snapshot) {
+    throw new Error(lastError?.name === "AbortError"
+      ? "Campaign creation did not finish before the connection timed out. Do not create another campaign yet; refresh Campaigns after one minute to check whether the snapshot completed."
+      : `Campaign creation connection failed: ${String(lastError)}`);
   }
   throw new Error(lastError?.name === "AbortError"
     ? `Google Sheets took too long to answer after ${attempts} attempts.`
@@ -173,6 +179,7 @@ export async function handler(event) {
     if (API_KEY) body.api_key = API_KEY;
 
     const sendRequest = SEND_ACTIONS.has(action);
+    const snapshotRequest = SNAPSHOT_ACTIONS.has(action);
     const resp = await fetchAppsScript(APPS_SCRIPT_URL, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
@@ -181,6 +188,10 @@ export async function handler(event) {
       attempts:SEND_UPSTREAM_ATTEMPTS,
       timeoutMs:SEND_UPSTREAM_TIMEOUT_MS,
       send:true,
+    } : snapshotRequest ? {
+      attempts:1,
+      timeoutMs:SEND_UPSTREAM_TIMEOUT_MS,
+      snapshot:true,
     } : {
       attempts:UPSTREAM_ATTEMPTS,
       timeoutMs:UPSTREAM_TIMEOUT_MS,

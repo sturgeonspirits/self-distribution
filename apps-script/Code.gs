@@ -1,6 +1,6 @@
 /*********************************
  * Inventory API (JSON) for Netlify
- * App version: 2026.09.23.1
+ * App version: 2026.09.23.2
  *
  * CHANGES IN THIS VERSION
  * - Allowed Karl-only test sends for saved drafts whose prospect email is missing or unverified.
@@ -109,7 +109,7 @@
  * - Use only in the staging inventory backend until testing is complete.
  *********************************/
 
-const APP_VERSION = "2026.09.23.1";
+const APP_VERSION = "2026.09.23.2";
 
 const SHEET_NAMES = {
   STORES: "Stores",
@@ -2031,7 +2031,15 @@ function apiCreateOutreachCampaign_(p) {
     const draftMap = outreachDraftMap_();
     const programMap = outreachProgramMap_();
     const engagementMap = outreachEngagementMap_();
-    const records = getAllRowsAsObjects_(leadSheet).map((row, index) => outreachRecord_(row, index + 2, activityMap, settings, draftMap, programMap, engagementMap));
+    // A campaign only includes untouched initial prospects. Narrow the source rows before
+    // rendering messages so snapshot creation stays within the interactive request window.
+    const candidateRows = getAllRowsAsObjects_(leadSheet).map((row, index) => ({ row:row, sourceRow:index + 2 }))
+      .filter(item => {
+        const relationship = String(outreachValue_(item.row, ["relationship"]) || "").trim().toLowerCase();
+        const nextEmail = String(outreachValue_(item.row, ["next_email", "stage"]) || "Initial").trim().toLowerCase();
+        return relationship === "prospect" && (!nextEmail || nextEmail === "initial");
+      });
+    const records = candidateRows.map(item => outreachRecord_(item.row, item.sourceRow, activityMap, settings, draftMap, programMap, engagementMap));
     const seenEmails = new Set();
     const eligible = records.filter(record => {
       if (String(record.relationship || "").trim().toLowerCase() !== "prospect") return false;
