@@ -9,7 +9,7 @@ Read this file before inspecting the repository or changing the application. Upd
 | Component | Source version | Deployment state |
 | --- | --- | --- |
 | Netlify web app and staff proxy | `2026.09.23.11-WEB` | Source updated on 2026-09-23; deployment pending. It includes a confirmation-gated “Send remaining” run that continues in 10-recipient chunks past delivery-unknown records without retrying them, and stops the run if a batch result is unknown. |
-| Inventory API Apps Script | `2026.09.23.9` | Source updated on 2026-09-23; deployment pending. It preserves sent, blocked, and excluded recipients on reopen; the explicit “Send remaining” run records delivery-unknown outcomes but continues through the rest of a chunk without retrying them. |
+| Inventory API Apps Script | `2026.09.23.10` | Source updated on 2026-09-23; deployment pending. It adds audited reopening of unsent approved recipients for editing while preserving sent, blocked, and excluded recipients; the explicit “Send remaining” run records delivery-unknown outcomes but continues through the rest of a chunk without retrying them. |
 | Distribution Outreach Apps Script | `2026.09.22.9-APP` | Source is committed; owner has not yet confirmed this exact version is deployed |
 | Public customer Netlify proxy | `2026.09.18.3-WEB` | Deployed with Netlify; unchanged by the latest staff-app UI work |
 

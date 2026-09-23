@@ -1,8 +1,11 @@
 /*********************************
  * Inventory API (JSON) for Netlify
- * App version: 2026.09.23.9
+ * App version: 2026.09.23.10
  *
  * CHANGES IN THIS VERSION
+ * - Added reopening for unsent approved campaign recipients, returning only those recipients to review for editing.
+ * - Preserved sent, blocked, and excluded recipients when reopening a campaign, and kept every reopen audited.
+ * - Added saved, per-recipient campaign subject and message editing before approval.
  * - Allowed Karl-only test sends for saved drafts whose prospect email is missing or unverified.
  * - Kept every real-send recipient, exclusion, stage and duplicate safety check unchanged.
  *
@@ -109,7 +112,7 @@
  * - Use only in the staging inventory backend until testing is complete.
  *********************************/
 
-const APP_VERSION = "2026.09.23.9";
+const APP_VERSION = "2026.09.23.10";
 
 const SHEET_NAMES = {
   STORES: "Stores",
