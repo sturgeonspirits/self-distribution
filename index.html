@@ -2463,7 +2463,7 @@
 
   <footer style="max-width:1200px;margin:18px auto 120px;padding:0 12px;text-align:center;color:#6b7280;font-size:12px;">
     Designed by <a href="https://scriptspirit.dev" target="_blank" rel="noopener noreferrer" style="color:#1d4ed8;text-decoration:none;font-weight:700;">Script Spirit</a>
-<span id="appVersionFooter"> • Version 2026.09.23.1-WEB</span>
+<span id="appVersionFooter"> • Version 2026.09.23.4-WEB</span>
   </footer>
 
 
@@ -2486,7 +2486,7 @@
   window.addEventListener("unhandledrejection", e => console.error("Unhandled promise rejection:", e.reason));
   window.addEventListener("error", e => console.error("Unhandled error:", e.error || e.message));
   const $ = (id) => document.getElementById(id);
-  const APP_VERSION = "2026.09.23.1-WEB";
+  const APP_VERSION = "2026.09.23.4-WEB";
   $("appVersionFooter").textContent = ` • Version ${APP_VERSION}`;
 
   let cache = { stores: [], lines: [] };
@@ -3209,7 +3209,7 @@
     $("outreachCampaignTitle").textContent = campaign.name;
     $("outreachCampaignSubtitle").textContent = `${campaign.recipient_count} frozen recipients • ${campaign.status}`;
     $("outreachCampaignNotice").textContent = campaign.status === "Review"
-      ? "Read the recipient subjects and open any message below. Approval freezes this exact audience; it still does not send email."
+      ? "Open any recipient to edit and save its subject or message. Approval freezes the exact saved audience and messages; it still does not send email."
       : campaign.status === "Approved" ? "This audience is approved. “Send next 10” sends only one controlled batch and stops at the first blocked record."
       : "This campaign is closed; delivery history remains available below.";
     $("campaignSegmentConfirmRow").hidden = campaign.status !== "Review" || !Number(campaign.unsegmented_count || 0);
@@ -3218,13 +3218,39 @@
     $("sendOutreachCampaignBatchBtn").hidden = campaign.status !== "Approved";
     $("sendOutreachCampaignBatchBtn").disabled = !outreachCanSend;
     $("outreachCampaignStatus").textContent = campaign.status === "Approved" && !outreachCanSend ? "Live sending is not configured yet. You can still review the campaign." : "";
+    const editable = campaign.status === "Review";
     $("outreachCampaignRecipients").innerHTML = `<div class="outreachList">${(campaign.recipients || []).map((recipient, index) => `
       <details class="outreachCard"><summary><strong>${escapeHtml(recipient.business)}</strong><span class="smallMuted"> • ${escapeHtml(recipient.email)} • ${escapeHtml(recipient.status)}</span><br><span class="smallMuted">${escapeHtml(recipient.subject)}${recipient.segment ? ` • ${escapeHtml(recipient.segment)}` : " • Default Segment C"}</span></summary>
       <div class="outreachMeta"><span class="badge">${escapeHtml(recipient.priority || "No")} priority</span><span class="badge blue">${escapeHtml(recipient.email_confidence || "Unrated")}</span>${recipient.wave ? `<span class="badge">${escapeHtml(recipient.wave)}</span>` : ""}</div>
-      <label>Rendered message</label><textarea class="emailEditor" readonly>${escapeHtml(recipient.body_text || "")}</textarea>${recipient.result_detail ? `<div class="status">${escapeHtml(recipient.result_detail)}</div>` : ""}
+      <label>Subject</label><input class="emailEditor" data-campaign-subject value="${escapeHtml(recipient.subject || "")}" ${editable ? "" : "readonly"} />
+      <label>Message</label><textarea class="emailEditor" data-campaign-body ${editable ? "" : "readonly"}>${escapeHtml(recipient.body_text || "")}</textarea>
+      ${editable ? `<div class="outreachActions"><button class="actionBtn primary" type="button" data-campaign-recipient-action="save" data-recipient-token="${escapeHtml(recipient.idempotency_token)}"><i data-lucide="save"></i><span>Save email changes</span></button></div>` : ""}${recipient.result_detail ? `<div class="status">${escapeHtml(recipient.result_detail)}</div>` : ""}
     </details>`).join("")}</div>`;
     $("outreachCampaignDialog").showModal();
     refreshIcons();
+  }
+
+  async function saveOutreachCampaignRecipient(button){
+    const campaign = selectedOutreachCampaign;
+    const token = button.dataset.recipientToken || "";
+    const recipient = (campaign?.recipients || []).find(item => item.idempotency_token === token);
+    const card = button.closest("details");
+    if (!campaign || !recipient || !card) return;
+    const subject = card.querySelector("[data-campaign-subject]").value.trim();
+    const bodyText = card.querySelector("[data-campaign-body]").value.trim();
+    if (!subject || !bodyText) return toast("Email subject and message are required.");
+    button.disabled = true;
+    $("outreachCampaignStatus").textContent = `Saving ${recipient.business}...`;
+    try {
+      const res = await staffApiPost({ action:"updateOutreachCampaignRecipient", campaign_id:campaign.campaign_id, idempotency_token:token, content_checksum:recipient.content_checksum, subject:subject, body_text:bodyText });
+      if (!res.ok) throw new Error(res.error || "Campaign email could not be saved.");
+      await loadOutreachCampaigns();
+      await openOutreachCampaign(campaign.campaign_id);
+      $("outreachCampaignStatus").textContent = `${recipient.business} saved. No email was sent.`;
+    } catch (error) {
+      $("outreachCampaignStatus").textContent = error.message || String(error);
+      button.disabled = false;
+    }
   }
 
   async function approveOutreachCampaign(){
@@ -5466,6 +5492,10 @@
   $("sendOutreachTestBtn").addEventListener("click", () => sendOutreachEmail(true));
   $("closeOutreachReviewBtn").addEventListener("click", closeOutreachReview);
   $("closeOutreachCampaignBtn").addEventListener("click", () => $("outreachCampaignDialog").close());
+  $("outreachCampaignRecipients").addEventListener("click", event => {
+    const button = event.target.closest("[data-campaign-recipient-action='save']");
+    if (button) saveOutreachCampaignRecipient(button);
+  });
   $("approveOutreachCampaignBtn").addEventListener("click", () => approveOutreachCampaign().catch(error => { $("outreachCampaignStatus").textContent = error.message || String(error); }));
   $("sendOutreachCampaignBatchBtn").addEventListener("click", sendOutreachCampaignBatch);
   $("closeBusinessDetailBtn").addEventListener("click", () => $("businessDetailDialog").close());

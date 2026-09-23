@@ -8,8 +8,8 @@ Read this file before inspecting the repository or changing the application. Upd
 
 | Component | Source version | Deployment state |
 | --- | --- | --- |
-| Netlify web app and staff proxy | `2026.09.23.3-WEB` | Source updated on 2026-09-23; deployment pending. Zoho sign-in is verified for Karl, while anonymous `/api/auth?action=session` requests correctly report `STAFF_AUTH_REQUIRED`. |
-| Inventory API Apps Script | `2026.09.23.2` | Source updated on 2026-09-23; deployment pending. Campaign snapshot creation now prefilters to initial prospects before rendering messages. |
+| Netlify web app and staff proxy | `2026.09.23.4-WEB` | Source updated on 2026-09-23; deployment pending. Zoho sign-in is verified for Karl, while anonymous `/api/auth?action=session` requests correctly report `STAFF_AUTH_REQUIRED`. |
+| Inventory API Apps Script | `2026.09.23.4` | Source updated on 2026-09-23; deployment pending. Campaign review supports audited edits to recipient subjects and messages before approval. |
 | Distribution Outreach Apps Script | `2026.09.22.9-APP` | Source is committed; owner has not yet confirmed this exact version is deployed |
 | Public customer Netlify proxy | `2026.09.18.3-WEB` | Deployed with Netlify; unchanged by the latest staff-app UI work |
 
@@ -27,6 +27,7 @@ Latest completed changes:
 - The browser requires a verified Zoho message ID before showing send success.
 - Orders & Accounts and Outreach reads were shortened to reduce Google Sheets timeouts.
 - Campaign creation and review use one 24-second proxy attempt rather than short retries, so a delayed create cannot make duplicate recipient lists; a timeout instructs the user to refresh Campaigns before retrying.
+- Campaign review now supports a saved per-recipient subject/body edit before approval; the sendable HTML is regenerated with the standard footer and every edit is audited.
 
 ## Direct links
 
@@ -176,7 +177,7 @@ If a send times out or returns an unreadable response, do not retry blindly. Che
 - Zoho OIDC login and Karl's `admin` role are deployed and verified. A second, non-admin staff-account verification remains outstanding.
 - Toast remains disconnected until read-only API access and SKU mapping are verified.
 - Newsletter records exist, but newsletter sending remains disabled.
-- Campaign snapshot creation needs a live verification after deploying Inventory API `2026.09.23.2`. Do not approve or send a live campaign until the configuration and a Karl-only test batch have been verified.
+- Campaign review editing needs a live verification after deploying Inventory API `2026.09.23.4`. Do not approve or send a live campaign until the configuration and a Karl-only test batch have been verified.
 - Replace `STAFF_ROLES_JSON` with a dedicated, sheet-managed staff access roster. It should support immediate add/remove/change of role and permitted work areas without a Netlify environment-variable edit or redeploy, while preserving server-side authorization and audit attribution.
 
 ## Low-token workflow for future Codex tasks

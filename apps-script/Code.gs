@@ -1,6 +1,6 @@
 /*********************************
  * Inventory API (JSON) for Netlify
- * App version: 2026.09.23.2
+ * App version: 2026.09.23.4
  *
  * CHANGES IN THIS VERSION
  * - Allowed Karl-only test sends for saved drafts whose prospect email is missing or unverified.
@@ -109,7 +109,7 @@
  * - Use only in the staging inventory backend until testing is complete.
  *********************************/
 
-const APP_VERSION = "2026.09.23.2";
+const APP_VERSION = "2026.09.23.4";
 
 const SHEET_NAMES = {
   STORES: "Stores",
@@ -496,7 +496,7 @@ function handle_(e, body) {
     assertAuthorized_(e, body);
     const action = (e?.parameter?.action) || (body?.action) || "";
     if (!action) {
-      return json_({ ok:true, service:"sturgeon-distribution-hub", version:APP_VERSION, actions:["initData","listSkus","addSkuToStore","upsertProduct","submitCounts","createReorder","managerGrid","salesSinceCount","updateStoreContacts","outreachDashboard","outreachSendStatus","outreachNewsletterContacts","outreachCampaigns","outreachCampaign","createOutreachCampaign","approveOutreachCampaign","sendOutreachCampaignBatch","saveOutreachDraft","sendOutreachEmail","sendOutreachTestEmail","updateOutreachOutcome","updateOutreachBusiness","updateOutreachPrograms","createOutreachBusiness","importOutreachBusinesses","upsertNewsletterContact","submitCustomerApplication","submitOnlineOrderRequest","customerWorkQueue","updateCustomerApplication","updateOnlineOrderRequest","hubSystemStatus","initializeHardenedHub","reconcileIntegrations"] });
+      return json_({ ok:true, service:"sturgeon-distribution-hub", version:APP_VERSION, actions:["initData","listSkus","addSkuToStore","upsertProduct","submitCounts","createReorder","managerGrid","salesSinceCount","updateStoreContacts","outreachDashboard","outreachSendStatus","outreachNewsletterContacts","outreachCampaigns","outreachCampaign","createOutreachCampaign","updateOutreachCampaignRecipient","approveOutreachCampaign","sendOutreachCampaignBatch","saveOutreachDraft","sendOutreachEmail","sendOutreachTestEmail","updateOutreachOutcome","updateOutreachBusiness","updateOutreachPrograms","createOutreachBusiness","importOutreachBusinesses","upsertNewsletterContact","submitCustomerApplication","submitOnlineOrderRequest","customerWorkQueue","updateCustomerApplication","updateOnlineOrderRequest","hubSystemStatus","initializeHardenedHub","reconcileIntegrations"] });
     }
 
     let res;
@@ -516,6 +516,7 @@ function handle_(e, body) {
       case "outreachCampaigns": res = apiGetOutreachCampaigns_(); break;
       case "outreachCampaign": res = apiGetOutreachCampaign_(body); break;
       case "createOutreachCampaign": res = apiCreateOutreachCampaign_(body); break;
+      case "updateOutreachCampaignRecipient": res = apiUpdateOutreachCampaignRecipient_(body); break;
       case "approveOutreachCampaign": res = apiApproveOutreachCampaign_(body); break;
       case "sendOutreachCampaignBatch": res = apiSendOutreachCampaignBatch_(body); break;
       case "saveOutreachDraft": res = apiSaveOutreachDraft_(body); break;
@@ -1713,6 +1714,7 @@ function outreachMessage_(row, settings, draft) {
     subject: String(draft?.subject || "").trim() || templateSubject,
     body_text: draftBody || outreachHtmlToPlainText_(templateBodyHtml),
     html: draftBody ? outreachPlainTextToHtml_(draftBody) + footerHtml : templateBodyHtml + footerHtml,
+    footer_html: footerHtml,
     has_saved_draft: !!draft,
     draft_updated_at: draft?.updated_at || "",
   };
@@ -1828,6 +1830,7 @@ function outreachRecord_(row, sourceRow, activityMap, settings, draftMap, progra
     subject: message.subject || `A Wisconsin spirits option for ${outreachDisplayBusinessName_(business)}`,
     body_text: message.body_text,
     preview_html: message.html,
+    message_footer_html: message.footer_html,
     has_saved_draft: message.has_saved_draft,
     draft_updated_at: message.draft_updated_at,
     programs: programMap.get(accountId) || programMap.get(sourceRow) || {
@@ -1937,17 +1940,20 @@ function apiGetOutreachDashboard_() {
 // possible without changing a source lead or sending anything at creation time.
 function outreachCampaignSheets_() {
   const ss = getOutreachSs_();
+  const campaigns = ensureSheet_(ss, OUTREACH_CAMPAIGNS_SHEET_NAME, [
+    "Campaign ID", "Campaign Name", "Audience", "Status", "Recipient Count", "Audience Checksum",
+    "Unsegmented Count", "Created At", "Created By", "Approved At", "Approved By", "Approval Token",
+    "Last Batch At", "Sent Count", "Blocked Count", "App Version"
+  ]);
+  const recipients = ensureSheet_(ss, OUTREACH_CAMPAIGN_RECIPIENTS_SHEET_NAME, [
+    "Campaign ID", "Source Row", "Account ID", "Business Name", "Recipient Email", "Contact", "Priority",
+    "Email Confidence", "Segment", "Wave", "Subject", "Body Text", "HTML", "Content Checksum",
+    "Status", "Result Detail", "Zoho Message ID", "Sent At", "Idempotency Token", "App Version", "Footer HTML"
+  ]);
+  ensureHeaderColumns_(recipients, ["Footer HTML"]);
   return {
-    campaigns: ensureSheet_(ss, OUTREACH_CAMPAIGNS_SHEET_NAME, [
-      "Campaign ID", "Campaign Name", "Audience", "Status", "Recipient Count", "Audience Checksum",
-      "Unsegmented Count", "Created At", "Created By", "Approved At", "Approved By", "Approval Token",
-      "Last Batch At", "Sent Count", "Blocked Count", "App Version"
-    ]),
-    recipients: ensureSheet_(ss, OUTREACH_CAMPAIGN_RECIPIENTS_SHEET_NAME, [
-      "Campaign ID", "Source Row", "Account ID", "Business Name", "Recipient Email", "Contact", "Priority",
-      "Email Confidence", "Segment", "Wave", "Subject", "Body Text", "HTML", "Content Checksum",
-      "Status", "Result Detail", "Zoho Message ID", "Sent At", "Idempotency Token", "App Version"
-    ]),
+    campaigns:campaigns,
+    recipients:recipients,
   };
 }
 
@@ -1978,7 +1984,7 @@ function campaignObject_(campaign, recipients, includeRecipients) {
       business:String(get("business_name") || ""), email:String(get("recipient_email") || ""),
       contact:String(get("contact") || ""), priority:String(get("priority") || ""),
       email_confidence:String(get("email_confidence") || ""), segment:String(get("segment") || ""), wave:String(get("wave") || ""),
-      subject:String(get("subject") || ""), body_text:String(get("body_text") || ""), preview_html:String(get("html") || ""),
+      subject:String(get("subject") || ""), body_text:String(get("body_text") || ""), preview_html:String(get("html") || ""), footer_html:String(get("footer_html") || ""),
       content_checksum:String(get("content_checksum") || ""), status:String(get("status") || ""),
       result_detail:String(get("result_detail") || ""), message_id:String(get("zoho_message_id") || ""),
       sent_at:get("sent_at") || "", idempotency_token:String(get("idempotency_token") || ""),
@@ -2019,6 +2025,61 @@ function apiGetOutreachCampaign_(p) {
   return { campaign:campaignObject_(campaign, campaignRecipientRows_(sheets.recipients, p.campaign_id), true) };
 }
 
+function campaignRecipientFooterHtml_(recipient, settings, draftMap) {
+  const rh = recipient.headers;
+  const stored = String(recipient.values[rh.footer_html] || "");
+  if (stored) return stored;
+  const sourceRow = Number(recipient.values[rh.source_row] || 0);
+  const leadSheet = getOutreachSheet_(OUTREACH_SHEET_NAME);
+  if (!Number.isInteger(sourceRow) || sourceRow < 2 || sourceRow > leadSheet.getLastRow()) return "";
+  const headers = getHeaderMap_(leadSheet);
+  const values = leadSheet.getRange(sourceRow, 1, 1, leadSheet.getLastColumn()).getValues()[0];
+  const source = {};
+  Object.keys(headers).forEach(key => source[key] = values[headers[key]]);
+  const stage = String(outreachValue_(source, ["next_email", "stage"]) || "Initial").trim();
+  const accountId = String(source.account_id || "").trim();
+  const draft = draftMap.get(outreachDraftKey_(accountId || sourceRow, stage)) || draftMap.get(outreachDraftKey_(sourceRow, stage));
+  return String(outreachMessage_(source, settings, draft).footer_html || "");
+}
+
+function apiUpdateOutreachCampaignRecipient_(p) {
+  requireFields_(p || {}, ["campaign_id", "idempotency_token", "subject", "body_text", "content_checksum"]);
+  const lock = LockService.getScriptLock();
+  if (!lock.tryLock(10000)) throw new Error("Another campaign update is in progress. Try again in a moment.");
+  try {
+    const sheets = outreachCampaignSheets_();
+    const campaign = outreachCampaignRow_(sheets.campaigns, p.campaign_id);
+    if (!campaign) throw new Error("Campaign not found.");
+    const ch = campaign.headers;
+    if (String(campaign.values[ch.status] || "") !== "Review") throw new Error("Only a campaign in Review can be edited.");
+    const recipient = campaignRecipientRows_(sheets.recipients, p.campaign_id)
+      .find(item => String(item.values[item.headers.idempotency_token] || "") === String(p.idempotency_token || ""));
+    if (!recipient) throw new Error("Campaign recipient not found.");
+    const rh = recipient.headers;
+    if (String(recipient.values[rh.content_checksum] || "") !== String(p.content_checksum || "")) throw new Error("This email was changed elsewhere. Refresh the campaign before editing it.");
+    const subject = publicText_(p.subject, 500, "Email subject");
+    const bodyText = publicText_(p.body_text, 20000, "Email message");
+    if (!subject || !bodyText) throw new Error("Email subject and message are required.");
+    const footerHtml = campaignRecipientFooterHtml_(recipient, getOutreachCampaignSettings_(), outreachDraftMap_());
+    const checksum = sha256_([recipient.values[rh.source_row], recipient.values[rh.account_id], recipient.values[rh.business_name], recipient.values[rh.recipient_email], subject, bodyText].join("|"));
+    recipient.values[rh.subject] = subject;
+    recipient.values[rh.body_text] = bodyText;
+    recipient.values[rh.html] = outreachPlainTextToHtml_(bodyText) + footerHtml;
+    recipient.values[rh.footer_html] = footerHtml;
+    recipient.values[rh.content_checksum] = checksum;
+    recipient.values[rh.app_version] = APP_VERSION;
+    sheets.recipients.getRange(recipient.row, 1, 1, recipient.values.length).setValues([recipient.values]);
+    const recipients = campaignRecipientRows_(sheets.recipients, p.campaign_id);
+    campaign.values[ch.audience_checksum] = sha256_(recipients.map(item => `${item.values[item.headers.source_row]}|${item.values[item.headers.recipient_email]}|${item.values[item.headers.content_checksum]}`).join("\n"));
+    campaign.values[ch.app_version] = APP_VERSION;
+    sheets.campaigns.getRange(campaign.row, 1, 1, campaign.values.length).setValues([campaign.values]);
+    appendAudit_("EDIT_OUTREACH_CAMPAIGN_RECIPIENT", "Campaign recipient", String(p.idempotency_token), String(recipient.values[rh.account_id] || ""), authenticatedActor_(p, "Sturgeon Distribution Hub"), OUTREACH_CAMPAIGN_RECIPIENTS_SHEET_NAME, OUTREACH_CAMPAIGNS_SHEET_NAME, "Review", `Edited ${recipient.values[rh.business_name]}.`);
+    return { message:"Campaign email saved. No email was sent.", content_checksum:checksum, audience_checksum:String(campaign.values[ch.audience_checksum] || "") };
+  } finally {
+    lock.releaseLock();
+  }
+}
+
 function apiCreateOutreachCampaign_(p) {
   const name = publicText_(p?.campaign_name || "Initial prospect campaign", 120, "Campaign name");
   const lock = LockService.getScriptLock();
@@ -2056,10 +2117,18 @@ function apiCreateOutreachCampaign_(p) {
       const checksum = sha256_([record.source_row, record.account_id, record.business, record.email, record.subject, record.body_text].join("|"));
       return [campaignId, record.source_row, record.account_id, record.business, record.email, record.contact, record.priority,
         record.email_confidence, record.segment, record.wave, record.subject, record.body_text, record.preview_html, checksum,
-        "Ready for review", "", "", "", `${campaignId}-${record.source_row}`, APP_VERSION];
+        "Ready for review", "", "", "", `${campaignId}-${record.source_row}`, APP_VERSION, record.message_footer_html || ""];
     });
     const audienceChecksum = sha256_(recipientRows.map(row => `${row[1]}|${row[4]}|${row[13]}`).join("\n"));
     const unsegmentedCount = eligible.filter(record => !String(record.segment || "").trim()).length;
+    const campaignHeaders = getHeaderMap_(sheets.campaigns);
+    if (sheets.campaigns.getLastRow() >= 2) {
+      const matching = sheets.campaigns.getRange(2, 1, sheets.campaigns.getLastRow() - 1, sheets.campaigns.getLastColumn()).getValues()
+        .find(row => ["Review", "Approved"].includes(String(row[campaignHeaders.status] || "")) && String(row[campaignHeaders.audience_checksum] || "") === audienceChecksum);
+      if (matching) {
+        return { message:"A matching active campaign already exists. No duplicate was created.", campaign_id:String(matching[campaignHeaders.campaign_id]), recipient_count:Number(matching[campaignHeaders.recipient_count] || eligible.length), audience_checksum:audienceChecksum, unsegmented_count:Number(matching[campaignHeaders.unsegmented_count] || unsegmentedCount), already_exists:true };
+      }
+    }
     sheets.recipients.getRange(sheets.recipients.getLastRow() + 1, 1, recipientRows.length, recipientRows[0].length).setValues(recipientRows);
     sheets.campaigns.appendRow([campaignId, name, "Eligible initial prospects", "Review", eligible.length, audienceChecksum,
       unsegmentedCount, new Date(), authenticatedActor_(p, "Sturgeon Distribution Hub"), "", "", "", "", 0, 0, APP_VERSION]);
