@@ -79,22 +79,24 @@ test("authenticated inventory GET and POST preserve action payload, API key, and
   assert.equal(JSON.parse(postResponse.body).ok, true);
 });
 
-test("inventory proxy follows Apps Script redirects explicitly and classifies HTML", async () => {
+test("inventory proxy lets fetch follow Apps Script redirects and classifies HTML", async () => {
   const { handler } = await loadFunction("netlify/functions/inventory.js", "redirect-regression");
   process.env.APPS_SCRIPT_URL = "https://script.google.test/exec";
   process.env.API_KEY = "backend-key";
   process.env.APP_SESSION_SECRET = "test-session-secret-that-is-long-enough";
   process.env.STAFF_ROLES_JSON = '{"staff@sturgeonspirits.com":"staff"}';
   let calls = 0;
-  globalThis.fetch = async () => {
+  let redirectMode = "";
+  globalThis.fetch = async (_url, options) => {
     calls += 1;
-    if (calls === 1) return new Response("", { status:302, headers:{ location:"https://script-content.google.test/response" } });
+    redirectMode = options.redirect;
     return new Response(JSON.stringify({ ok:true, version:"2026.09.18.3-WEB" }), { status:200 });
   };
   const redirected = await handler(event("managerGrid", { method:"GET", session:staffSession() }));
   assert.equal(redirected.statusCode, 200);
   assert.equal(JSON.parse(redirected.body).version, "2026.09.18.3-WEB");
-  assert.equal(calls, 2);
+  assert.equal(calls, 1);
+  assert.equal(redirectMode, "follow");
 
   globalThis.fetch = async () => new Response("<!doctype html><title>Page Not Found</title>", { status:200, headers:{ "content-type":"text/html" } });
   const invalid = await handler(event("managerGrid", { method:"GET", session:staffSession() }));

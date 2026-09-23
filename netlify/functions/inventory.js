@@ -1,7 +1,7 @@
-// App version: 2026.09.23.13-WEB
+// App version: 2026.09.23.14-WEB
 import { requireStaffSession } from "./auth.js";
 
-const APP_VERSION = "2026.09.23.13-WEB";
+const APP_VERSION = "2026.09.23.14-WEB";
 const STAFF_ACTIONS = new Set([
   "outreachDashboard",
   "outreachSendStatus",
@@ -73,17 +73,10 @@ async function fetchAppsScript(url, options = {}, policy = {}) {
     const controller = new AbortController();
     const timer = setTimeout(() => controller.abort(), timeoutMs);
     try {
-      let upstream = await fetch(url, { ...options, redirect:"manual", signal:controller.signal });
-      if (upstream.status >= 300 && upstream.status < 400) {
-        const location = upstream.headers.get("location");
-        if (!location) throw new Error("Inventory API redirect was missing its destination.");
-        upstream = await fetch(location, {
-          method:"GET",
-          headers:{ "Accept":"application/json" },
-          redirect:"follow",
-          signal:controller.signal,
-        });
-      }
+      // Google Apps Script creates a one-time googleusercontent response URL for
+      // each request. Fetching that URL ourselves after a manual redirect can
+      // return a 404; let fetch follow the redirect within the same request.
+      const upstream = await fetch(url, { ...options, redirect:"follow", signal:controller.signal });
       clearTimeout(timer);
       return upstream;
     } catch (error) {
