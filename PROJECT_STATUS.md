@@ -1,6 +1,6 @@
 # Sturgeon Distribution Hub — Project Status
 
-Last updated: 2026-09-22
+Last updated: 2026-09-23
 
 Read this file before inspecting the repository or changing the application. Update it whenever a deployment, version, service URL, known issue, or required setup step changes. Never put secret values in this file.
 
@@ -8,8 +8,8 @@ Read this file before inspecting the repository or changing the application. Upd
 
 | Component | Source version | Deployment state |
 | --- | --- | --- |
-| Netlify web app and staff proxy | `2026.09.22.5-WEB` | Verified live on 2026-09-22 |
-| Inventory API Apps Script | `2026.09.22.3` | Source is committed; owner has not yet confirmed this exact version is deployed |
+| Netlify web app and staff proxy | `2026.09.23.1-WEB` | Campaign review and controlled batch-delivery UI are built locally; deployment pending configuration and authorization |
+| Inventory API Apps Script | `2026.09.23.1` | Deployed by owner on 2026-09-23; campaign endpoints need live verification through the staff proxy |
 | Distribution Outreach Apps Script | `2026.09.22.9-APP` | Source is committed; owner has not yet confirmed this exact version is deployed |
 | Public customer Netlify proxy | `2026.09.18.3-WEB` | Deployed with Netlify; unchanged by the latest staff-app UI work |
 
@@ -19,6 +19,8 @@ Current remote: `https://github.com/sturgeonspirits/self-distribution.git`
 
 Latest completed changes:
 
+- Campaigns can freeze every currently eligible initial prospect into a persistent, reviewable recipient/message snapshot; creation and approval never send mail.
+- Approved campaigns expose every rendered email, require explicit acknowledgement for unsegmented prospects, and deliver only a manually confirmed batch of up to 10—stopping at the first blocked record and retaining per-recipient receipts.
 - Prospect cards show the actual email and phone, or explicit `No email` and `No phone` warnings.
 - The email-review window warns when an account has no email and disables real sending while leaving Karl-only testing available.
 - Karl-only test sends may use a saved draft even when the prospect email is missing or unverified.
@@ -75,11 +77,11 @@ Browser
   -> Zoho Mail API
 ```
 
-- Netlify owns the browser UI, staff-code boundary, request timeouts, and proxy behavior.
+- Netlify owns the browser UI, Zoho staff-login boundary, request timeouts, and proxy behavior.
 - Inventory API owns spreadsheet reads/writes, saved drafts, eligibility, activity, accounts, orders, inventory, and audit records.
 - Distribution Outreach owns Zoho credentials, final email validation, Karl-only test delivery, real delivery, idempotency receipts, and Activity Log send results.
 - `Pilot Review` is a read-only legacy archive and duplicate-send source. Do not restore sending from that tab.
-- Sending is one recipient at a time. Queued and bulk sending remain disabled.
+- The deployed system still sends one recipient at a time. The un-deployed campaign source adds a review-first batch controller that invokes the mailer sequentially, caps each run at 10, and stops at the first anomaly.
 - Never report an email as sent unless Zoho returned a nonblank message ID and the Activity Log/Zoho state supports the result.
 
 ## Configuration names
@@ -90,7 +92,12 @@ Record names only—never record their values here.
 
 - `APPS_SCRIPT_URL`
 - `API_KEY`
-- `STAFF_ACCESS_CODE`
+- `ZOHO_OIDC_CLIENT_ID`
+- `ZOHO_OIDC_CLIENT_SECRET`
+- `ZOHO_OIDC_REDIRECT_URI`
+- `ZOHO_OIDC_ISSUER` (use `https://accounts.zoho.com` unless the organization uses another Zoho data center)
+- `APP_SESSION_SECRET` (a new random secret, at least 32 characters)
+- `STAFF_ROLES_JSON` (approved Zoho emails mapped to a role and permitted work areas)
 
 ### Inventory API Script Properties
 
@@ -106,7 +113,7 @@ Record names only—never record their values here.
 - `ZOHO_CLIENT_SECRET`
 - `ZOHO_REFRESH_TOKEN`
 
-The shared outreach secret must match in the two Apps Script projects. Zoho properties belong only in Distribution Outreach. The staff access code belongs only in Netlify and is not the API key or outreach secret.
+The shared outreach secret must match in the two Apps Script projects. Zoho mail properties belong only in Distribution Outreach. Zoho OIDC client credentials and the staff-role map belong only in Netlify; they are not the API key or outreach secret.
 
 ## Deployment procedures
 
@@ -119,6 +126,14 @@ The shared outreach secret must match in the two Apps Script projects. Zoho prop
 5. Commit and push `codex/distribution-system-foundation`.
 6. Wait for Netlify and verify that https://distribution-hub.netlify.app/ reports the new version.
 7. No Apps Script deployment is required unless an Apps Script source file also changed.
+
+### Zoho staff login rollout
+
+1. In Zoho API Console, create a server-based OIDC client with callback URL `https://distribution-hub.netlify.app/api/auth?action=callback`.
+2. Add the Zoho/session Netlify variables listed above. Example role-map shape: `{ "inventory@sturgeonspirits.com": { "role": "staff", "areas": ["inventory"] }, "outreach@sturgeonspirits.com": { "role": "staff", "areas": ["outreach"] }, "orders@sturgeonspirits.com": { "role": "staff", "areas": ["orders"] }, "owner@sturgeonspirits.com": "admin" }`.
+3. Deploy the Netlify web app, then sign in with one approved `admin` account and one `staff` account.
+4. Deploy the Inventory API source version `2026.09.22.4` so spreadsheet “updated by” fields use the Zoho-verified actor.
+5. Confirm a removed email is rejected immediately, each staff user sees only their assigned workspace, and an admin can manage products/system tools.
 
 ### Inventory API Apps Script change
 
@@ -157,9 +172,11 @@ If a send times out or returns an unreadable response, do not retry blindly. Che
 
 - Confirm deployment of Inventory API `2026.09.22.3` and Distribution Outreach `2026.09.22.9-APP` before retesting a prospect with no email.
 - Google Sheets can still respond slowly. The app now avoids several duplicate reads and shows timeout errors, but additional profiling may be needed if Orders & Accounts repeatedly fails.
-- Individual staff accounts, signatures, attribution, and role-based permissions are deferred until the pilot workflows are stable. The shared staff access code remains temporary.
+- Zoho OIDC login and `staff`/`admin` roles are built but not yet deployed. Add the Netlify configuration, deploy the web app and Inventory API, then complete the two-account verification in the rollout procedure.
 - Toast remains disconnected until read-only API access and SKU mapping are verified.
 - Newsletter records exist, but newsletter sending remains disabled.
+- Campaign source has not been deployed or verified against Apps Script/Zoho. Do not approve or send a live campaign until the configuration and a Karl-only test batch have been verified.
+- Replace `STAFF_ROLES_JSON` with a dedicated, sheet-managed staff access roster. It should support immediate add/remove/change of role and permitted work areas without a Netlify environment-variable edit or redeploy, while preserving server-side authorization and audit attribution.
 
 ## Low-token workflow for future Codex tasks
 

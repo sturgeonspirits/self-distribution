@@ -1,7 +1,7 @@
 # Sturgeon Distribution Hub
 
-- Web version: `2026.09.18.3-WEB`
-- Inventory API version: `2026.09.18.2`
+- Web version: `2026.09.22.7-WEB`
+- Inventory API version: `2026.09.22.4`
 
 Repository: `sturgeonspirits/sturgeon-distribution-hub`
 
@@ -44,9 +44,20 @@ New customer applications collect the Wisconsin seller's permit number. They do 
 
 The newsletter option is selected by default and tells applicants to uncheck it if they do not want marketing email. Stored consent-source text records that the option was preselected rather than describing it as a manually selected opt-in.
 
-## Future improvement: individual staff accounts
+## Staff access
 
-Deferred until the current Inventory, Outreach, and Orders & Accounts workflows are functioning reliably. Replace the shared staff access code with a separate login for each staff member. Each account should provide its own display name and approved email signature, automatically attribute outreach and operational changes to that user, support role-based permissions, and allow one staff member to be disabled without changing access for everyone else. Preserve the current audit history during migration. Do not implement this during pilot stabilization.
+Staff sign in with their approved Zoho work account through a separate Zoho OIDC client. The Hub stores only a short-lived, HttpOnly signed session; it never receives a Zoho password or the Zoho Mail sender token. Netlify verifies the session and injects the verified display name into staff writes, so names typed into the browser cannot spoof audit attribution.
+
+Netlify environment variables required for staff login:
+
+- `ZOHO_OIDC_CLIENT_ID`
+- `ZOHO_OIDC_CLIENT_SECRET`
+- `ZOHO_OIDC_REDIRECT_URI` — `https://distribution-hub.netlify.app/api/auth?action=callback`
+- `ZOHO_OIDC_ISSUER` — normally `https://accounts.zoho.com`
+- `APP_SESSION_SECRET` — a new random secret at least 32 characters long
+- `STAFF_ROLES_JSON` — for example `{ "inventory@sturgeonspirits.com": { "role": "staff", "areas": ["inventory"] }, "outreach@sturgeonspirits.com": { "role": "staff", "areas": ["outreach"] }, "orders@sturgeonspirits.com": { "role": "staff", "areas": ["orders"] }, "owner@sturgeonspirits.com": "admin" }`
+
+For staff users, `areas` may contain `inventory`, `outreach`, and/or `orders` (the Orders & Accounts workspace). They can see and call only those areas. `admin` users receive all three areas and additionally control product/SKU changes, staging initialization, and integration reconciliation. Removing an email from `STAFF_ROLES_JSON` revokes existing sessions on their next request.
 
 ## Versioning
 
@@ -65,7 +76,7 @@ All deployable files are stamped with the same app version. When updating Apps S
 9. Keep the existing GitHub-to-Netlify connection and environment variables:
    - `APPS_SCRIPT_URL` = your Apps Script `/exec` URL
    - `API_KEY` = the same private key stored in Apps Script Properties
-   - `STAFF_ACCESS_CODE` = a separate staff-entered code for customer records
+   - the Zoho OIDC and staff-role environment variables listed in **Staff access**
 10. Redeploy Netlify only after both staging Apps Script web apps are deployed and the Inventory Backend reports version `2026.09.18.2`.
 
 ## API auth
@@ -73,13 +84,13 @@ All deployable files are stamped with the same app version. When updating Apps S
 - In `apps-script/Code.gs`, keep `REQUIRE_API_KEY = true`
 - Add Script Property `API_KEY` in Apps Script
 - Add Netlify env var `API_KEY`
-- Never use the API key as the staff access code
+- Never use the API key, outreach secret, or Zoho Mail refresh token as a staff-login secret
 
 ## Notes
 
 - The manager grid requires `apiGetManagerGrid_()` in the Apps Script backend.
 - The frontend uses `/api/inventory`, which is redirected to the Netlify function via `netlify.toml`.
-- Inventory, Outreach, and Orders & Accounts share one session-scoped staff code. No inventory endpoint or inventory data fetch is allowed before unlock.
+- Inventory, Outreach, and Orders & Accounts share one Zoho-authenticated staff session. No inventory endpoint or inventory data fetch is allowed before sign-in.
 - The Outreach section reads and updates the staging Distribution Directory and Activity Log. Real delivery is proxied to the separately controlled Distribution Outreach mailer; queued and bulk sends remain disabled.
 - Outreach Directory returns every business row, supports searching across all nonblank spreadsheet fields, and shows each business's complete row plus recent activity.
 - Business details can update existing contact columns. New notes are appended with a date and logged as activity instead of replacing earlier notes.

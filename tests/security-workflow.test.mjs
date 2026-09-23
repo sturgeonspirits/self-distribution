@@ -1,13 +1,25 @@
-// App version: 2026.09.22.5-WEB
+// App version: 2026.09.22.7-WEB
 import test from "node:test";
 import assert from "node:assert/strict";
 import { readFile } from "node:fs/promises";
+import { createHmac } from "node:crypto";
 
 const root = new URL("../", import.meta.url);
 
 async function loadFunction(path, suffix = Math.random()) {
-  const source = await readFile(new URL(path, root), "utf8");
+  let source = await readFile(new URL(path, root), "utf8");
+  if (path === "netlify/functions/inventory.js") {
+    const auth = await readFile(new URL("netlify/functions/auth.js", root), "utf8");
+    const authUrl = `data:text/javascript;base64,${Buffer.from(auth).toString("base64")}`;
+    source = source.replace('from "./auth.js";', `from "${authUrl}";`);
+  }
   return import(`data:text/javascript;base64,${Buffer.from(source).toString("base64")}#${suffix}`);
+}
+
+function staffSession({ email = "staff@sturgeonspirits.com", name = "Staff Member", sub = "zoho-user-1", exp = Math.floor(Date.now() / 1000) + 3600 } = {}) {
+  const encoded = Buffer.from(JSON.stringify({ email, name, sub, exp })).toString("base64url");
+  const signature = createHmac("sha256", process.env.APP_SESSION_SECRET).update(encoded).digest("base64url");
+  return `distribution_staff_session=${encodeURIComponent(`${encoded}.${signature}`)}`;
 }
 
 function event(action, options = {}) {
@@ -15,7 +27,7 @@ function event(action, options = {}) {
   return {
     httpMethod:method,
     headers:{
-      ...(options.code ? { "x-staff-code":options.code } : {}),
+      ...(options.session ? { cookie:options.session } : {}),
       "x-nf-client-connection-ip":options.ip || "192.0.2.10",
     },
     queryStringParameters:method === "GET" ? { action } : {},
@@ -24,11 +36,12 @@ function event(action, options = {}) {
   };
 }
 
-test("every inventory action rejects missing staff auth before proxying", async () => {
+test("every inventory action rejects a missing Zoho session before proxying", async () => {
   const { handler } = await loadFunction("netlify/functions/inventory.js", "unauthenticated-actions");
   process.env.APPS_SCRIPT_URL = "https://example.test/exec";
   process.env.API_KEY = "backend-key";
-  process.env.STAFF_ACCESS_CODE = "staff-code";
+  process.env.APP_SESSION_SECRET = "test-session-secret-that-is-long-enough";
+  process.env.STAFF_ROLES_JSON = '{"staff@sturgeonspirits.com":"staff"}';
   let fetches = 0;
   globalThis.fetch = async () => { fetches += 1; throw new Error("should not proxy"); };
   const actions = ["initData", "listSkus", "addSkuToStore", "upsertProduct", "submitCounts", "createReorder", "managerGrid", "salesSinceCount", "updateStoreContacts", "outreachSendStatus", "outreachNewsletterContacts"];
@@ -40,24 +53,28 @@ test("every inventory action rejects missing staff auth before proxying", async 
   assert.equal(fetches, 0);
 });
 
-test("authenticated inventory GET and POST preserve action payload and API key", async () => {
+test("authenticated inventory GET and POST preserve action payload, API key, and Zoho actor", async () => {
   const { handler } = await loadFunction("netlify/functions/inventory.js", "authenticated-regression");
   process.env.APPS_SCRIPT_URL = "https://example.test/exec";
   process.env.API_KEY = "backend-key";
-  process.env.STAFF_ACCESS_CODE = "staff-code";
+  process.env.APP_SESSION_SECRET = "test-session-secret-that-is-long-enough";
+  process.env.STAFF_ROLES_JSON = '{"staff@sturgeonspirits.com":"staff"}';
   const calls = [];
   globalThis.fetch = async (url, options = {}) => {
     calls.push({ url:String(url), options });
     return new Response(JSON.stringify({ ok:true, version:"2026.09.18.3-WEB" }), { status:200 });
   };
-  const getResponse = await handler(event("managerGrid", { method:"GET", code:"staff-code", ip:"198.51.100.1" }));
-  const postResponse = await handler(event("submitCounts", { code:"staff-code", ip:"198.51.100.1", body:{ store_id:"S1", rep:"Karl", items:[{ sku_id:"SKU", counted:1 }] } }));
+  const session = staffSession();
+  const getResponse = await handler(event("managerGrid", { method:"GET", session, ip:"198.51.100.1" }));
+  const postResponse = await handler(event("submitCounts", { session, ip:"198.51.100.1", body:{ store_id:"S1", rep:"Untrusted", items:[{ sku_id:"SKU", counted:1 }] } }));
   assert.equal(getResponse.statusCode, 200);
   assert.match(calls[0].url, /action=managerGrid/);
   assert.match(calls[0].url, /api_key=backend-key/);
   const forwarded = JSON.parse(calls[1].options.body);
   assert.equal(forwarded.action, "submitCounts");
   assert.equal(forwarded.api_key, "backend-key");
+  assert.equal(forwarded.staff_name, "Staff Member");
+  assert.equal(forwarded.rep, "Staff Member");
   assert.equal(JSON.parse(postResponse.body).ok, true);
 });
 
@@ -65,20 +82,21 @@ test("inventory proxy follows Apps Script redirects explicitly and rejects HTML"
   const { handler } = await loadFunction("netlify/functions/inventory.js", "redirect-regression");
   process.env.APPS_SCRIPT_URL = "https://script.google.test/exec";
   process.env.API_KEY = "backend-key";
-  process.env.STAFF_ACCESS_CODE = "staff-code";
+  process.env.APP_SESSION_SECRET = "test-session-secret-that-is-long-enough";
+  process.env.STAFF_ROLES_JSON = '{"staff@sturgeonspirits.com":"staff"}';
   let calls = 0;
   globalThis.fetch = async () => {
     calls += 1;
     if (calls === 1) return new Response("", { status:302, headers:{ location:"https://script-content.google.test/response" } });
     return new Response(JSON.stringify({ ok:true, version:"2026.09.18.3-WEB" }), { status:200 });
   };
-  const redirected = await handler(event("managerGrid", { method:"GET", code:"staff-code" }));
+  const redirected = await handler(event("managerGrid", { method:"GET", session:staffSession() }));
   assert.equal(redirected.statusCode, 200);
   assert.equal(JSON.parse(redirected.body).version, "2026.09.18.3-WEB");
   assert.equal(calls, 2);
 
   globalThis.fetch = async () => new Response("<!doctype html><title>Page Not Found</title>", { status:200, headers:{ "content-type":"text/html" } });
-  const invalid = await handler(event("managerGrid", { method:"GET", code:"staff-code" }));
+  const invalid = await handler(event("managerGrid", { method:"GET", session:staffSession() }));
   assert.equal(invalid.statusCode, 502);
   assert.match(JSON.parse(invalid.body).error, /non-JSON response/);
 });
@@ -87,14 +105,15 @@ test("email sends use one non-retrying upstream attempt", async () => {
   const { handler } = await loadFunction("netlify/functions/inventory.js", "send-no-retry");
   process.env.APPS_SCRIPT_URL = "https://script.google.test/exec";
   process.env.API_KEY = "backend-key";
-  process.env.STAFF_ACCESS_CODE = "staff-code";
+  process.env.APP_SESSION_SECRET = "test-session-secret-that-is-long-enough";
+  process.env.STAFF_ROLES_JSON = '{"staff@sturgeonspirits.com":"staff"}';
   let calls = 0;
   globalThis.fetch = async () => {
     calls += 1;
     throw new Error("connection ended");
   };
   const result = await handler(event("sendOutreachEmail", {
-    code:"staff-code",
+    session:staffSession(),
     body:{ business:"Cellars Wines & Spirits", idempotency_token:"12345678901234567890" },
   }));
   assert.equal(calls, 1);
@@ -102,20 +121,25 @@ test("email sends use one non-retrying upstream attempt", async () => {
   assert.match(JSON.parse(result.body).error, /send connection failed before Zoho confirmation/i);
 });
 
-test("wrong staff codes are logged and throttled by source", async () => {
-  const { handler } = await loadFunction("netlify/functions/inventory.js", "throttle");
+test("roles and workspace areas are enforced server-side and revoked users lose access immediately", async () => {
+  const { handler } = await loadFunction("netlify/functions/inventory.js", "roles");
   process.env.APPS_SCRIPT_URL = "https://example.test/exec";
-  process.env.STAFF_ACCESS_CODE = "correct";
-  globalThis.fetch = async () => new Response(JSON.stringify({ ok:true }), { status:200 });
-  for (let attempt = 0; attempt < 5; attempt += 1) {
-    const response = await handler(event("initData", { code:"wrong", ip:"203.0.113.5" }));
-    assert.equal(response.statusCode, 401);
-  }
-  const throttled = await handler(event("initData", { code:"wrong", ip:"203.0.113.5" }));
-  assert.equal(throttled.statusCode, 429);
-  assert.equal(JSON.parse(throttled.body).code, "STAFF_AUTH_THROTTLED");
-  const legitimate = await handler(event("initData", { code:"correct", ip:"203.0.113.6" }));
-  assert.equal(legitimate.statusCode, 200);
+  process.env.APP_SESSION_SECRET = "test-session-secret-that-is-long-enough";
+  process.env.STAFF_ROLES_JSON = '{"staff@sturgeonspirits.com":{"role":"staff","areas":["inventory"]}}';
+  let fetches = 0;
+  globalThis.fetch = async () => { fetches += 1; return new Response(JSON.stringify({ ok:true }), { status:200 }); };
+  const session = staffSession();
+  const blocked = await handler(event("upsertProduct", { session }));
+  assert.equal(blocked.statusCode, 403);
+  assert.equal(JSON.parse(blocked.body).code, "STAFF_ROLE_FORBIDDEN");
+  const areaBlocked = await handler(event("customerWorkQueue", { method:"POST", session }));
+  assert.equal(areaBlocked.statusCode, 403);
+  assert.equal(JSON.parse(areaBlocked.body).code, "STAFF_AREA_FORBIDDEN");
+  assert.equal(fetches, 0);
+  process.env.STAFF_ROLES_JSON = "{}";
+  const revoked = await handler(event("initData", { session }));
+  assert.equal(revoked.statusCode, 401);
+  assert.equal(fetches, 0);
 });
 
 test("public customer proxy remains narrowly allowlisted", async () => {
@@ -160,7 +184,9 @@ test("source contains formula protection, global error listeners, and recoverabl
   const customerQueueSource = backend.slice(backend.indexOf("function apiGetCustomerWorkQueue_"), backend.indexOf("function makeStoreId_"));
   assert.doesNotMatch(accountBuilderSource, /ensureAccountIdentityModel_/);
   assert.doesNotMatch(customerQueueSource, /ensureAccountIdentityModel_/);
-  assert.match(index, /function showCustomerAccessState\(\)\{\s*const unlocked = !!staffAccessCode;/);
+  assert.match(index, /function startZohoLogin\(\)/);
+  assert.match(index, /function loadStaffSession\(\)/);
+  assert.doesNotMatch(index, /distribution_staff_access/);
   const sendStateSource = index.slice(index.indexOf("function updateOutreachSendState"), index.indexOf("async function saveOutreachDraft"));
   assert.doesNotMatch(sendStateSource, /saved && outreachCanSend/);
   assert.doesNotMatch(sendStateSource, /saved && outreachTestSendAvailable/);
@@ -174,9 +200,21 @@ test("source contains formula protection, global error listeners, and recoverabl
   assert.match(index, /id="outreachReviewRecipientAlert" role="alert" hidden/);
   assert.match(index, /const hasRecipientEmail = !!String\(selectedOutreachRecord\?\.email/);
   assert.match(index, /disabled = !canAttempt \|\| !hasRecipientEmail/);
+  assert.match(index, /action:"createOutreachCampaign"/);
+  assert.match(index, /action:"approveOutreachCampaign"/);
+  assert.match(index, /action:"sendOutreachCampaignBatch"/);
   assert.match(backend, /CacheService\.getScriptCache\(\)/);
   assert.match(backend, /if \(!__OUTREACH_SS\) __OUTREACH_SS = SpreadsheetApp\.openById/);
   assert.match(backend, /const reasons = testMode \? \[\] : outreachSendEligibility_\(record\)/);
+  assert.match(backend, /function apiCreateOutreachCampaign_\(/);
+  assert.match(backend, /function apiApproveOutreachCampaign_\(/);
+  assert.match(backend, /function apiSendOutreachCampaignBatch_\(/);
+  assert.match(backend, /Stop on the first anomaly/);
+  assert.match(backend, /Campaign created for review\. No email was sent\./);
+  assert.match(backend, /Campaign approved\. No email was sent\./);
+  assert.match(backend, /OUTREACH_CAMPAIGN_RECIPIENTS_SHEET_NAME/);
+  assert.match(backend, /batch size must be between 1 and 20/i);
+  assert.match(await readFile(new URL("netlify/functions/inventory.js", root), "utf8"), /"sendOutreachCampaignBatch"/);
   assert.match(mailer, /if \(!testMode && !isValidEmail_\(email\)\)/);
   assert.match(mailer, /if \(!testMode && \(row\[OUTREACH\.COL\.DO_NOT_EMAIL/);
   assert.match(mailer, /function sendApprovedPilotForActiveRow\(\) \{\s*throw new Error\('Pilot Review is a read-only legacy archive/);

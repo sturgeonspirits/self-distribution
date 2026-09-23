@@ -1,10 +1,10 @@
 <!doctype html>
-<!-- App version: 2026.09.22.5-WEB -->
+<!-- App version: 2026.09.22.7-WEB -->
 <html>
 <head>
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover"/>
-  <meta name="app-version" content="2026.09.22.5-WEB" />
+  <meta name="app-version" content="2026.09.22.7-WEB" />
   <title>Sturgeon Distribution Hub</title>
   <style>
     :root{
@@ -1789,10 +1789,10 @@
   <section id="inventoryScreen">
   <div class="customerAccess" id="inventoryAccessPanel">
     <div>
-      <label for="inventoryStaffAccessCode">Staff access code</label>
-      <input id="inventoryStaffAccessCode" type="password" autocomplete="current-password" inputmode="text" />
+      <label>Staff sign-in</label>
+      <div class="smallMuted" id="inventoryAccessIdentity">Use your approved Zoho work account.</div>
     </div>
-    <button class="primary" id="unlockInventoryBtn" type="button"><i data-lucide="unlock-keyhole"></i><span>Unlock</span></button>
+    <button class="primary" id="unlockInventoryBtn" type="button"><i data-lucide="log-in"></i><span>Sign in with Zoho</span></button>
     <div class="status" id="inventoryAccessStatus"></div>
   </div>
   <div id="inventoryWorkspace" hidden>
@@ -1997,10 +1997,10 @@
 
     <div class="customerAccess" id="outreachAccessPanel">
       <div>
-        <label for="outreachStaffAccessCode">Staff access code</label>
-        <input id="outreachStaffAccessCode" type="password" autocomplete="current-password" inputmode="text" />
+        <label>Staff sign-in</label>
+        <div class="smallMuted" id="outreachAccessIdentity">Use your approved Zoho work account.</div>
       </div>
-      <button class="primary" id="unlockOutreachBtn" type="button"><i data-lucide="unlock-keyhole"></i><span>Unlock</span></button>
+      <button class="primary" id="unlockOutreachBtn" type="button"><i data-lucide="log-in"></i><span>Sign in with Zoho</span></button>
       <div class="status" id="outreachAccessStatus"></div>
     </div>
 
@@ -2054,6 +2054,7 @@
         <button class="outreachTab active" id="outreachTodayBtn" type="button">Today</button>
         <button class="outreachTab" id="outreachDirectoryBtn" type="button">Businesses</button>
         <button class="outreachTab" id="outreachSentBtn" type="button">Sent</button>
+        <button class="outreachTab" id="outreachCampaignsBtn" type="button">Campaigns</button>
         <button class="outreachTab" id="outreachNewsletterBtn" type="button">Newsletter</button>
       </div>
       <div class="searchWrap">
@@ -2085,10 +2086,10 @@
 
     <div class="customerAccess" id="customerAccessPanel">
       <div>
-        <label for="staffAccessCode">Staff access code</label>
-        <input id="staffAccessCode" type="password" autocomplete="current-password" inputmode="text" />
+        <label>Staff sign-in</label>
+        <div class="smallMuted" id="customerAccessIdentity">Use your approved Zoho work account.</div>
       </div>
-      <button class="primary" id="unlockCustomersBtn" type="button"><i data-lucide="unlock-keyhole"></i><span>Unlock</span></button>
+      <button class="primary" id="unlockCustomersBtn" type="button"><i data-lucide="log-in"></i><span>Sign in with Zoho</span></button>
       <div class="status" id="customerAccessStatus"></div>
     </div>
 
@@ -2293,6 +2294,20 @@
     </div>
   </dialog>
 
+  <dialog id="outreachCampaignDialog">
+    <div class="dlgHeader">
+      <div><div class="dlgTitle" id="outreachCampaignTitle">Campaign review</div><div class="smallMuted" id="outreachCampaignSubtitle"></div></div>
+      <button id="closeOutreachCampaignBtn" type="button">Close</button>
+    </div>
+    <div class="dlgBody">
+      <div class="modeNotice" style="margin-top:0"><i data-lucide="shield-check"></i><span id="outreachCampaignNotice">Review the frozen audience before approving delivery.</span></div>
+      <div class="status" id="outreachCampaignStatus"></div>
+      <label class="checkLabel" id="campaignSegmentConfirmRow"><input id="campaignSegmentConfirm" type="checkbox" /><span>I reviewed the default Segment C message used for recipients without a segment.</span></label>
+      <div id="outreachCampaignRecipients"></div>
+      <div class="dlgActions"><button id="approveOutreachCampaignBtn" type="button">Approve campaign</button><button class="primary" id="sendOutreachCampaignBatchBtn" type="button">Send next 10</button></div>
+    </div>
+  </dialog>
+
   <dialog id="outcomeDialog">
     <div class="dlgHeader">
       <div>
@@ -2448,7 +2463,7 @@
 
   <footer style="max-width:1200px;margin:18px auto 120px;padding:0 12px;text-align:center;color:#6b7280;font-size:12px;">
     Designed by <a href="https://scriptspirit.dev" target="_blank" rel="noopener noreferrer" style="color:#1d4ed8;text-decoration:none;font-weight:700;">Script Spirit</a>
-    <span id="appVersionFooter"> • Version 2026.09.22.5-WEB</span>
+<span id="appVersionFooter"> • Version 2026.09.23.1-WEB</span>
   </footer>
 
 
@@ -2471,7 +2486,7 @@
   window.addEventListener("unhandledrejection", e => console.error("Unhandled promise rejection:", e.reason));
   window.addEventListener("error", e => console.error("Unhandled error:", e.error || e.message));
   const $ = (id) => document.getElementById(id);
-  const APP_VERSION = "2026.09.22.5-WEB";
+  const APP_VERSION = "2026.09.23.1-WEB";
   $("appVersionFooter").textContent = ` • Version ${APP_VERSION}`;
 
   let cache = { stores: [], lines: [] };
@@ -2486,7 +2501,7 @@
   let salesData = { lines: [], summary: { total_sold_units: 0, counted_skus: 0, total_skus: 0 } };
   let salesLoadedStoreId = "";
 
-  let outreachData = { today: [], directory: [], sent: [], newsletter: [], summary: { due_today: 0, total_businesses: 0, waiting: 0, weekly_ready: 0 } };
+  let outreachData = { today: [], directory: [], sent: [], newsletter: [], campaigns: [], summary: { due_today: 0, total_businesses: 0, waiting: 0, weekly_ready: 0 } };
   let outreachView = localStorage.getItem("outreach_view") || "today";
   if (outreachView === "leads") outreachView = "directory";
   let outreachAudiencePreset = ["weekly", "distance_needed"].includes(localStorage.getItem("outreach_audience"))
@@ -2502,6 +2517,8 @@
   let selectedOutcome = "";
   let outreachDraftOriginal = { subject:"", body:"" };
   let selectedNewsletterContact = null;
+  let selectedOutreachCampaign = null;
+  let selectedCampaignApprovalToken = "";
 
   let customerData = { accounts:[], applications:[], orders:[], summary:{ new_applications:0, active_applications:0, new_orders:0, active_orders:0, invoice_needed:0 } };
   let customerView = ["accounts", "orders", "applications"].includes(localStorage.getItem("customer_work_view")) ? localStorage.getItem("customer_work_view") : "accounts";
@@ -2509,7 +2526,8 @@
   let customerStatusFilter = customerView === "accounts" ? "all" : "active";
   let customerLoaded = false;
   let selectedCustomerRecord = null;
-  let staffAccessCode = sessionStorage.getItem("distribution_staff_access") || "";
+  let staffAccessCode = "";
+  let staffSession = null;
   let inventoryLoaded = false;
   let outreachCanSend = false;
   let outreachTestSendAvailable = false;
@@ -2553,7 +2571,7 @@
 
   async function staffApiGet(params){
     const qs = new URLSearchParams(params).toString();
-    const res = await fetch(`/api/inventory?${qs}`, { headers:{ "X-Staff-Code":staffAccessCode } });
+    const res = await fetch(`/api/inventory?${qs}`, { credentials:"same-origin" });
     try { return await readApiJson(res); }
     catch (error) { if (error.staffAuth) handleCustomerError(error); throw error; }
   }
@@ -2561,7 +2579,8 @@
   async function staffApiPost(body){
     const res = await fetch(`/api/inventory`, {
       method:"POST",
-      headers:{ "Content-Type":"application/json", "X-Staff-Code":staffAccessCode },
+      headers:{ "Content-Type":"application/json" },
+      credentials:"same-origin",
       body:JSON.stringify(body),
     });
     try { return await readApiJson(res); }
@@ -2588,7 +2607,9 @@
   }
 
   function setAppSection(section){
-    activeAppSection = ["inventory", "outreach", "customers"].includes(section) ? section : "inventory";
+    const areaForSection = { inventory:"inventory", outreach:"outreach", customers:"orders" };
+    const permittedSections = ["inventory", "outreach", "customers"].filter(candidate => !staffSession || (staffSession.areas || []).includes(areaForSection[candidate]));
+    activeAppSection = permittedSections.includes(section) ? section : (permittedSections[0] || "inventory");
     localStorage.setItem("distribution_section", activeAppSection);
     const isOutreach = activeAppSection === "outreach";
     const isCustomers = activeAppSection === "customers";
@@ -2643,7 +2664,7 @@
     $("inventoryAccessPanel").hidden = unlocked;
     $("inventoryWorkspace").hidden = !unlocked;
     if (!unlocked) {
-      $("inventoryStaffAccessCode").value = "";
+      $("inventoryAccessIdentity").textContent = "Use your approved Zoho work account.";
       if (activeAppSection === "inventory") {
         $("hdrStore").textContent = "Locked";
         $("hdrChanged").textContent = "Staff only";
@@ -2659,7 +2680,7 @@
     $("outreachAccessPanel").hidden = unlocked;
     $("outreachWorkspace").hidden = !unlocked;
     if (!unlocked) {
-      $("outreachStaffAccessCode").value = "";
+      $("outreachAccessIdentity").textContent = "Use your approved Zoho work account.";
       $("hdrStore").textContent = "Locked";
       $("hdrChanged").textContent = "Staff only";
     }
@@ -2671,7 +2692,7 @@
     $("customerWorkspace").hidden = !unlocked;
     $("lockCustomersBtn").hidden = !unlocked;
     if (!unlocked) {
-      $("staffAccessCode").value = "";
+      $("customerAccessIdentity").textContent = "Use your approved Zoho work account.";
       $("hdrStore").textContent = "Locked";
       $("hdrChanged").textContent = "Staff only";
     }
@@ -2681,7 +2702,8 @@
     const message = error?.message || String(error);
     if (error?.staffAuth) {
       staffAccessCode = "";
-      sessionStorage.removeItem("distribution_staff_access");
+      staffSession = null;
+      ["inventoryNavBtn", "outreachNavBtn", "customersNavBtn"].forEach(id => $(id).hidden = false);
       customerLoaded = false;
       outreachLoaded = false;
       outreachNewsletterLoaded = false;
@@ -2691,13 +2713,10 @@
       showInventoryAccessState();
       if (activeAppSection === "inventory") {
         $("inventoryAccessStatus").textContent = message;
-        $("inventoryStaffAccessCode").focus();
       } else if (activeAppSection === "outreach") {
         $("outreachAccessStatus").textContent = message;
-        $("outreachStaffAccessCode").focus();
       } else {
         $("customerAccessStatus").textContent = message;
-        $("staffAccessCode").focus();
       }
       return;
     }
@@ -2712,35 +2731,21 @@
     showCustomerAccessState();
   }
 
-  async function unlockCustomerWorkspace(){
-    const code = $("staffAccessCode").value.trim();
-    if (!code) {
-      $("customerAccessStatus").textContent = "Enter the staff access code.";
-      return;
-    }
-    staffAccessCode = code;
-    sessionStorage.setItem("distribution_staff_access", code);
-    $("unlockCustomersBtn").disabled = true;
-    $("customerAccessStatus").textContent = "Checking staff access...";
-    showCustomerAccessState();
-    try {
-      await loadCustomerWorkQueue();
-      $("customerAccessStatus").textContent = "";
-    } catch (error) {
-      handleCustomerError(error);
-    } finally {
-      $("unlockCustomersBtn").disabled = false;
-    }
+  function startZohoLogin(){
+    const returnTo = `${location.pathname}${location.search}`;
+    location.assign(`/api/auth?action=login&return_to=${encodeURIComponent(returnTo)}`);
   }
 
-  function lockCustomerWorkspace(){
+  async function lockCustomerWorkspace(){
+    await fetch("/api/auth?action=logout", { credentials:"same-origin" }).catch(() => {});
     staffAccessCode = "";
+    staffSession = null;
+    ["inventoryNavBtn", "outreachNavBtn", "customersNavBtn"].forEach(id => $(id).hidden = false);
     customerLoaded = false;
     outreachLoaded = false;
     outreachNewsletterLoaded = false;
     inventoryLoaded = false;
     selectedCustomerRecord = null;
-    sessionStorage.removeItem("distribution_staff_access");
     customerData = { accounts:[], applications:[], orders:[], summary:{} };
     showCustomerAccessState();
     showOutreachAccessState();
@@ -2748,41 +2753,27 @@
     $("customerAccessStatus").textContent = "Customer records locked.";
   }
 
-  async function unlockOutreachWorkspace(){
-    const code = $("outreachStaffAccessCode").value.trim();
-    if (!code) return $("outreachAccessStatus").textContent = "Enter the staff access code.";
-    staffAccessCode = code;
-    sessionStorage.setItem("distribution_staff_access", code);
-    $("unlockOutreachBtn").disabled = true;
-    $("outreachAccessStatus").textContent = "Checking staff access...";
-    showOutreachAccessState();
-    try {
-      await loadOutreach();
-      $("outreachAccessStatus").textContent = "";
-    } catch (error) {
-      handleOutreachLoadError(error);
-    } finally {
-      $("unlockOutreachBtn").disabled = false;
-    }
-  }
-
-  async function unlockInventoryWorkspace(){
-    const code = $("inventoryStaffAccessCode").value.trim();
-    if (!code) return $("inventoryAccessStatus").textContent = "Enter the staff access code.";
-    staffAccessCode = code;
-    sessionStorage.setItem("distribution_staff_access", code);
-    $("unlockInventoryBtn").disabled = true;
-    $("inventoryAccessStatus").textContent = "Unlocking...";
-    try {
-      await loadStartup();
-      showInventoryAccessState();
-      showOutreachAccessState();
-    } catch (error) {
-      handleCustomerError(error);
-      $("inventoryAccessStatus").textContent = error.message || String(error);
-    } finally {
-      $("unlockInventoryBtn").disabled = false;
-    }
+  async function loadStaffSession(){
+    const response = await fetch("/api/auth?action=session", { credentials:"same-origin" });
+    if (!response.ok) return null;
+    const result = await response.json();
+    if (!result?.user) return null;
+    staffSession = result.user;
+    staffAccessCode = staffSession.email;
+    const identity = `${staffSession.name} · ${staffSession.role}`;
+    ["inventoryAccessIdentity", "outreachAccessIdentity", "customerAccessIdentity"].forEach(id => $(id).textContent = identity);
+    ["customerStaffName", "outreachStaffName", "rep"].forEach(id => {
+      const input = $(id);
+      if (input) { input.value = staffSession.name; input.readOnly = true; }
+    });
+    const isAdmin = staffSession.role === "admin";
+    ["initializeHubBtn", "reconcileHubBtn", "addExistingBtn", "addProductBtn"].forEach(id => $(id).hidden = !isAdmin);
+    $("inventoryNavBtn").hidden = !staffSession.areas.includes("inventory");
+    $("outreachNavBtn").hidden = !staffSession.areas.includes("outreach");
+    $("customersNavBtn").hidden = !staffSession.areas.includes("orders");
+    showCustomerAccessState(); showOutreachAccessState(); showInventoryAccessState();
+    setAppSection(activeAppSection);
+    return staffSession;
   }
 
   function customerStatusOptions(){
@@ -3172,6 +3163,98 @@
     refreshIcons();
   }
 
+  async function loadOutreachCampaigns(){
+    const res = await staffApiGet({ action:"outreachCampaigns" });
+    if (!res.ok) throw new Error(res.error || "Campaigns could not be loaded.");
+    outreachData.campaigns = res.campaigns || [];
+    renderOutreach();
+  }
+
+  function renderOutreachCampaigns(){
+    const campaigns = outreachData.campaigns || [];
+    $("outreachAudienceCount").textContent = `${campaigns.length} campaign${campaigns.length === 1 ? "" : "s"}`;
+    $("outreachList").innerHTML = `
+      <article class="outreachCard priority">
+        <div class="outreachCardTop"><div><div class="businessName">New initial-prospect campaign</div><div class="contactLine">Freeze every currently eligible initial prospect into one reviewable audience. No email is sent when the campaign is created.</div></div><span class="badge amber">Draft</span></div>
+        <div class="outreachActions"><button class="actionBtn primary" type="button" data-campaign-action="create"><i data-lucide="send-horizontal"></i><span>Create campaign</span></button></div>
+      </article>
+      ${campaigns.map(campaign => `
+        <article class="outreachCard" data-campaign-id="${escapeHtml(campaign.campaign_id)}">
+          <div class="outreachCardTop"><div><div class="businessName">${escapeHtml(campaign.name)}</div><div class="contactLine">${escapeHtml(campaign.audience)} • ${escapeHtml(campaign.created_by || "Staff")}</div></div><span class="badge ${campaign.status === "Complete" ? "green" : campaign.status === "Approved" ? "blue" : "amber"}">${escapeHtml(campaign.status)}</span></div>
+          <div class="outreachMeta"><span class="badge">${Number(campaign.recipient_count || 0)} recipients</span><span class="badge blue">${Number(campaign.sent_count || 0)} sent</span>${Number(campaign.unsegmented_count || 0) ? `<span class="badge amber">${Number(campaign.unsegmented_count)} unsegmented</span>` : ""}${Number(campaign.blocked_count || 0) ? `<span class="badge red">${Number(campaign.blocked_count)} blocked</span>` : ""}</div>
+          <div class="outreachActions"><button class="actionBtn primary" type="button" data-campaign-action="review"><i data-lucide="clipboard-check"></i><span>Review campaign</span></button></div>
+        </article>`).join("")}`;
+    refreshIcons();
+  }
+
+  async function createOutreachCampaign(){
+    const staffName = $("outreachStaffName").value.trim();
+    if (!staffName) return toast("Enter your staff name before creating a campaign.");
+    const campaignName = `Initial prospect campaign — ${new Date().toLocaleDateString(undefined, { month:"short", day:"numeric", year:"numeric" })}`;
+    if (!confirm("Create a frozen campaign for every eligible initial prospect? This creates a review snapshot only; it does not send email.")) return;
+    setOutreachStatus("Creating campaign snapshot...");
+    const res = await staffApiPost({ action:"createOutreachCampaign", campaign_name:campaignName, staff_name:staffName });
+    if (!res.ok) throw new Error(res.error || "Campaign could not be created.");
+    setOutreachStatus(`${res.recipient_count} recipients frozen for review. No email was sent.`);
+    await loadOutreachCampaigns();
+    await openOutreachCampaign(res.campaign_id);
+  }
+
+  async function openOutreachCampaign(campaignId){
+    const res = await staffApiPost({ action:"outreachCampaign", campaign_id:campaignId });
+    if (!res.ok) throw new Error(res.error || "Campaign could not be loaded.");
+    selectedOutreachCampaign = res.campaign;
+    const campaign = selectedOutreachCampaign;
+    selectedCampaignApprovalToken = campaign.approval_token || "";
+    $("outreachCampaignTitle").textContent = campaign.name;
+    $("outreachCampaignSubtitle").textContent = `${campaign.recipient_count} frozen recipients • ${campaign.status}`;
+    $("outreachCampaignNotice").textContent = campaign.status === "Review"
+      ? "Read the recipient subjects and open any message below. Approval freezes this exact audience; it still does not send email."
+      : campaign.status === "Approved" ? "This audience is approved. “Send next 10” sends only one controlled batch and stops at the first blocked record."
+      : "This campaign is closed; delivery history remains available below.";
+    $("campaignSegmentConfirmRow").hidden = campaign.status !== "Review" || !Number(campaign.unsegmented_count || 0);
+    $("campaignSegmentConfirm").checked = false;
+    $("approveOutreachCampaignBtn").hidden = campaign.status !== "Review";
+    $("sendOutreachCampaignBatchBtn").hidden = campaign.status !== "Approved";
+    $("sendOutreachCampaignBatchBtn").disabled = !outreachCanSend;
+    $("outreachCampaignStatus").textContent = campaign.status === "Approved" && !outreachCanSend ? "Live sending is not configured yet. You can still review the campaign." : "";
+    $("outreachCampaignRecipients").innerHTML = `<div class="outreachList">${(campaign.recipients || []).map((recipient, index) => `
+      <details class="outreachCard"><summary><strong>${escapeHtml(recipient.business)}</strong><span class="smallMuted"> • ${escapeHtml(recipient.email)} • ${escapeHtml(recipient.status)}</span><br><span class="smallMuted">${escapeHtml(recipient.subject)}${recipient.segment ? ` • ${escapeHtml(recipient.segment)}` : " • Default Segment C"}</span></summary>
+      <div class="outreachMeta"><span class="badge">${escapeHtml(recipient.priority || "No")} priority</span><span class="badge blue">${escapeHtml(recipient.email_confidence || "Unrated")}</span>${recipient.wave ? `<span class="badge">${escapeHtml(recipient.wave)}</span>` : ""}</div>
+      <label>Rendered message</label><textarea class="emailEditor" readonly>${escapeHtml(recipient.body_text || "")}</textarea>${recipient.result_detail ? `<div class="status">${escapeHtml(recipient.result_detail)}</div>` : ""}
+    </details>`).join("")}</div>`;
+    $("outreachCampaignDialog").showModal();
+    refreshIcons();
+  }
+
+  async function approveOutreachCampaign(){
+    const campaign = selectedOutreachCampaign;
+    const staffName = $("outreachStaffName").value.trim();
+    if (!campaign || !staffName) return toast("Enter your staff name before approving.");
+    if (Number(campaign.unsegmented_count || 0) && !$("campaignSegmentConfirm").checked) return toast("Confirm the default message for unsegmented recipients first.");
+    if (!confirm(`Approve ${campaign.recipient_count} recipients for controlled batch delivery? This action does not send email.`)) return;
+    const res = await staffApiPost({ action:"approveOutreachCampaign", campaign_id:campaign.campaign_id, audience_checksum:campaign.audience_checksum, recipient_count:campaign.recipient_count, confirm_unsegmented:$("campaignSegmentConfirm").checked, staff_name:staffName });
+    if (!res.ok) throw new Error(res.error || "Campaign could not be approved.");
+    selectedCampaignApprovalToken = res.approval_token;
+    await loadOutreachCampaigns(); await openOutreachCampaign(campaign.campaign_id);
+    $("outreachCampaignStatus").textContent = "Campaign approved. No email was sent.";
+  }
+
+  async function sendOutreachCampaignBatch(){
+    const campaign = selectedOutreachCampaign;
+    const staffName = $("outreachStaffName").value.trim();
+    if (!campaign || !staffName) return toast("Enter your staff name before sending.");
+    if (!selectedCampaignApprovalToken) return toast("Refresh and re-open this campaign before sending a batch.");
+    if (!confirm(`Send the next 10 approved emails from “${campaign.name}”? The batch stops if any recipient is blocked.`)) return;
+    $("sendOutreachCampaignBatchBtn").disabled = true; $("outreachCampaignStatus").textContent = "Sending controlled batch...";
+    try {
+      const res = await staffApiPost({ action:"sendOutreachCampaignBatch", campaign_id:campaign.campaign_id, approval_token:selectedCampaignApprovalToken, batch_size:10, staff_name:staffName });
+      if (!res.ok) throw new Error(res.error || "Batch could not be sent.");
+      await loadOutreachCampaigns(); await openOutreachCampaign(campaign.campaign_id);
+      $("outreachCampaignStatus").textContent = `${res.sent} sent • ${res.blocked} blocked • ${res.remaining} remaining.`;
+    } catch (error) { $("outreachCampaignStatus").textContent = error.message || String(error); $("sendOutreachCampaignBatchBtn").disabled = false; }
+  }
+
   function renderOutreach(){
     const summary = outreachData.summary || {};
     $("outreachDueCount").textContent = Number(summary.due_today || 0);
@@ -3182,17 +3265,19 @@
       $("hdrChanged").textContent = `${Number(summary.waiting || 0)} waiting`;
     }
 
-    ["today", "directory", "sent", "newsletter"].forEach(view => {
+    ["today", "directory", "sent", "campaigns", "newsletter"].forEach(view => {
       $(`outreach${view.charAt(0).toUpperCase() + view.slice(1)}Btn`).classList.toggle("active", outreachView === view);
     });
     const newsletterView = outreachView === "newsletter";
-    $("outreachAudienceBar").hidden = newsletterView;
+    const campaignsView = outreachView === "campaigns";
+    $("outreachAudienceBar").hidden = newsletterView || campaignsView;
     $("addNewsletterContactBtn").hidden = !newsletterView;
     $("outreachSearch").placeholder = newsletterView ? "Search newsletter contacts" : "Search any business information";
     if (newsletterView) {
       renderNewsletterContacts();
       return;
     }
+    if (campaignsView) { renderOutreachCampaigns(); return; }
     $("outreachAudiencePreset").value = outreachAudiencePreset;
     $("outreachSort").value = outreachSort;
 
@@ -3870,8 +3955,7 @@
   function requireDirectoryAccess(message){
     if (staffAccessCode) return true;
     showOutreachAccessState();
-    $("outreachAccessStatus").textContent = message || "Unlock staff access first.";
-    $("outreachStaffAccessCode").focus();
+    $("outreachAccessStatus").textContent = message || "Sign in with Zoho first.";
     return false;
   }
 
@@ -5215,20 +5299,15 @@
   $("inventoryNavBtn").addEventListener("click", () => setAppSection("inventory"));
   $("outreachNavBtn").addEventListener("click", () => setAppSection("outreach"));
   $("customersNavBtn").addEventListener("click", () => setAppSection("customers"));
-  $("unlockInventoryBtn").addEventListener("click", unlockInventoryWorkspace);
-  $("inventoryStaffAccessCode").addEventListener("keydown", event => { if (event.key === "Enter") unlockInventoryWorkspace(); });
-  $("unlockOutreachBtn").addEventListener("click", unlockOutreachWorkspace);
-  $("outreachStaffAccessCode").addEventListener("keydown", event => { if (event.key === "Enter") unlockOutreachWorkspace(); });
+  $("unlockInventoryBtn").addEventListener("click", startZohoLogin);
+  $("unlockOutreachBtn").addEventListener("click", startZohoLogin);
   $("refreshOutreachBtn").addEventListener("click", () => loadOutreach().catch(handleOutreachLoadError));
   $("refreshCustomersBtn").addEventListener("click", () => {
     if (!staffAccessCode) return showCustomerAccessState();
     loadCustomerWorkQueue().catch(handleCustomerError);
   });
   $("lockCustomersBtn").addEventListener("click", lockCustomerWorkspace);
-  $("unlockCustomersBtn").addEventListener("click", unlockCustomerWorkspace);
-  $("staffAccessCode").addEventListener("keydown", event => {
-    if (event.key === "Enter") unlockCustomerWorkspace();
-  });
+  $("unlockCustomersBtn").addEventListener("click", startZohoLogin);
   $("accountsViewBtn").addEventListener("click", () => {
     customerView = "accounts";
     customerStatusFilter = "all";
@@ -5262,12 +5341,6 @@
     $("clearCustomerSearchBtn").hidden = true;
     renderCustomerWorkflow();
     $("customerSearch").focus();
-  });
-  $("customerStaffName").addEventListener("change", () => localStorage.setItem("customer_staff_name", $("customerStaffName").value.trim()));
-  $("outreachStaffName").addEventListener("change", () => {
-    const value = $("outreachStaffName").value.trim();
-    localStorage.setItem("customer_staff_name", value);
-    $("customerStaffName").value = value;
   });
   $("customerWorkflowList").addEventListener("click", event => {
     const button = event.target.closest("[data-customer-action='open']");
@@ -5315,6 +5388,12 @@
     localStorage.setItem("outreach_view", outreachView);
     renderOutreach();
   });
+  $("outreachCampaignsBtn").addEventListener("click", () => {
+    outreachView = "campaigns";
+    localStorage.setItem("outreach_view", outreachView);
+    renderOutreach();
+    loadOutreachCampaigns().catch(handleOutreachLoadError);
+  });
   $("outreachNewsletterBtn").addEventListener("click", () => {
     outreachView = "newsletter";
     localStorage.setItem("outreach_view", outreachView);
@@ -5350,6 +5429,14 @@
     $("outreachSearch").focus();
   });
   $("outreachList").addEventListener("click", event => {
+    const campaignButton = event.target.closest("[data-campaign-action]");
+    if (campaignButton) {
+      const action = campaignButton.dataset.campaignAction;
+      const card = campaignButton.closest("[data-campaign-id]");
+      if (action === "create") createOutreachCampaign().catch(handleOutreachLoadError);
+      else if (card?.dataset.campaignId) openOutreachCampaign(card.dataset.campaignId).catch(handleOutreachLoadError);
+      return;
+    }
     const newsletterButton = event.target.closest("[data-newsletter-action]");
     if (newsletterButton) {
       const card = newsletterButton.closest("[data-newsletter-id]");
@@ -5378,6 +5465,9 @@
   $("sendOutreachEmailBtn").addEventListener("click", () => sendOutreachEmail(false));
   $("sendOutreachTestBtn").addEventListener("click", () => sendOutreachEmail(true));
   $("closeOutreachReviewBtn").addEventListener("click", closeOutreachReview);
+  $("closeOutreachCampaignBtn").addEventListener("click", () => $("outreachCampaignDialog").close());
+  $("approveOutreachCampaignBtn").addEventListener("click", () => approveOutreachCampaign().catch(error => { $("outreachCampaignStatus").textContent = error.message || String(error); }));
+  $("sendOutreachCampaignBatchBtn").addEventListener("click", sendOutreachCampaignBatch);
   $("closeBusinessDetailBtn").addEventListener("click", () => $("businessDetailDialog").close());
   $("closeNewsletterContactBtn").addEventListener("click", () => $("newsletterContactDialog").close());
   $("saveNewsletterContactBtn").addEventListener("click", saveNewsletterContact);
@@ -5386,10 +5476,9 @@
     if (event.target.closest("#saveProgramSettingsBtn")) saveProgramSettings();
   });
 
-  $("customerStaffName").value = localStorage.getItem("customer_staff_name") || "";
-  $("outreachStaffName").value = localStorage.getItem("customer_staff_name") || "";
   refreshIcons();
   setAppSection(activeAppSection);
+  loadStaffSession().catch(() => {});
 })();
 </script>
 </body>

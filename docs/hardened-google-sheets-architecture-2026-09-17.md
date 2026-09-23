@@ -29,7 +29,7 @@ Delivery records do not directly reduce inventory. Physical counts remain the in
 ## Write Safety
 
 - Apps Script API-key validation remains mandatory.
-- Sensitive staff actions also require the Netlify `STAFF_ACCESS_CODE`.
+- Sensitive staff actions require an approved Zoho OIDC staff session at Netlify. Product/SKU changes, staging initialization, and reconciliation additionally require the `admin` role.
 - Script locks serialize inventory, application, account, order, import, and reconciliation writes.
 - Public submissions use a write-ahead `Submission Journal` before normalized rows are written.
 - Submission tokens make application and order retries idempotent.

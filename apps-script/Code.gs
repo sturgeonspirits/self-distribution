@@ -1,6 +1,6 @@
 /*********************************
  * Inventory API (JSON) for Netlify
- * App version: 2026.09.22.3
+ * App version: 2026.09.23.1
  *
  * CHANGES IN THIS VERSION
  * - Allowed Karl-only test sends for saved drafts whose prospect email is missing or unverified.
@@ -109,7 +109,7 @@
  * - Use only in the staging inventory backend until testing is complete.
  *********************************/
 
-const APP_VERSION = "2026.09.22.3";
+const APP_VERSION = "2026.09.23.1";
 
 const SHEET_NAMES = {
   STORES: "Stores",
@@ -129,6 +129,8 @@ const OUTREACH_DRAFTS_SHEET_NAME = "Outreach Drafts";
 const OUTREACH_PILOT_SHEET_NAME = "Pilot Review";
 const OUTREACH_PROGRAMS_SHEET_NAME = "Account Programs";
 const OUTREACH_ENGAGEMENT_SHEET_NAME = "Email Engagement";
+const OUTREACH_CAMPAIGNS_SHEET_NAME = "Outreach Campaigns";
+const OUTREACH_CAMPAIGN_RECIPIENTS_SHEET_NAME = "Outreach Campaign Recipients";
 const TOAST_ITEM_MAP_SHEET_NAME = "Toast Item Map";
 const NEWSLETTER_CONTACTS_SHEET_NAME = "Newsletter Contacts";
 const CUSTOMER_APPLICATIONS_SHEET_NAME = "Customer Applications";
@@ -494,7 +496,7 @@ function handle_(e, body) {
     assertAuthorized_(e, body);
     const action = (e?.parameter?.action) || (body?.action) || "";
     if (!action) {
-      return json_({ ok:true, service:"sturgeon-distribution-hub", version:APP_VERSION, actions:["initData","listSkus","addSkuToStore","upsertProduct","submitCounts","createReorder","managerGrid","salesSinceCount","updateStoreContacts","outreachDashboard","outreachSendStatus","outreachNewsletterContacts","saveOutreachDraft","sendOutreachEmail","sendOutreachTestEmail","updateOutreachOutcome","updateOutreachBusiness","updateOutreachPrograms","createOutreachBusiness","importOutreachBusinesses","upsertNewsletterContact","submitCustomerApplication","submitOnlineOrderRequest","customerWorkQueue","updateCustomerApplication","updateOnlineOrderRequest","hubSystemStatus","initializeHardenedHub","reconcileIntegrations"] });
+      return json_({ ok:true, service:"sturgeon-distribution-hub", version:APP_VERSION, actions:["initData","listSkus","addSkuToStore","upsertProduct","submitCounts","createReorder","managerGrid","salesSinceCount","updateStoreContacts","outreachDashboard","outreachSendStatus","outreachNewsletterContacts","outreachCampaigns","outreachCampaign","createOutreachCampaign","approveOutreachCampaign","sendOutreachCampaignBatch","saveOutreachDraft","sendOutreachEmail","sendOutreachTestEmail","updateOutreachOutcome","updateOutreachBusiness","updateOutreachPrograms","createOutreachBusiness","importOutreachBusinesses","upsertNewsletterContact","submitCustomerApplication","submitOnlineOrderRequest","customerWorkQueue","updateCustomerApplication","updateOnlineOrderRequest","hubSystemStatus","initializeHardenedHub","reconcileIntegrations"] });
     }
 
     let res;
@@ -511,6 +513,11 @@ function handle_(e, body) {
       case "outreachDashboard": res = apiGetOutreachDashboard_(); break;
       case "outreachSendStatus": res = apiGetOutreachSendStatus_(); break;
       case "outreachNewsletterContacts": res = { newsletter_contacts:newsletterContacts_() }; break;
+      case "outreachCampaigns": res = apiGetOutreachCampaigns_(); break;
+      case "outreachCampaign": res = apiGetOutreachCampaign_(body); break;
+      case "createOutreachCampaign": res = apiCreateOutreachCampaign_(body); break;
+      case "approveOutreachCampaign": res = apiApproveOutreachCampaign_(body); break;
+      case "sendOutreachCampaignBatch": res = apiSendOutreachCampaignBatch_(body); break;
       case "saveOutreachDraft": res = apiSaveOutreachDraft_(body); break;
       case "sendOutreachEmail": res = apiSendOutreachEmail_(body, false); break;
       case "sendOutreachTestEmail": res = apiSendOutreachEmail_(body, true); break;
@@ -1926,6 +1933,221 @@ function apiGetOutreachDashboard_() {
   };
 }
 
+// Campaigns are immutable recipient/message snapshots.  They make bulk review
+// possible without changing a source lead or sending anything at creation time.
+function outreachCampaignSheets_() {
+  const ss = getOutreachSs_();
+  return {
+    campaigns: ensureSheet_(ss, OUTREACH_CAMPAIGNS_SHEET_NAME, [
+      "Campaign ID", "Campaign Name", "Audience", "Status", "Recipient Count", "Audience Checksum",
+      "Unsegmented Count", "Created At", "Created By", "Approved At", "Approved By", "Approval Token",
+      "Last Batch At", "Sent Count", "Blocked Count", "App Version"
+    ]),
+    recipients: ensureSheet_(ss, OUTREACH_CAMPAIGN_RECIPIENTS_SHEET_NAME, [
+      "Campaign ID", "Source Row", "Account ID", "Business Name", "Recipient Email", "Contact", "Priority",
+      "Email Confidence", "Segment", "Wave", "Subject", "Body Text", "HTML", "Content Checksum",
+      "Status", "Result Detail", "Zoho Message ID", "Sent At", "Idempotency Token", "App Version"
+    ]),
+  };
+}
+
+function outreachCampaignRow_(sheet, campaignId) {
+  const h = getHeaderMap_(sheet);
+  if (sheet.getLastRow() < 2) return null;
+  const values = sheet.getRange(2, 1, sheet.getLastRow() - 1, sheet.getLastColumn()).getValues();
+  const index = values.findIndex(row => String(row[h.campaign_id] || "") === String(campaignId || ""));
+  return index < 0 ? null : { row:index + 2, values:values[index], headers:h };
+}
+
+function campaignRecipientRows_(sheet, campaignId) {
+  const h = getHeaderMap_(sheet);
+  if (sheet.getLastRow() < 2) return [];
+  return sheet.getRange(2, 1, sheet.getLastRow() - 1, sheet.getLastColumn()).getValues()
+    .map((values, index) => ({ row:index + 2, values:values, headers:h }))
+    .filter(item => String(item.values[h.campaign_id] || "") === String(campaignId || ""));
+}
+
+function campaignObject_(campaign, recipients, includeRecipients) {
+  const h = campaign.headers;
+  const value = key => campaign.values[h[key]];
+  const recipientObjects = recipients.map(item => {
+    const rh = item.headers;
+    const get = key => item.values[rh[key]];
+    return {
+      source_row:Number(get("source_row") || 0), account_id:String(get("account_id") || ""),
+      business:String(get("business_name") || ""), email:String(get("recipient_email") || ""),
+      contact:String(get("contact") || ""), priority:String(get("priority") || ""),
+      email_confidence:String(get("email_confidence") || ""), segment:String(get("segment") || ""), wave:String(get("wave") || ""),
+      subject:String(get("subject") || ""), body_text:String(get("body_text") || ""), preview_html:String(get("html") || ""),
+      content_checksum:String(get("content_checksum") || ""), status:String(get("status") || ""),
+      result_detail:String(get("result_detail") || ""), message_id:String(get("zoho_message_id") || ""),
+      sent_at:get("sent_at") || "", idempotency_token:String(get("idempotency_token") || ""),
+    };
+  });
+  const counts = recipientObjects.reduce((all, item) => { all[item.status || "Unknown"] = (all[item.status || "Unknown"] || 0) + 1; return all; }, {});
+  const result = {
+    campaign_id:String(value("campaign_id") || ""), name:String(value("campaign_name") || ""), audience:String(value("audience") || ""),
+    status:String(value("status") || ""), recipient_count:Number(value("recipient_count") || recipientObjects.length),
+    audience_checksum:String(value("audience_checksum") || ""), unsegmented_count:Number(value("unsegmented_count") || 0),
+    created_at:value("created_at") || "", created_by:String(value("created_by") || ""), approved_at:value("approved_at") || "",
+    approved_by:String(value("approved_by") || ""), sent_count:Number(value("sent_count") || 0), blocked_count:Number(value("blocked_count") || 0),
+    counts:counts,
+  };
+  if (includeRecipients) {
+    result.recipients = recipientObjects;
+    result.approval_token = String(value("approval_token") || "");
+  }
+  return result;
+}
+
+function apiGetOutreachCampaigns_() {
+  const sheets = outreachCampaignSheets_();
+  const h = getHeaderMap_(sheets.campaigns);
+  if (sheets.campaigns.getLastRow() < 2) return { campaigns:[] };
+  const allRecipients = sheets.recipients.getLastRow() < 2 ? [] : sheets.recipients.getRange(2, 1, sheets.recipients.getLastRow() - 1, sheets.recipients.getLastColumn()).getValues()
+    .map((values, index) => ({ row:index + 2, values:values, headers:getHeaderMap_(sheets.recipients) }));
+  const campaigns = sheets.campaigns.getRange(2, 1, sheets.campaigns.getLastRow() - 1, sheets.campaigns.getLastColumn()).getValues()
+    .map((values, index) => ({ row:index + 2, values:values, headers:h }))
+    .reverse().map(campaign => campaignObject_(campaign, allRecipients.filter(item => String(item.values[item.headers.campaign_id] || "") === String(campaign.values[h.campaign_id] || "")), false));
+  return { campaigns:campaigns };
+}
+
+function apiGetOutreachCampaign_(p) {
+  const sheets = outreachCampaignSheets_();
+  const campaign = outreachCampaignRow_(sheets.campaigns, p?.campaign_id);
+  if (!campaign) throw new Error("Campaign not found.");
+  return { campaign:campaignObject_(campaign, campaignRecipientRows_(sheets.recipients, p.campaign_id), true) };
+}
+
+function apiCreateOutreachCampaign_(p) {
+  const name = publicText_(p?.campaign_name || "Initial prospect campaign", 120, "Campaign name");
+  const lock = LockService.getScriptLock();
+  if (!lock.tryLock(10000)) throw new Error("Another campaign update is in progress. Try again in a moment.");
+  try {
+    const sheets = outreachCampaignSheets_();
+    const leadSheet = getOutreachSheet_(OUTREACH_SHEET_NAME);
+    const activityMap = outreachActivityMap_();
+    const settings = getOutreachCampaignSettings_();
+    const draftMap = outreachDraftMap_();
+    const programMap = outreachProgramMap_();
+    const engagementMap = outreachEngagementMap_();
+    const records = getAllRowsAsObjects_(leadSheet).map((row, index) => outreachRecord_(row, index + 2, activityMap, settings, draftMap, programMap, engagementMap));
+    const seenEmails = new Set();
+    const eligible = records.filter(record => {
+      if (String(record.relationship || "").trim().toLowerCase() !== "prospect") return false;
+      if (String(record.next_email || "Initial").trim().toLowerCase() !== "initial") return false;
+      if (outreachSendEligibility_(record).length) return false;
+      const email = String(record.email || "").trim().toLowerCase();
+      if (seenEmails.has(email)) return false;
+      seenEmails.add(email);
+      return true;
+    }).sort((a, b) => outreachPriorityScore_(b) - outreachPriorityScore_(a) || String(a.business).localeCompare(String(b.business)));
+    if (!eligible.length) throw new Error("No eligible initial prospects are available for a campaign.");
+    const campaignId = permanentId_("CMP");
+    const recipientRows = eligible.map(record => {
+      const checksum = sha256_([record.source_row, record.account_id, record.business, record.email, record.subject, record.body_text].join("|"));
+      return [campaignId, record.source_row, record.account_id, record.business, record.email, record.contact, record.priority,
+        record.email_confidence, record.segment, record.wave, record.subject, record.body_text, record.preview_html, checksum,
+        "Ready for review", "", "", "", `${campaignId}-${record.source_row}`, APP_VERSION];
+    });
+    const audienceChecksum = sha256_(recipientRows.map(row => `${row[1]}|${row[4]}|${row[13]}`).join("\n"));
+    const unsegmentedCount = eligible.filter(record => !String(record.segment || "").trim()).length;
+    sheets.recipients.getRange(sheets.recipients.getLastRow() + 1, 1, recipientRows.length, recipientRows[0].length).setValues(recipientRows);
+    sheets.campaigns.appendRow([campaignId, name, "Eligible initial prospects", "Review", eligible.length, audienceChecksum,
+      unsegmentedCount, new Date(), authenticatedActor_(p, "Sturgeon Distribution Hub"), "", "", "", "", 0, 0, APP_VERSION]);
+    appendAudit_("CREATE_OUTREACH_CAMPAIGN", "Campaign", campaignId, "", authenticatedActor_(p, "Sturgeon Distribution Hub"), OUTREACH_SHEET_NAME, OUTREACH_CAMPAIGN_RECIPIENTS_SHEET_NAME, "Review", `${eligible.length} frozen recipients.`);
+    return { message:"Campaign created for review. No email was sent.", campaign_id:campaignId, recipient_count:eligible.length, audience_checksum:audienceChecksum, unsegmented_count:unsegmentedCount };
+  } finally { lock.releaseLock(); }
+}
+
+function apiApproveOutreachCampaign_(p) {
+  requireFields_(p || {}, ["campaign_id", "audience_checksum", "staff_name"]);
+  const sheets = outreachCampaignSheets_();
+  const campaign = outreachCampaignRow_(sheets.campaigns, p.campaign_id);
+  if (!campaign) throw new Error("Campaign not found.");
+  const h = campaign.headers;
+  if (String(campaign.values[h.status] || "") !== "Review") throw new Error("Only a campaign awaiting review can be approved.");
+  if (String(campaign.values[h.audience_checksum] || "") !== String(p.audience_checksum || "")) throw new Error("Campaign recipients changed. Refresh and review again.");
+  const recipients = campaignRecipientRows_(sheets.recipients, p.campaign_id);
+  if (Number(p.recipient_count || 0) !== recipients.length) throw new Error("Recipient count confirmation does not match this campaign.");
+  const unsegmented = recipients.filter(item => !String(item.values[item.headers.segment] || "").trim()).length;
+  if (unsegmented && p.confirm_unsegmented !== true) throw new Error(`${unsegmented} recipients have no segment. Confirm the default template before approval.`);
+  const token = Utilities.getUuid().replace(/-/g, "");
+  const now = new Date();
+  campaign.values[h.status] = "Approved"; campaign.values[h.approved_at] = now; campaign.values[h.approved_by] = authenticatedActor_(p, "Sturgeon Distribution Hub"); campaign.values[h.approval_token] = token;
+  campaign.values[h.app_version] = APP_VERSION;
+  sheets.campaigns.getRange(campaign.row, 1, 1, campaign.values.length).setValues([campaign.values]);
+  recipients.forEach(item => { item.values[item.headers.status] = "Ready to send"; item.values[item.headers.app_version] = APP_VERSION; sheets.recipients.getRange(item.row, 1, 1, item.values.length).setValues([item.values]); });
+  appendAudit_("APPROVE_OUTREACH_CAMPAIGN", "Campaign", p.campaign_id, "", authenticatedActor_(p, "Sturgeon Distribution Hub"), OUTREACH_CAMPAIGNS_SHEET_NAME, OUTREACH_CAMPAIGN_RECIPIENTS_SHEET_NAME, "Approved", `${recipients.length} recipients approved.`);
+  return { message:"Campaign approved. No email was sent.", approval_token:token, recipient_count:recipients.length };
+}
+
+function apiSendOutreachCampaignBatch_(p) {
+  requireFields_(p || {}, ["campaign_id", "approval_token", "staff_name"]);
+  const requestedSize = Number(p.batch_size || 10);
+  if (!Number.isInteger(requestedSize) || requestedSize < 1 || requestedSize > 20) throw new Error("Batch size must be between 1 and 20.");
+  const lock = LockService.getScriptLock();
+  if (!lock.tryLock(20000)) throw new Error("Another outreach send is in progress. Wait a moment and try again.");
+  try {
+    const sheets = outreachCampaignSheets_();
+    const campaign = outreachCampaignRow_(sheets.campaigns, p.campaign_id);
+    if (!campaign) throw new Error("Campaign not found.");
+    const ch = campaign.headers;
+    if (String(campaign.values[ch.status] || "") !== "Approved") throw new Error("Campaign must be approved before delivery.");
+    if (String(campaign.values[ch.approval_token] || "") !== String(p.approval_token || "")) throw new Error("Campaign approval is not valid. Refresh and review again.");
+    const recipients = campaignRecipientRows_(sheets.recipients, p.campaign_id)
+      .filter(item => String(item.values[item.headers.status] || "") === "Ready to send").slice(0, requestedSize);
+    if (!recipients.length) return { message:"No campaign recipients are waiting to send.", sent:0, blocked:0, remaining:0, results:[] };
+    const leadSheet = getOutreachSheet_(OUTREACH_SHEET_NAME);
+    const leadHeaders = getHeaderMap_(leadSheet);
+    const activityMap = outreachActivityMap_();
+    const settings = getOutreachCampaignSettings_();
+    const draftMap = outreachDraftMap_();
+    const programMap = outreachProgramMap_();
+    const engagementMap = outreachEngagementMap_();
+    const staffName = authenticatedActor_(p, "Sturgeon Distribution Hub");
+    const results = []; let sent = 0; let blocked = 0;
+    for (const item of recipients) {
+      const rh = item.headers;
+      const sourceRow = Number(item.values[rh.source_row] || 0);
+      try {
+        if (!Number.isInteger(sourceRow) || sourceRow < 2 || sourceRow > leadSheet.getLastRow()) throw new Error("Source lead no longer exists.");
+        const raw = leadSheet.getRange(sourceRow, 1, 1, leadSheet.getLastColumn()).getValues()[0];
+        const current = {}; Object.keys(leadHeaders).forEach(key => current[key] = raw[leadHeaders[key]]);
+        const record = outreachRecord_(current, sourceRow, activityMap, settings, draftMap, programMap, engagementMap);
+        if (record.business !== String(item.values[rh.business_name] || "") || record.email.toLowerCase() !== String(item.values[rh.recipient_email] || "").toLowerCase()) throw new Error("Business or recipient changed after review.");
+        const reasons = outreachSendEligibility_(record);
+        if (reasons.length) throw new Error(reasons.join("; "));
+        const token = String(item.values[rh.idempotency_token] || "");
+        const prior = acceptedOutreachSendForToken_(token);
+        const result = prior || callOutreachMailer_({ action:"sendAppEmail", idempotency_token:token, account_id:record.account_id,
+          source_row:sourceRow, business:record.business, recipient:record.email, message_stage:"Initial",
+          subject:String(item.values[rh.subject] || ""), html:String(item.values[rh.html] || ""), requested_by:staffName });
+        if (!result.accepted || !String(result.message_id || "").trim()) throw new Error("Zoho did not return a verified message ID.");
+        const sentAt = result.sent_at ? new Date(result.sent_at) : new Date();
+        finalizeOutreachSend_(leadSheet, sourceRow, record, "Initial", String(result.message_id), isNaN(sentAt.getTime()) ? new Date() : sentAt, staffName, token);
+        item.values[rh.status] = "Sent"; item.values[rh.result_detail] = result.idempotent ? "Previously accepted and recovered." : "Zoho accepted delivery.";
+        item.values[rh.zoho_message_id] = String(result.message_id); item.values[rh.sent_at] = isNaN(sentAt.getTime()) ? new Date() : sentAt; item.values[rh.app_version] = APP_VERSION;
+        sheets.recipients.getRange(item.row, 1, 1, item.values.length).setValues([item.values]);
+        sent += 1; results.push({ source_row:sourceRow, business:record.business, status:"Sent", message_id:String(result.message_id) });
+      } catch (error) {
+        item.values[rh.status] = "Blocked"; item.values[rh.result_detail] = String(error.message || error).slice(0, 2000); item.values[rh.app_version] = APP_VERSION;
+        sheets.recipients.getRange(item.row, 1, 1, item.values.length).setValues([item.values]);
+        blocked += 1; results.push({ source_row:sourceRow, business:String(item.values[rh.business_name] || ""), status:"Blocked", detail:String(error.message || error) });
+        break; // Stop on the first anomaly; the operator can review before another batch.
+      }
+    }
+    const allRecipients = campaignRecipientRows_(sheets.recipients, p.campaign_id);
+    const remaining = allRecipients.filter(item => String(item.values[item.headers.status] || "") === "Ready to send").length;
+    campaign.values[ch.last_batch_at] = new Date(); campaign.values[ch.sent_count] = Number(campaign.values[ch.sent_count] || 0) + sent;
+    campaign.values[ch.blocked_count] = Number(campaign.values[ch.blocked_count] || 0) + blocked; campaign.values[ch.app_version] = APP_VERSION;
+    if (!remaining) campaign.values[ch.status] = blocked ? "Complete with blocks" : "Complete";
+    sheets.campaigns.getRange(campaign.row, 1, 1, campaign.values.length).setValues([campaign.values]);
+    appendAudit_("SEND_OUTREACH_CAMPAIGN_BATCH", "Campaign", p.campaign_id, "", staffName, OUTREACH_CAMPAIGN_RECIPIENTS_SHEET_NAME, OUTREACH_ACTIVITY_SHEET_NAME, blocked ? "Stopped for review" : "Completed", `${sent} sent; ${blocked} blocked; ${remaining} remaining.`);
+    return { message:blocked ? "Batch stopped for review after a blocked recipient." : `Batch complete: ${sent} sent.`, sent:sent, blocked:blocked, remaining:remaining, results:results };
+  } finally { lock.releaseLock(); }
+}
+
 function outreachStatusForOutcome_(outcome) {
   const map = {
     "Interested": "Interested",
@@ -2011,7 +2233,7 @@ function apiSaveOutreachDraft_(p) {
     const headers = getHeaderMap_(sheet);
     const key = outreachDraftKey_(accountId || rowNumber, currentStage);
     const now = new Date();
-    const updatedBy = Session.getActiveUser().getEmail() || "Sturgeon Distribution Hub";
+    const updatedBy = authenticatedActor_(p, "Sturgeon Distribution Hub");
     const rowValues = Array(sheet.getLastColumn()).fill("");
     const set = (name, value) => { if (headers[name] !== undefined) rowValues[headers[name]] = value; };
     set("draft_key", key);
@@ -2433,7 +2655,7 @@ function apiUpdateOutreachPrograms_(p) {
     const h = getHeaderMap_(sheet);
     const programKey = `account::${accountId || rowNumber}`;
     const now = new Date();
-    const updatedBy = Session.getActiveUser().getEmail() || "Sturgeon Distribution Hub";
+    const updatedBy = authenticatedActor_(p, "Sturgeon Distribution Hub");
     const values = Array(sheet.getLastColumn()).fill("");
     const set = (key, value) => { if (h[key] !== undefined) values[h[key]] = value; };
     set("program_key", programKey);
@@ -2545,7 +2767,7 @@ function apiUpsertNewsletterContact_(p) {
     set("topics", String(p.topics || "").trim());
     set("notes", String(p.notes || "").trim());
     set("updated_at", now);
-    set("updated_by", Session.getActiveUser().getEmail() || "Sturgeon Distribution Hub");
+    set("updated_by", authenticatedActor_(p, "Sturgeon Distribution Hub"));
     set("app_version", APP_VERSION);
     sheet.getRange(targetRow || sheet.getLastRow() + 1, 1, 1, values.length).setValues([values]);
     return { message:"Newsletter contact saved.", contact_id:contactId, updated_at:now.toISOString() };
@@ -2558,6 +2780,13 @@ function publicText_(value, maxLength, label) {
   const text = String(value ?? "").trim();
   if (text.length > maxLength) throw new Error(`${label} is too long.`);
   return /^[=+\-@]/.test(text) ? `'${text}` : text;
+}
+
+// Netlify sets authenticated_staff_name only after validating a Zoho session.
+// Browser-provided staff_name is retained solely as a compatibility fallback for
+// older operational records; the deployed Hub always supplies the trusted value.
+function authenticatedActor_(p, fallback) {
+  return publicText_(p?.authenticated_staff_name || p?.staff_name || fallback || "Sturgeon Distribution Hub", 120, "Staff name");
 }
 
 function publicEmail_(value, label, required) {

@@ -1,9 +1,16 @@
-// App version: 2026.09.22.5-WEB
-const APP_VERSION = "2026.09.22.5-WEB";
+// App version: 2026.09.23.1-WEB
+import { requireStaffSession } from "./auth.js";
+
+const APP_VERSION = "2026.09.23.1-WEB";
 const STAFF_ACTIONS = new Set([
   "outreachDashboard",
   "outreachSendStatus",
   "outreachNewsletterContacts",
+  "outreachCampaigns",
+  "outreachCampaign",
+  "createOutreachCampaign",
+  "approveOutreachCampaign",
+  "sendOutreachCampaignBatch",
   "saveOutreachDraft",
   "updateOutreachOutcome",
   "updateOutreachBusiness",
@@ -30,14 +37,24 @@ const STAFF_ACTIONS = new Set([
   "updateStoreContacts",
 ]);
 
-const FAILED_ATTEMPT_LIMIT = 5;
-const FAILED_ATTEMPT_WINDOW_MS = 15 * 60 * 1000;
 const UPSTREAM_ATTEMPTS = 2;
 const UPSTREAM_TIMEOUT_MS = 11000;
 const SEND_UPSTREAM_ATTEMPTS = 1;
 const SEND_UPSTREAM_TIMEOUT_MS = 24000;
-const SEND_ACTIONS = new Set(["sendOutreachEmail", "sendOutreachTestEmail"]);
-const failedStaffAttempts = new Map();
+const SEND_ACTIONS = new Set(["sendOutreachEmail", "sendOutreachTestEmail", "sendOutreachCampaignBatch"]);
+const ADMIN_ACTIONS = new Set(["initializeHardenedHub", "reconcileIntegrations", "upsertProduct", "addSkuToStore"]);
+const ACTION_AREAS = new Map([
+  ["outreachDashboard", "outreach"], ["outreachSendStatus", "outreach"], ["outreachNewsletterContacts", "outreach"],
+  ["outreachCampaigns", "outreach"], ["outreachCampaign", "outreach"], ["createOutreachCampaign", "outreach"],
+  ["approveOutreachCampaign", "outreach"], ["sendOutreachCampaignBatch", "outreach"],
+  ["saveOutreachDraft", "outreach"], ["updateOutreachOutcome", "outreach"], ["updateOutreachBusiness", "outreach"],
+  ["updateOutreachPrograms", "outreach"], ["upsertNewsletterContact", "outreach"], ["createOutreachBusiness", "outreach"],
+  ["importOutreachBusinesses", "outreach"], ["sendOutreachEmail", "outreach"], ["sendOutreachTestEmail", "outreach"],
+  ["customerWorkQueue", "orders"], ["updateCustomerApplication", "orders"], ["updateOnlineOrderRequest", "orders"],
+  ["hubSystemStatus", "orders"], ["initializeHardenedHub", "orders"], ["reconcileIntegrations", "orders"],
+  ["initData", "inventory"], ["listSkus", "inventory"], ["addSkuToStore", "inventory"], ["upsertProduct", "inventory"],
+  ["submitCounts", "inventory"], ["createReorder", "inventory"], ["managerGrid", "inventory"], ["salesSinceCount", "inventory"], ["updateStoreContacts", "inventory"],
+]);
 
 function response(statusCode, headers, body) {
   return { statusCode, headers, body: JSON.stringify(body) };
@@ -94,45 +111,10 @@ function staffActionFor(event, body) {
   return body?.action || "";
 }
 
-function staffCodeFor(event) {
-  return event.headers?.["x-staff-code"] || event.headers?.["X-Staff-Code"] || "";
-}
-
-function requestSourceFor(event) {
-  return String(
-    event.headers?.["x-nf-client-connection-ip"] ||
-    event.headers?.["x-forwarded-for"] ||
-    event.headers?.["client-ip"] ||
-    "unknown"
-  ).split(",")[0].trim().slice(0, 120);
-}
-
-function activeFailureState(source, now = Date.now()) {
-  const state = failedStaffAttempts.get(source);
-  if (!state || now - state.startedAt >= FAILED_ATTEMPT_WINDOW_MS) {
-    failedStaffAttempts.delete(source);
-    return null;
-  }
-  return state;
-}
-
-function registerFailedStaffAttempt(source, action, now = Date.now()) {
-  const current = activeFailureState(source, now) || { count:0, startedAt:now };
-  current.count += 1;
-  failedStaffAttempts.set(source, current);
-  console.warn("Rejected staff-code attempt", {
-    action:String(action || "").slice(0, 80),
-    source,
-    attempts:current.count,
-    windowStartedAt:new Date(current.startedAt).toISOString(),
-  });
-  return current;
-}
-
 export async function handler(event) {
   const cors = {
     "Access-Control-Allow-Origin": "*",
-    "Access-Control-Allow-Headers": "Content-Type, X-Staff-Code",
+    "Access-Control-Allow-Headers": "Content-Type",
     "Access-Control-Allow-Methods": "GET, POST, OPTIONS",
     "Content-Type": "application/json",
     "Cache-Control": "no-store",
@@ -150,20 +132,24 @@ export async function handler(event) {
     const action = staffActionFor(event, body);
 
     if (STAFF_ACTIONS.has(action)) {
-      const expectedStaffCode = process.env.STAFF_ACCESS_CODE || "";
-      if (!expectedStaffCode) {
-        return response(503, cors, { ok:false, error:"Staff customer access is not configured.", code:"STAFF_AUTH_NOT_CONFIGURED" });
+      const staff = requireStaffSession(event);
+      if (staff.error) return response(staff.statusCode, cors, { ok:false, error:staff.error, code:staff.code });
+      const area = ACTION_AREAS.get(action);
+      if (!area || !staff.areas?.includes(area)) {
+        return response(403, cors, { ok:false, error:"Your staff account does not have access to this workspace.", code:"STAFF_AREA_FORBIDDEN" });
       }
-      const requestSource = requestSourceFor(event);
-      const failureState = activeFailureState(requestSource);
-      if (failureState?.count >= FAILED_ATTEMPT_LIMIT) {
-        return response(429, { ...cors, "Retry-After":"900" }, { ok:false, error:"Too many incorrect staff-code attempts. Try again later.", code:"STAFF_AUTH_THROTTLED" });
+      if (ADMIN_ACTIONS.has(action) && staff.role !== "admin") {
+        return response(403, cors, { ok:false, error:"This action requires an administrator role.", code:"STAFF_ROLE_FORBIDDEN" });
       }
-      if (staffCodeFor(event) !== expectedStaffCode) {
-        registerFailedStaffAttempt(requestSource, action);
-        return response(401, cors, { ok:false, error:"Enter the staff access code.", code:"STAFF_AUTH_REQUIRED" });
-      }
-      failedStaffAttempts.delete(requestSource);
+      // These fields are written only after browser input has been parsed, so the
+      // Apps Script audit trail receives the identity verified by Zoho, not a name
+      // typed into the page.
+      body.staff_name = staff.name;
+      body.authenticated_staff_name = staff.name;
+      body.authenticated_staff_email = staff.email;
+      body.authenticated_staff_id = staff.sub;
+      body.authenticated_staff_role = staff.role;
+      if (["submitCounts", "createReorder"].includes(action)) body.rep = staff.name;
     }
 
     if (!APPS_SCRIPT_URL) {
