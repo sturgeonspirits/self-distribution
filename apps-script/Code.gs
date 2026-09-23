@@ -115,7 +115,7 @@
  * - Use only in the staging inventory backend until testing is complete.
  *********************************/
 
-const APP_VERSION = "2026.09.23.10";
+const APP_VERSION = "2026.09.23.11";
 
 const SHEET_NAMES = {
   STORES: "Stores",

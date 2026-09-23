@@ -1,10 +1,10 @@
 <!doctype html>
-<!-- App version: 2026.09.23.15-WEB -->
+<!-- App version: 2026.09.23.16-WEB -->
 <html>
 <head>
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover"/>
-  <meta name="app-version" content="2026.09.23.15-WEB" />
+  <meta name="app-version" content="2026.09.23.16-WEB" />
   <title>Sturgeon Distribution Hub</title>
   <style>
     :root{
@@ -2464,7 +2464,7 @@
 
   <footer style="max-width:1200px;margin:18px auto 120px;padding:0 12px;text-align:center;color:#6b7280;font-size:12px;">
     Designed by <a href="https://scriptspirit.dev" target="_blank" rel="noopener noreferrer" style="color:#1d4ed8;text-decoration:none;font-weight:700;">Script Spirit</a>
-<span id="appVersionFooter"> • Version 2026.09.23.15-WEB</span>
+<span id="appVersionFooter"> • Version 2026.09.23.16-WEB</span>
   </footer>
 
 
@@ -2487,7 +2487,7 @@
   window.addEventListener("unhandledrejection", e => console.error("Unhandled promise rejection:", e.reason));
   window.addEventListener("error", e => console.error("Unhandled error:", e.error || e.message));
   const $ = (id) => document.getElementById(id);
-  const APP_VERSION = "2026.09.23.15-WEB";
+  const APP_VERSION = "2026.09.23.16-WEB";
   $("appVersionFooter").textContent = ` • Version ${APP_VERSION}`;
 
   let cache = { stores: [], lines: [] };
@@ -2520,6 +2520,7 @@
   let selectedNewsletterContact = null;
   let selectedOutreachCampaign = null;
   let selectedCampaignApprovalToken = "";
+  let campaignSendInProgress = false;
 
   let customerData = { accounts:[], applications:[], orders:[], summary:{ new_applications:0, active_applications:0, new_orders:0, active_orders:0, invoice_needed:0 } };
   let customerView = ["accounts", "orders", "applications"].includes(localStorage.getItem("customer_work_view")) ? localStorage.getItem("customer_work_view") : "accounts";
@@ -3223,7 +3224,7 @@
     $("outreachCampaignSubtitle").textContent = `${campaign.recipient_count} frozen recipients${excludedCount ? ` • ${excludedCount} excluded` : ""} • ${campaign.status}`;
     $("outreachCampaignNotice").textContent = campaign.status === "Review"
       ? "Open any recipient to edit it or exclude it from this campaign. Approval freezes the exact saved audience and messages; it still does not send email."
-      : campaign.status === "Approved" ? "This audience is approved. “Send remaining” works through the approved audience in 10-recipient chunks, skips delivery-unknown records without retrying them, and sends no further email if the connection outcome is unknown."
+      : campaign.status === "Approved" ? "This audience is approved. “Send remaining” sends one verified recipient at a time, skips delivery-unknown records without retrying them, and sends no further email if the connection outcome is unknown."
       : "This campaign is closed; delivery history remains available below.";
     $("campaignSegmentConfirmRow").hidden = campaign.status !== "Review" || !Number(campaign.unsegmented_count || 0);
     $("campaignSegmentConfirm").checked = false;
@@ -3232,13 +3233,8 @@
     $("reopenOutreachCampaignBtn").hidden = !canReopen;
     $("approveOutreachCampaignBtn").hidden = campaign.status !== "Review";
     $("sendOutreachCampaignBatchBtn").hidden = campaign.status !== "Approved";
-    $("sendOutreachCampaignBatchBtn").disabled = !outreachCanSend;
     $("sendRemainingCampaignBtn").hidden = campaign.status !== "Approved";
-    $("sendRemainingCampaignBtn").disabled = !outreachCanSend;
-    const sendDisabledMessage = outreachSendConfigurationDetail || "The mailer has not confirmed that live sending is available.";
-    $("sendOutreachCampaignBatchBtn").title = outreachCanSend ? "Send the next approved recipients" : sendDisabledMessage;
-    $("sendRemainingCampaignBtn").title = outreachCanSend ? "Send all remaining approved recipients" : sendDisabledMessage;
-    setCampaignStatus(campaign.status === "Approved" && !outreachCanSend ? `Send remaining is disabled: ${sendDisabledMessage}` : "");
+    refreshCampaignSendControls();
     const editable = campaign.status === "Review";
     $("outreachCampaignRecipients").innerHTML = `<div class="outreachList">${(campaign.recipients || []).map((recipient, index) => `
       <details class="outreachCard"><summary><strong>${escapeHtml(recipient.business)}</strong><span class="smallMuted"> • ${escapeHtml(recipient.email)} • ${escapeHtml(recipient.status)}</span><br><span class="smallMuted">${escapeHtml(recipient.subject)}${recipient.segment ? ` • ${escapeHtml(recipient.segment)}` : " • Default Segment C"}</span></summary>
@@ -3330,19 +3326,52 @@
     }
   }
 
+  function refreshCampaignSendControls(){
+    const campaign = selectedOutreachCampaign;
+    const approved = campaign?.status === "Approved";
+    const pendingDetail = outreachSendConfigurationDetail || "The mailer will verify sending availability when you send.";
+    $("sendOutreachCampaignBatchBtn").disabled = !approved || campaignSendInProgress;
+    $("sendRemainingCampaignBtn").disabled = !approved || campaignSendInProgress;
+    $("sendOutreachCampaignBatchBtn").title = outreachCanSend ? "Send up to the next 10 approved recipients" : pendingDetail;
+    $("sendRemainingCampaignBtn").title = outreachCanSend ? "Send all remaining approved recipients" : pendingDetail;
+    if (approved && !outreachCanSend && !campaignSendInProgress) {
+      setCampaignStatus(`Sending availability: ${pendingDetail} The server will verify again when you send.`);
+    }
+  }
+
+  async function sendCampaignRecipients(campaign, staffName, maximum, continueAfterBlock){
+    let sent = 0, blocked = 0, remaining = Number(campaign?.counts?.["Ready to send"] || 0);
+    let attempts = 0;
+    while (remaining > 0 && attempts < maximum) {
+      $("outreachCampaignStatus").textContent = `Sending… ${sent} sent • ${blocked} unresolved • ${remaining} remaining.`;
+      const res = await staffApiPost({ action:"sendOutreachCampaignBatch", campaign_id:campaign.campaign_id, approval_token:selectedCampaignApprovalToken, batch_size:1, continue_after_block:continueAfterBlock, staff_name:staffName });
+      if (!res.ok) throw new Error(res.error || "Campaign send could not continue.");
+      const previousRemaining = remaining;
+      sent += Number(res.sent || 0);
+      blocked += Number(res.blocked || 0);
+      remaining = Number(res.remaining || 0);
+      attempts += 1;
+      if (remaining >= previousRemaining && !Number(res.sent || 0)) {
+        throw new Error("Campaign send made no confirmed progress. Refresh before continuing.");
+      }
+      if (Number(res.blocked || 0) && !continueAfterBlock) break;
+    }
+    return { sent, blocked, remaining, attempts };
+  }
+
   async function sendOutreachCampaignBatch(){
     const campaign = selectedOutreachCampaign;
     const staffName = $("outreachStaffName").value.trim();
     if (!campaign || !staffName) return toast("Enter your staff name before sending.");
     if (!selectedCampaignApprovalToken) return toast("Refresh and re-open this campaign before sending a batch.");
-    if (!confirm(`Send the next 10 approved emails from “${campaign.name}”? The batch stops if any recipient is blocked.`)) return;
-    $("sendOutreachCampaignBatchBtn").disabled = true; $("outreachCampaignStatus").textContent = "Sending controlled batch...";
+    if (!confirm(`Send up to the next 10 approved emails from “${campaign.name}”? Each email is sent in its own verified request; the run stops if any recipient is blocked.`)) return;
+    campaignSendInProgress = true; refreshCampaignSendControls();
     try {
-      const res = await staffApiPost({ action:"sendOutreachCampaignBatch", campaign_id:campaign.campaign_id, approval_token:selectedCampaignApprovalToken, batch_size:10, staff_name:staffName });
-      if (!res.ok) throw new Error(res.error || "Batch could not be sent.");
+      const res = await sendCampaignRecipients(campaign, staffName, 10, false);
       await loadOutreachCampaigns(); await openOutreachCampaign(campaign.campaign_id);
       $("outreachCampaignStatus").textContent = `${res.sent} sent • ${res.blocked} blocked • ${res.remaining} remaining.`;
-    } catch (error) { $("outreachCampaignStatus").textContent = error.message || String(error); $("sendOutreachCampaignBatchBtn").disabled = false; }
+    } catch (error) { $("outreachCampaignStatus").textContent = error.message || String(error); }
+    finally { campaignSendInProgress = false; refreshCampaignSendControls(); }
   }
 
   async function sendRemainingCampaign(){
@@ -3352,26 +3381,15 @@
     if (!campaign || !staffName) return toast("Enter your staff name before sending.");
     if (!selectedCampaignApprovalToken) return toast("Refresh and re-open this campaign before sending.");
     if (!ready) return toast("No approved recipients are waiting to send.");
-    if (!confirm(`Send all ${ready} remaining approved emails from “${campaign.name}”? This runs in 10-recipient chunks, skips delivery-unknown recipients without retrying them, and continues with the rest.`)) return;
-    $("sendRemainingCampaignBtn").disabled = true;
-    $("sendOutreachCampaignBatchBtn").disabled = true;
-    let sentTotal = 0; let blockedTotal = 0; let remaining = ready;
+    if (!confirm(`Send all ${ready} remaining approved emails from “${campaign.name}”? Each email is sent in its own verified request, skips delivery-unknown recipients without retrying them, and continues with the rest.`)) return;
+    campaignSendInProgress = true; refreshCampaignSendControls();
     try {
-      while (remaining > 0) {
-        $("outreachCampaignStatus").textContent = `Sending… ${sentTotal} sent • ${blockedTotal} unresolved • ${remaining} remaining.`;
-        const res = await staffApiPost({ action:"sendOutreachCampaignBatch", campaign_id:campaign.campaign_id, approval_token:selectedCampaignApprovalToken, batch_size:10, continue_after_block:true, staff_name:staffName });
-        if (!res.ok) throw new Error(res.error || "Campaign run could not continue.");
-        sentTotal += Number(res.sent || 0);
-        blockedTotal += Number(res.blocked || 0);
-        remaining = Number(res.remaining || 0);
-      }
+      const res = await sendCampaignRecipients(campaign, staffName, ready, true);
       await loadOutreachCampaigns(); await openOutreachCampaign(campaign.campaign_id);
-      $("outreachCampaignStatus").textContent = `Campaign run complete: ${sentTotal} sent • ${blockedTotal} unresolved.`;
+      $("outreachCampaignStatus").textContent = `Campaign run complete: ${res.sent} sent • ${res.blocked} unresolved.`;
     } catch (error) {
       $("outreachCampaignStatus").textContent = `Campaign run stopped before a confirmed result: ${error.message || String(error)} Refresh the campaign before continuing.`;
-      $("sendRemainingCampaignBtn").disabled = false;
-      $("sendOutreachCampaignBatchBtn").disabled = false;
-    }
+    } finally { campaignSendInProgress = false; refreshCampaignSendControls(); }
   }
 
   function renderOutreach(){

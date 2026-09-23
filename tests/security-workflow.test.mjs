@@ -256,7 +256,12 @@ test("source contains formula protection, global error listeners, and recoverabl
   assert.match(index, /action:"reopenOutreachCampaign"/);
   assert.match(index, /action:"sendOutreachCampaignBatch"/);
   assert.match(index, /function sendRemainingCampaign\(\)/);
-  assert.match(index, /continue_after_block:true/);
+  assert.match(index, /function refreshCampaignSendControls\(\)/);
+  assert.match(index, /function sendCampaignRecipients\(/);
+  assert.match(index, /batch_size:1/);
+  assert.doesNotMatch(index, /batch_size:10/);
+  assert.match(index, /continue_after_block:continueAfterBlock/);
+  assert.match(index, /sendCampaignRecipients\(campaign, staffName, ready, true\)/);
   assert.match(backend, /CacheService\.getScriptCache\(\)/);
   assert.match(backend, /if \(!__OUTREACH_SS\) __OUTREACH_SS = SpreadsheetApp\.openById/);
   assert.match(backend, /const reasons = testMode \? \[\] : outreachSendEligibility_\(record\)/);
