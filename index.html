@@ -1,5 +1,5 @@
 <!doctype html>
-<!-- App version: 2026.09.23.9-WEB -->
+<!-- App version: 2026.09.23.10-WEB -->
 <html>
 <head>
   <meta charset="utf-8" />
@@ -2463,7 +2463,7 @@
 
   <footer style="max-width:1200px;margin:18px auto 120px;padding:0 12px;text-align:center;color:#6b7280;font-size:12px;">
     Designed by <a href="https://scriptspirit.dev" target="_blank" rel="noopener noreferrer" style="color:#1d4ed8;text-decoration:none;font-weight:700;">Script Spirit</a>
-<span id="appVersionFooter"> • Version 2026.09.23.9-WEB</span>
+<span id="appVersionFooter"> • Version 2026.09.23.10-WEB</span>
   </footer>
 
 
@@ -2486,7 +2486,7 @@
   window.addEventListener("unhandledrejection", e => console.error("Unhandled promise rejection:", e.reason));
   window.addEventListener("error", e => console.error("Unhandled error:", e.error || e.message));
   const $ = (id) => document.getElementById(id);
-  const APP_VERSION = "2026.09.23.9-WEB";
+  const APP_VERSION = "2026.09.23.10-WEB";
   $("appVersionFooter").textContent = ` • Version ${APP_VERSION}`;
 
   let cache = { stores: [], lines: [] };
@@ -3305,7 +3305,7 @@
       const res = await staffApiPost({ action:"reopenOutreachCampaign", campaign_id:campaign.campaign_id, staff_name:staffName });
       if (!res.ok) throw new Error(res.error || "Campaign could not be reopened.");
       await loadOutreachCampaigns(); await openOutreachCampaign(campaign.campaign_id);
-      $("outreachCampaignStatus").textContent = `${remaining} unsent recipients reopened. No email was sent.`;
+      $("outreachCampaignStatus").textContent = res.message || `${remaining} unsent recipients reopened. No email was sent.`;
     } catch (error) {
       $("outreachCampaignStatus").textContent = error.message || String(error);
       $("reopenOutreachCampaignBtn").disabled = false;

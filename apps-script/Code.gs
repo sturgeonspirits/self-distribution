@@ -1,6 +1,6 @@
 /*********************************
  * Inventory API (JSON) for Netlify
- * App version: 2026.09.23.7
+ * App version: 2026.09.23.8
  *
  * CHANGES IN THIS VERSION
  * - Allowed Karl-only test sends for saved drafts whose prospect email is missing or unverified.
@@ -109,7 +109,7 @@
  * - Use only in the staging inventory backend until testing is complete.
  *********************************/
 
-const APP_VERSION = "2026.09.23.7";
+const APP_VERSION = "2026.09.23.8";
 
 const SHEET_NAMES = {
   STORES: "Stores",
@@ -2203,20 +2203,36 @@ function apiReopenOutreachCampaign_(p) {
     const recipients = campaignRecipientRows_(sheets.recipients, p.campaign_id);
     const pending = recipients.filter(item => String(item.values[item.headers.status] || "") === "Ready to send");
     if (!pending.length) throw new Error("There are no unsent campaign recipients to reopen.");
+    const leadSheet = getOutreachSheet_(OUTREACH_SHEET_NAME);
+    const leadHeaders = getHeaderMap_(leadSheet);
+    let correctedSubjects = 0;
     pending.forEach(item => {
+      const rh = item.headers;
+      const sourceRow = Number(item.values[rh.source_row] || 0);
+      const source = sourceRow >= 2 && sourceRow <= leadSheet.getLastRow()
+        ? leadSheet.getRange(sourceRow, 1, 1, leadSheet.getLastColumn()).getValues()[0] : null;
+      const city = source && leadHeaders.city !== undefined ? String(source[leadHeaders.city] || "").trim().toLowerCase() : "";
+      const currentSubject = String(item.values[rh.subject] || "");
+      if (city && city !== "oshkosh" && currentSubject.includes("made here in Oshkosh")) {
+        item.values[rh.subject] = currentSubject.replace("made here in Oshkosh", "made in Oshkosh");
+        item.values[rh.content_checksum] = sha256_([item.values[rh.source_row], item.values[rh.account_id], item.values[rh.business_name], item.values[rh.recipient_email], item.values[rh.subject], item.values[rh.body_text]].join("|"));
+        correctedSubjects += 1;
+      }
       item.values[item.headers.status] = "Ready for review";
       item.values[item.headers.result_detail] = "Reopened for edits before delivery.";
       item.values[item.headers.app_version] = APP_VERSION;
       sheets.recipients.getRange(item.row, 1, 1, item.values.length).setValues([item.values]);
     });
+    const updatedRecipients = campaignRecipientRows_(sheets.recipients, p.campaign_id);
+    campaign.values[ch.audience_checksum] = sha256_(updatedRecipients.map(item => `${item.values[item.headers.source_row]}|${item.values[item.headers.recipient_email]}|${item.values[item.headers.content_checksum]}`).join("\n"));
     campaign.values[ch.status] = "Review";
     campaign.values[ch.approved_at] = "";
     campaign.values[ch.approved_by] = "";
     campaign.values[ch.approval_token] = "";
     campaign.values[ch.app_version] = APP_VERSION;
     sheets.campaigns.getRange(campaign.row, 1, 1, campaign.values.length).setValues([campaign.values]);
-    appendAudit_("REOPEN_OUTREACH_CAMPAIGN", "Campaign", p.campaign_id, "", authenticatedActor_(p, "Sturgeon Distribution Hub"), OUTREACH_CAMPAIGNS_SHEET_NAME, OUTREACH_CAMPAIGN_RECIPIENTS_SHEET_NAME, "Review", `${pending.length} unsent recipients reopened for edits; sent and excluded recipients were unchanged.`);
-    return { message:`${pending.length} unsent recipients reopened for edits. No email was sent.`, recipient_count:pending.length };
+    appendAudit_("REOPEN_OUTREACH_CAMPAIGN", "Campaign", p.campaign_id, "", authenticatedActor_(p, "Sturgeon Distribution Hub"), OUTREACH_CAMPAIGNS_SHEET_NAME, OUTREACH_CAMPAIGN_RECIPIENTS_SHEET_NAME, "Review", `${pending.length} unsent recipients reopened for edits; ${correctedSubjects} non-Oshkosh subjects corrected; sent and excluded recipients were unchanged.`);
+    return { message:`${pending.length} unsent recipients reopened; ${correctedSubjects} non-Oshkosh subjects corrected. No email was sent.`, recipient_count:pending.length, corrected_subjects:correctedSubjects };
   } finally { lock.releaseLock(); }
 }
 

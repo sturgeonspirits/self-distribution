@@ -261,6 +261,7 @@ test("source contains formula protection, global error listeners, and recoverabl
   assert.match(backend, /function apiReopenOutreachCampaign_\(/);
   assert.match(backend, /function apiSendOutreachCampaignBatch_\(/);
   assert.match(backend, /Only an unsent recipient returned to review can be edited/);
+  assert.match(backend, /made here in Oshkosh/, "reopen corrects the exact non-Oshkosh subject phrase");
   assert.match(backend, /Stop on the first anomaly/);
   assert.match(backend, /Campaign created for review\. No email was sent\./);
   assert.match(backend, /Campaign approved\. No email was sent\./);
