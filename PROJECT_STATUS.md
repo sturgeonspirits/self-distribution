@@ -8,7 +8,7 @@ Read this file before inspecting the repository or changing the application. Upd
 
 | Component | Source version | Deployment state |
 | --- | --- | --- |
-| Netlify web app and staff proxy | `2026.09.23.14-WEB` | Source updated on 2026-09-23; deployment pending. It lets fetch follow the single-use Apps Script redirect, avoiding the proxy-generated 404 that disabled campaign sending. |
+| Netlify web app and staff proxy | `2026.09.23.15-WEB` | Source updated on 2026-09-23; deployment pending. It displays the mailer's exact live-send safety status in the campaign dialog rather than silently disabling Send remaining. |
 | Inventory API Apps Script | `2026.09.23.11` | Source updated on 2026-09-23; deployment pending. It safely reopens genuinely unsent blocked recipients after an Activity Log check, prevents a Zoho-accepted message from returning to the resend path if recording fails, and locks approval. |
 | Distribution Outreach Apps Script | `2026.09.22.9-APP` | Source is committed; owner has not yet confirmed this exact version is deployed |
 | Public customer Netlify proxy | `2026.09.18.3-WEB` | Deployed with Netlify; unchanged by the latest staff-app UI work |

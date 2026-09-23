@@ -1,10 +1,10 @@
 <!doctype html>
-<!-- App version: 2026.09.23.14-WEB -->
+<!-- App version: 2026.09.23.15-WEB -->
 <html>
 <head>
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover"/>
-  <meta name="app-version" content="2026.09.23.14-WEB" />
+  <meta name="app-version" content="2026.09.23.15-WEB" />
   <title>Sturgeon Distribution Hub</title>
   <style>
     :root{
@@ -2464,7 +2464,7 @@
 
   <footer style="max-width:1200px;margin:18px auto 120px;padding:0 12px;text-align:center;color:#6b7280;font-size:12px;">
     Designed by <a href="https://scriptspirit.dev" target="_blank" rel="noopener noreferrer" style="color:#1d4ed8;text-decoration:none;font-weight:700;">Script Spirit</a>
-<span id="appVersionFooter"> • Version 2026.09.23.14-WEB</span>
+<span id="appVersionFooter"> • Version 2026.09.23.15-WEB</span>
   </footer>
 
 
@@ -2487,7 +2487,7 @@
   window.addEventListener("unhandledrejection", e => console.error("Unhandled promise rejection:", e.reason));
   window.addEventListener("error", e => console.error("Unhandled error:", e.error || e.message));
   const $ = (id) => document.getElementById(id);
-  const APP_VERSION = "2026.09.23.14-WEB";
+  const APP_VERSION = "2026.09.23.15-WEB";
   $("appVersionFooter").textContent = ` • Version ${APP_VERSION}`;
 
   let cache = { stores: [], lines: [] };
@@ -2532,6 +2532,7 @@
   let inventoryLoaded = false;
   let outreachCanSend = false;
   let outreachTestSendAvailable = false;
+  let outreachSendConfigurationDetail = "";
   let outreachIsMock = false;
   let selectedOutreachSendToken = "";
   let pendingBusinessImport = [];
@@ -3234,7 +3235,10 @@
     $("sendOutreachCampaignBatchBtn").disabled = !outreachCanSend;
     $("sendRemainingCampaignBtn").hidden = campaign.status !== "Approved";
     $("sendRemainingCampaignBtn").disabled = !outreachCanSend;
-    $("outreachCampaignStatus").textContent = campaign.status === "Approved" && !outreachCanSend ? "Live sending is not configured yet. You can still review the campaign." : "";
+    const sendDisabledMessage = outreachSendConfigurationDetail || "The mailer has not confirmed that live sending is available.";
+    $("sendOutreachCampaignBatchBtn").title = outreachCanSend ? "Send the next approved recipients" : sendDisabledMessage;
+    $("sendRemainingCampaignBtn").title = outreachCanSend ? "Send all remaining approved recipients" : sendDisabledMessage;
+    setCampaignStatus(campaign.status === "Approved" && !outreachCanSend ? `Send remaining is disabled: ${sendDisabledMessage}` : "");
     const editable = campaign.status === "Review";
     $("outreachCampaignRecipients").innerHTML = `<div class="outreachList">${(campaign.recipients || []).map((recipient, index) => `
       <details class="outreachCard"><summary><strong>${escapeHtml(recipient.business)}</strong><span class="smallMuted"> • ${escapeHtml(recipient.email)} • ${escapeHtml(recipient.status)}</span><br><span class="smallMuted">${escapeHtml(recipient.subject)}${recipient.segment ? ` • ${escapeHtml(recipient.segment)}` : " • Default Segment C"}</span></summary>
@@ -3464,6 +3468,7 @@
     if (Object.prototype.hasOwnProperty.call(res, "is_mock")) outreachIsMock = !!res.is_mock;
     outreachCanSend = !!res.can_send && !outreachIsMock;
     outreachTestSendAvailable = !!res.test_send_available && !outreachIsMock;
+    outreachSendConfigurationDetail = String(res.send_configuration_detail || res.detail || "");
     const noticeText = $("outreachModeNotice").querySelector("span");
     noticeText.textContent = res.is_mock
       ? `Local mock data: ${Number(res.summary?.total_businesses || 0)} sample businesses. The staging connection will load the complete spreadsheet directory.`
