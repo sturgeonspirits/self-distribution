@@ -1,6 +1,6 @@
 /*********************************
  * Inventory API (JSON) for Netlify
- * App version: 2026.09.23.5
+ * App version: 2026.09.23.6
  *
  * CHANGES IN THIS VERSION
  * - Allowed Karl-only test sends for saved drafts whose prospect email is missing or unverified.
@@ -109,7 +109,7 @@
  * - Use only in the staging inventory backend until testing is complete.
  *********************************/
 
-const APP_VERSION = "2026.09.23.5";
+const APP_VERSION = "2026.09.23.6";
 
 const SHEET_NAMES = {
   STORES: "Stores",
@@ -1941,20 +1941,17 @@ function apiGetOutreachDashboard_() {
 // possible without changing a source lead or sending anything at creation time.
 function outreachCampaignSheets_() {
   const ss = getOutreachSs_();
-  const campaigns = ensureSheet_(ss, OUTREACH_CAMPAIGNS_SHEET_NAME, [
-    "Campaign ID", "Campaign Name", "Audience", "Status", "Recipient Count", "Audience Checksum",
-    "Unsegmented Count", "Created At", "Created By", "Approved At", "Approved By", "Approval Token",
-    "Last Batch At", "Sent Count", "Blocked Count", "App Version"
-  ]);
-  const recipients = ensureSheet_(ss, OUTREACH_CAMPAIGN_RECIPIENTS_SHEET_NAME, [
-    "Campaign ID", "Source Row", "Account ID", "Business Name", "Recipient Email", "Contact", "Priority",
-    "Email Confidence", "Segment", "Wave", "Subject", "Body Text", "HTML", "Content Checksum",
-    "Status", "Result Detail", "Zoho Message ID", "Sent At", "Idempotency Token", "App Version", "Footer HTML"
-  ]);
-  ensureHeaderColumns_(recipients, ["Footer HTML"]);
   return {
-    campaigns:campaigns,
-    recipients:recipients,
+    campaigns: ensureSheet_(ss, OUTREACH_CAMPAIGNS_SHEET_NAME, [
+      "Campaign ID", "Campaign Name", "Audience", "Status", "Recipient Count", "Audience Checksum",
+      "Unsegmented Count", "Created At", "Created By", "Approved At", "Approved By", "Approval Token",
+      "Last Batch At", "Sent Count", "Blocked Count", "App Version"
+    ]),
+    recipients: ensureSheet_(ss, OUTREACH_CAMPAIGN_RECIPIENTS_SHEET_NAME, [
+      "Campaign ID", "Source Row", "Account ID", "Business Name", "Recipient Email", "Contact", "Priority",
+      "Email Confidence", "Segment", "Wave", "Subject", "Body Text", "HTML", "Content Checksum",
+      "Status", "Result Detail", "Zoho Message ID", "Sent At", "Idempotency Token", "App Version"
+    ]),
   };
 }
 
@@ -1985,7 +1982,7 @@ function campaignObject_(campaign, recipients, includeRecipients) {
       business:String(get("business_name") || ""), email:String(get("recipient_email") || ""),
       contact:String(get("contact") || ""), priority:String(get("priority") || ""),
       email_confidence:String(get("email_confidence") || ""), segment:String(get("segment") || ""), wave:String(get("wave") || ""),
-      subject:String(get("subject") || ""), body_text:String(get("body_text") || ""), preview_html:String(get("html") || ""), footer_html:String(get("footer_html") || ""),
+      subject:String(get("subject") || ""), body_text:String(get("body_text") || ""), preview_html:String(get("html") || ""),
       content_checksum:String(get("content_checksum") || ""), status:String(get("status") || ""),
       result_detail:String(get("result_detail") || ""), message_id:String(get("zoho_message_id") || ""),
       sent_at:get("sent_at") || "", idempotency_token:String(get("idempotency_token") || ""),
@@ -2028,7 +2025,7 @@ function apiGetOutreachCampaign_(p) {
 
 function campaignRecipientFooterHtml_(recipient, settings, draftMap) {
   const rh = recipient.headers;
-  const stored = String(recipient.values[rh.footer_html] || "");
+  const stored = rh.footer_html === undefined ? "" : String(recipient.values[rh.footer_html] || "");
   if (stored) return stored;
   const sourceRow = Number(recipient.values[rh.source_row] || 0);
   const leadSheet = getOutreachSheet_(OUTREACH_SHEET_NAME);
@@ -2093,7 +2090,7 @@ function apiUpdateOutreachCampaignRecipient_(p) {
     recipient.values[rh.subject] = subject;
     recipient.values[rh.body_text] = bodyText;
     recipient.values[rh.html] = outreachPlainTextToHtml_(bodyText) + footerHtml;
-    recipient.values[rh.footer_html] = footerHtml;
+    if (rh.footer_html !== undefined) recipient.values[rh.footer_html] = footerHtml;
     recipient.values[rh.content_checksum] = checksum;
     recipient.values[rh.app_version] = APP_VERSION;
     sheets.recipients.getRange(recipient.row, 1, 1, recipient.values.length).setValues([recipient.values]);
@@ -2145,7 +2142,7 @@ function apiCreateOutreachCampaign_(p) {
       const checksum = sha256_([record.source_row, record.account_id, record.business, record.email, record.subject, record.body_text].join("|"));
       return [campaignId, record.source_row, record.account_id, record.business, record.email, record.contact, record.priority,
         record.email_confidence, record.segment, record.wave, record.subject, record.body_text, record.preview_html, checksum,
-        "Ready for review", "", "", "", `${campaignId}-${record.source_row}`, APP_VERSION, record.message_footer_html || ""];
+        "Ready for review", "", "", "", `${campaignId}-${record.source_row}`, APP_VERSION];
     });
     const audienceChecksum = sha256_(recipientRows.map(row => `${row[1]}|${row[4]}|${row[13]}`).join("\n"));
     const unsegmentedCount = eligible.filter(record => !String(record.segment || "").trim()).length;

@@ -9,7 +9,7 @@ Read this file before inspecting the repository or changing the application. Upd
 | Component | Source version | Deployment state |
 | --- | --- | --- |
 | Netlify web app and staff proxy | `2026.09.23.5-WEB` | Source updated on 2026-09-23; deployment pending. Zoho sign-in is verified for Karl, while anonymous `/api/auth?action=session` requests correctly report `STAFF_AUTH_REQUIRED`. |
-| Inventory API Apps Script | `2026.09.23.5` | Source updated on 2026-09-23; deployment pending. Campaign review supports audited edits and review-only per-recipient exclusions before approval. |
+| Inventory API Apps Script | `2026.09.23.6` | Source updated on 2026-09-23; deployment pending. Campaign review supports audited edits and review-only per-recipient exclusions before approval without mutating the campaign-recipient sheet schema on a read. |
 | Distribution Outreach Apps Script | `2026.09.22.9-APP` | Source is committed; owner has not yet confirmed this exact version is deployed |
 | Public customer Netlify proxy | `2026.09.18.3-WEB` | Deployed with Netlify; unchanged by the latest staff-app UI work |
 
@@ -178,7 +178,7 @@ If a send times out or returns an unreadable response, do not retry blindly. Che
 - Zoho OIDC login and Karl's `admin` role are deployed and verified. A second, non-admin staff-account verification remains outstanding.
 - Toast remains disconnected until read-only API access and SKU mapping are verified.
 - Newsletter records exist, but newsletter sending remains disabled.
-- Campaign review exclusion needs a live verification after deploying Inventory API `2026.09.23.5`. Do not approve or send a live campaign until the configuration and a Karl-only test batch have been verified.
+- Campaign review exclusion needs a live verification after deploying Inventory API `2026.09.23.6`. Do not approve or send a live campaign until the configuration and a Karl-only test batch have been verified.
 - Replace `STAFF_ROLES_JSON` with a dedicated, sheet-managed staff access roster. It should support immediate add/remove/change of role and permitted work areas without a Netlify environment-variable edit or redeploy, while preserving server-side authorization and audit attribution.
 
 ## Low-token workflow for future Codex tasks
