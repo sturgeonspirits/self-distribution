@@ -78,7 +78,7 @@ test("authenticated inventory GET and POST preserve action payload, API key, and
   assert.equal(JSON.parse(postResponse.body).ok, true);
 });
 
-test("inventory proxy follows Apps Script redirects explicitly and rejects HTML", async () => {
+test("inventory proxy follows Apps Script redirects explicitly and classifies HTML", async () => {
   const { handler } = await loadFunction("netlify/functions/inventory.js", "redirect-regression");
   process.env.APPS_SCRIPT_URL = "https://script.google.test/exec";
   process.env.API_KEY = "backend-key";
@@ -98,7 +98,12 @@ test("inventory proxy follows Apps Script redirects explicitly and rejects HTML"
   globalThis.fetch = async () => new Response("<!doctype html><title>Page Not Found</title>", { status:200, headers:{ "content-type":"text/html" } });
   const invalid = await handler(event("managerGrid", { method:"GET", session:staffSession() }));
   assert.equal(invalid.statusCode, 502);
-  assert.match(JSON.parse(invalid.body).error, /non-JSON response/);
+  assert.equal(JSON.parse(invalid.body).code, "UPSTREAM_NON_JSON");
+  assert.match(JSON.parse(invalid.body).error, /text\/html instead of JSON/);
+
+  globalThis.fetch = async () => new Response("<!doctype html><title>Sign in to continue</title>", { status:200, headers:{ "content-type":"text/html" } });
+  const signIn = await handler(event("managerGrid", { method:"GET", session:staffSession() }));
+  assert.match(JSON.parse(signIn.body).error, /sign-in page/i);
 });
 
 test("email sends use one non-retrying upstream attempt", async () => {

@@ -1,7 +1,7 @@
-// App version: 2026.09.23.5-WEB
+// App version: 2026.09.23.6-WEB
 import { requireStaffSession } from "./auth.js";
 
-const APP_VERSION = "2026.09.23.5-WEB";
+const APP_VERSION = "2026.09.23.6-WEB";
 const STAFF_ACTIONS = new Set([
   "outreachDashboard",
   "outreachSendStatus",
@@ -111,11 +111,30 @@ async function fetchAppsScript(url, options = {}, policy = {}) {
     : `Inventory API connection failed after ${attempts} attempts: ${String(lastError)}`);
 }
 
+function nonJsonUpstreamDetail(upstream, text) {
+  const contentType = String(upstream.headers.get("content-type") || "unknown").split(";")[0];
+  const title = (text.match(/<title[^>]*>\s*([^<]{1,120})\s*<\/title>/i) || [])[1] || "";
+  const normalized = `${title} ${text.slice(0, 800)}`.toLowerCase();
+  if (/accounts\.google\.com|servicelogin|sign in to continue/.test(normalized)) {
+    return "Google returned a sign-in page instead of the Inventory API response.";
+  }
+  if (/script error|google apps script|exception:/.test(normalized)) {
+    return "Google returned an Apps Script error page instead of the Inventory API response.";
+  }
+  return `Inventory API returned ${contentType} instead of JSON (HTTP ${upstream.status}).`;
+}
+
 async function proxyResult(upstream, cors) {
   const text = await upstream.text();
   try { JSON.parse(text); }
   catch (error) {
-    return response(502, cors, { ok:false, error:"The Inventory API returned a non-JSON response. Refresh and try again." });
+    const detail = nonJsonUpstreamDetail(upstream, text);
+    console.error("Inventory API returned non-JSON", {
+      status:upstream.status,
+      contentType:upstream.headers.get("content-type") || "unknown",
+      detail,
+    });
+    return response(502, cors, { ok:false, code:"UPSTREAM_NON_JSON", error:detail });
   }
   return { statusCode:upstream.ok ? 200 : 502, headers:cors, body:text };
 }
