@@ -1,10 +1,10 @@
 <!doctype html>
-<!-- App version: 2026.09.23.11-WEB -->
+<!-- App version: 2026.09.23.12-WEB -->
 <html>
 <head>
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover"/>
-  <meta name="app-version" content="2026.09.22.7-WEB" />
+  <meta name="app-version" content="2026.09.23.12-WEB" />
   <title>Sturgeon Distribution Hub</title>
   <style>
     :root{
@@ -723,6 +723,7 @@
 
     .smallMuted{font-size:12px;color:var(--muted)}
     .status{font-size:12px;color:var(--muted);margin-top:8px;white-space:pre-wrap}
+    .status.error{color:var(--red);font-weight:700}
 
     .topTools{
       display:flex;
@@ -2301,7 +2302,7 @@
     </div>
     <div class="dlgBody">
       <div class="modeNotice" style="margin-top:0"><i data-lucide="shield-check"></i><span id="outreachCampaignNotice">Review the frozen audience before approving delivery.</span></div>
-      <div class="status" id="outreachCampaignStatus"></div>
+      <div class="status" id="outreachCampaignStatus" role="status" aria-live="polite"></div>
       <label class="checkLabel" id="campaignSegmentConfirmRow"><input id="campaignSegmentConfirm" type="checkbox" /><span>I reviewed the standard fallback message used for recipients without a tailored segment.</span></label>
       <div id="outreachCampaignRecipients"></div>
       <div class="dlgActions"><button id="reopenOutreachCampaignBtn" type="button">Reopen unsent for edits</button><button id="approveOutreachCampaignBtn" type="button">Approve campaign</button><button id="sendOutreachCampaignBatchBtn" type="button">Send next 10</button><button class="primary" id="sendRemainingCampaignBtn" type="button">Send remaining</button></div>
@@ -2463,7 +2464,7 @@
 
   <footer style="max-width:1200px;margin:18px auto 120px;padding:0 12px;text-align:center;color:#6b7280;font-size:12px;">
     Designed by <a href="https://scriptspirit.dev" target="_blank" rel="noopener noreferrer" style="color:#1d4ed8;text-decoration:none;font-weight:700;">Script Spirit</a>
-<span id="appVersionFooter"> • Version 2026.09.23.11-WEB</span>
+<span id="appVersionFooter"> • Version 2026.09.23.12-WEB</span>
   </footer>
 
 
@@ -2486,7 +2487,7 @@
   window.addEventListener("unhandledrejection", e => console.error("Unhandled promise rejection:", e.reason));
   window.addEventListener("error", e => console.error("Unhandled error:", e.error || e.message));
   const $ = (id) => document.getElementById(id);
-  const APP_VERSION = "2026.09.23.11-WEB";
+  const APP_VERSION = "2026.09.23.12-WEB";
   $("appVersionFooter").textContent = ` • Version ${APP_VERSION}`;
 
   let cache = { stores: [], lines: [] };
@@ -2593,6 +2594,16 @@
 
   function setOutreachStatus(message){
     $("outreachStatus").textContent = message || "";
+  }
+
+  function setCampaignStatus(message, isError = false){
+    const status = $("outreachCampaignStatus");
+    status.textContent = message || "";
+    status.classList.toggle("error", isError);
+    if (isError) {
+      status.scrollIntoView({ block:"nearest", behavior:"smooth" });
+      toast(message);
+    }
   }
 
   function handleOutreachLoadError(error){
@@ -3302,14 +3313,14 @@
     if (!remaining) return toast("There are no unsent recipients to reopen.");
     if (!confirm(`Reopen ${remaining} unsent recipients for editing? This cancels approval until you review and approve again. Sent and excluded recipients will not change; no email will be sent.`)) return;
     $("reopenOutreachCampaignBtn").disabled = true;
-    $("outreachCampaignStatus").textContent = "Reopening unsent recipients for edits...";
+    setCampaignStatus("Reopening unsent recipients for edits...");
     try {
       const res = await staffApiPost({ action:"reopenOutreachCampaign", campaign_id:campaign.campaign_id, staff_name:staffName });
       if (!res.ok) throw new Error(res.error || "Campaign could not be reopened.");
       await loadOutreachCampaigns(); await openOutreachCampaign(campaign.campaign_id);
-      $("outreachCampaignStatus").textContent = res.message || `${remaining} unsent recipients reopened. No email was sent.`;
+      setCampaignStatus(res.message || `${remaining} unsent recipients reopened. No email was sent.`);
     } catch (error) {
-      $("outreachCampaignStatus").textContent = error.message || String(error);
+      setCampaignStatus(`Could not reopen this campaign: ${error.message || String(error)}`, true);
       $("reopenOutreachCampaignBtn").disabled = false;
     }
   }
