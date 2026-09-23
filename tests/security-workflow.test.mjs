@@ -220,6 +220,8 @@ test("source contains formula protection, global error listeners, and recoverabl
   assert.match(index, /action:"outreachNewsletterContacts"/);
   assert.match(index, /action:"updateOutreachCampaignRecipient"/);
   assert.match(index, /action:"setOutreachCampaignRecipientExclusion"/);
+  assert.match(index, /campaigns: outreachData\.campaigns \|\| \[\]/);
+  assert.match(index, /if \(outreachView === "campaigns"\) loadOutreachCampaigns\(\)\.catch\(handleOutreachLoadError\);/);
   assert.match(backend, /Only a campaign in Review can be edited/);
   assert.match(backend, /Excluded from this campaign/);
   const dashboardSource = backend.match(/function apiGetOutreachDashboard_\(\) \{[\s\S]*?\n\}/)?.[0];

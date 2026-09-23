@@ -8,7 +8,7 @@ Read this file before inspecting the repository or changing the application. Upd
 
 | Component | Source version | Deployment state |
 | --- | --- | --- |
-| Netlify web app and staff proxy | `2026.09.23.6-WEB` | Deployed and live on 2026-09-23. It classifies a non-JSON Apps Script response without exposing upstream contents. Zoho sign-in is verified for Karl, while anonymous `/api/auth?action=session` requests correctly report `STAFF_AUTH_REQUIRED`. |
+| Netlify web app and staff proxy | `2026.09.23.7-WEB` | Source updated on 2026-09-23; deployment pending. It keeps the campaign list through a normal Outreach refresh and reloads it when Campaigns is the active view. Zoho sign-in is verified for Karl, while anonymous `/api/auth?action=session` requests correctly report `STAFF_AUTH_REQUIRED`. |
 | Inventory API Apps Script | `2026.09.23.6` | Karl confirmed this version's web-app deployment and its Execute-as / access settings on 2026-09-23. Campaign review supports audited edits and review-only per-recipient exclusions before approval without mutating the campaign-recipient sheet schema on a read. |
 | Distribution Outreach Apps Script | `2026.09.22.9-APP` | Source is committed; owner has not yet confirmed this exact version is deployed |
 | Public customer Netlify proxy | `2026.09.18.3-WEB` | Deployed with Netlify; unchanged by the latest staff-app UI work |
