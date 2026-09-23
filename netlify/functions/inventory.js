@@ -1,7 +1,7 @@
-// App version: 2026.09.23.8-WEB
+// App version: 2026.09.23.9-WEB
 import { requireStaffSession } from "./auth.js";
 
-const APP_VERSION = "2026.09.23.8-WEB";
+const APP_VERSION = "2026.09.23.9-WEB";
 const STAFF_ACTIONS = new Set([
   "outreachDashboard",
   "outreachSendStatus",
@@ -12,6 +12,7 @@ const STAFF_ACTIONS = new Set([
   "updateOutreachCampaignRecipient",
   "setOutreachCampaignRecipientExclusion",
   "approveOutreachCampaign",
+  "reopenOutreachCampaign",
   "sendOutreachCampaignBatch",
   "saveOutreachDraft",
   "updateOutreachOutcome",
@@ -50,7 +51,7 @@ const ADMIN_ACTIONS = new Set(["initializeHardenedHub", "reconcileIntegrations",
 const ACTION_AREAS = new Map([
   ["outreachDashboard", "outreach"], ["outreachSendStatus", "outreach"], ["outreachNewsletterContacts", "outreach"],
   ["outreachCampaigns", "outreach"], ["outreachCampaign", "outreach"], ["createOutreachCampaign", "outreach"], ["updateOutreachCampaignRecipient", "outreach"], ["setOutreachCampaignRecipientExclusion", "outreach"],
-  ["approveOutreachCampaign", "outreach"], ["sendOutreachCampaignBatch", "outreach"],
+  ["approveOutreachCampaign", "outreach"], ["reopenOutreachCampaign", "outreach"], ["sendOutreachCampaignBatch", "outreach"],
   ["saveOutreachDraft", "outreach"], ["updateOutreachOutcome", "outreach"], ["updateOutreachBusiness", "outreach"],
   ["updateOutreachPrograms", "outreach"], ["upsertNewsletterContact", "outreach"], ["createOutreachBusiness", "outreach"],
   ["importOutreachBusinesses", "outreach"], ["sendOutreachEmail", "outreach"], ["sendOutreachTestEmail", "outreach"],

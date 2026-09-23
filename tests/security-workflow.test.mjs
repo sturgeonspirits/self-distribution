@@ -251,13 +251,16 @@ test("source contains formula protection, global error listeners, and recoverabl
   assert.match(index, /disabled = !canAttempt \|\| !hasRecipientEmail/);
   assert.match(index, /action:"createOutreachCampaign"/);
   assert.match(index, /action:"approveOutreachCampaign"/);
+  assert.match(index, /action:"reopenOutreachCampaign"/);
   assert.match(index, /action:"sendOutreachCampaignBatch"/);
   assert.match(backend, /CacheService\.getScriptCache\(\)/);
   assert.match(backend, /if \(!__OUTREACH_SS\) __OUTREACH_SS = SpreadsheetApp\.openById/);
   assert.match(backend, /const reasons = testMode \? \[\] : outreachSendEligibility_\(record\)/);
   assert.match(backend, /function apiCreateOutreachCampaign_\(/);
   assert.match(backend, /function apiApproveOutreachCampaign_\(/);
+  assert.match(backend, /function apiReopenOutreachCampaign_\(/);
   assert.match(backend, /function apiSendOutreachCampaignBatch_\(/);
+  assert.match(backend, /Only an unsent recipient returned to review can be edited/);
   assert.match(backend, /Stop on the first anomaly/);
   assert.match(backend, /Campaign created for review\. No email was sent\./);
   assert.match(backend, /Campaign approved\. No email was sent\./);

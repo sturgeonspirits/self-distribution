@@ -1,6 +1,6 @@
 /*********************************
  * Inventory API (JSON) for Netlify
- * App version: 2026.09.23.6
+ * App version: 2026.09.23.7
  *
  * CHANGES IN THIS VERSION
  * - Allowed Karl-only test sends for saved drafts whose prospect email is missing or unverified.
@@ -109,7 +109,7 @@
  * - Use only in the staging inventory backend until testing is complete.
  *********************************/
 
-const APP_VERSION = "2026.09.23.6";
+const APP_VERSION = "2026.09.23.7";
 
 const SHEET_NAMES = {
   STORES: "Stores",
@@ -496,7 +496,7 @@ function handle_(e, body) {
     assertAuthorized_(e, body);
     const action = (e?.parameter?.action) || (body?.action) || "";
     if (!action) {
-      return json_({ ok:true, service:"sturgeon-distribution-hub", version:APP_VERSION, actions:["initData","listSkus","addSkuToStore","upsertProduct","submitCounts","createReorder","managerGrid","salesSinceCount","updateStoreContacts","outreachDashboard","outreachSendStatus","outreachNewsletterContacts","outreachCampaigns","outreachCampaign","createOutreachCampaign","updateOutreachCampaignRecipient","setOutreachCampaignRecipientExclusion","approveOutreachCampaign","sendOutreachCampaignBatch","saveOutreachDraft","sendOutreachEmail","sendOutreachTestEmail","updateOutreachOutcome","updateOutreachBusiness","updateOutreachPrograms","createOutreachBusiness","importOutreachBusinesses","upsertNewsletterContact","submitCustomerApplication","submitOnlineOrderRequest","customerWorkQueue","updateCustomerApplication","updateOnlineOrderRequest","hubSystemStatus","initializeHardenedHub","reconcileIntegrations"] });
+      return json_({ ok:true, service:"sturgeon-distribution-hub", version:APP_VERSION, actions:["initData","listSkus","addSkuToStore","upsertProduct","submitCounts","createReorder","managerGrid","salesSinceCount","updateStoreContacts","outreachDashboard","outreachSendStatus","outreachNewsletterContacts","outreachCampaigns","outreachCampaign","createOutreachCampaign","updateOutreachCampaignRecipient","setOutreachCampaignRecipientExclusion","approveOutreachCampaign","reopenOutreachCampaign","sendOutreachCampaignBatch","saveOutreachDraft","sendOutreachEmail","sendOutreachTestEmail","updateOutreachOutcome","updateOutreachBusiness","updateOutreachPrograms","createOutreachBusiness","importOutreachBusinesses","upsertNewsletterContact","submitCustomerApplication","submitOnlineOrderRequest","customerWorkQueue","updateCustomerApplication","updateOnlineOrderRequest","hubSystemStatus","initializeHardenedHub","reconcileIntegrations"] });
     }
 
     let res;
@@ -519,6 +519,7 @@ function handle_(e, body) {
       case "updateOutreachCampaignRecipient": res = apiUpdateOutreachCampaignRecipient_(body); break;
       case "setOutreachCampaignRecipientExclusion": res = apiSetOutreachCampaignRecipientExclusion_(body); break;
       case "approveOutreachCampaign": res = apiApproveOutreachCampaign_(body); break;
+      case "reopenOutreachCampaign": res = apiReopenOutreachCampaign_(body); break;
       case "sendOutreachCampaignBatch": res = apiSendOutreachCampaignBatch_(body); break;
       case "saveOutreachDraft": res = apiSaveOutreachDraft_(body); break;
       case "sendOutreachEmail": res = apiSendOutreachEmail_(body, false); break;
@@ -2081,6 +2082,7 @@ function apiUpdateOutreachCampaignRecipient_(p) {
       .find(item => String(item.values[item.headers.idempotency_token] || "") === String(p.idempotency_token || ""));
     if (!recipient) throw new Error("Campaign recipient not found.");
     const rh = recipient.headers;
+    if (String(recipient.values[rh.status] || "") !== "Ready for review") throw new Error("Only an unsent recipient returned to review can be edited.");
     if (String(recipient.values[rh.content_checksum] || "") !== String(p.content_checksum || "")) throw new Error("This email was changed elsewhere. Refresh the campaign before editing it.");
     const subject = publicText_(p.subject, 500, "Email subject");
     const bodyText = publicText_(p.body_text, 20000, "Email message");
@@ -2186,6 +2188,36 @@ function apiApproveOutreachCampaign_(p) {
   });
   appendAudit_("APPROVE_OUTREACH_CAMPAIGN", "Campaign", p.campaign_id, "", authenticatedActor_(p, "Sturgeon Distribution Hub"), OUTREACH_CAMPAIGNS_SHEET_NAME, OUTREACH_CAMPAIGN_RECIPIENTS_SHEET_NAME, "Approved", `${recipients.length} recipients approved.`);
   return { message:"Campaign approved. No email was sent.", approval_token:token, recipient_count:recipients.length };
+}
+
+function apiReopenOutreachCampaign_(p) {
+  requireFields_(p || {}, ["campaign_id", "staff_name"]);
+  const lock = LockService.getScriptLock();
+  if (!lock.tryLock(10000)) throw new Error("Another campaign update is in progress. Try again in a moment.");
+  try {
+    const sheets = outreachCampaignSheets_();
+    const campaign = outreachCampaignRow_(sheets.campaigns, p.campaign_id);
+    if (!campaign) throw new Error("Campaign not found.");
+    const ch = campaign.headers;
+    if (String(campaign.values[ch.status] || "") !== "Approved") throw new Error("Only an approved campaign can be reopened for edits.");
+    const recipients = campaignRecipientRows_(sheets.recipients, p.campaign_id);
+    const pending = recipients.filter(item => String(item.values[item.headers.status] || "") === "Ready to send");
+    if (!pending.length) throw new Error("There are no unsent campaign recipients to reopen.");
+    pending.forEach(item => {
+      item.values[item.headers.status] = "Ready for review";
+      item.values[item.headers.result_detail] = "Reopened for edits before delivery.";
+      item.values[item.headers.app_version] = APP_VERSION;
+      sheets.recipients.getRange(item.row, 1, 1, item.values.length).setValues([item.values]);
+    });
+    campaign.values[ch.status] = "Review";
+    campaign.values[ch.approved_at] = "";
+    campaign.values[ch.approved_by] = "";
+    campaign.values[ch.approval_token] = "";
+    campaign.values[ch.app_version] = APP_VERSION;
+    sheets.campaigns.getRange(campaign.row, 1, 1, campaign.values.length).setValues([campaign.values]);
+    appendAudit_("REOPEN_OUTREACH_CAMPAIGN", "Campaign", p.campaign_id, "", authenticatedActor_(p, "Sturgeon Distribution Hub"), OUTREACH_CAMPAIGNS_SHEET_NAME, OUTREACH_CAMPAIGN_RECIPIENTS_SHEET_NAME, "Review", `${pending.length} unsent recipients reopened for edits; sent and excluded recipients were unchanged.`);
+    return { message:`${pending.length} unsent recipients reopened for edits. No email was sent.`, recipient_count:pending.length };
+  } finally { lock.releaseLock(); }
 }
 
 function apiSendOutreachCampaignBatch_(p) {

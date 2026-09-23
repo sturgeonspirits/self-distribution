@@ -1,5 +1,5 @@
 <!doctype html>
-<!-- App version: 2026.09.23.8-WEB -->
+<!-- App version: 2026.09.23.9-WEB -->
 <html>
 <head>
   <meta charset="utf-8" />
@@ -2302,9 +2302,9 @@
     <div class="dlgBody">
       <div class="modeNotice" style="margin-top:0"><i data-lucide="shield-check"></i><span id="outreachCampaignNotice">Review the frozen audience before approving delivery.</span></div>
       <div class="status" id="outreachCampaignStatus"></div>
-      <label class="checkLabel" id="campaignSegmentConfirmRow"><input id="campaignSegmentConfirm" type="checkbox" /><span>I reviewed the default Segment C message used for recipients without a segment.</span></label>
+      <label class="checkLabel" id="campaignSegmentConfirmRow"><input id="campaignSegmentConfirm" type="checkbox" /><span>I reviewed the standard fallback message used for recipients without a tailored segment.</span></label>
       <div id="outreachCampaignRecipients"></div>
-      <div class="dlgActions"><button id="approveOutreachCampaignBtn" type="button">Approve campaign</button><button class="primary" id="sendOutreachCampaignBatchBtn" type="button">Send next 10</button></div>
+      <div class="dlgActions"><button id="reopenOutreachCampaignBtn" type="button">Reopen unsent for edits</button><button id="approveOutreachCampaignBtn" type="button">Approve campaign</button><button class="primary" id="sendOutreachCampaignBatchBtn" type="button">Send next 10</button></div>
     </div>
   </dialog>
 
@@ -2463,7 +2463,7 @@
 
   <footer style="max-width:1200px;margin:18px auto 120px;padding:0 12px;text-align:center;color:#6b7280;font-size:12px;">
     Designed by <a href="https://scriptspirit.dev" target="_blank" rel="noopener noreferrer" style="color:#1d4ed8;text-decoration:none;font-weight:700;">Script Spirit</a>
-<span id="appVersionFooter"> • Version 2026.09.23.8-WEB</span>
+<span id="appVersionFooter"> • Version 2026.09.23.9-WEB</span>
   </footer>
 
 
@@ -2486,7 +2486,7 @@
   window.addEventListener("unhandledrejection", e => console.error("Unhandled promise rejection:", e.reason));
   window.addEventListener("error", e => console.error("Unhandled error:", e.error || e.message));
   const $ = (id) => document.getElementById(id);
-  const APP_VERSION = "2026.09.23.8-WEB";
+  const APP_VERSION = "2026.09.23.9-WEB";
   $("appVersionFooter").textContent = ` • Version ${APP_VERSION}`;
 
   let cache = { stores: [], lines: [] };
@@ -3215,6 +3215,8 @@
       : "This campaign is closed; delivery history remains available below.";
     $("campaignSegmentConfirmRow").hidden = campaign.status !== "Review" || !Number(campaign.unsegmented_count || 0);
     $("campaignSegmentConfirm").checked = false;
+    const canReopen = campaign.status === "Approved" && Number(campaign.counts?.["Ready to send"] || 0) > 0;
+    $("reopenOutreachCampaignBtn").hidden = !canReopen;
     $("approveOutreachCampaignBtn").hidden = campaign.status !== "Review";
     $("sendOutreachCampaignBatchBtn").hidden = campaign.status !== "Approved";
     $("sendOutreachCampaignBatchBtn").disabled = !outreachCanSend;
@@ -3223,9 +3225,9 @@
     $("outreachCampaignRecipients").innerHTML = `<div class="outreachList">${(campaign.recipients || []).map((recipient, index) => `
       <details class="outreachCard"><summary><strong>${escapeHtml(recipient.business)}</strong><span class="smallMuted"> • ${escapeHtml(recipient.email)} • ${escapeHtml(recipient.status)}</span><br><span class="smallMuted">${escapeHtml(recipient.subject)}${recipient.segment ? ` • ${escapeHtml(recipient.segment)}` : " • Default Segment C"}</span></summary>
       <div class="outreachMeta"><span class="badge">${escapeHtml(recipient.priority || "No")} priority</span><span class="badge blue">${escapeHtml(recipient.email_confidence || "Unrated")}</span>${recipient.wave ? `<span class="badge">${escapeHtml(recipient.wave)}</span>` : ""}</div>
-      <label>Subject</label><input class="emailEditor" data-campaign-subject value="${escapeHtml(recipient.subject || "")}" ${editable ? "" : "readonly"} />
-      <label>Message</label><textarea class="emailEditor" data-campaign-body ${editable ? "" : "readonly"}>${escapeHtml(recipient.body_text || "")}</textarea>
-      ${editable ? `<div class="outreachActions"><button class="actionBtn primary" type="button" data-campaign-recipient-action="save" data-recipient-token="${escapeHtml(recipient.idempotency_token)}"><i data-lucide="save"></i><span>Save email changes</span></button><button class="actionBtn" type="button" data-campaign-recipient-action="${recipient.status === "Excluded" ? "restore" : "exclude"}" data-recipient-token="${escapeHtml(recipient.idempotency_token)}"><i data-lucide="${recipient.status === "Excluded" ? "rotate-ccw" : "ban"}"></i><span>${recipient.status === "Excluded" ? "Restore to campaign" : "Exclude from campaign"}</span></button></div>` : ""}${recipient.result_detail ? `<div class="status">${escapeHtml(recipient.result_detail)}</div>` : ""}
+      <label>Subject</label><input class="emailEditor" data-campaign-subject value="${escapeHtml(recipient.subject || "")}" ${editable && recipient.status === "Ready for review" ? "" : "readonly"} />
+      <label>Message</label><textarea class="emailEditor" data-campaign-body ${editable && recipient.status === "Ready for review" ? "" : "readonly"}>${escapeHtml(recipient.body_text || "")}</textarea>
+      ${editable && ["Ready for review", "Excluded"].includes(recipient.status) ? `<div class="outreachActions">${recipient.status === "Ready for review" ? `<button class="actionBtn primary" type="button" data-campaign-recipient-action="save" data-recipient-token="${escapeHtml(recipient.idempotency_token)}"><i data-lucide="save"></i><span>Save email changes</span></button>` : ""}<button class="actionBtn" type="button" data-campaign-recipient-action="${recipient.status === "Excluded" ? "restore" : "exclude"}" data-recipient-token="${escapeHtml(recipient.idempotency_token)}"><i data-lucide="${recipient.status === "Excluded" ? "rotate-ccw" : "ban"}"></i><span>${recipient.status === "Excluded" ? "Restore to campaign" : "Exclude from campaign"}</span></button></div>` : ""}${recipient.result_detail ? `<div class="status">${escapeHtml(recipient.result_detail)}</div>` : ""}
     </details>`).join("")}</div>`;
     $("outreachCampaignDialog").showModal();
     refreshIcons();
@@ -3288,6 +3290,26 @@
     selectedCampaignApprovalToken = res.approval_token;
     await loadOutreachCampaigns(); await openOutreachCampaign(campaign.campaign_id);
     $("outreachCampaignStatus").textContent = "Campaign approved. No email was sent.";
+  }
+
+  async function reopenOutreachCampaign(){
+    const campaign = selectedOutreachCampaign;
+    const staffName = $("outreachStaffName").value.trim();
+    const remaining = Number(campaign?.counts?.["Ready to send"] || 0);
+    if (!campaign || !staffName) return toast("Enter your staff name before reopening the campaign.");
+    if (!remaining) return toast("There are no unsent recipients to reopen.");
+    if (!confirm(`Reopen ${remaining} unsent recipients for editing? This cancels approval until you review and approve again. Sent and excluded recipients will not change; no email will be sent.`)) return;
+    $("reopenOutreachCampaignBtn").disabled = true;
+    $("outreachCampaignStatus").textContent = "Reopening unsent recipients for edits...";
+    try {
+      const res = await staffApiPost({ action:"reopenOutreachCampaign", campaign_id:campaign.campaign_id, staff_name:staffName });
+      if (!res.ok) throw new Error(res.error || "Campaign could not be reopened.");
+      await loadOutreachCampaigns(); await openOutreachCampaign(campaign.campaign_id);
+      $("outreachCampaignStatus").textContent = `${remaining} unsent recipients reopened. No email was sent.`;
+    } catch (error) {
+      $("outreachCampaignStatus").textContent = error.message || String(error);
+      $("reopenOutreachCampaignBtn").disabled = false;
+    }
   }
 
   async function sendOutreachCampaignBatch(){
@@ -5525,6 +5547,7 @@
     if (exclusionButton) setOutreachCampaignRecipientExclusion(exclusionButton, exclusionButton.dataset.campaignRecipientAction === "exclude");
   });
   $("approveOutreachCampaignBtn").addEventListener("click", () => approveOutreachCampaign().catch(error => { $("outreachCampaignStatus").textContent = error.message || String(error); }));
+  $("reopenOutreachCampaignBtn").addEventListener("click", () => reopenOutreachCampaign());
   $("sendOutreachCampaignBatchBtn").addEventListener("click", sendOutreachCampaignBatch);
   $("closeBusinessDetailBtn").addEventListener("click", () => $("businessDetailDialog").close());
   $("closeNewsletterContactBtn").addEventListener("click", () => $("newsletterContactDialog").close());
