@@ -1,4 +1,4 @@
-// App version: 2026.09.23.4-WEB
+// App version: 2026.09.23.5-WEB
 import test from "node:test";
 import assert from "node:assert/strict";
 import { readFile } from "node:fs/promises";
@@ -44,7 +44,7 @@ test("every inventory action rejects a missing Zoho session before proxying", as
   process.env.STAFF_ROLES_JSON = '{"staff@sturgeonspirits.com":"staff"}';
   let fetches = 0;
   globalThis.fetch = async () => { fetches += 1; throw new Error("should not proxy"); };
-  const actions = ["initData", "listSkus", "addSkuToStore", "upsertProduct", "submitCounts", "createReorder", "managerGrid", "salesSinceCount", "updateStoreContacts", "outreachSendStatus", "outreachNewsletterContacts", "updateOutreachCampaignRecipient"];
+  const actions = ["initData", "listSkus", "addSkuToStore", "upsertProduct", "submitCounts", "createReorder", "managerGrid", "salesSinceCount", "updateStoreContacts", "outreachSendStatus", "outreachNewsletterContacts", "updateOutreachCampaignRecipient", "setOutreachCampaignRecipientExclusion"];
   for (const action of actions) {
     const response = await handler(event(action, { method:["managerGrid", "outreachSendStatus", "outreachNewsletterContacts"].includes(action) ? "GET" : "POST", ip:`192.0.2.${actions.indexOf(action) + 10}` }));
     assert.equal(response.statusCode, 401, action);
@@ -214,7 +214,9 @@ test("source contains formula protection, global error listeners, and recoverabl
   assert.match(index, /action:"outreachSendStatus"/);
   assert.match(index, /action:"outreachNewsletterContacts"/);
   assert.match(index, /action:"updateOutreachCampaignRecipient"/);
+  assert.match(index, /action:"setOutreachCampaignRecipientExclusion"/);
   assert.match(backend, /Only a campaign in Review can be edited/);
+  assert.match(backend, /Excluded from this campaign/);
   const dashboardSource = backend.match(/function apiGetOutreachDashboard_\(\) \{[\s\S]*?\n\}/)?.[0];
   assert.ok(dashboardSource);
   assert.doesNotMatch(dashboardSource, /ensureAccountIdentityModel_/);

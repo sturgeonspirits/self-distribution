@@ -2463,7 +2463,7 @@
 
   <footer style="max-width:1200px;margin:18px auto 120px;padding:0 12px;text-align:center;color:#6b7280;font-size:12px;">
     Designed by <a href="https://scriptspirit.dev" target="_blank" rel="noopener noreferrer" style="color:#1d4ed8;text-decoration:none;font-weight:700;">Script Spirit</a>
-<span id="appVersionFooter"> • Version 2026.09.23.4-WEB</span>
+<span id="appVersionFooter"> • Version 2026.09.23.5-WEB</span>
   </footer>
 
 
@@ -2486,7 +2486,7 @@
   window.addEventListener("unhandledrejection", e => console.error("Unhandled promise rejection:", e.reason));
   window.addEventListener("error", e => console.error("Unhandled error:", e.error || e.message));
   const $ = (id) => document.getElementById(id);
-  const APP_VERSION = "2026.09.23.4-WEB";
+  const APP_VERSION = "2026.09.23.5-WEB";
   $("appVersionFooter").textContent = ` • Version ${APP_VERSION}`;
 
   let cache = { stores: [], lines: [] };
@@ -3207,9 +3207,10 @@
     const campaign = selectedOutreachCampaign;
     selectedCampaignApprovalToken = campaign.approval_token || "";
     $("outreachCampaignTitle").textContent = campaign.name;
-    $("outreachCampaignSubtitle").textContent = `${campaign.recipient_count} frozen recipients • ${campaign.status}`;
+    const excludedCount = Number(campaign.counts?.Excluded || 0);
+    $("outreachCampaignSubtitle").textContent = `${campaign.recipient_count} frozen recipients${excludedCount ? ` • ${excludedCount} excluded` : ""} • ${campaign.status}`;
     $("outreachCampaignNotice").textContent = campaign.status === "Review"
-      ? "Open any recipient to edit and save its subject or message. Approval freezes the exact saved audience and messages; it still does not send email."
+      ? "Open any recipient to edit it or exclude it from this campaign. Approval freezes the exact saved audience and messages; it still does not send email."
       : campaign.status === "Approved" ? "This audience is approved. “Send next 10” sends only one controlled batch and stops at the first blocked record."
       : "This campaign is closed; delivery history remains available below.";
     $("campaignSegmentConfirmRow").hidden = campaign.status !== "Review" || !Number(campaign.unsegmented_count || 0);
@@ -3224,7 +3225,7 @@
       <div class="outreachMeta"><span class="badge">${escapeHtml(recipient.priority || "No")} priority</span><span class="badge blue">${escapeHtml(recipient.email_confidence || "Unrated")}</span>${recipient.wave ? `<span class="badge">${escapeHtml(recipient.wave)}</span>` : ""}</div>
       <label>Subject</label><input class="emailEditor" data-campaign-subject value="${escapeHtml(recipient.subject || "")}" ${editable ? "" : "readonly"} />
       <label>Message</label><textarea class="emailEditor" data-campaign-body ${editable ? "" : "readonly"}>${escapeHtml(recipient.body_text || "")}</textarea>
-      ${editable ? `<div class="outreachActions"><button class="actionBtn primary" type="button" data-campaign-recipient-action="save" data-recipient-token="${escapeHtml(recipient.idempotency_token)}"><i data-lucide="save"></i><span>Save email changes</span></button></div>` : ""}${recipient.result_detail ? `<div class="status">${escapeHtml(recipient.result_detail)}</div>` : ""}
+      ${editable ? `<div class="outreachActions"><button class="actionBtn primary" type="button" data-campaign-recipient-action="save" data-recipient-token="${escapeHtml(recipient.idempotency_token)}"><i data-lucide="save"></i><span>Save email changes</span></button><button class="actionBtn" type="button" data-campaign-recipient-action="${recipient.status === "Excluded" ? "restore" : "exclude"}" data-recipient-token="${escapeHtml(recipient.idempotency_token)}"><i data-lucide="${recipient.status === "Excluded" ? "rotate-ccw" : "ban"}"></i><span>${recipient.status === "Excluded" ? "Restore to campaign" : "Exclude from campaign"}</span></button></div>` : ""}${recipient.result_detail ? `<div class="status">${escapeHtml(recipient.result_detail)}</div>` : ""}
     </details>`).join("")}</div>`;
     $("outreachCampaignDialog").showModal();
     refreshIcons();
@@ -3247,6 +3248,29 @@
       await loadOutreachCampaigns();
       await openOutreachCampaign(campaign.campaign_id);
       $("outreachCampaignStatus").textContent = `${recipient.business} saved. No email was sent.`;
+    } catch (error) {
+      $("outreachCampaignStatus").textContent = error.message || String(error);
+      button.disabled = false;
+    }
+  }
+
+  async function setOutreachCampaignRecipientExclusion(button, exclude){
+    const campaign = selectedOutreachCampaign;
+    const token = button.dataset.recipientToken || "";
+    const recipient = (campaign?.recipients || []).find(item => item.idempotency_token === token);
+    if (!campaign || !recipient) return;
+    const reason = exclude ? prompt(`Why exclude ${recipient.business} from this campaign? This does not mark the business Do Not Email globally.`, "") : "";
+    if (exclude && reason === null) return;
+    if (exclude && !reason.trim()) return toast("An exclusion reason is required.");
+    if (!exclude && !confirm(`Restore ${recipient.business} to this campaign review?`)) return;
+    button.disabled = true;
+    $("outreachCampaignStatus").textContent = `${exclude ? "Excluding" : "Restoring"} ${recipient.business}...`;
+    try {
+      const res = await staffApiPost({ action:"setOutreachCampaignRecipientExclusion", campaign_id:campaign.campaign_id, idempotency_token:token, exclude:exclude, reason:reason || "" });
+      if (!res.ok) throw new Error(res.error || "Campaign recipient could not be updated.");
+      await loadOutreachCampaigns();
+      await openOutreachCampaign(campaign.campaign_id);
+      $("outreachCampaignStatus").textContent = `${recipient.business} ${exclude ? "excluded" : "restored"}. No email was sent.`;
     } catch (error) {
       $("outreachCampaignStatus").textContent = error.message || String(error);
       button.disabled = false;
@@ -5494,7 +5518,9 @@
   $("closeOutreachCampaignBtn").addEventListener("click", () => $("outreachCampaignDialog").close());
   $("outreachCampaignRecipients").addEventListener("click", event => {
     const button = event.target.closest("[data-campaign-recipient-action='save']");
-    if (button) saveOutreachCampaignRecipient(button);
+    if (button) return saveOutreachCampaignRecipient(button);
+    const exclusionButton = event.target.closest("[data-campaign-recipient-action='exclude'], [data-campaign-recipient-action='restore']");
+    if (exclusionButton) setOutreachCampaignRecipientExclusion(exclusionButton, exclusionButton.dataset.campaignRecipientAction === "exclude");
   });
   $("approveOutreachCampaignBtn").addEventListener("click", () => approveOutreachCampaign().catch(error => { $("outreachCampaignStatus").textContent = error.message || String(error); }));
   $("sendOutreachCampaignBatchBtn").addEventListener("click", sendOutreachCampaignBatch);

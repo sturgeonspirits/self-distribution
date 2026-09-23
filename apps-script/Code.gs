@@ -1,6 +1,6 @@
 /*********************************
  * Inventory API (JSON) for Netlify
- * App version: 2026.09.23.4
+ * App version: 2026.09.23.5
  *
  * CHANGES IN THIS VERSION
  * - Allowed Karl-only test sends for saved drafts whose prospect email is missing or unverified.
@@ -109,7 +109,7 @@
  * - Use only in the staging inventory backend until testing is complete.
  *********************************/
 
-const APP_VERSION = "2026.09.23.4";
+const APP_VERSION = "2026.09.23.5";
 
 const SHEET_NAMES = {
   STORES: "Stores",
@@ -496,7 +496,7 @@ function handle_(e, body) {
     assertAuthorized_(e, body);
     const action = (e?.parameter?.action) || (body?.action) || "";
     if (!action) {
-      return json_({ ok:true, service:"sturgeon-distribution-hub", version:APP_VERSION, actions:["initData","listSkus","addSkuToStore","upsertProduct","submitCounts","createReorder","managerGrid","salesSinceCount","updateStoreContacts","outreachDashboard","outreachSendStatus","outreachNewsletterContacts","outreachCampaigns","outreachCampaign","createOutreachCampaign","updateOutreachCampaignRecipient","approveOutreachCampaign","sendOutreachCampaignBatch","saveOutreachDraft","sendOutreachEmail","sendOutreachTestEmail","updateOutreachOutcome","updateOutreachBusiness","updateOutreachPrograms","createOutreachBusiness","importOutreachBusinesses","upsertNewsletterContact","submitCustomerApplication","submitOnlineOrderRequest","customerWorkQueue","updateCustomerApplication","updateOnlineOrderRequest","hubSystemStatus","initializeHardenedHub","reconcileIntegrations"] });
+      return json_({ ok:true, service:"sturgeon-distribution-hub", version:APP_VERSION, actions:["initData","listSkus","addSkuToStore","upsertProduct","submitCounts","createReorder","managerGrid","salesSinceCount","updateStoreContacts","outreachDashboard","outreachSendStatus","outreachNewsletterContacts","outreachCampaigns","outreachCampaign","createOutreachCampaign","updateOutreachCampaignRecipient","setOutreachCampaignRecipientExclusion","approveOutreachCampaign","sendOutreachCampaignBatch","saveOutreachDraft","sendOutreachEmail","sendOutreachTestEmail","updateOutreachOutcome","updateOutreachBusiness","updateOutreachPrograms","createOutreachBusiness","importOutreachBusinesses","upsertNewsletterContact","submitCustomerApplication","submitOnlineOrderRequest","customerWorkQueue","updateCustomerApplication","updateOnlineOrderRequest","hubSystemStatus","initializeHardenedHub","reconcileIntegrations"] });
     }
 
     let res;
@@ -517,6 +517,7 @@ function handle_(e, body) {
       case "outreachCampaign": res = apiGetOutreachCampaign_(body); break;
       case "createOutreachCampaign": res = apiCreateOutreachCampaign_(body); break;
       case "updateOutreachCampaignRecipient": res = apiUpdateOutreachCampaignRecipient_(body); break;
+      case "setOutreachCampaignRecipientExclusion": res = apiSetOutreachCampaignRecipientExclusion_(body); break;
       case "approveOutreachCampaign": res = apiApproveOutreachCampaign_(body); break;
       case "sendOutreachCampaignBatch": res = apiSendOutreachCampaignBatch_(body); break;
       case "saveOutreachDraft": res = apiSaveOutreachDraft_(body); break;
@@ -2042,6 +2043,33 @@ function campaignRecipientFooterHtml_(recipient, settings, draftMap) {
   return String(outreachMessage_(source, settings, draft).footer_html || "");
 }
 
+function apiSetOutreachCampaignRecipientExclusion_(p) {
+  requireFields_(p || {}, ["campaign_id", "idempotency_token"]);
+  const lock = LockService.getScriptLock();
+  if (!lock.tryLock(10000)) throw new Error("Another campaign update is in progress. Try again in a moment.");
+  try {
+    const sheets = outreachCampaignSheets_();
+    const campaign = outreachCampaignRow_(sheets.campaigns, p.campaign_id);
+    if (!campaign) throw new Error("Campaign not found.");
+    if (String(campaign.values[campaign.headers.status] || "") !== "Review") throw new Error("Only a campaign in Review can change recipient exclusions.");
+    const recipient = campaignRecipientRows_(sheets.recipients, p.campaign_id)
+      .find(item => String(item.values[item.headers.idempotency_token] || "") === String(p.idempotency_token || ""));
+    if (!recipient) throw new Error("Campaign recipient not found.");
+    const rh = recipient.headers;
+    const exclude = p.exclude === true;
+    const reason = publicText_(p.reason || "", 500, "Exclusion reason");
+    if (exclude && !reason) throw new Error("Provide a reason before excluding a recipient.");
+    recipient.values[rh.status] = exclude ? "Excluded" : "Ready for review";
+    recipient.values[rh.result_detail] = exclude ? `Excluded from this campaign: ${reason}` : "Restored for campaign review.";
+    recipient.values[rh.app_version] = APP_VERSION;
+    sheets.recipients.getRange(recipient.row, 1, 1, recipient.values.length).setValues([recipient.values]);
+    appendAudit_(exclude ? "EXCLUDE_OUTREACH_CAMPAIGN_RECIPIENT" : "RESTORE_OUTREACH_CAMPAIGN_RECIPIENT", "Campaign recipient", String(p.idempotency_token), String(recipient.values[rh.account_id] || ""), authenticatedActor_(p, "Sturgeon Distribution Hub"), OUTREACH_CAMPAIGN_RECIPIENTS_SHEET_NAME, OUTREACH_CAMPAIGNS_SHEET_NAME, exclude ? "Excluded" : "Review", `${recipient.values[rh.business_name]}${exclude ? `: ${reason}` : ""}`);
+    return { message:exclude ? "Recipient excluded from this campaign. No email was sent." : "Recipient restored for campaign review. No email was sent.", status:String(recipient.values[rh.status] || "") };
+  } finally {
+    lock.releaseLock();
+  }
+}
+
 function apiUpdateOutreachCampaignRecipient_(p) {
   requireFields_(p || {}, ["campaign_id", "idempotency_token", "subject", "body_text", "content_checksum"]);
   const lock = LockService.getScriptLock();
@@ -2154,7 +2182,11 @@ function apiApproveOutreachCampaign_(p) {
   campaign.values[h.status] = "Approved"; campaign.values[h.approved_at] = now; campaign.values[h.approved_by] = authenticatedActor_(p, "Sturgeon Distribution Hub"); campaign.values[h.approval_token] = token;
   campaign.values[h.app_version] = APP_VERSION;
   sheets.campaigns.getRange(campaign.row, 1, 1, campaign.values.length).setValues([campaign.values]);
-  recipients.forEach(item => { item.values[item.headers.status] = "Ready to send"; item.values[item.headers.app_version] = APP_VERSION; sheets.recipients.getRange(item.row, 1, 1, item.values.length).setValues([item.values]); });
+  recipients.filter(item => String(item.values[item.headers.status] || "") === "Ready for review").forEach(item => {
+    item.values[item.headers.status] = "Ready to send";
+    item.values[item.headers.app_version] = APP_VERSION;
+    sheets.recipients.getRange(item.row, 1, 1, item.values.length).setValues([item.values]);
+  });
   appendAudit_("APPROVE_OUTREACH_CAMPAIGN", "Campaign", p.campaign_id, "", authenticatedActor_(p, "Sturgeon Distribution Hub"), OUTREACH_CAMPAIGNS_SHEET_NAME, OUTREACH_CAMPAIGN_RECIPIENTS_SHEET_NAME, "Approved", `${recipients.length} recipients approved.`);
   return { message:"Campaign approved. No email was sent.", approval_token:token, recipient_count:recipients.length };
 }
