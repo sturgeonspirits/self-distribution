@@ -8,7 +8,7 @@ Read this file before inspecting the repository or changing the application. Upd
 
 | Component | Source version | Deployment state |
 | --- | --- | --- |
-| Netlify web app and staff proxy | `2026.09.23.1-WEB` | Campaign review and controlled batch-delivery UI are built locally; deployment pending configuration and authorization |
+| Netlify web app and staff proxy | `2026.09.23.1-WEB` | Deployed and verified on 2026-09-23; Campaigns UI is live, but `/api/auth?action=session` currently reports `STAFF_AUTH_NOT_CONFIGURED` |
 | Inventory API Apps Script | `2026.09.23.1` | Deployed by owner on 2026-09-23; campaign endpoints need live verification through the staff proxy |
 | Distribution Outreach Apps Script | `2026.09.22.9-APP` | Source is committed; owner has not yet confirmed this exact version is deployed |
 | Public customer Netlify proxy | `2026.09.18.3-WEB` | Deployed with Netlify; unchanged by the latest staff-app UI work |
