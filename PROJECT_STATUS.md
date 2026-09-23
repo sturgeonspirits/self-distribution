@@ -8,8 +8,8 @@ Read this file before inspecting the repository or changing the application. Upd
 
 | Component | Source version | Deployment state |
 | --- | --- | --- |
-| Netlify web app and staff proxy | `2026.09.23.10-WEB` | Source updated on 2026-09-23; deployment pending. It keeps the campaign list through a normal Outreach refresh, authorizes POSTs reliably, and lets an approved campaign reopen only its unsent recipients for review edits. Zoho sign-in is verified for Karl, while anonymous `/api/auth?action=session` requests correctly report `STAFF_AUTH_REQUIRED`. |
-| Inventory API Apps Script | `2026.09.23.8` | Source updated on 2026-09-23; deployment pending. Reopening preserves sent, blocked, and excluded recipients while changing the exact non-Oshkosh subject phrase on unsent recipients from “made here in Oshkosh” to “made in Oshkosh.” |
+| Netlify web app and staff proxy | `2026.09.23.11-WEB` | Source updated on 2026-09-23; deployment pending. It includes a confirmation-gated “Send remaining” run that continues in 10-recipient chunks past delivery-unknown records without retrying them, and stops the run if a batch result is unknown. |
+| Inventory API Apps Script | `2026.09.23.9` | Source updated on 2026-09-23; deployment pending. It preserves sent, blocked, and excluded recipients on reopen; the explicit “Send remaining” run records delivery-unknown outcomes but continues through the rest of a chunk without retrying them. |
 | Distribution Outreach Apps Script | `2026.09.22.9-APP` | Source is committed; owner has not yet confirmed this exact version is deployed |
 | Public customer Netlify proxy | `2026.09.18.3-WEB` | Deployed with Netlify; unchanged by the latest staff-app UI work |
 

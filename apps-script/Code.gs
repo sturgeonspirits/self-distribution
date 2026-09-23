@@ -1,6 +1,6 @@
 /*********************************
  * Inventory API (JSON) for Netlify
- * App version: 2026.09.23.8
+ * App version: 2026.09.23.9
  *
  * CHANGES IN THIS VERSION
  * - Allowed Karl-only test sends for saved drafts whose prospect email is missing or unverified.
@@ -109,7 +109,7 @@
  * - Use only in the staging inventory backend until testing is complete.
  *********************************/
 
-const APP_VERSION = "2026.09.23.8";
+const APP_VERSION = "2026.09.23.9";
 
 const SHEET_NAMES = {
   STORES: "Stores",
@@ -2288,7 +2288,7 @@ function apiSendOutreachCampaignBatch_(p) {
         item.values[rh.status] = "Blocked"; item.values[rh.result_detail] = String(error.message || error).slice(0, 2000); item.values[rh.app_version] = APP_VERSION;
         sheets.recipients.getRange(item.row, 1, 1, item.values.length).setValues([item.values]);
         blocked += 1; results.push({ source_row:sourceRow, business:String(item.values[rh.business_name] || ""), status:"Blocked", detail:String(error.message || error) });
-        break; // Stop on the first anomaly; the operator can review before another batch.
+        if (p.continue_after_block !== true) break; // Manual batches pause for review; the explicit continue run skips uncertain recipients without retrying them.
       }
     }
     const allRecipients = campaignRecipientRows_(sheets.recipients, p.campaign_id);
@@ -2298,7 +2298,7 @@ function apiSendOutreachCampaignBatch_(p) {
     if (!remaining) campaign.values[ch.status] = blocked ? "Complete with blocks" : "Complete";
     sheets.campaigns.getRange(campaign.row, 1, 1, campaign.values.length).setValues([campaign.values]);
     appendAudit_("SEND_OUTREACH_CAMPAIGN_BATCH", "Campaign", p.campaign_id, "", staffName, OUTREACH_CAMPAIGN_RECIPIENTS_SHEET_NAME, OUTREACH_ACTIVITY_SHEET_NAME, blocked ? "Stopped for review" : "Completed", `${sent} sent; ${blocked} blocked; ${remaining} remaining.`);
-    return { message:blocked ? "Batch stopped for review after a blocked recipient." : `Batch complete: ${sent} sent.`, sent:sent, blocked:blocked, remaining:remaining, results:results };
+    return { message:blocked && p.continue_after_block !== true ? "Batch stopped for review after a blocked recipient." : `Batch complete: ${sent} sent; ${blocked} blocked.`, sent:sent, blocked:blocked, remaining:remaining, results:results };
   } finally { lock.releaseLock(); }
 }
 

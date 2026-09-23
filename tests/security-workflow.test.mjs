@@ -253,6 +253,8 @@ test("source contains formula protection, global error listeners, and recoverabl
   assert.match(index, /action:"approveOutreachCampaign"/);
   assert.match(index, /action:"reopenOutreachCampaign"/);
   assert.match(index, /action:"sendOutreachCampaignBatch"/);
+  assert.match(index, /function sendRemainingCampaign\(\)/);
+  assert.match(index, /continue_after_block:true/);
   assert.match(backend, /CacheService\.getScriptCache\(\)/);
   assert.match(backend, /if \(!__OUTREACH_SS\) __OUTREACH_SS = SpreadsheetApp\.openById/);
   assert.match(backend, /const reasons = testMode \? \[\] : outreachSendEligibility_\(record\)/);
@@ -260,9 +262,10 @@ test("source contains formula protection, global error listeners, and recoverabl
   assert.match(backend, /function apiApproveOutreachCampaign_\(/);
   assert.match(backend, /function apiReopenOutreachCampaign_\(/);
   assert.match(backend, /function apiSendOutreachCampaignBatch_\(/);
+  assert.match(backend, /if \(p\.continue_after_block !== true\) break/);
   assert.match(backend, /Only an unsent recipient returned to review can be edited/);
   assert.match(backend, /made here in Oshkosh/, "reopen corrects the exact non-Oshkosh subject phrase");
-  assert.match(backend, /Stop on the first anomaly/);
+  assert.match(backend, /Manual batches pause for review; the explicit continue run skips uncertain recipients without retrying them/);
   assert.match(backend, /Campaign created for review\. No email was sent\./);
   assert.match(backend, /Campaign approved\. No email was sent\./);
   assert.match(backend, /OUTREACH_CAMPAIGN_RECIPIENTS_SHEET_NAME/);
