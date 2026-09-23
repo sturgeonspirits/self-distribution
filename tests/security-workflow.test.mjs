@@ -70,6 +70,7 @@ test("authenticated inventory GET and POST preserve action payload, API key, and
   assert.equal(getResponse.statusCode, 200);
   assert.match(calls[0].url, /action=managerGrid/);
   assert.match(calls[0].url, /api_key=backend-key/);
+  assert.match(calls[1].url, /api_key=backend-key/);
   const forwarded = JSON.parse(calls[1].options.body);
   assert.equal(forwarded.action, "submitCounts");
   assert.equal(forwarded.api_key, "backend-key");

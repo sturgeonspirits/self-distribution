@@ -1,7 +1,7 @@
-// App version: 2026.09.23.6-WEB
+// App version: 2026.09.23.8-WEB
 import { requireStaffSession } from "./auth.js";
 
-const APP_VERSION = "2026.09.23.6-WEB";
+const APP_VERSION = "2026.09.23.8-WEB";
 const STAFF_ACTIONS = new Set([
   "outreachDashboard",
   "outreachSendStatus",
@@ -207,11 +207,18 @@ export async function handler(event) {
       return proxyResult(resp, cors);
     }
 
-    if (API_KEY) body.api_key = API_KEY;
+    // Apps Script reliably exposes URL parameters for both GET and POST. Keep the
+    // body copy for compatibility, but also put the server-only key on the POST
+    // URL so authorization does not depend on postData parsing.
+    let postUrl = APPS_SCRIPT_URL;
+    if (API_KEY) {
+      body.api_key = API_KEY;
+      postUrl += (postUrl.includes("?") ? "&" : "?") + `api_key=${encodeURIComponent(API_KEY)}`;
+    }
 
     const sendRequest = SEND_ACTIONS.has(action);
     const snapshotRequest = SNAPSHOT_ACTIONS.has(action);
-    const resp = await fetchAppsScript(APPS_SCRIPT_URL, {
+    const resp = await fetchAppsScript(postUrl, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify(body),
