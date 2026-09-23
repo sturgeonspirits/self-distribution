@@ -1,10 +1,10 @@
 <!doctype html>
-<!-- App version: 2026.09.23.12-WEB -->
+<!-- App version: 2026.09.23.13-WEB -->
 <html>
 <head>
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover"/>
-  <meta name="app-version" content="2026.09.23.12-WEB" />
+  <meta name="app-version" content="2026.09.23.13-WEB" />
   <title>Sturgeon Distribution Hub</title>
   <style>
     :root{
@@ -2464,7 +2464,7 @@
 
   <footer style="max-width:1200px;margin:18px auto 120px;padding:0 12px;text-align:center;color:#6b7280;font-size:12px;">
     Designed by <a href="https://scriptspirit.dev" target="_blank" rel="noopener noreferrer" style="color:#1d4ed8;text-decoration:none;font-weight:700;">Script Spirit</a>
-<span id="appVersionFooter"> • Version 2026.09.23.12-WEB</span>
+<span id="appVersionFooter"> • Version 2026.09.23.13-WEB</span>
   </footer>
 
 
@@ -2487,7 +2487,7 @@
   window.addEventListener("unhandledrejection", e => console.error("Unhandled promise rejection:", e.reason));
   window.addEventListener("error", e => console.error("Unhandled error:", e.error || e.message));
   const $ = (id) => document.getElementById(id);
-  const APP_VERSION = "2026.09.23.12-WEB";
+  const APP_VERSION = "2026.09.23.13-WEB";
   $("appVersionFooter").textContent = ` • Version ${APP_VERSION}`;
 
   let cache = { stores: [], lines: [] };
@@ -3226,7 +3226,8 @@
       : "This campaign is closed; delivery history remains available below.";
     $("campaignSegmentConfirmRow").hidden = campaign.status !== "Review" || !Number(campaign.unsegmented_count || 0);
     $("campaignSegmentConfirm").checked = false;
-    const canReopen = campaign.status === "Approved" && Number(campaign.counts?.["Ready to send"] || 0) > 0;
+    const reopenableCount = Number(campaign.counts?.["Ready to send"] || 0) + Number(campaign.counts?.Blocked || 0);
+    const canReopen = ["Review", "Approved", "Complete with blocks"].includes(campaign.status) && reopenableCount > 0;
     $("reopenOutreachCampaignBtn").hidden = !canReopen;
     $("approveOutreachCampaignBtn").hidden = campaign.status !== "Review";
     $("sendOutreachCampaignBatchBtn").hidden = campaign.status !== "Approved";
@@ -3308,10 +3309,10 @@
   async function reopenOutreachCampaign(){
     const campaign = selectedOutreachCampaign;
     const staffName = $("outreachStaffName").value.trim();
-    const remaining = Number(campaign?.counts?.["Ready to send"] || 0);
+    const remaining = Number(campaign?.counts?.["Ready to send"] || 0) + Number(campaign?.counts?.Blocked || 0);
     if (!campaign || !staffName) return toast("Enter your staff name before reopening the campaign.");
     if (!remaining) return toast("There are no unsent recipients to reopen.");
-    if (!confirm(`Reopen ${remaining} unsent recipients for editing? This cancels approval until you review and approve again. Sent and excluded recipients will not change; no email will be sent.`)) return;
+    if (!confirm(`Reopen up to ${remaining} unsent recipients for editing? This cancels approval until you review and approve again. Recipients with a recorded accepted Zoho send, plus sent and excluded recipients, will not change; no email will be sent.`)) return;
     $("reopenOutreachCampaignBtn").disabled = true;
     setCampaignStatus("Reopening unsent recipients for edits...");
     try {

@@ -8,8 +8,8 @@ Read this file before inspecting the repository or changing the application. Upd
 
 | Component | Source version | Deployment state |
 | --- | --- | --- |
-| Netlify web app and staff proxy | `2026.09.23.12-WEB` | Source updated on 2026-09-23; deployment pending. It surfaces a campaign-reopen failure in the dialog and a toast, so the exact backend error is visible instead of looking like a dead button. |
-| Inventory API Apps Script | `2026.09.23.10` | Source updated on 2026-09-23; deployment pending. It adds audited reopening of unsent approved recipients for editing while preserving sent, blocked, and excluded recipients; the explicit “Send remaining” run records delivery-unknown outcomes but continues through the rest of a chunk without retrying them. |
+| Netlify web app and staff proxy | `2026.09.23.13-WEB` | Source updated on 2026-09-23; deployment pending. It surfaces campaign-reopen failures and enables safe reopening when a campaign has blocked recipients that may be returned to review by the backend. |
+| Inventory API Apps Script | `2026.09.23.11` | Source updated on 2026-09-23; deployment pending. It safely reopens genuinely unsent blocked recipients after an Activity Log check, prevents a Zoho-accepted message from returning to the resend path if recording fails, and locks approval. |
 | Distribution Outreach Apps Script | `2026.09.22.9-APP` | Source is committed; owner has not yet confirmed this exact version is deployed |
 | Public customer Netlify proxy | `2026.09.18.3-WEB` | Deployed with Netlify; unchanged by the latest staff-app UI work |
 

@@ -263,6 +263,12 @@ test("source contains formula protection, global error listeners, and recoverabl
   assert.match(backend, /function apiReopenOutreachCampaign_\(/);
   assert.match(backend, /function apiSendOutreachCampaignBatch_\(/);
   assert.match(backend, /if \(p\.continue_after_block !== true\) break/);
+  assert.match(backend, /status === "Blocked"[\s\S]*?zoho_message_id[\s\S]*?acceptedTokens/);
+  assert.match(backend, /status\] = "Sent - needs recording"/);
+  assert.match(backend, /function apiApproveOutreachCampaign_[\s\S]*?LockService\.getScriptLock\(\)/);
+  assert.match(backend, /const token = String\(p\.idempotency_token \|\| ""\)\.trim\(\)/);
+  assert.doesNotMatch(backend, /const token = publicText_\(p\.idempotency_token/);
+  assert.match(backend, /const columnCount = sheet\.getLastColumn\(\);[\s\S]*?if \(!columnCount\)/);
   assert.match(backend, /Only an unsent recipient returned to review can be edited/);
   assert.match(backend, /made here in Oshkosh/, "reopen corrects the exact non-Oshkosh subject phrase");
   assert.match(backend, /Manual batches pause for review; the explicit continue run skips uncertain recipients without retrying them/);
@@ -270,6 +276,7 @@ test("source contains formula protection, global error listeners, and recoverabl
   assert.match(backend, /Campaign approved\. No email was sent\./);
   assert.match(backend, /OUTREACH_CAMPAIGN_RECIPIENTS_SHEET_NAME/);
   assert.match(backend, /batch size must be between 1 and 20/i);
+  assert.match(index, /Number\(campaign\.counts\?\.Blocked \|\| 0\)/);
   assert.match(await readFile(new URL("netlify/functions/inventory.js", root), "utf8"), /"sendOutreachCampaignBatch"/);
   assert.match(mailer, /if \(!testMode && !isValidEmail_\(email\)\)/);
   assert.match(mailer, /if \(!testMode && \(row\[OUTREACH\.COL\.DO_NOT_EMAIL/);
