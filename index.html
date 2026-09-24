@@ -1,10 +1,10 @@
 <!doctype html>
-<!-- App version: 2026.09.24.32-WEB -->
+<!-- App version: 2026.09.24.33-WEB -->
 <html>
 <head>
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover"/>
-  <meta name="app-version" content="2026.09.24.32-WEB" />
+  <meta name="app-version" content="2026.09.24.33-WEB" />
   <meta name="theme-color" content="#536f77" />
   <link rel="icon" href="/assets/distribution-hub-icon.svg" type="image/svg+xml" />
   <link rel="manifest" href="/site.webmanifest" />
@@ -2508,7 +2508,7 @@
 
   <footer style="max-width:1200px;margin:18px auto 120px;padding:0 12px;text-align:center;color:#6b7280;font-size:12px;">
     Designed by <a href="https://scriptspirit.dev" target="_blank" rel="noopener noreferrer" style="color:#1d4ed8;text-decoration:none;font-weight:700;">Script Spirit</a>
-<span id="appVersionFooter"> • Version 2026.09.24.32-WEB</span>
+<span id="appVersionFooter"> • Version 2026.09.24.33-WEB</span>
   </footer>
 
 
@@ -2531,7 +2531,7 @@
   window.addEventListener("unhandledrejection", e => console.error("Unhandled promise rejection:", e.reason));
   window.addEventListener("error", e => console.error("Unhandled error:", e.error || e.message));
   const $ = (id) => document.getElementById(id);
-  const APP_VERSION = "2026.09.24.32-WEB";
+  const APP_VERSION = "2026.09.24.33-WEB";
   $("appVersionFooter").textContent = ` • Version ${APP_VERSION}`;
 
   let cache = { stores: [], lines: [] };
@@ -2570,6 +2570,7 @@
   let selectedNewsletterContact = null;
   let selectedOutreachCampaign = null;
   let selectedCampaignApprovalToken = "";
+  let campaignSegmentConfirmation = { campaignId:"", confirmed:false };
   let campaignSendInProgress = false;
   let outreachCampaignPreview = null;
 
@@ -2656,7 +2657,6 @@
     status.classList.toggle("error", isError);
     if (isError) {
       status.scrollIntoView({ block:"nearest", behavior:"smooth" });
-      toast(message);
     }
   }
 
@@ -3348,7 +3348,7 @@
 
   async function previewOutreachCampaignCriteria(){
     const staffName = $("outreachStaffName").value.trim();
-    if (!staffName) return toast("Enter your staff name before previewing a campaign.");
+    if (!staffName) return $("outreachCampaignCriteriaStatus").textContent = "Enter your staff name before previewing a campaign.";
     const criteria = campaignCriteriaInput();
     if (criteria.center_type === "zip" && !/^\d{5}$/.test(criteria.center_value)) return $("outreachCampaignCriteriaStatus").textContent = "Enter a five-digit center ZIP.";
     if (criteria.center_type === "city" && !criteria.center_value) return $("outreachCampaignCriteriaStatus").textContent = "Enter a center city.";
@@ -3376,7 +3376,7 @@
   async function submitOutreachCampaignCriteria(){
     const staffName = $("outreachStaffName").value.trim();
     const campaignName = $("outreachCampaignCriteriaName").value.trim();
-    if (!staffName) return toast("Enter your staff name before creating a campaign.");
+    if (!staffName) return $("outreachCampaignCriteriaStatus").textContent = "Enter your staff name before creating a campaign.";
     if (!campaignName) return $("outreachCampaignCriteriaStatus").textContent = "Campaign name is required.";
     if (!outreachCampaignPreview) return $("outreachCampaignCriteriaStatus").textContent = "Preview this audience before creating a campaign.";
     const button = $("createOutreachCampaignCriteriaBtn");
@@ -3440,7 +3440,9 @@
     const requiresSegmentConfirmation = campaign.status === "Review" && unsegmentedCount > 0;
     $("campaignSegmentConfirmRow").hidden = !requiresSegmentConfirmation;
     $("campaignSegmentConfirmLabel").textContent = `I reviewed the fallback message for ${unsegmentedCount} unsegmented recipient${unsegmentedCount === 1 ? "" : "s"}.`;
-    $("campaignSegmentConfirm").checked = false;
+    const isSameReviewSession = campaignSegmentConfirmation.campaignId === campaign.campaign_id;
+    if (!isSameReviewSession) campaignSegmentConfirmation = { campaignId:campaign.campaign_id, confirmed:false };
+    $("campaignSegmentConfirm").checked = requiresSegmentConfirmation && campaignSegmentConfirmation.confirmed;
     const reopenableCount = Number(campaign.counts?.["Ready to send"] || 0) + Number(campaign.counts?.Blocked || 0);
     const canReopen = ["Review", "Approved", "Complete with blocks"].includes(campaign.status) && reopenableCount > 0;
     $("reopenOutreachCampaignBtn").hidden = !canReopen;
@@ -3465,7 +3467,7 @@
       <label>Message</label><textarea class="emailEditor" data-campaign-body ${editable && recipient.status === "Ready for review" ? "" : "readonly"}>${escapeHtml(recipient.body_text || "")}</textarea>
       ${editable && ["Ready for review", "Excluded"].includes(recipient.status) ? `<div class="outreachActions">${recipient.status === "Ready for review" ? `<button class="actionBtn primary" type="button" data-campaign-recipient-action="save" data-recipient-token="${escapeHtml(recipient.idempotency_token)}"><i data-lucide="save"></i><span>Save email changes</span></button>` : ""}<button class="actionBtn" type="button" data-campaign-recipient-action="${recipient.status === "Excluded" ? "restore" : "exclude"}" data-recipient-token="${escapeHtml(recipient.idempotency_token)}"><i data-lucide="${recipient.status === "Excluded" ? "rotate-ccw" : "ban"}"></i><span>${recipient.status === "Excluded" ? "Restore to campaign" : "Exclude from campaign"}</span></button></div>` : ""}${recipient.result_detail ? `<div class="status">${escapeHtml(recipient.result_detail)}</div>` : ""}
     </details>`).join("")}</div>`;
-    $("outreachCampaignDialog").showModal();
+    if (!$("outreachCampaignDialog").open) $("outreachCampaignDialog").showModal();
     refreshIcons();
   }
 
@@ -3476,6 +3478,8 @@
     const approveButton = $("approveOutreachCampaignBtn");
     approveButton.disabled = campaign?.status !== "Review" || (requiresConfirmation && !confirmed);
     $("campaignSegmentConfirmHint").hidden = !requiresConfirmation || confirmed;
+    if (campaign?.status !== "Review") campaignSegmentConfirmation = { campaignId:campaign?.campaign_id || "", confirmed:false };
+    else if (requiresConfirmation) campaignSegmentConfirmation = { campaignId:campaign.campaign_id, confirmed };
   }
 
   async function saveOutreachCampaignRecipient(button){
@@ -3486,17 +3490,17 @@
     if (!campaign || !recipient || !card) return;
     const subject = card.querySelector("[data-campaign-subject]").value.trim();
     const bodyText = card.querySelector("[data-campaign-body]").value.trim();
-    if (!subject || !bodyText) return toast("Email subject and message are required.");
+    if (!subject || !bodyText) return setCampaignStatus("Email subject and message are required.", true);
     button.disabled = true;
-    $("outreachCampaignStatus").textContent = `Saving ${recipient.business}...`;
+    setCampaignStatus(`Saving ${recipient.business}...`);
     try {
       const res = await staffApiPost({ action:"updateOutreachCampaignRecipient", campaign_id:campaign.campaign_id, idempotency_token:token, content_checksum:recipient.content_checksum, subject:subject, body_text:bodyText });
       if (!res.ok) throw new Error(res.error || "Campaign email could not be saved.");
       await loadOutreachCampaigns();
       await openOutreachCampaign(campaign.campaign_id);
-      $("outreachCampaignStatus").textContent = `${recipient.business} saved. No email was sent.`;
+      setCampaignStatus(`${recipient.business} saved. No email was sent.`);
     } catch (error) {
-      $("outreachCampaignStatus").textContent = error.message || String(error);
+      setCampaignStatus(error.message || String(error), true);
       button.disabled = false;
     }
   }
@@ -3508,18 +3512,18 @@
     if (!campaign || !recipient) return;
     const reason = exclude ? prompt(`Why exclude ${recipient.business} from this campaign? This does not mark the business Do Not Email globally.`, "") : "";
     if (exclude && reason === null) return;
-    if (exclude && !reason.trim()) return toast("An exclusion reason is required.");
+    if (exclude && !reason.trim()) return setCampaignStatus("An exclusion reason is required.", true);
     if (!exclude && !confirm(`Restore ${recipient.business} to this campaign review?`)) return;
     button.disabled = true;
-    $("outreachCampaignStatus").textContent = `${exclude ? "Excluding" : "Restoring"} ${recipient.business}...`;
+    setCampaignStatus(`${exclude ? "Excluding" : "Restoring"} ${recipient.business}...`);
     try {
       const res = await staffApiPost({ action:"setOutreachCampaignRecipientExclusion", campaign_id:campaign.campaign_id, idempotency_token:token, exclude:exclude, reason:reason || "" });
       if (!res.ok) throw new Error(res.error || "Campaign recipient could not be updated.");
       await loadOutreachCampaigns();
       await openOutreachCampaign(campaign.campaign_id);
-      $("outreachCampaignStatus").textContent = `${recipient.business} ${exclude ? "excluded" : "restored"}. No email was sent.`;
+      setCampaignStatus(`${recipient.business} ${exclude ? "excluded" : "restored"}. No email was sent.`);
     } catch (error) {
-      $("outreachCampaignStatus").textContent = error.message || String(error);
+      setCampaignStatus(error.message || String(error), true);
       button.disabled = false;
     }
   }
@@ -3527,22 +3531,22 @@
   async function approveOutreachCampaign(){
     const campaign = selectedOutreachCampaign;
     const staffName = $("outreachStaffName").value.trim();
-    if (!campaign || !staffName) return toast("Enter your staff name before approving.");
-    if (Number(campaign.unsegmented_count || 0) && !$("campaignSegmentConfirm").checked) return toast("Confirm the default message for unsegmented recipients first.");
+    if (!campaign || !staffName) return setCampaignStatus("Enter your staff name before approving.", true);
+    if (Number(campaign.unsegmented_count || 0) && !$("campaignSegmentConfirm").checked) return setCampaignStatus("Review the fallback message and check the confirmation box before approving.", true);
     if (!confirm(`Approve ${campaign.recipient_count} recipients for controlled batch delivery? This action does not send email.`)) return;
     const res = await staffApiPost({ action:"approveOutreachCampaign", campaign_id:campaign.campaign_id, audience_checksum:campaign.audience_checksum, recipient_count:campaign.recipient_count, confirm_unsegmented:$("campaignSegmentConfirm").checked, staff_name:staffName });
     if (!res.ok) throw new Error(res.error || "Campaign could not be approved.");
     selectedCampaignApprovalToken = res.approval_token;
     await loadOutreachCampaigns(); await openOutreachCampaign(campaign.campaign_id);
-    $("outreachCampaignStatus").textContent = "Campaign approved. No email was sent.";
+    setCampaignStatus("Campaign approved. No email was sent.");
   }
 
   async function reopenOutreachCampaign(){
     const campaign = selectedOutreachCampaign;
     const staffName = $("outreachStaffName").value.trim();
     const remaining = Number(campaign?.counts?.["Ready to send"] || 0) + Number(campaign?.counts?.Blocked || 0);
-    if (!campaign || !staffName) return toast("Enter your staff name before reopening the campaign.");
-    if (!remaining) return toast("There are no unsent recipients to reopen.");
+    if (!campaign || !staffName) return setCampaignStatus("Enter your staff name before reopening the campaign.", true);
+    if (!remaining) return setCampaignStatus("There are no unsent recipients to reopen.", true);
     if (!confirm(`Reopen up to ${remaining} unsent recipients for editing? This cancels approval until you review and approve again. Recipients with a recorded accepted Zoho send, plus sent and excluded recipients, will not change; no email will be sent.`)) return;
     $("reopenOutreachCampaignBtn").disabled = true;
     setCampaignStatus("Reopening unsent recipients for edits...");
@@ -3561,9 +3565,9 @@
     const campaign = selectedOutreachCampaign;
     const staffName = $("outreachStaffName").value.trim();
     const ready = Number(campaign?.counts?.["Ready for review"] || 0);
-    if (!campaign || campaign.status !== "Review") return toast("Only a campaign in Review can rebuild unsent emails.");
-    if (!staffName) return toast("Enter your staff name before rebuilding the campaign.");
-    if (!ready) return toast("There are no Ready for review recipients to rebuild.");
+    if (!campaign || campaign.status !== "Review") return setCampaignStatus("Only a campaign in Review can rebuild unsent emails.", true);
+    if (!staffName) return setCampaignStatus("Enter your staff name before rebuilding the campaign.", true);
+    if (!ready) return setCampaignStatus("There are no Ready for review recipients to rebuild.", true);
     if (!confirm(`Rebuild ${ready} unsent email${ready === 1 ? "" : "s"} with the current template? Edited subjects and messages will be kept, while their HTML footer is refreshed. Blocked sends will be reconciled from the Activity Log first. No email will be sent.`)) return;
     const button = $("rebuildCampaignRecipientsBtn");
     button.disabled = true;
@@ -3646,15 +3650,15 @@
   async function sendOutreachCampaignBatch(){
     const campaign = selectedOutreachCampaign;
     const staffName = $("outreachStaffName").value.trim();
-    if (!campaign || !staffName) return toast("Enter your staff name before sending.");
-    if (!selectedCampaignApprovalToken) return toast("Refresh and re-open this campaign before sending a batch.");
+    if (!campaign || !staffName) return setCampaignStatus("Enter your staff name before sending.", true);
+    if (!selectedCampaignApprovalToken) return setCampaignStatus("Refresh and re-open this campaign before sending a batch.", true);
     if (!confirm(`Send up to the next 10 approved emails from “${campaign.name}”? Each email is sent in its own verified request; the run stops if any recipient is blocked.`)) return;
     campaignSendInProgress = true; refreshCampaignSendControls();
     try {
       const res = await sendCampaignRecipients(campaign, staffName, 10, false);
       await loadOutreachCampaigns(); await openOutreachCampaign(campaign.campaign_id);
-      $("outreachCampaignStatus").textContent = `${res.sent} sent • ${res.blocked} blocked • ${res.remaining} remaining${res.last_business ? ` • Last sent: ${res.last_business}.` : "."}`;
-    } catch (error) { $("outreachCampaignStatus").textContent = error.message || String(error); }
+      setCampaignStatus(`${res.sent} sent • ${res.blocked} blocked • ${res.remaining} remaining${res.last_business ? ` • Last sent: ${res.last_business}.` : "."}`);
+    } catch (error) { setCampaignStatus(error.message || String(error), true); }
     finally { campaignSendInProgress = false; refreshCampaignSendControls(); }
   }
 
@@ -3662,17 +3666,17 @@
     const campaign = selectedOutreachCampaign;
     const staffName = $("outreachStaffName").value.trim();
     const ready = Number(campaign?.counts?.["Ready to send"] || 0);
-    if (!campaign || !staffName) return toast("Enter your staff name before sending.");
-    if (!selectedCampaignApprovalToken) return toast("Refresh and re-open this campaign before sending.");
-    if (!ready) return toast("No approved recipients are waiting to send.");
+    if (!campaign || !staffName) return setCampaignStatus("Enter your staff name before sending.", true);
+    if (!selectedCampaignApprovalToken) return setCampaignStatus("Refresh and re-open this campaign before sending.", true);
+    if (!ready) return setCampaignStatus("No approved recipients are waiting to send.", true);
     if (!confirm(`Send all ${ready} remaining approved emails from “${campaign.name}”? Each email is sent in its own verified request, skips delivery-unknown recipients without retrying them, and continues with the rest.`)) return;
     campaignSendInProgress = true; refreshCampaignSendControls();
     try {
       const res = await sendCampaignRecipients(campaign, staffName, ready, true);
       await loadOutreachCampaigns(); await openOutreachCampaign(campaign.campaign_id);
-      $("outreachCampaignStatus").textContent = `Campaign run complete: ${res.sent} sent • ${res.blocked} unresolved${res.last_business ? ` • Last sent: ${res.last_business}.` : "."}`;
+      setCampaignStatus(`Campaign run complete: ${res.sent} sent • ${res.blocked} unresolved${res.last_business ? ` • Last sent: ${res.last_business}.` : "."}`);
     } catch (error) {
-      $("outreachCampaignStatus").textContent = `Campaign run stopped before a confirmed result: ${error.message || String(error)} Refresh the campaign before continuing.`;
+      setCampaignStatus(`Campaign run stopped before a confirmed result: ${error.message || String(error)} Refresh the campaign before continuing.`, true);
     } finally { campaignSendInProgress = false; refreshCampaignSendControls(); }
   }
 
@@ -6139,7 +6143,7 @@
     const exclusionButton = event.target.closest("[data-campaign-recipient-action='exclude'], [data-campaign-recipient-action='restore']");
     if (exclusionButton) setOutreachCampaignRecipientExclusion(exclusionButton, exclusionButton.dataset.campaignRecipientAction === "exclude");
   });
-  $("approveOutreachCampaignBtn").addEventListener("click", () => approveOutreachCampaign().catch(error => { $("outreachCampaignStatus").textContent = error.message || String(error); }));
+  $("approveOutreachCampaignBtn").addEventListener("click", () => approveOutreachCampaign().catch(error => setCampaignStatus(error.message || String(error), true)));
   $("campaignSegmentConfirm").addEventListener("change", refreshCampaignApprovalControl);
   $("rebuildCampaignRecipientsBtn").addEventListener("click", () => rebuildCampaignRecipients());
   $("reopenOutreachCampaignBtn").addEventListener("click", () => reopenOutreachCampaign());

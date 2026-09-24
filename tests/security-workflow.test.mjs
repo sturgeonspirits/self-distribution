@@ -643,4 +643,14 @@ test("campaign approval confirmation is inline, counted, and required before app
   assert.match(index, /function refreshCampaignApprovalControl\(\)/);
   assert.match(index, /approveButton\.disabled = campaign\?\.status !== "Review" \|\| \(requiresConfirmation && !confirmed\)/);
   assert.match(index, /campaignSegmentConfirm"\)\.addEventListener\("change", refreshCampaignApprovalControl\)/);
+  const campaignStart = index.indexOf("async function openOutreachCampaign");
+  const campaignActions = index.slice(campaignStart, index.indexOf("function renderOutreach", campaignStart));
+  assert.doesNotMatch(campaignActions, /toast\(/, "campaign-dialog validation never renders behind its modal");
+  assert.match(campaignActions, /const isSameReviewSession = campaignSegmentConfirmation\.campaignId === campaign\.campaign_id/);
+  assert.match(campaignActions, /\$\("campaignSegmentConfirm"\)\.checked = requiresSegmentConfirmation && campaignSegmentConfirmation\.confirmed/);
+  assert.doesNotMatch(campaignActions, /\$\("campaignSegmentConfirm"\)\.checked = false/);
+  assert.match(campaignActions, /if \(campaign\?\.status !== "Review"\) campaignSegmentConfirmation = \{ campaignId:campaign\?\.campaign_id \|\| "", confirmed:false \}/);
+  assert.match(campaignActions, /setCampaignStatus\("Enter your staff name before approving\.", true\)/);
+  assert.match(campaignActions, /setCampaignStatus\("An exclusion reason is required\.", true\)/);
+  assert.match(campaignActions, /setCampaignStatus\("Refresh and re-open this campaign before sending/, "send validation stays in the dialog");
 });
