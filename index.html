@@ -1,10 +1,10 @@
 <!doctype html>
-<!-- App version: 2026.09.24.30-WEB -->
+<!-- App version: 2026.09.24.31-WEB -->
 <html>
 <head>
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover"/>
-  <meta name="app-version" content="2026.09.24.30-WEB" />
+  <meta name="app-version" content="2026.09.24.31-WEB" />
   <meta name="theme-color" content="#536f77" />
   <link rel="icon" href="/assets/distribution-hub-icon.svg" type="image/svg+xml" />
   <link rel="manifest" href="/site.webmanifest" />
@@ -2509,7 +2509,7 @@
 
   <footer style="max-width:1200px;margin:18px auto 120px;padding:0 12px;text-align:center;color:#6b7280;font-size:12px;">
     Designed by <a href="https://scriptspirit.dev" target="_blank" rel="noopener noreferrer" style="color:#1d4ed8;text-decoration:none;font-weight:700;">Script Spirit</a>
-<span id="appVersionFooter"> • Version 2026.09.24.30-WEB</span>
+<span id="appVersionFooter"> • Version 2026.09.24.31-WEB</span>
   </footer>
 
 
@@ -2532,7 +2532,7 @@
   window.addEventListener("unhandledrejection", e => console.error("Unhandled promise rejection:", e.reason));
   window.addEventListener("error", e => console.error("Unhandled error:", e.error || e.message));
   const $ = (id) => document.getElementById(id);
-  const APP_VERSION = "2026.09.24.30-WEB";
+  const APP_VERSION = "2026.09.24.31-WEB";
   $("appVersionFooter").textContent = ` • Version ${APP_VERSION}`;
 
   let cache = { stores: [], lines: [] };
@@ -3448,8 +3448,15 @@
     $("sendRemainingCampaignBtn").hidden = campaign.status !== "Approved";
     refreshCampaignSendControls();
     const editable = campaign.status === "Review";
+    const campaignRecipientLocation = recipient => {
+      const parts = [escapeHtml(recipient.city || "City missing")];
+      const hasMiles = recipient.miles !== null && recipient.miles !== undefined && recipient.miles !== "";
+      if (hasMiles) parts.push(`${escapeHtml(recipient.miles)} mi from ${escapeHtml(centerLabel)}`);
+      else if (criteria) parts.push("Miles missing");
+      return parts.join(" • ");
+    };
     $("outreachCampaignRecipients").innerHTML = `<div class="outreachList">${(campaign.recipients || []).map((recipient, index) => `
-      <details class="outreachCard"><summary><strong>${escapeHtml(recipient.business)}</strong><span class="smallMuted"> • ${escapeHtml(recipient.city || "City missing")} • ${recipient.miles === null || recipient.miles === undefined || recipient.miles === "" ? "Miles missing" : `${escapeHtml(recipient.miles)} mi from ${escapeHtml(centerLabel)}`} • ${escapeHtml(recipient.email)} • ${escapeHtml(recipient.status)}</span><br><span class="smallMuted">${escapeHtml(recipient.subject)}${recipient.segment ? ` • ${escapeHtml(recipient.segment)}` : " • Default Segment C"}</span></summary>
+      <details class="outreachCard"><summary><strong>${escapeHtml(recipient.business)}</strong><span class="smallMuted"> • ${campaignRecipientLocation(recipient)} • ${escapeHtml(recipient.email)} • ${escapeHtml(recipient.status)}</span><br><span class="smallMuted">${escapeHtml(recipient.subject)}${recipient.segment ? ` • ${escapeHtml(recipient.segment)}` : " • Default Segment C"}</span></summary>
       <div class="outreachMeta"><span class="badge">${escapeHtml(recipient.priority || "No")} priority</span><span class="badge blue">${escapeHtml(recipient.email_confidence || "Unrated")}</span>${recipient.wave ? `<span class="badge">${escapeHtml(recipient.wave)}</span>` : ""}${criteria && (recipient.miles === null || recipient.miles === undefined || Number(recipient.miles) > maxMiles) ? `<span class="badge amber">Area review needed</span>` : ""}</div>
       <label>Subject</label><input class="emailEditor" data-campaign-subject value="${escapeHtml(recipient.subject || "")}" ${editable && recipient.status === "Ready for review" ? "" : "readonly"} />
       <label>Message</label><textarea class="emailEditor" data-campaign-body ${editable && recipient.status === "Ready for review" ? "" : "readonly"}>${escapeHtml(recipient.body_text || "")}</textarea>
@@ -3585,7 +3592,8 @@
     let pendingRecipients = (campaign?.recipients || []).filter(recipient => recipient.status === "Ready to send");
     while (remaining > 0 && attempts < maximum) {
       const expected = pendingRecipients[0] || { business:"the next recipient", idempotency_token:"" };
-      $("outreachCampaignStatus").textContent = `Sending… ${sent} sent • ${blocked} unresolved • ${remaining} remaining${lastBusiness ? ` • Last sent: ${lastBusiness}` : ""} • Sending: ${expected.business}.`;
+      const expectedLabel = expected.city ? `${expected.business} (${expected.city})` : expected.business;
+      $("outreachCampaignStatus").textContent = `Sending… ${sent} sent • ${blocked} unresolved • ${remaining} remaining${lastBusiness ? ` • Last sent: ${lastBusiness}` : ""} • Sending: ${expectedLabel}.`;
       try {
         const res = await staffApiPost({ action:"sendOutreachCampaignBatch", campaign_id:campaign.campaign_id, approval_token:selectedCampaignApprovalToken, batch_size:1, continue_after_block:continueAfterBlock, staff_name:staffName });
         if (!res.ok) throw new Error(res.error || "Campaign send could not continue.");

@@ -614,3 +614,18 @@ test("campaign rebuild UI and first-draft save gate preserve review-before-send"
   assert.match(index, /if \(!selectedOutreachRecord \|\| \(selectedOutreachRecord\.has_saved_draft && !outreachDraftIsDirty\(\)\)\) return;/);
   assert.match(index, /const saved = !!selectedOutreachRecord\?\.has_saved_draft && !outreachDraftIsDirty\(\)/);
 });
+
+test("campaign loading backfills legacy cities once and does not label absent legacy miles", async () => {
+  const [backend, index] = await Promise.all([
+    readFile(new URL("apps-script/Code.gs", root), "utf8"),
+    readFile(new URL("index.html", root), "utf8"),
+  ]);
+  const campaignObjectSource = backend.slice(backend.indexOf("function campaignRecipientCityFallbacks_"), backend.indexOf("function apiGetOutreachCampaigns_"));
+  const campaignWindowSource = index.slice(index.indexOf("async function openOutreachCampaign"), index.indexOf("async function saveOutreachCampaignRecipient"));
+  assert.match(campaignObjectSource, /function campaignRecipientCityFallbacks_\(/);
+  assert.match(campaignObjectSource, /One directory data read per campaign load/);
+  assert.match(campaignObjectSource, /by_account\.get\(accountId\) \|\| cityFallbacks\.by_source_row\.get\(sourceRow\)/);
+  assert.match(campaignWindowSource, /else if \(criteria\) parts\.push\("Miles missing"\)/);
+  assert.match(campaignWindowSource, /campaignRecipientLocation\(recipient\)/);
+  assert.match(index, /expected\.city \?/);
+});

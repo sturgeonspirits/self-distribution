@@ -1,8 +1,9 @@
 /*********************************
  * Inventory API (JSON) for Netlify
- * App version: 2026.09.24.27
+ * App version: 2026.09.24.28
  *
  * CHANGES IN THIS VERSION
+ * - Backfills missing legacy campaign-recipient cities from one directory read per campaign load and omits unstored legacy mileage.
  * - Makes campaign delivery use one directory row plus targeted Activity Log duplicate lookup instead of rebuilding Outreach support maps.
  * - Batches directory finalization into one row write and logs lock, row-read, mailer, and finalization timing for every recipient.
  * - Lets timeout recovery reconcile the specific delivery-unknown recipient before the browser decides whether to continue.
@@ -140,7 +141,7 @@
  * - Use only in the staging inventory backend until testing is complete.
  *********************************/
 
-const APP_VERSION = "2026.09.24.27";
+const APP_VERSION = "2026.09.24.28";
 
 const SHEET_NAMES = {
   STORES: "Stores",
@@ -2711,16 +2712,39 @@ function campaignAudienceChecksum_(audience, recipients, criteriaValue) {
   })).join("\n"));
 }
 
+function campaignRecipientCityFallbacks_(recipients) {
+  const fallback = { by_account:new Map(), by_source_row:new Map() };
+  const missingCity = recipients.some(item => !String(item.values[item.headers.city] || "").trim());
+  if (!missingCity) return fallback;
+  const sheet = getOutreachSheet_(OUTREACH_SHEET_NAME);
+  const headers = getHeaderMap_(sheet);
+  if (sheet.getLastRow() < 2 || headers.city === undefined) return fallback;
+  // One directory data read per campaign load, then recipient rows resolve from maps.
+  sheet.getRange(2, 1, sheet.getLastRow() - 1, sheet.getLastColumn()).getValues().forEach((values, index) => {
+    const city = String(values[headers.city] || "").trim();
+    if (!city) return;
+    const sourceRow = index + 2;
+    fallback.by_source_row.set(sourceRow, city);
+    const accountId = headers.account_id === undefined ? "" : String(values[headers.account_id] || "").trim();
+    if (accountId) fallback.by_account.set(accountId, city);
+  });
+  return fallback;
+}
+
 function campaignObject_(campaign, recipients, includeRecipients) {
   const h = campaign.headers;
   const value = key => campaign.values[h[key]];
+  const cityFallbacks = includeRecipients ? campaignRecipientCityFallbacks_(recipients) : { by_account:new Map(), by_source_row:new Map() };
   const recipientObjects = recipients.map(item => {
     const rh = item.headers;
     const get = key => item.values[rh[key]];
+    const sourceRow = Number(get("source_row") || 0);
+    const accountId = String(get("account_id") || "");
+    const storedCity = String(get("city") || "").trim();
     return {
-      source_row:Number(get("source_row") || 0), account_id:String(get("account_id") || ""),
+      source_row:sourceRow, account_id:accountId,
       business:String(get("business_name") || ""), email:String(get("recipient_email") || ""),
-      contact:String(get("contact") || ""), city:String(get("city") || ""), miles:outreachMiles_(get("miles")), priority:String(get("priority") || ""),
+      contact:String(get("contact") || ""), city:storedCity || cityFallbacks.by_account.get(accountId) || cityFallbacks.by_source_row.get(sourceRow) || "", miles:outreachMiles_(get("miles")), priority:String(get("priority") || ""),
       email_confidence:String(get("email_confidence") || ""), segment:String(get("segment") || ""), wave:String(get("wave") || ""),
       subject:String(get("subject") || ""), body_text:String(get("body_text") || ""), preview_html:String(get("html") || ""),
       content_checksum:String(get("content_checksum") || ""), status:String(get("status") || ""),
