@@ -325,7 +325,6 @@ function ensureFoundationalSheets_() {
 }
 
 function setHubConfigurationValue_(key, value, actor) {
-  ensureFoundationalSheets_();
   const sheet = getOutreachSs_().getSheetByName(HUB_CONFIGURATION_SHEET_NAME);
   const h = getHeaderMap_(sheet);
   const rows = sheet.getLastRow() < 2 ? [] : sheet.getRange(2, 1, sheet.getLastRow() - 1, sheet.getLastColumn()).getValues();
@@ -341,7 +340,6 @@ function setHubConfigurationValue_(key, value, actor) {
 }
 
 function appendAudit_(action, recordType, recordId, accountId, actor, source, target, result, details) {
-  ensureFoundationalSheets_();
   getOutreachSs_().getSheetByName(HUB_AUDIT_SHEET_NAME).appendRow([
     permanentId_("EVT"), new Date(), action, recordType || "", recordId || "", accountId || "",
     actor || "Sturgeon Distribution Hub", source || "", target || "", result || "Recorded", details || "", APP_VERSION,
@@ -349,7 +347,6 @@ function appendAudit_(action, recordType, recordId, accountId, actor, source, ta
 }
 
 function startSubmissionJournal_(type, token, accountId, business, payload) {
-  ensureFoundationalSheets_();
   const sheet = getOutreachSs_().getSheetByName(SUBMISSION_JOURNAL_SHEET_NAME);
   const h = getHeaderMap_(sheet);
   if (sheet.getLastRow() >= 2) {
@@ -376,7 +373,6 @@ function completeSubmissionJournal_(journal, status, recordId, error) {
 }
 
 function enqueueIntegrationJob_(jobType, recordType, recordId, accountId, payload) {
-  ensureFoundationalSheets_();
   const sheet = getOutreachSs_().getSheetByName(INTEGRATION_JOBS_SHEET_NAME);
   const h = getHeaderMap_(sheet);
   const payloadJson = safeJson_(payload || {});
@@ -462,7 +458,6 @@ function apiInitializeHardenedHub_(p) {
 }
 
 function apiGetHubSystemStatus_() {
-  ensureFoundationalSheets_();
   const active = isHubInventoryActive_();
   return {
     migration_status:active ? HUB_MIGRATION_ACTIVE : "NOT STARTED",
@@ -472,6 +467,19 @@ function apiGetHubSystemStatus_() {
     toast_adapter:"Disabled",
     catalog_source:ORDER_CATALOG_SOURCE,
   };
+}
+
+function apiRepairHubStructure_(p) {
+  if (!p) throw new Error("Missing repair request.");
+  requireFields_(p, ["staff_name"]);
+  const lock = LockService.getScriptLock();
+  if (!lock.tryLock(30000)) throw new Error("Another migration or write is in progress.");
+  try {
+    ensureFoundationalSheets_();
+    return { message:"Hub structure repaired.", repaired_at:new Date().toISOString() };
+  } finally {
+    lock.releaseLock();
+  }
 }
 
 function json_(obj) {
@@ -508,7 +516,7 @@ function handle_(e, body) {
     assertAuthorized_(e, body);
     const action = (e?.parameter?.action) || (body?.action) || "";
     if (!action) {
-      return json_({ ok:true, service:"sturgeon-distribution-hub", version:APP_VERSION, actions:["initData","listSkus","addSkuToStore","upsertProduct","submitCounts","createReorder","managerGrid","salesSinceCount","updateStoreContacts","outreachDashboard","outreachRecord","outreachSendStatus","outreachNewsletterContacts","outreachCampaigns","outreachCampaign","createOutreachCampaign","updateOutreachCampaignRecipient","setOutreachCampaignRecipientExclusion","approveOutreachCampaign","reopenOutreachCampaign","sendOutreachCampaignBatch","saveOutreachDraft","sendOutreachEmail","sendOutreachTestEmail","updateOutreachOutcome","updateOutreachBusiness","updateOutreachPrograms","createOutreachBusiness","importOutreachBusinesses","upsertNewsletterContact","submitCustomerApplication","submitOnlineOrderRequest","customerWorkQueue","updateCustomerApplication","updateOnlineOrderRequest","hubSystemStatus","initializeHardenedHub","reconcileIntegrations"] });
+      return json_({ ok:true, service:"sturgeon-distribution-hub", version:APP_VERSION, actions:["initData","listSkus","addSkuToStore","upsertProduct","submitCounts","createReorder","managerGrid","salesSinceCount","updateStoreContacts","outreachDashboard","outreachRecord","outreachSendStatus","outreachNewsletterContacts","outreachCampaigns","outreachCampaign","createOutreachCampaign","updateOutreachCampaignRecipient","setOutreachCampaignRecipientExclusion","approveOutreachCampaign","reopenOutreachCampaign","sendOutreachCampaignBatch","saveOutreachDraft","sendOutreachEmail","sendOutreachTestEmail","updateOutreachOutcome","updateOutreachBusiness","updateOutreachPrograms","createOutreachBusiness","importOutreachBusinesses","upsertNewsletterContact","submitCustomerApplication","submitOnlineOrderRequest","customerWorkQueue","updateCustomerApplication","updateOnlineOrderRequest","hubSystemStatus","initializeHardenedHub","repairHubStructure","reconcileIntegrations"] });
     }
 
     let res;
@@ -550,6 +558,7 @@ function handle_(e, body) {
       case "updateOnlineOrderRequest": res = apiUpdateOnlineOrderRequest_(body); break;
       case "hubSystemStatus": res = apiGetHubSystemStatus_(); break;
       case "initializeHardenedHub": res = apiInitializeHardenedHub_(body); break;
+      case "repairHubStructure": res = apiRepairHubStructure_(body); break;
       case "reconcileIntegrations": res = apiReconcileIntegrations_(body); break;
       default: throw new Error(`Unknown action: ${action}`);
     }
@@ -1259,7 +1268,6 @@ function apiImportOutreachBusinesses_(p) {
   const lock = LockService.getScriptLock();
   if (!lock.tryLock(30000)) throw new Error("Another directory import is in progress.");
   try {
-    ensureFoundationalSheets_();
     let identity = ensureAccountIdentityModel_(true);
     const directory = getOutreachSheet_(OUTREACH_SHEET_NAME);
     const batches = getOutreachSs_().getSheetByName(IMPORT_BATCHES_SHEET_NAME);
@@ -1411,7 +1419,6 @@ function outreachWeeklyExclusionReasons_(record) {
 
 function outreachActivityMap_() {
   const sheet = getOutreachSheet_(OUTREACH_ACTIVITY_SHEET_NAME);
-  ensureHeaderColumns_(sheet, [ACCOUNT_ID_HEADER]);
   const rows = getAllRowsAsObjects_(sheet);
   const activity = new Map();
   rows.forEach(row => {
@@ -1459,10 +1466,7 @@ function outreachDraftKey_(identityKey, stage) {
 function getOutreachDraftSheet_(createIfMissing) {
   const ss = getOutreachSs_();
   let sheet = ss.getSheetByName(OUTREACH_DRAFTS_SHEET_NAME);
-  if (sheet) {
-    ensureHeaderColumns_(sheet, [ACCOUNT_ID_HEADER]);
-    return sheet;
-  }
+  if (sheet) return sheet;
   if (!createIfMissing) return sheet;
 
   sheet = ss.insertSheet(OUTREACH_DRAFTS_SHEET_NAME);
@@ -3656,9 +3660,6 @@ function apiGetCustomerWorkQueue_() {
   const orderSheet = getOnlineOrderRequestsSheet_(false);
   const lineSheet = getOnlineOrderLinesSheet_(false);
 
-  if (applicationSheet) ensureHeaderColumns_(applicationSheet, ["Customer ID", "Assigned To", "Staff Notes", "Review Updated At", "Review Updated By"]);
-  if (orderSheet) ensureHeaderColumns_(orderSheet, ["Badger Invoice Number", "Invoice Status", "Delivery Status", "Assigned To", "Staff Notes", "Review Updated At", "Review Updated By"]);
-
   const linesByRequest = new Map();
   rowsWithSource_(lineSheet).forEach(row => {
     const requestId = String(row.request_id || "");
@@ -3862,7 +3863,6 @@ function reconcileBadgerForOrder_(sheet, rowNumber, h, invoiceNumber) {
 }
 
 function upsertDeliveryForOrder_(order, lines, staffName) {
-  ensureFoundationalSheets_();
   const sheet = getOutreachSs_().getSheetByName(DELIVERIES_SHEET_NAME);
   const h = getHeaderMap_(sheet);
   const rows = sheet.getLastRow() < 2 ? [] : sheet.getRange(2, 1, sheet.getLastRow() - 1, sheet.getLastColumn()).getValues();
@@ -4242,7 +4242,6 @@ function apiReconcileIntegrations_(p) {
   const lock = LockService.getScriptLock();
   if (!lock.tryLock(30000)) throw new Error("Another reconciliation or write is in progress.");
   try {
-    ensureFoundationalSheets_();
     ensureAccountIdentityModel_(true);
     const orderSheet = getOnlineOrderRequestsSheet_(false);
     if (!orderSheet || orderSheet.getLastRow() < 2) return { message:"No orders need reconciliation.", checked:0, badger_matches:0, deliveries:0, attention:0 };

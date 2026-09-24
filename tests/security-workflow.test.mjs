@@ -235,6 +235,11 @@ test("source contains formula protection, global error listeners, and recoverabl
   assert.match(backend, /case "outreachRecord": res = apiGetOutreachRecord_\(body\);/);
   assert.match(backend, /function apiGetOutreachRecord_\(p\)/);
   assert.match(backend, /requireFields_\(p, \["source_row", "account_id"\]\)/);
+  assert.match(backend, /function apiRepairHubStructure_\(p\)/);
+  const foundationalCalls = backend.match(/ensureFoundationalSheets_\(\);/g) || [];
+  assert.equal(foundationalCalls.length, 2, "only initialization and repair may create foundational sheets");
+  const activityMapSource = backend.slice(backend.indexOf("function outreachActivityMap_"), backend.indexOf("function getOutreachCampaignSettings_"));
+  assert.doesNotMatch(activityMapSource, /ensureHeaderColumns_/);
   assert.match(backend, /today: slim \? today\.map\(record => record\.source_row\) : today/);
   assert.match(backend, /sent: slim \? sent\.slice\(0, 50\)\.map\(record => record\.source_row\) : sent\.slice\(0, 50\)/);
   const accountBuilderSource = backend.slice(backend.indexOf("function buildCustomerAccounts_"), backend.indexOf("function apiGetCustomerWorkQueue_"));
