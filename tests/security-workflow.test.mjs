@@ -272,6 +272,38 @@ test("valid Karl-only test tracking links redirect without recording engagement"
   assert.equal(fetches, 0);
 });
 
+test("Karl-only test rendering supplies non-empty HTML with an unsigned x=test marker", async () => {
+  const backend = await readFile(new URL("apps-script/Code.gs", root), "utf8");
+  const rendererSource = backend.slice(backend.indexOf("function outreachPlainTextToHtml_"), backend.indexOf("function outreachFieldLabel_"));
+  const renderMessage = new Function(
+    "Utilities", "PropertiesService", "outreachValue_", "outreachSegmentTemplateKey_", "outreachDisplayBusinessName_", "escapeOutreachHtml_", "outreachTemplateParts_", "renderOutreachTemplate_",
+    `${rendererSource}\nreturn outreachMessage_;`
+  )(
+    {
+      computeHmacSha256Signature:(payload, secret) => createHmac("sha256", secret).update(payload).digest(),
+      base64EncodeWebSafe:bytes => Buffer.from(bytes).toString("base64url"),
+    },
+    { getScriptProperties:() => ({ getProperty:() => "tracking-test-secret" }) },
+    (row, keys) => keys.map(key => row[key]).find(value => value !== undefined && value !== null && value !== ""),
+    () => "A",
+    value => String(value || ""),
+    value => String(value || "").replace(/&/g, "&amp;").replace(/"/g, "&quot;"),
+    template => ({ body:String(template || ""), footer:"{{Sell Sheet Link}}" }),
+    (template, values) => String(template || "").replace(/{{([^}]+)}}/g, (_, key) => values[key.trim()] || "")
+  );
+  const message = renderMessage(
+    { account_id:"ACC-1", next_email:"Initial", business:"Example Bar", email:"orders@example.test", contact:"Alex" },
+    { "Tracking base URL":"https://distribution-hub.netlify.app/go", "Wholesale sell-sheet URL":"https://example.test/sell-sheet", "Segment A subject":"Hello", "Segment A HTML":"Hello" },
+    { subject:"Saved subject", body_text:"Saved body" },
+    true
+  );
+  assert.ok(message.html.length > 0);
+  assert.match(message.html, /x=test/);
+  const sendSource = backend.slice(backend.indexOf("function apiSendOutreachEmail_"), backend.indexOf("function apiUpdateOutreachOutcome_"));
+  assert.match(sendSource, /testMode \? outreachMessage_\(current, settings, testDraft, true\)\.html : record\.preview_html/);
+  assert.match(sendSource, /html:html/);
+});
+
 test("source contains formula protection, global error listeners, and recoverable action state", async () => {
   const [backend, index, signup, order, mailer] = await Promise.all([
     readFile(new URL("apps-script/Code.gs", root), "utf8"),
@@ -343,7 +375,7 @@ test("source contains formula protection, global error listeners, and recoverabl
   assert.match(mailer, /trackedSellSheet \|\| sellSheet/);
   assert.match(mailer, /trackedApplication \|\| applicationHref/);
   assert.match(backend, /if \(testMode\) params\.x = "test"/);
-  assert.match(backend, /testMode \? outreachMessage_\(current, settings, testDraft, true\)\.preview_html : record\.preview_html/);
+  assert.match(backend, /testMode \? outreachMessage_\(current, settings, testDraft, true\)\.html : record\.preview_html/);
   assert.match(mailer, /if \(testMode\) params\.x = 'test'/);
   assert.match(mailer, /testMode \? markTestTrackingLinks_\(html\) : html/);
   const mailerTemplateValuesSource = mailer.slice(mailer.indexOf("function templateValues_"), mailer.indexOf("function formatDateValue_"));

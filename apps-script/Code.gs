@@ -1,8 +1,9 @@
 /*********************************
  * Inventory API (JSON) for Netlify
- * App version: 2026.09.24.22
+ * App version: 2026.09.24.23
  *
  * CHANGES IN THIS VERSION
+ * - Sends Karl-only test email HTML from the renderer's actual html field so test links retain their non-recording marker.
  * - Uses Reactivation-specific online-ordering wording for the wholesale application link in every renderer.
  * - Marks tracking links in Karl-only test messages so test clicks redirect without being recorded as prospect engagement.
  * - Includes the wholesale application link in every outreach stage while retaining tracked-link fallback behavior.
@@ -129,7 +130,7 @@
  * - Use only in the staging inventory backend until testing is complete.
  *********************************/
 
-const APP_VERSION = "2026.09.24.22";
+const APP_VERSION = "2026.09.24.23";
 
 const SHEET_NAMES = {
   STORES: "Stores",
@@ -3114,7 +3115,7 @@ function apiSendOutreachEmail_(p, testMode) {
       const reasons = testMode ? [] : outreachSendEligibility_(record);
       if (reasons.length) throw new Error(reasons.join("; ") + ".");
       const testDraft = draftMap.get(outreachDraftKey_(record.account_id || rowNumber, stage)) || draftMap.get(outreachDraftKey_(rowNumber, stage));
-      const html = testMode ? outreachMessage_(current, settings, testDraft, true).preview_html : record.preview_html;
+      const html = testMode ? outreachMessage_(current, settings, testDraft, true).html : record.preview_html;
       result = callOutreachMailer_({
         action:testMode ? "sendAppTestEmail" : "sendAppEmail",
         idempotency_token:token,
