@@ -335,6 +335,9 @@ test("source contains formula protection, global error listeners, and recoverabl
   const inventoryMessageSource = backend.slice(backend.indexOf("function outreachMessage_"), backend.indexOf("function outreachRecord_"));
   assert.match(inventoryMessageSource, /const applicationLink = \(trackedApplication \|\| directApplication\)/);
   assert.doesNotMatch(inventoryMessageSource, /stage === "Initial" && \(trackedApplication/);
+  assert.match(inventoryMessageSource, /stage === "Reactivation"/);
+  assert.match(inventoryMessageSource, /If you'd like to set up online ordering with us/);
+  assert.match(inventoryMessageSource, /complete our short wholesale account form/);
   assert.match(mailer, /function trackingUrl_\(target, accountId, stage, settings, extras, testMode\)/);
   assert.ok(mailer.includes(String.raw`if (!/^https:\/\/\S+$/i.test(baseUrl) || !secret || !accountId) return '';`));
   assert.match(mailer, /trackedSellSheet \|\| sellSheet/);
@@ -346,6 +349,9 @@ test("source contains formula protection, global error listeners, and recoverabl
   const mailerTemplateValuesSource = mailer.slice(mailer.indexOf("function templateValues_"), mailer.indexOf("function formatDateValue_"));
   assert.match(mailerTemplateValuesSource, /const applicationLink = \(trackedApplication \|\| applicationHref\)/);
   assert.doesNotMatch(mailerTemplateValuesSource, /stage === 'Initial' && \(trackedApplication/);
+  assert.match(mailerTemplateValuesSource, /stage === 'Reactivation'/);
+  assert.match(mailerTemplateValuesSource, /If you'd like to set up online ordering with us/);
+  assert.match(mailerTemplateValuesSource, /complete our short wholesale account form/);
   assert.match(backend, /function apiRepairHubStructure_\(p\)/);
   assert.match(backend, /function installNightlyHubStructureRepair\(\)/);
   assert.match(backend, /function accountIdentityLookup_\(\)/);

@@ -1,8 +1,9 @@
 /*********************************
  * Inventory API (JSON) for Netlify
- * App version: 2026.09.24.21
+ * App version: 2026.09.24.22
  *
  * CHANGES IN THIS VERSION
+ * - Uses Reactivation-specific online-ordering wording for the wholesale application link in every renderer.
  * - Marks tracking links in Karl-only test messages so test clicks redirect without being recorded as prospect engagement.
  * - Includes the wholesale application link in every outreach stage while retaining tracked-link fallback behavior.
  * - Shows the most recent tracked link target alongside click counts in Outreach business details.
@@ -128,7 +129,7 @@
  * - Use only in the staging inventory backend until testing is complete.
  *********************************/
 
-const APP_VERSION = "2026.09.24.21";
+const APP_VERSION = "2026.09.24.22";
 
 const SHEET_NAMES = {
   STORES: "Stores",
@@ -1978,8 +1979,11 @@ function outreachMessage_(row, settings, draft, testMode) {
     ? `${applicationUrl}${applicationUrl.includes("?") ? "&" : "?"}account_id=${encodeURIComponent(accountId)}&business=${encodeURIComponent(business)}&email=${encodeURIComponent(email)}`
     : "";
   const trackedApplication = outreachTrackingUrl_("application", accountId, stage, settings, { business:business, email:email }, testMode);
+  const applicationSentence = stage === "Reactivation"
+    ? `If you'd like to set up online ordering with us, <a href="${escapeOutreachHtml_(trackedApplication || directApplication)}">complete our short wholesale account form</a>. It takes about five minutes.`
+    : `If you would like to get the account setup started, <a href="${escapeOutreachHtml_(trackedApplication || directApplication)}">complete our short wholesale customer application</a>.`;
   const applicationLink = (trackedApplication || directApplication)
-    ? `<p>If you would like to get the account setup started, <a href="${escapeOutreachHtml_(trackedApplication || directApplication)}">complete our short wholesale customer application</a>.</p>`
+    ? `<p>${applicationSentence}</p>`
     : "";
   const values = {
     "First Name": contact ? contact.split(/\s+/)[0] : "there",

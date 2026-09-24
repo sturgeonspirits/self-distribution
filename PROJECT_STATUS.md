@@ -9,8 +9,8 @@ Read this file before inspecting the repository or changing the application. Upd
 | Component | Source version | Deployment state |
 | --- | --- | --- |
 | Netlify web app and staff proxy | `2026.09.24.24-WEB` on `codex/work` / `2026.09.24.22-WEB` live | Signed, allowlisted outreach link redirects and business-detail click display are committed; no deployment has been made. |
-| Inventory API Apps Script | `2026.09.24.21` on `codex/work` / `2026.09.24.17` live | Targeted record reads, possessive-name display correction, and signed-link click engagement recording are committed and awaiting Apps Script deployment. |
-| Distribution Outreach Apps Script | `2026.09.24.12-APP` on `codex/work` | Signed-link rendering is committed; owner has not yet confirmed this exact version is deployed. |
+| Inventory API Apps Script | `2026.09.24.22` on `codex/work` / `2026.09.24.17` live | Targeted record reads, possessive-name display correction, and signed-link click engagement recording are committed and awaiting Apps Script deployment. |
+| Distribution Outreach Apps Script | `2026.09.24.13-APP` on `codex/work` | Signed-link rendering is committed; owner has not yet confirmed this exact version is deployed. |
 | Public customer Netlify proxy | `2026.09.18.3-WEB` | Deployed with Netlify; unchanged by the latest staff-app UI work |
 
 Current Git branch: `codex/work`

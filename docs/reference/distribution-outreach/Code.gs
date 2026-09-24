@@ -1,9 +1,10 @@
 /**
  * Sturgeon Spirits Distribution Outreach
  *
- * VERSION: 2026.09.24.12-APP
+ * VERSION: 2026.09.24.13-APP
  *
  * CHANGES IN THIS VERSION
+ * - Uses Reactivation-specific online-ordering wording for the wholesale application link in every renderer.
  * - Marks tracking links in Karl-only test messages so test clicks redirect without being recorded as prospect engagement.
  * - Includes the wholesale application link in every outreach stage while retaining tracked-link fallback behavior.
  * - Added opt-in signed sell-sheet and wholesale-application links for click measurement; direct links remain unchanged until tracking is configured.
@@ -56,7 +57,7 @@
  * Sends through the authenticated Zoho Mail API account.
  */
 
-const OUTREACH_VERSION = '2026.09.24.12-APP';
+const OUTREACH_VERSION = '2026.09.24.13-APP';
 
 const OUTREACH = Object.freeze({
   ENVIRONMENT: 'STAGING_PILOT',
@@ -886,8 +887,10 @@ function templateValues_(row, settings, stage, accountId, testMode) {
       '&email=' + encodeURIComponent(email)
     : '';
   const trackedApplication = trackingUrl_('application', accountId, stage, settings, { business:business, email:email }, testMode);
-  const applicationLink = (trackedApplication || applicationHref) ?
-    '<p>If you would like to get the account setup started, <a href="' + escapeHtml_(trackedApplication || applicationHref) + '">complete our short wholesale customer application</a>.</p>' : '';
+  const applicationSentence = stage === 'Reactivation'
+    ? "If you'd like to set up online ordering with us, <a href=\"" + escapeHtml_(trackedApplication || applicationHref) + "\">complete our short wholesale account form</a>. It takes about five minutes."
+    : 'If you would like to get the account setup started, <a href="' + escapeHtml_(trackedApplication || applicationHref) + '">complete our short wholesale customer application</a>.';
+  const applicationLink = (trackedApplication || applicationHref) ? '<p>' + applicationSentence + '</p>' : '';
   return {
     'First Name': firstName,
     'Business Name': smartTitleCase_(String(row[OUTREACH.COL.BUSINESS - 1] || 'your business')),
