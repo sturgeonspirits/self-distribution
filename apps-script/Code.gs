@@ -1,8 +1,9 @@
 /*********************************
  * Inventory API (JSON) for Netlify
- * App version: 2026.09.24.15
+ * App version: 2026.09.24.16
  *
  * CHANGES IN THIS VERSION
+ * - Corrected all-caps business display formatting so a terminal possessive 's stays lowercase while names such as O'Brien still retain their internal capital.
  * - Added lightweight Outreach badges and search text from the Programs and Engagement support tabs for slim dashboard loads.
  * - Fixed the nightly repair trigger handler, refreshed a missed Badger invoice lookup once, and made single-record Outreach lookup accept source-row-only requests.
  * - Added an optional slim Outreach dashboard response and a single-record outreach endpoint.
@@ -121,7 +122,7 @@
  * - Use only in the staging inventory backend until testing is complete.
  *********************************/
 
-const APP_VERSION = "2026.09.24.15";
+const APP_VERSION = "2026.09.24.16";
 
 const SHEET_NAMES = {
   STORES: "Stores",
@@ -1692,7 +1693,10 @@ function outreachDisplayBusinessName_(value) {
   return text.split(/\s+/).map(word => {
     if (/^(EAA|HQ|BP|VFW|LLC|USA|II|III|IV|TJ'S|T&O)$/i.test(word)) return word.toUpperCase();
     if (/^X-GOLF$/i.test(word)) return "X-Golf";
-    return word.toLowerCase().replace(/(^|[-\/'&])([a-z])/g, (_, prefix, letter) => prefix + letter.toUpperCase());
+    const normalized = word.toLowerCase().replace(/(^|[-\/&])([a-z])/g, (_, prefix, letter) => prefix + letter.toUpperCase());
+    return normalized.replace(/'([a-z])/g, (match, letter, index, source) =>
+      `'${letter === "s" && index + match.length === source.length ? "s" : letter.toUpperCase()}`
+    );
   }).join(" ");
 }
 
