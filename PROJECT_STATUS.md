@@ -8,9 +8,9 @@ Read this file before inspecting the repository or changing the application. Upd
 
 | Component | Source version | Deployment state |
 | --- | --- | --- |
-| Netlify web app and staff proxy | `2026.09.24.23-WEB` on `codex/work` / `2026.09.24.22-WEB` live | Signed, allowlisted outreach link redirects and business-detail click display are committed; no deployment has been made. |
-| Inventory API Apps Script | `2026.09.24.19` on `codex/work` / `2026.09.24.15` live | Targeted record reads, possessive-name display correction, and signed-link click engagement recording are committed and awaiting Apps Script deployment. |
-| Distribution Outreach Apps Script | `2026.09.24.10-APP` on `codex/work` | Signed-link rendering is committed; owner has not yet confirmed this exact version is deployed. |
+| Netlify web app and staff proxy | `2026.09.24.24-WEB` on `codex/work` / `2026.09.24.22-WEB` live | Signed, allowlisted outreach link redirects and business-detail click display are committed; no deployment has been made. |
+| Inventory API Apps Script | `2026.09.24.21` on `codex/work` / `2026.09.24.17` live | Targeted record reads, possessive-name display correction, and signed-link click engagement recording are committed and awaiting Apps Script deployment. |
+| Distribution Outreach Apps Script | `2026.09.24.12-APP` on `codex/work` | Signed-link rendering is committed; owner has not yet confirmed this exact version is deployed. |
 | Public customer Netlify proxy | `2026.09.18.3-WEB` | Deployed with Netlify; unchanged by the latest staff-app UI work |
 
 Current Git branch: `codex/work`
@@ -129,6 +129,8 @@ The shared outreach secret must match in the two Apps Script projects. Zoho mail
 2. Add `SELL_SHEET_URL` to Netlify.
 3. Deploy the Netlify and Apps Script source changes, while leaving Campaign Settings `Tracking base URL` blank.
 4. Add Campaign Settings `Tracking base URL` last (for example, the Netlify `/go` path). This is the switch that enables tracked links in newly rendered outreach emails; existing campaign snapshots keep the links captured when they were created.
+
+Add the required Netlify environment variables before the Netlify deployment; adding them afterward would leave the new `/go` route unable to sign or route tracked links correctly.
 
 ## Review branch and batched deployment policy
 
