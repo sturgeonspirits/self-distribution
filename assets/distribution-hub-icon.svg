@@ -1,0 +1,18 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512" role="img" aria-labelledby="title description">
+  <title id="title">Sturgeon Distribution Hub</title>
+  <desc id="description">A Sturgeon Spirits sturgeon head with a distribution network route.</desc>
+  <!-- Brand palette: slate teal, antique cream, warm tan, and Sturgeon rust. -->
+  <rect width="512" height="512" rx="112" fill="#536f77"/>
+  <!-- A simple, front-facing sturgeon: long snout, brow, eyes, and four barbels. -->
+  <path fill="#f1f1e7" d="M256 84c-76 0-137 56-137 126 0 49 25 93 64 116l20 15-15 48 34-28 18 73 16-69 16 69 18-73 34 28-15-48 20-15c39-23 64-67 64-116 0-70-61-126-137-126Zm0 42c51 0 93 36 101 82H155c8-46 50-82 101-82Zm-82 119 36-17 19 17-33 27-22-27Zm164 0 22-17 19 17-36 0-22 27-33-27 19-17Z"/>
+  <path fill="#c8bca4" d="M181 211h150l-25 49-50 35-50-35-25-49Zm75 22 25 29-25 18-25-18 25-29Z"/>
+  <path fill="#242622" d="M193 215a12 12 0 1 0 0 24 12 12 0 0 0 0-24Zm126 0a12 12 0 1 0 0 24 12 12 0 0 0 0-24Z"/>
+  <!-- Three connected accounts, placed high enough to survive a tiny favicon. -->
+  <path d="M256 138 190 208M256 138l66 70" fill="none" stroke="#96321f" stroke-linecap="round" stroke-width="22"/>
+  <circle cx="256" cy="138" r="27" fill="#96321f" stroke="#f1f1e7" stroke-width="10"/>
+  <circle cx="190" cy="208" r="23" fill="#96321f" stroke="#f1f1e7" stroke-width="9"/>
+  <circle cx="322" cy="208" r="23" fill="#96321f" stroke="#f1f1e7" stroke-width="9"/>
+  <circle cx="256" cy="138" r="8" fill="#f1f1e7"/>
+  <circle cx="190" cy="208" r="7" fill="#f1f1e7"/>
+  <circle cx="322" cy="208" r="7" fill="#f1f1e7"/>
+</svg>

@@ -1,7 +1,7 @@
-// App version: 2026.09.24.25-WEB
+// App version: 2026.09.24.27-WEB
 import { requireStaffSession } from "./auth.js";
 
-const APP_VERSION = "2026.09.24.25-WEB";
+const APP_VERSION = "2026.09.24.27-WEB";
 const STAFF_ACTIONS = new Set([
   "outreachDashboard",
   "outreachRecord",
@@ -43,15 +43,16 @@ const STAFF_ACTIONS = new Set([
   "updateStoreContacts",
 ]);
 
-// Netlify's default synchronous limit is 10 seconds, so a second 9-second
-// read attempt cannot complete before the function is terminated.
+// This site's function limit is verified above 17 seconds from successful
+// campaign sends. Do not reduce upstream timeouts below 20 seconds without
+// first checking the active Netlify function limit and a live campaign run.
 const UPSTREAM_ATTEMPTS = 1;
 const UPSTREAM_WRITE_ATTEMPTS = 1;
-const UPSTREAM_TIMEOUT_MS = 9000;
+const UPSTREAM_TIMEOUT_MS = 20000;
 const SEND_UPSTREAM_ATTEMPTS = 1;
-// Keep this about one second below the site's Netlify function limit: 10 seconds
-// by default; raise it to about 25000 only when the function limit is 26 seconds.
-const SEND_UPSTREAM_TIMEOUT_MS = 9000;
+// Sends, campaign creation, and campaign reads need the longer verified window.
+// Do not reduce this below 20 seconds without checking the active function limit.
+const SEND_UPSTREAM_TIMEOUT_MS = 24000;
 const SEND_ACTIONS = new Set(["sendOutreachEmail", "sendOutreachTestEmail", "sendOutreachCampaignBatch"]);
 const SNAPSHOT_ACTIONS = new Set(["createOutreachCampaign"]);
 const CAMPAIGN_READ_ACTIONS = new Set(["outreachCampaigns", "outreachCampaign"]);

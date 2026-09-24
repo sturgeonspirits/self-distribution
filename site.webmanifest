@@ -1,0 +1,17 @@
+{
+  "name": "Sturgeon Distribution Hub",
+  "short_name": "Distribution Hub",
+  "description": "Sturgeon Spirits wholesale distribution workspace.",
+  "start_url": "/",
+  "display": "standalone",
+  "background_color": "#536f77",
+  "theme_color": "#536f77",
+  "icons": [
+    {
+      "src": "/assets/distribution-hub-icon.svg",
+      "sizes": "any",
+      "type": "image/svg+xml",
+      "purpose": "any maskable"
+    }
+  ]
+}
