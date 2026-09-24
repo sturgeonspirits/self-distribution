@@ -217,6 +217,42 @@ test("public customer proxy remains narrowly allowlisted", async () => {
   assert.equal(blocked.statusCode, 403);
 });
 
+function goEvent(params, userAgent = "Mozilla/5.0") {
+  return { httpMethod:"GET", rawQuery:new URLSearchParams(params).toString(), headers:{ "user-agent":userAgent } };
+}
+
+function trackingSignature(target, accountId, stage) {
+  return createHmac("sha256", process.env.TRACKING_LINK_SECRET).update(`${target}\n${accountId}\n${stage}`).digest("base64url");
+}
+
+test("tracking redirect allowlists destinations and ignores invalid signatures", async () => {
+  const { handler } = await loadFunction("netlify/functions/go.js", "tracking-redirect");
+  process.env.TRACKING_LINK_SECRET = "tracking-test-secret";
+  process.env.SELL_SHEET_URL = "https://example.test/sell-sheet";
+  process.env.APPS_SCRIPT_URL = "https://example.test/exec";
+  let fetches = 0;
+  globalThis.fetch = async () => { fetches += 1; return new Response(JSON.stringify({ ok:true }), { status:200 }); };
+  const unknown = await handler(goEvent({ t:"https://attacker.test", url:"https://attacker.test" }));
+  assert.equal(unknown.statusCode, 404);
+  const invalid = await handler(goEvent({ t:"sell_sheet", a:"ACC-1", s:"Initial", k:"bad", url:"https://attacker.test" }));
+  assert.equal(invalid.statusCode, 302);
+  assert.equal(invalid.headers.Location, "https://example.test/sell-sheet");
+  assert.equal(fetches, 0);
+});
+
+test("tracking logging failure or timeout never prevents a redirect", async () => {
+  const { handler } = await loadFunction("netlify/functions/go.js", "tracking-log-failure");
+  process.env.TRACKING_LINK_SECRET = "tracking-test-secret";
+  process.env.SELL_SHEET_URL = "https://example.test/sell-sheet";
+  process.env.APPS_SCRIPT_URL = "https://example.test/exec";
+  const signature = trackingSignature("sell_sheet", "ACC-1", "Initial");
+  globalThis.fetch = async () => { throw Object.assign(new Error("timed out"), { name:"AbortError" }); };
+  const response = await handler(goEvent({ t:"sell_sheet", a:"ACC-1", s:"Initial", k:signature }));
+  assert.equal(response.statusCode, 302);
+  assert.equal(response.headers.Location, "https://example.test/sell-sheet");
+  assert.equal(response.headers["Cache-Control"], "no-store");
+});
+
 test("source contains formula protection, global error listeners, and recoverable action state", async () => {
   const [backend, index, signup, order, mailer] = await Promise.all([
     readFile(new URL("apps-script/Code.gs", root), "utf8"),

@@ -18,3 +18,8 @@
   from = "/api/customer"
   to = "/.netlify/functions/customer"
   status = 200
+
+[[redirects]]
+  from = "/go"
+  to = "/.netlify/functions/go"
+  status = 200
