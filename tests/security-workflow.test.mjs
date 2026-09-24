@@ -258,6 +258,20 @@ test("tracking logging failure or timeout never prevents a redirect", async () =
   assert.equal(response.headers["Cache-Control"], "no-store");
 });
 
+test("valid Karl-only test tracking links redirect without recording engagement", async () => {
+  const { handler } = await loadFunction("netlify/functions/go.js", "tracking-test-link");
+  process.env.TRACKING_LINK_SECRET = "tracking-test-secret";
+  process.env.SELL_SHEET_URL = "https://example.test/sell-sheet";
+  process.env.APPS_SCRIPT_URL = "https://example.test/exec";
+  const signature = trackingSignature("sell_sheet", "ACC-1", "Initial");
+  let fetches = 0;
+  globalThis.fetch = async () => { fetches += 1; return new Response(JSON.stringify({ ok:true }), { status:200 }); };
+  const response = await handler(goEvent({ t:"sell_sheet", a:"ACC-1", s:"Initial", k:signature, x:"test" }));
+  assert.equal(response.statusCode, 302);
+  assert.equal(response.headers.Location, "https://example.test/sell-sheet");
+  assert.equal(fetches, 0);
+});
+
 test("source contains formula protection, global error listeners, and recoverable action state", async () => {
   const [backend, index, signup, order, mailer] = await Promise.all([
     readFile(new URL("apps-script/Code.gs", root), "utf8"),
@@ -314,17 +328,21 @@ test("source contains formula protection, global error listeners, and recoverabl
   assert.match(backend, /if \(recentDuplicate\) return \{ recorded:false, duplicate:true \}/);
   const inventoryProxy = await readFile(new URL("netlify/functions/inventory.js", root), "utf8");
   assert.doesNotMatch(inventoryProxy, /recordEmailEngagement/);
-  assert.match(backend, /function outreachTrackingUrl_\(target, accountId, stage, settings, extras\)/);
+  assert.match(backend, /function outreachTrackingUrl_\(target, accountId, stage, settings, extras, testMode\)/);
   assert.ok(backend.includes(String.raw`if (!/^https:\/\/\S+$/i.test(baseUrl) || !secret || !accountId) return "";`));
   assert.match(backend, /trackedSellSheet \|\| sellSheet/);
   assert.match(backend, /trackedApplication \|\| directApplication/);
   const inventoryMessageSource = backend.slice(backend.indexOf("function outreachMessage_"), backend.indexOf("function outreachRecord_"));
   assert.match(inventoryMessageSource, /const applicationLink = \(trackedApplication \|\| directApplication\)/);
   assert.doesNotMatch(inventoryMessageSource, /stage === "Initial" && \(trackedApplication/);
-  assert.match(mailer, /function trackingUrl_\(target, accountId, stage, settings, extras\)/);
+  assert.match(mailer, /function trackingUrl_\(target, accountId, stage, settings, extras, testMode\)/);
   assert.ok(mailer.includes(String.raw`if (!/^https:\/\/\S+$/i.test(baseUrl) || !secret || !accountId) return '';`));
   assert.match(mailer, /trackedSellSheet \|\| sellSheet/);
   assert.match(mailer, /trackedApplication \|\| applicationHref/);
+  assert.match(backend, /if \(testMode\) params\.x = "test"/);
+  assert.match(backend, /testMode \? outreachMessage_\(current, settings, testDraft, true\)\.preview_html : record\.preview_html/);
+  assert.match(mailer, /if \(testMode\) params\.x = 'test'/);
+  assert.match(mailer, /testMode \? markTestTrackingLinks_\(html\) : html/);
   const mailerTemplateValuesSource = mailer.slice(mailer.indexOf("function templateValues_"), mailer.indexOf("function formatDateValue_"));
   assert.match(mailerTemplateValuesSource, /const applicationLink = \(trackedApplication \|\| applicationHref\)/);
   assert.doesNotMatch(mailerTemplateValuesSource, /stage === 'Initial' && \(trackedApplication/);

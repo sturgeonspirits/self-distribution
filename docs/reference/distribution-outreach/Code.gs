@@ -1,9 +1,10 @@
 /**
  * Sturgeon Spirits Distribution Outreach
  *
- * VERSION: 2026.09.24.11-APP
+ * VERSION: 2026.09.24.12-APP
  *
  * CHANGES IN THIS VERSION
+ * - Marks tracking links in Karl-only test messages so test clicks redirect without being recorded as prospect engagement.
  * - Includes the wholesale application link in every outreach stage while retaining tracked-link fallback behavior.
  * - Added opt-in signed sell-sheet and wholesale-application links for click measurement; direct links remain unchanged until tracking is configured.
  * - Allowed Karl-only app tests to render saved drafts before a prospect email is available or verified.
@@ -55,7 +56,7 @@
  * Sends through the authenticated Zoho Mail API account.
  */
 
-const OUTREACH_VERSION = '2026.09.24.11-APP';
+const OUTREACH_VERSION = '2026.09.24.12-APP';
 
 const OUTREACH = Object.freeze({
   ENVIRONMENT: 'STAGING_PILOT',
@@ -380,7 +381,7 @@ function sendAppEmailRequest_(body, testMode) {
     const lead = validateAppLead_(body, testMode);
     const settings = getSettings_();
     const deliveredTo = testMode ? String(settings['Test recipient'] || '').trim().toLowerCase() : lead.email;
-    const zoho = sendZohoEmail_(deliveredTo, subject, html, settings, testMode ? 'APP_TEST' : 'APP');
+    const zoho = sendZohoEmail_(deliveredTo, subject, testMode ? markTestTrackingLinks_(html) : html, settings, testMode ? 'APP_TEST' : 'APP');
     accepted = { accepted:true, message_id:String(zoho.messageId || ''), sent_at:new Date().toISOString(), idempotent:false };
     setAppReceipt_(token, accepted);
     try {
@@ -483,7 +484,7 @@ function sendTestForActiveRow() {
   validateCampaignSettings_(settings, true);
   const row = sheet.getRange(rowNumber, 1, 1, OUTREACH.COL.LAST_DATA_COLUMN).getValues()[0];
   const stage = row[OUTREACH.COL.STAGE - 1] || 'Initial';
-  const message = buildMessage_(stage, row, settings, rowNumber);
+  const message = buildMessage_(stage, row, settings, rowNumber, true);
   const result = sendZohoEmail_(settings['Test recipient'], message.subject, message.html, settings, 'TEST');
   appendLog_(
     row,
@@ -687,7 +688,7 @@ function plainTextToHtml_(text) {
   }).join('');
 }
 
-function buildMessage_(stage, row, settings, sourceRowNumber) {
+function buildMessage_(stage, row, settings, sourceRowNumber, testMode) {
   let keys;
   if (stage === 'Reactivation') {
     keys = ['Reactivation subject', 'Reactivation HTML'];
@@ -701,7 +702,7 @@ function buildMessage_(stage, row, settings, sourceRowNumber) {
   }
   const leadSheet = SpreadsheetApp.getActive().getSheetByName(OUTREACH.LEADS_SHEET);
   const accountId = ensureLeadAccountId_(leadSheet, sourceRowNumber, row);
-  const values = templateValues_(row, settings, stage, accountId);
+  const values = templateValues_(row, settings, stage, accountId, testMode);
   const template = String(settings[keys[1]] || '');
   const parts = splitMessageTemplate_(template);
   const savedDraft = getSavedDraft_(accountId, sourceRowNumber, stage);
@@ -856,17 +857,18 @@ function trackingSignature_(target, accountId, stage, secret) {
   return Utilities.base64EncodeWebSafe(bytes).replace(/=+$/g, '');
 }
 
-function trackingUrl_(target, accountId, stage, settings, extras) {
+function trackingUrl_(target, accountId, stage, settings, extras, testMode) {
   const baseUrl = String(settings['Tracking base URL'] || '').trim();
   const secret = PropertiesService.getScriptProperties().getProperty('TRACKING_LINK_SECRET') || '';
   if (!/^https:\/\/\S+$/i.test(baseUrl) || !secret || !accountId) return '';
   const params = Object.assign({ t:target, a:accountId, s:stage, k:trackingSignature_(target, accountId, stage, secret) }, extras || {});
+  if (testMode) params.x = 'test';
   return baseUrl + (baseUrl.indexOf('?') >= 0 ? '&' : '?') + Object.keys(params).map(function (key) {
     return encodeURIComponent(key) + '=' + encodeURIComponent(params[key] || '');
   }).join('&');
 }
 
-function templateValues_(row, settings, stage, accountId) {
+function templateValues_(row, settings, stage, accountId, testMode) {
   const contact = String(row[OUTREACH.COL.CONTACT - 1] || '').trim();
   const firstName = contact ? contact.split(/\s+/)[0] : 'there';
   const sellSheet = String(settings['Wholesale sell-sheet URL'] || '').trim();
@@ -875,7 +877,7 @@ function templateValues_(row, settings, stage, accountId) {
   const applicationUrl = String(settings['Customer application URL'] || '').trim();
   const business = String(row[OUTREACH.COL.BUSINESS - 1] || '');
   const email = String(row[OUTREACH.COL.EMAIL - 1] || '');
-  const trackedSellSheet = trackingUrl_('sell_sheet', accountId, stage, settings);
+  const trackedSellSheet = trackingUrl_('sell_sheet', accountId, stage, settings, null, testMode);
   const sellSheetLink = sellSheet ? '<p><a href="' + escapeHtml_(trackedSellSheet || sellSheet) + '">View our current wholesale sell sheet</a></p>' : '';
   const applicationHref = /^https:\/\/\S+$/i.test(applicationUrl)
     ? applicationUrl + (applicationUrl.indexOf('?') >= 0 ? '&' : '?') +
@@ -883,7 +885,7 @@ function templateValues_(row, settings, stage, accountId) {
       '&business=' + encodeURIComponent(business) +
       '&email=' + encodeURIComponent(email)
     : '';
-  const trackedApplication = trackingUrl_('application', accountId, stage, settings, { business:business, email:email });
+  const trackedApplication = trackingUrl_('application', accountId, stage, settings, { business:business, email:email }, testMode);
   const applicationLink = (trackedApplication || applicationHref) ?
     '<p>If you would like to get the account setup started, <a href="' + escapeHtml_(trackedApplication || applicationHref) + '">complete our short wholesale customer application</a>.</p>' : '';
   return {
@@ -900,6 +902,15 @@ function templateValues_(row, settings, stage, accountId) {
       '" alt="Sturgeon Spirits" width="180" style="display:block;width:180px;max-width:100%;height:auto;border:0;margin:10px 0 6px"></a>' : '',
     'Sell Sheet Link': sellSheetLink + applicationLink
   };
+}
+
+function markTestTrackingLinks_(html) {
+  return String(html || '').replace(/href=(["'])([^"']+)\1/gi, function (match, quote, href) {
+    const link = String(href || '').replace(/&amp;/g, '&');
+    const isTracked = /(?:[?&])t=(?:sell_sheet|application)(?:&|$)/.test(link) && /(?:[?&])k=[^&]+/.test(link);
+    if (!isTracked || /(?:[?&])x=/.test(link)) return match;
+    return 'href=' + quote + href + (href.indexOf('?') >= 0 ? '&amp;x=test' : '?x=test') + quote;
+  });
 }
 
 function formatDateValue_(value) {

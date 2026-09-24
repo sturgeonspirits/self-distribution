@@ -1,8 +1,9 @@
 /*********************************
  * Inventory API (JSON) for Netlify
- * App version: 2026.09.24.20
+ * App version: 2026.09.24.21
  *
  * CHANGES IN THIS VERSION
+ * - Marks tracking links in Karl-only test messages so test clicks redirect without being recorded as prospect engagement.
  * - Includes the wholesale application link in every outreach stage while retaining tracked-link fallback behavior.
  * - Shows the most recent tracked link target alongside click counts in Outreach business details.
  * - Added opt-in signed sell-sheet and wholesale-application links for click measurement without changing send approval, eligibility, receipt, or Activity Log safeguards.
@@ -127,7 +128,7 @@
  * - Use only in the staging inventory backend until testing is complete.
  *********************************/
 
-const APP_VERSION = "2026.09.24.20";
+const APP_VERSION = "2026.09.24.21";
 
 const SHEET_NAMES = {
   STORES: "Stores",
@@ -1944,15 +1945,16 @@ function outreachTrackingSignature_(target, accountId, stage, secret) {
   return Utilities.base64EncodeWebSafe(bytes).replace(/=+$/g, "");
 }
 
-function outreachTrackingUrl_(target, accountId, stage, settings, extras) {
+function outreachTrackingUrl_(target, accountId, stage, settings, extras, testMode) {
   const baseUrl = String(settings["Tracking base URL"] || "").trim();
   const secret = PropertiesService.getScriptProperties().getProperty("TRACKING_LINK_SECRET") || "";
   if (!/^https:\/\/\S+$/i.test(baseUrl) || !secret || !accountId) return "";
   const params = Object.assign({ t:target, a:accountId, s:stage, k:outreachTrackingSignature_(target, accountId, stage, secret) }, extras || {});
+  if (testMode) params.x = "test";
   return `${baseUrl}${baseUrl.includes("?") ? "&" : "?"}${Object.keys(params).map(key => `${encodeURIComponent(key)}=${encodeURIComponent(params[key] || "")}`).join("&")}`;
 }
 
-function outreachMessage_(row, settings, draft) {
+function outreachMessage_(row, settings, draft, testMode) {
   const stage = String(outreachValue_(row, ["next_email", "stage"]) || "Initial");
   let keys;
   if (stage === "Reactivation") keys = ["Reactivation subject", "Reactivation HTML"];
@@ -1971,11 +1973,11 @@ function outreachMessage_(row, settings, draft) {
   const accountId = String(row.account_id || "").trim();
   const business = String(outreachValue_(row, ["business", "business_name"]) || "").trim();
   const email = String(outreachValue_(row, ["email", "email_address"]) || "").trim();
-  const trackedSellSheet = outreachTrackingUrl_("sell_sheet", accountId, stage, settings);
+  const trackedSellSheet = outreachTrackingUrl_("sell_sheet", accountId, stage, settings, null, testMode);
   const directApplication = /^https:\/\/\S+$/i.test(applicationUrl)
     ? `${applicationUrl}${applicationUrl.includes("?") ? "&" : "?"}account_id=${encodeURIComponent(accountId)}&business=${encodeURIComponent(business)}&email=${encodeURIComponent(email)}`
     : "";
-  const trackedApplication = outreachTrackingUrl_("application", accountId, stage, settings, { business:business, email:email });
+  const trackedApplication = outreachTrackingUrl_("application", accountId, stage, settings, { business:business, email:email }, testMode);
   const applicationLink = (trackedApplication || directApplication)
     ? `<p>If you would like to get the account setup started, <a href="${escapeOutreachHtml_(trackedApplication || directApplication)}">complete our short wholesale customer application</a>.</p>`
     : "";
@@ -3107,6 +3109,8 @@ function apiSendOutreachEmail_(p, testMode) {
       // status. Real sends still require a valid, verified, eligible recipient.
       const reasons = testMode ? [] : outreachSendEligibility_(record);
       if (reasons.length) throw new Error(reasons.join("; ") + ".");
+      const testDraft = draftMap.get(outreachDraftKey_(record.account_id || rowNumber, stage)) || draftMap.get(outreachDraftKey_(rowNumber, stage));
+      const html = testMode ? outreachMessage_(current, settings, testDraft, true).preview_html : record.preview_html;
       result = callOutreachMailer_({
         action:testMode ? "sendAppTestEmail" : "sendAppEmail",
         idempotency_token:token,
@@ -3116,7 +3120,7 @@ function apiSendOutreachEmail_(p, testMode) {
         recipient:record.email,
         message_stage:stage,
         subject:record.subject,
-        html:record.preview_html,
+        html:html,
         requested_by:publicText_(p.staff_name, 120, "Staff name"),
       });
     }
