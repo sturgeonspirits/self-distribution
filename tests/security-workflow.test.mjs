@@ -227,10 +227,13 @@ test("source contains formula protection, global error listeners, and recoverabl
   assert.match(index, /if \(outreachView === "campaigns"\) loadOutreachCampaigns\(\)\.catch\(handleOutreachLoadError\);/);
   assert.match(backend, /Only a campaign in Review can be edited/);
   assert.match(backend, /Excluded from this campaign/);
-  const dashboardSource = backend.match(/function apiGetOutreachDashboard_\(\) \{[\s\S]*?\n\}/)?.[0];
+  const dashboardSource = backend.match(/function apiGetOutreachDashboard_\([^)]*\) \{[\s\S]*?\n\}/)?.[0];
   assert.ok(dashboardSource);
   assert.doesNotMatch(dashboardSource, /ensureAccountIdentityModel_/);
   assert.doesNotMatch(dashboardSource, /newsletterContacts_/);
+  assert.match(backend, /function outreachSlimRecord_\(/);
+  assert.match(backend, /today: slim \? today\.map\(record => record\.source_row\) : today/);
+  assert.match(backend, /sent: slim \? sent\.slice\(0, 50\)\.map\(record => record\.source_row\) : sent\.slice\(0, 50\)/);
   const accountBuilderSource = backend.slice(backend.indexOf("function buildCustomerAccounts_"), backend.indexOf("function apiGetCustomerWorkQueue_"));
   const customerQueueSource = backend.slice(backend.indexOf("function apiGetCustomerWorkQueue_"), backend.indexOf("function makeStoreId_"));
   assert.doesNotMatch(accountBuilderSource, /ensureAccountIdentityModel_/);

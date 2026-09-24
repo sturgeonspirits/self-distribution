@@ -522,7 +522,7 @@ function handle_(e, body) {
       case "managerGrid": res = apiGetManagerGrid_(); break;
       case "salesSinceCount": res = apiGetSalesSinceCount_((e?.parameter?.store_id) || (body?.store_id) || ""); break;
       case "updateStoreContacts": res = apiUpdateStoreContacts_(body); break;
-      case "outreachDashboard": res = apiGetOutreachDashboard_(); break;
+      case "outreachDashboard": res = apiGetOutreachDashboard_(Object.assign({}, e?.parameter || {}, body || {})); break;
       case "outreachSendStatus": res = apiGetOutreachSendStatus_(); break;
       case "outreachNewsletterContacts": res = { newsletter_contacts:newsletterContacts_() }; break;
       case "outreachCampaigns": res = apiGetOutreachCampaigns_(); break;
@@ -1874,7 +1874,57 @@ function outreachRecord_(row, sourceRow, activityMap, settings, draftMap, progra
   return record;
 }
 
-function apiGetOutreachDashboard_() {
+function outreachSlimRecord_(row, sourceRow, draftMap) {
+  const accountId = String(row.account_id || "").trim();
+  const stage = String(outreachValue_(row, ["next_email", "stage"]) || "Initial").trim();
+  const record = {
+    account_id:accountId,
+    source_row:sourceRow,
+    business:String(outreachValue_(row, ["business", "business_name"]) || "").trim(),
+    display_business:outreachDisplayBusinessName_(outreachValue_(row, ["business", "business_name"]) || ""),
+    contact:String(outreachValue_(row, ["contact", "contact_name", "contact_person", "first_name"]) || "").trim(),
+    email:String(outreachValue_(row, ["email", "email_address"]) || "").trim(),
+    phone:String(outreachValue_(row, ["phone", "phone_number", "telephone"]) || "").trim(),
+    city:String(outreachValue_(row, ["city", "town"]) || "").trim(),
+    state:String(outreachValue_(row, ["state"]) || "").trim(),
+    status:String(outreachValue_(row, ["status"]) || "Not contacted").trim(),
+    next_email:stage,
+    priority:String(outreachValue_(row, ["priority"]) || "").trim(),
+    next_follow_up:outreachValue_(row, ["next_follow-up", "next_follow_up"]),
+    last_emailed:outreachValue_(row, ["last_emailed", "last_email"]),
+    outcome:String(outreachValue_(row, ["outcome"]) || "").trim(),
+    do_not_email:toBool_(outreachValue_(row, ["do_not_email", "do_not_contact"])),
+    segment:String(outreachValue_(row, ["segment"]) || "").trim(),
+    wave:String(outreachValue_(row, ["wave"]) || "").trim(),
+    top_50:toBool_(outreachValue_(row, ["top50", "top_50", "top_50?"])),
+    craft_spirit_fit:Number(outreachValue_(row, ["craft-spirit_fit_(1–5)", "craft-spirit_fit_(1-5)", "craft_spirit_fit", "craft_spirit_fit_(1–5)"]) || 0),
+    miles:outreachMiles_(outreachValue_(row, ["miles", "distance", "distance_miles"])),
+    email_confidence:String(outreachValue_(row, ["email_confidence"]) || "").trim(),
+    relationship:String(outreachValue_(row, ["relationship"]) || "").trim(),
+    has_saved_draft:draftMap.has(outreachDraftKey_(accountId || sourceRow, stage)),
+    // Used only while assembling the server-side Today queue; omitted from slim JSON.
+    queue:String(outreachValue_(row, ["queue", "queue?"]) || "").trim(),
+  };
+  record.weekly_exclusion_reasons = outreachWeeklyExclusionReasons_(record);
+  record.weekly_eligible = record.weekly_exclusion_reasons.length === 0;
+  return record;
+}
+
+function outreachSlimPayload_(record) {
+  const fields = [
+    "account_id", "source_row", "business", "display_business", "contact", "email", "phone", "city", "state",
+    "status", "next_email", "priority", "next_follow_up", "last_emailed", "outcome", "do_not_email", "segment",
+    "wave", "top_50", "craft_spirit_fit", "miles", "email_confidence", "relationship", "weekly_eligible",
+    "weekly_exclusion_reasons", "has_saved_draft",
+  ];
+  return fields.reduce((payload, field) => {
+    payload[field] = record[field];
+    return payload;
+  }, {});
+}
+
+function apiGetOutreachDashboard_(p) {
+  const slim = String(p?.slim || "") === "1";
   const startedAt = Date.now();
   const timings = {};
   let stageStartedAt = startedAt;
@@ -1886,15 +1936,24 @@ function apiGetOutreachDashboard_() {
   const sheet = getOutreachSheet_(OUTREACH_SHEET_NAME);
   const rows = getAllRowsAsObjects_(sheet);
   mark("directory_read_ms");
-  const activityMap = outreachActivityMap_();
-  mark("activity_read_ms");
-  const settings = getOutreachCampaignSettings_();
-  const draftMap = outreachDraftMap_();
-  const programMap = outreachProgramMap_();
-  const engagementMap = outreachEngagementMap_();
-  mark("supporting_tabs_ms");
-  const records = rows.map((row, index) => outreachRecord_(row, index + 2, activityMap, settings, draftMap, programMap, engagementMap))
-    .filter(record => record.business);
+  let activityMap = new Map();
+  let records;
+  if (slim) {
+    const draftMap = outreachDraftMap_();
+    mark("supporting_tabs_ms");
+    records = rows.map((row, index) => outreachSlimRecord_(row, index + 2, draftMap))
+      .filter(record => record.business);
+  } else {
+    activityMap = outreachActivityMap_();
+    mark("activity_read_ms");
+    const settings = getOutreachCampaignSettings_();
+    const draftMap = outreachDraftMap_();
+    const programMap = outreachProgramMap_();
+    const engagementMap = outreachEngagementMap_();
+    mark("supporting_tabs_ms");
+    records = rows.map((row, index) => outreachRecord_(row, index + 2, activityMap, settings, draftMap, programMap, engagementMap))
+      .filter(record => record.business);
+  }
   mark("record_build_ms");
 
   const endOfToday = new Date();
@@ -1936,9 +1995,9 @@ function apiGetOutreachDashboard_() {
     test_send_available: mailer.test_send_available,
     send_configuration_detail: mailer.detail,
     send_status_pending:!!mailer.pending,
-    today: today,
-    directory: directory,
-    sent: sent.slice(0, 50),
+    today: slim ? today.map(record => record.source_row) : today,
+    directory: slim ? directory.map(outreachSlimPayload_) : directory,
+    sent: slim ? sent.slice(0, 50).map(record => record.source_row) : sent.slice(0, 50),
     newsletter_contacts: [],
     performance: { total_ms:totalMs },
     summary: {
