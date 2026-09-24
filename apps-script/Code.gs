@@ -1,8 +1,10 @@
 /*********************************
  * Inventory API (JSON) for Netlify
- * App version: 2026.09.24.28
+ * App version: 2026.09.24.29
  *
  * CHANGES IN THIS VERSION
+ * - Builds campaign previews from directory-only eligibility records and defers rendered email creation until campaign freeze.
+ * - Rejects campaign exclusion changes for recipients already marked Sent or Sent - needs recording.
  * - Backfills missing legacy campaign-recipient cities from one directory read per campaign load and omits unstored legacy mileage.
  * - Makes campaign delivery use one directory row plus targeted Activity Log duplicate lookup instead of rebuilding Outreach support maps.
  * - Batches directory finalization into one row write and logs lock, row-read, mailer, and finalization timing for every recipient.
@@ -141,7 +143,7 @@
  * - Use only in the staging inventory backend until testing is complete.
  *********************************/
 
-const APP_VERSION = "2026.09.24.28";
+const APP_VERSION = "2026.09.24.29";
 
 const SHEET_NAMES = {
   STORES: "Stores",
@@ -2364,6 +2366,7 @@ function outreachSlimRecord_(row, sourceRow, draftMap, programMap, engagementMap
     top_50:toBool_(outreachValue_(row, ["top50", "top_50", "top_50?"])),
     craft_spirit_fit:Number(outreachValue_(row, ["craft-spirit_fit_(1–5)", "craft-spirit_fit_(1-5)", "craft_spirit_fit", "craft_spirit_fit_(1–5)"]) || 0),
     miles:outreachMiles_(outreachValue_(row, ["miles", "distance", "distance_miles"])),
+    county:String(outreachValue_(row, ["county"]) || "").trim(),
     email_confidence:String(outreachValue_(row, ["email_confidence"]) || "").trim(),
     relationship:String(outreachValue_(row, ["relationship"]) || "").trim(),
     newsletter_status:String(program.newsletter_status || "Not invited"),
@@ -2384,7 +2387,7 @@ function outreachSlimPayload_(record) {
   const fields = [
     "account_id", "source_row", "business", "display_business", "contact", "email", "phone", "city", "state",
     "status", "next_email", "priority", "next_follow_up", "last_emailed", "outcome", "do_not_email", "segment",
-    "wave", "top_50", "craft_spirit_fit", "miles", "email_confidence", "relationship", "newsletter_status",
+    "wave", "top_50", "craft_spirit_fit", "miles", "county", "email_confidence", "relationship", "newsletter_status",
     "ordering_status", "opened", "clicked", "search_text", "weekly_eligible",
     "weekly_exclusion_reasons", "has_saved_draft",
   ];
@@ -2666,29 +2669,65 @@ function campaignCriteriaFailures_(record, criteria) {
   return failures;
 }
 
-function campaignEligibleInitialRecords_(criteria) {
+function campaignDirectoryRecord_(row, sourceRow) {
+  return {
+    source_row:sourceRow,
+    account_id:String(row.account_id || "").trim(),
+    business:String(outreachValue_(row, ["business", "business_name"]) || "").trim(),
+    contact:String(outreachValue_(row, ["contact", "contact_name", "contact_person", "first_name"]) || "").trim(),
+    email:String(outreachValue_(row, ["email", "email_address"]) || "").trim(),
+    city:String(outreachValue_(row, ["city", "town"]) || "").trim(),
+    postal_code:String(outreachValue_(row, ["zip", "zip_code", "postal_code"]) || "").trim(),
+    status:String(outreachValue_(row, ["status"]) || "Not contacted").trim(),
+    next_email:String(outreachValue_(row, ["next_email", "stage"]) || "Initial").trim(),
+    priority:String(outreachValue_(row, ["priority"]) || "").trim(),
+    last_emailed:outreachValue_(row, ["last_emailed", "last_email"]),
+    message_id:String(outreachValue_(row, ["message_id", "zoho_message_id"]) || "").trim(),
+    outcome:String(outreachValue_(row, ["outcome"]) || "").trim(),
+    do_not_email:toBool_(outreachValue_(row, ["do_not_email", "do_not_contact"])),
+    segment:String(outreachValue_(row, ["segment"]) || "").trim(),
+    wave:String(outreachValue_(row, ["wave"]) || "").trim(),
+    county:String(outreachValue_(row, ["county"]) || "").trim(),
+    craft_spirit_fit:Number(outreachValue_(row, ["craft-spirit_fit_(1–5)", "craft-spirit_fit_(1-5)", "craft_spirit_fit", "craft_spirit_fit_(1–5)"]) || 0),
+    email_confidence:String(outreachValue_(row, ["email_confidence"]) || "").trim(),
+    relationship:String(outreachValue_(row, ["relationship"]) || "").trim(),
+    activity:[],
+    directory_row:row,
+  };
+}
+
+function campaignDirectoryInitialRecords_(criteria) {
   const leadSheet = getOutreachSheet_(OUTREACH_SHEET_NAME);
-  const activityMap = outreachActivityMap_();
-  const settings = getOutreachCampaignSettings_();
-  const draftMap = outreachDraftMap_();
-  const programMap = outreachProgramMap_();
-  const engagementMap = outreachEngagementMap_();
-  const candidateRows = getAllRowsAsObjects_(leadSheet).map((row, index) => ({ row:row, sourceRow:index + 2 }))
-    .filter(item => String(outreachValue_(item.row, ["relationship"]) || "").trim().toLowerCase() === "prospect"
-      && String(outreachValue_(item.row, ["next_email", "stage"]) || "Initial").trim().toLowerCase() === "initial");
+  const candidateRows = getAllRowsAsObjects_(leadSheet).map((row, index) => campaignDirectoryRecord_(row, index + 2))
+    .filter(record => record.relationship.toLowerCase() === "prospect" && record.next_email.toLowerCase() === "initial");
   const seenEmails = new Set();
-  const eligible = candidateRows.map(item => {
-    const record = outreachRecord_(item.row, item.sourceRow, activityMap, settings, draftMap, programMap, engagementMap);
+  const eligible = candidateRows.map(record => {
     record.campaign_miles = campaignDistanceForCriteria_(record, criteria);
     return record;
   }).filter(record => {
-    if (outreachSendEligibility_(record).length || campaignCriteriaFailures_(record, criteria).length) return false;
+    // Preview and freeze both use directory fields only for eligibility; rendered messages are intentionally deferred to freeze.
+    if (outreachSendEligibility_(record, { skip_legacy_pilot:true }).length || campaignCriteriaFailures_(record, criteria).length) return false;
     const email = String(record.email || "").trim().toLowerCase();
     if (seenEmails.has(email)) return false;
     seenEmails.add(email);
     return true;
   }).sort((a, b) => Number(a.campaign_miles) - Number(b.campaign_miles) || outreachPriorityScore_(b) - outreachPriorityScore_(a) || String(a.business).localeCompare(String(b.business)));
   return criteria.max_recipients === null ? eligible : eligible.slice(0, criteria.max_recipients);
+}
+
+function campaignEligibleInitialRecords_(criteria) {
+  const directoryRecords = campaignDirectoryInitialRecords_(criteria);
+  if (!directoryRecords.length) return [];
+  const activityMap = outreachActivityMap_();
+  const settings = getOutreachCampaignSettings_();
+  const draftMap = outreachDraftMap_();
+  const programMap = outreachProgramMap_();
+  const engagementMap = outreachEngagementMap_();
+  return directoryRecords.map(directoryRecord => {
+    const record = outreachRecord_(directoryRecord.directory_row, directoryRecord.source_row, activityMap, settings, draftMap, programMap, engagementMap);
+    record.campaign_miles = directoryRecord.campaign_miles;
+    return record;
+  });
 }
 
 function campaignRecipientSnapshotValues_(sheet, campaignId, record) {
@@ -3071,6 +3110,7 @@ function apiSetOutreachCampaignRecipientExclusion_(p) {
       .find(item => String(item.values[item.headers.idempotency_token] || "") === String(p.idempotency_token || ""));
     if (!recipient) throw new Error("Campaign recipient not found.");
     const rh = recipient.headers;
+    if (["Sent", "Sent - needs recording"].includes(String(recipient.values[rh.status] || ""))) throw new Error("Sent recipients cannot be excluded or restored.");
     const exclude = p.exclude === true;
     const reason = publicText_(p.reason || "", 500, "Exclusion reason");
     if (exclude && !reason) throw new Error("Provide a reason before excluding a recipient.");
@@ -3126,7 +3166,7 @@ function apiUpdateOutreachCampaignRecipient_(p) {
 
 function apiPreviewOutreachCampaign_(p) {
   const criteria = campaignCriteriaFromRequest_(p);
-  const records = campaignEligibleInitialRecords_(criteria);
+  const records = campaignDirectoryInitialRecords_(criteria);
   return {
     criteria:criteria,
     audience:campaignAudienceLabel_(criteria),
@@ -3135,8 +3175,12 @@ function apiPreviewOutreachCampaign_(p) {
       source_row:record.source_row,
       business:record.business,
       city:record.city,
+      postal_code:record.postal_code,
       miles_from_center:record.campaign_miles,
       craft_spirit_fit:record.craft_spirit_fit,
+      status:record.status,
+      email:record.email,
+      last_emailed:record.last_emailed,
     })),
   };
 }

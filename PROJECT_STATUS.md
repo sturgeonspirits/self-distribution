@@ -8,8 +8,8 @@ Read this file before inspecting the repository or changing the application. Upd
 
 | Component | Source version | Deployment state |
 | --- | --- | --- |
-| Netlify web app and staff proxy | `2026.09.24.33-WEB` on `codex/distribution-system-foundation` / `2026.09.24.24-WEB` live | Campaign-dialog validation and errors stay visible beside its action buttons; the unsegmented acknowledgement persists across same-campaign review refreshes; deployment is pending. |
-| Inventory API Apps Script | `2026.09.24.28` on `codex/distribution-system-foundation` / `2026.09.24.17` live | Campaign loads backfill missing recipient cities from one directory read without altering frozen campaign records; deployment is pending. |
+| Netlify web app and staff proxy | `2026.09.24.34-WEB` on `codex/distribution-system-foundation` / `2026.09.24.24-WEB` live | Campaign exclusions use in-card reasons and preview criteria offer directory-backed County and Segment choices; deployment is pending. |
+| Inventory API Apps Script | `2026.09.24.29` on `codex/distribution-system-foundation` / `2026.09.24.17` live | Campaign previews use directory-only eligibility records and sent recipients cannot be changed through campaign exclusion; deployment is pending. |
 | Distribution Outreach Apps Script | `2026.09.24.13-APP` on `codex/work` | Signed-link rendering is committed; owner has not yet confirmed this exact version is deployed. |
 | Public customer Netlify proxy | `2026.09.18.3-WEB` | Deployed with Netlify; unchanged by the latest staff-app UI work |
 
@@ -18,6 +18,8 @@ Current Git branch: `codex/distribution-system-foundation`
 Current remote: `https://github.com/sturgeonspirits/self-distribution.git`
 
 Latest completed changes:
+
+- Campaign exclusions now use an in-card reason form with quick picks, and the API refuses to change any recipient already marked Sent or Sent - needs recording. Preview uses only directory fields and defers rendered email construction until a campaign is frozen. County and Segment criteria are populated from directory values; City remains free text.
 
 - Campaign dialog validation and errors now render in its local status area rather than behind the modal. Its acknowledgement remains checked through a same-campaign Review refresh, and resets only for a different campaign or when the campaign no longer has Review status.
 

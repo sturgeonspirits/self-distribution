@@ -561,7 +561,7 @@ test("campaign criteria preview uses centroid distances, JSON rules, and distinc
   assert.doesNotMatch(backend, /function campaignAudienceRules_\(/);
   assert.match(previewSource, /function apiPreviewOutreachCampaign_\(/);
   assert.match(previewSource, /preview_confirmed !== true/);
-  assert.match(previewSource, /campaignEligibleInitialRecords_\(criteria\)/);
+  assert.match(previewSource, /campaignDirectoryInitialRecords_\(criteria\)/);
   assert.match(previewSource, /JSON\.stringify\(criteria\)/);
   assert.match(sendSource, /campaignStoredCriteria_\(campaign\.values\[ch\.criteria\]\)/);
   assert.match(sendSource, /Excluded — out of area/);
@@ -580,6 +580,33 @@ test("campaign criteria preview uses centroid distances, JSON rules, and distinc
   assert.match(index, /preview_confirmed:true/);
   assert.match(index, /recipient\.city/);
   assert.match(index, /Area review needed/);
+});
+
+test("campaign review exclusions are inline and previews use directory fields without rendered email", async () => {
+  const [backend, index] = await Promise.all([
+    readFile(new URL("apps-script/Code.gs", root), "utf8"),
+    readFile(new URL("index.html", root), "utf8"),
+  ]);
+  const previewSource = backend.slice(backend.indexOf("function apiPreviewOutreachCampaign_"), backend.indexOf("function apiCreateOutreachCampaign_"));
+  const exclusionSource = backend.slice(backend.indexOf("function apiSetOutreachCampaignRecipientExclusion_"), backend.indexOf("function apiUpdateOutreachCampaignRecipient_"));
+  const campaignUiSource = index.slice(index.indexOf("async function openOutreachCampaign"), index.indexOf("function renderOutreach", index.indexOf("async function openOutreachCampaign")));
+  assert.match(backend, /function campaignDirectoryInitialRecords_\(criteria\)/);
+  assert.match(previewSource, /campaignDirectoryInitialRecords_\(criteria\)/);
+  assert.doesNotMatch(previewSource, /outreachMessage_\(/);
+  for (const field of ["postal_code", "craft_spirit_fit", "status", "email", "last_emailed"]) assert.match(previewSource, new RegExp(`${field}:record\\.${field}`));
+  assert.match(exclusionSource, /\["Sent", "Sent - needs recording"\]\.includes/);
+  assert.match(exclusionSource, /Sent recipients cannot be excluded or restored/);
+  assert.doesNotMatch(campaignUiSource, /prompt\(/);
+  assert.match(campaignUiSource, /data-campaign-exclusion-form/);
+  assert.match(campaignUiSource, /data-campaign-exclusion-reason="Out of area"/);
+  assert.match(campaignUiSource, /data-campaign-recipient-action="confirm-exclude"/);
+  assert.match(campaignUiSource, /data-campaign-recipient-action="show-exclude"/);
+  assert.match(index, /<select id="outreachCampaignCriteriaCounty">/);
+  assert.match(index, /<select id="outreachCampaignCriteriaSegment">/);
+  assert.match(index, /function populateCampaignCriteriaOptions\(\)/);
+  assert.match(index, /fill\("outreachCampaignCriteriaCounty", "county", "Any county"\)/);
+  assert.match(index, /fill\("outreachCampaignCriteriaSegment", "segment", "Any segment"\)/);
+  assert.doesNotMatch(index, /escapeHtml\(res\.audience/);
 });
 
 test("campaign send timeouts reconcile one recipient before continuing and never resend an unknown result", async () => {

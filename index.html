@@ -1,10 +1,10 @@
 <!doctype html>
-<!-- App version: 2026.09.24.33-WEB -->
+<!-- App version: 2026.09.24.34-WEB -->
 <html>
 <head>
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover"/>
-  <meta name="app-version" content="2026.09.24.33-WEB" />
+  <meta name="app-version" content="2026.09.24.34-WEB" />
   <meta name="theme-color" content="#536f77" />
   <link rel="icon" href="/assets/distribution-hub-icon.svg" type="image/svg+xml" />
   <link rel="manifest" href="/site.webmanifest" />
@@ -1160,6 +1160,16 @@
       justify-content:flex-end;
       margin-top:12px;
     }
+    .campaignExclusionForm{
+      display:grid;
+      gap:8px;
+      margin-top:12px;
+      padding:10px;
+      border:1px solid var(--amber-line);
+      border-radius:8px;
+      background:var(--amber-bg);
+    }
+    .campaignExclusionForm[hidden]{display:none}
     @media (max-width:680px){
       dialog{width:100vw;height:100vh;border-radius:0;max-width:none}
       .dlgBody{padding-bottom:30px}
@@ -2340,8 +2350,8 @@
         <div><label>Radius (miles)</label><input id="outreachCampaignCriteriaRadius" type="number" min="0" max="1000" step="0.1" value="15" /></div>
         <div><label>Minimum craft-spirit fit</label><select id="outreachCampaignCriteriaFit"><option value="5">5 — strongest fit</option><option value="4">4 or better</option><option value="3">3 or better</option><option value="2">2 or better</option><option value="1">1 or better</option></select></div>
         <div><label>City filter (optional)</label><input id="outreachCampaignCriteriaCity" maxlength="80" /></div>
-        <div><label>County filter (optional)</label><input id="outreachCampaignCriteriaCounty" maxlength="80" /></div>
-        <div><label>Segment filter (optional)</label><input id="outreachCampaignCriteriaSegment" maxlength="80" /></div>
+        <div><label>County filter (optional)</label><select id="outreachCampaignCriteriaCounty"><option value="">Any county</option></select></div>
+        <div><label>Segment filter (optional)</label><select id="outreachCampaignCriteriaSegment"><option value="">Any segment</option></select></div>
         <div><label>Wave filter (optional)</label><input id="outreachCampaignCriteriaWave" maxlength="80" /></div>
         <div><label>Maximum recipients (optional)</label><input id="outreachCampaignCriteriaMaxRecipients" type="number" min="1" max="5000" step="1" /></div>
       </div>
@@ -2508,7 +2518,7 @@
 
   <footer style="max-width:1200px;margin:18px auto 120px;padding:0 12px;text-align:center;color:#6b7280;font-size:12px;">
     Designed by <a href="https://scriptspirit.dev" target="_blank" rel="noopener noreferrer" style="color:#1d4ed8;text-decoration:none;font-weight:700;">Script Spirit</a>
-<span id="appVersionFooter"> • Version 2026.09.24.33-WEB</span>
+<span id="appVersionFooter"> • Version 2026.09.24.34-WEB</span>
   </footer>
 
 
@@ -2531,7 +2541,7 @@
   window.addEventListener("unhandledrejection", e => console.error("Unhandled promise rejection:", e.reason));
   window.addEventListener("error", e => console.error("Unhandled error:", e.error || e.message));
   const $ = (id) => document.getElementById(id);
-  const APP_VERSION = "2026.09.24.33-WEB";
+  const APP_VERSION = "2026.09.24.34-WEB";
   $("appVersionFooter").textContent = ` • Version ${APP_VERSION}`;
 
   let cache = { stores: [], lines: [] };
@@ -3300,6 +3310,7 @@
     $("outreachCampaignCriteriaRadius").value = "15";
     $("outreachCampaignCriteriaFit").value = "5";
     $("outreachCampaignCriteriaCity").value = "";
+    populateCampaignCriteriaOptions();
     $("outreachCampaignCriteriaCounty").value = "";
     $("outreachCampaignCriteriaSegment").value = "";
     $("outreachCampaignCriteriaWave").value = "";
@@ -3312,6 +3323,17 @@
     invalidateOutreachCampaignPreview();
     $("outreachCampaignCriteriaDialog").showModal();
     $("outreachCampaignCriteriaName").focus();
+  }
+
+  function populateCampaignCriteriaOptions(){
+    const fill = (id, field, emptyLabel) => {
+      const select = $(id);
+      const values = Array.from(new Set((outreachData.directory || []).map(record => String(record[field] || "").trim()).filter(Boolean)))
+        .sort((a, b) => a.localeCompare(b));
+      select.innerHTML = `<option value="">${emptyLabel}</option>${values.map(value => `<option value="${escapeHtml(value)}">${escapeHtml(value)}</option>`).join("")}`;
+    };
+    fill("outreachCampaignCriteriaCounty", "county", "Any county");
+    fill("outreachCampaignCriteriaSegment", "segment", "Any segment");
   }
 
   function syncOutreachCampaignCenterInput(){
@@ -3360,8 +3382,8 @@
       if (!res.ok) throw new Error(res.error || "Campaign preview could not be created.");
       outreachCampaignPreview = { criteria:criteria, result:res };
       $("outreachCampaignCriteriaStatus").textContent = "Preview is ready. Confirm only if this is the intended audience.";
-      $("outreachCampaignPreviewSummary").textContent = `${Number(res.recipient_count || 0)} eligible initial prospect${Number(res.recipient_count || 0) === 1 ? "" : "s"} • ${escapeHtml(res.audience || "Selected criteria")}`;
-      $("outreachCampaignPreviewRecipients").innerHTML = (res.recipients || []).length ? res.recipients.map(recipient => `<article class="outreachCard"><div class="outreachCardTop"><div><div class="businessName">${escapeHtml(recipient.business)}</div><div class="contactLine">${escapeHtml(recipient.city || "City missing")} • ${recipient.miles_from_center === null || recipient.miles_from_center === undefined ? "Miles missing" : `${escapeHtml(recipient.miles_from_center)} mi from center`} • Fit ${escapeHtml(recipient.craft_spirit_fit)}</div></div></div></article>`).join("") : `<div class="outreachEmpty"><strong>No eligible prospects match these criteria</strong><span>Change the center, radius, fit, or optional filters and preview again.</span></div>`;
+      $("outreachCampaignPreviewSummary").textContent = `${Number(res.recipient_count || 0)} eligible initial prospect${Number(res.recipient_count || 0) === 1 ? "" : "s"} • ${res.audience || "Selected criteria"}`;
+      $("outreachCampaignPreviewRecipients").innerHTML = (res.recipients || []).length ? res.recipients.map(recipient => `<article class="outreachCard"><div class="outreachCardTop"><div><div class="businessName">${escapeHtml(recipient.business)}</div><div class="contactLine">${escapeHtml(recipient.city || "City missing")} ${recipient.postal_code ? `• ${escapeHtml(recipient.postal_code)}` : ""} • ${recipient.miles_from_center === null || recipient.miles_from_center === undefined ? "Miles missing" : `${escapeHtml(recipient.miles_from_center)} mi from center`} • Fit ${escapeHtml(recipient.craft_spirit_fit)} • ${escapeHtml(recipient.status || "No status")}</div><div class="smallMuted">${escapeHtml(recipient.email || "No email")} ${recipient.last_emailed ? `• Last emailed ${escapeHtml(formatOutreachDate(recipient.last_emailed))}` : "• Not previously emailed"}</div></div></div></article>`).join("") : `<div class="outreachEmpty"><strong>No eligible prospects match these criteria</strong><span>Change the center, radius, fit, or optional filters and preview again.</span></div>`;
       $("outreachCampaignPreview").hidden = false;
       $("createOutreachCampaignCriteriaBtn").disabled = !Number(res.recipient_count || 0);
       refreshIcons();
@@ -3461,11 +3483,11 @@
       return parts.join(" • ");
     };
     $("outreachCampaignRecipients").innerHTML = `<div class="outreachList">${(campaign.recipients || []).map((recipient, index) => `
-      <details class="outreachCard"><summary><strong>${escapeHtml(recipient.business)}</strong><span class="smallMuted"> • ${campaignRecipientLocation(recipient)} • ${escapeHtml(recipient.email)} • ${escapeHtml(recipient.status)}</span><br><span class="smallMuted">${escapeHtml(recipient.subject)}${recipient.segment ? ` • ${escapeHtml(recipient.segment)}` : " • Default Segment C"}</span></summary>
+      <details class="outreachCard"><summary><strong>${escapeHtml(recipient.business)}</strong><span class="smallMuted"> • ${campaignRecipientLocation(recipient)} • ${escapeHtml(recipient.email)} • ${escapeHtml(recipient.status)}</span>${editable && recipient.status === "Ready for review" ? `<button class="actionBtn" type="button" data-campaign-recipient-action="show-exclude" data-recipient-token="${escapeHtml(recipient.idempotency_token)}"><i data-lucide="ban"></i><span>Exclude</span></button>` : ""}<br><span class="smallMuted">${escapeHtml(recipient.subject)}${recipient.segment ? ` • ${escapeHtml(recipient.segment)}` : " • Default Segment C"}</span></summary>
       <div class="outreachMeta"><span class="badge">${escapeHtml(recipient.priority || "No")} priority</span><span class="badge blue">${escapeHtml(recipient.email_confidence || "Unrated")}</span>${recipient.wave ? `<span class="badge">${escapeHtml(recipient.wave)}</span>` : ""}${criteria && (recipient.miles === null || recipient.miles === undefined || Number(recipient.miles) > maxMiles) ? `<span class="badge amber">Area review needed</span>` : ""}</div>
       <label>Subject</label><input class="emailEditor" data-campaign-subject value="${escapeHtml(recipient.subject || "")}" ${editable && recipient.status === "Ready for review" ? "" : "readonly"} />
       <label>Message</label><textarea class="emailEditor" data-campaign-body ${editable && recipient.status === "Ready for review" ? "" : "readonly"}>${escapeHtml(recipient.body_text || "")}</textarea>
-      ${editable && ["Ready for review", "Excluded"].includes(recipient.status) ? `<div class="outreachActions">${recipient.status === "Ready for review" ? `<button class="actionBtn primary" type="button" data-campaign-recipient-action="save" data-recipient-token="${escapeHtml(recipient.idempotency_token)}"><i data-lucide="save"></i><span>Save email changes</span></button>` : ""}<button class="actionBtn" type="button" data-campaign-recipient-action="${recipient.status === "Excluded" ? "restore" : "exclude"}" data-recipient-token="${escapeHtml(recipient.idempotency_token)}"><i data-lucide="${recipient.status === "Excluded" ? "rotate-ccw" : "ban"}"></i><span>${recipient.status === "Excluded" ? "Restore to campaign" : "Exclude from campaign"}</span></button></div>` : ""}${recipient.result_detail ? `<div class="status">${escapeHtml(recipient.result_detail)}</div>` : ""}
+      ${editable && ["Ready for review", "Excluded"].includes(recipient.status) ? `<div class="outreachActions">${recipient.status === "Ready for review" ? `<button class="actionBtn primary" type="button" data-campaign-recipient-action="save" data-recipient-token="${escapeHtml(recipient.idempotency_token)}"><i data-lucide="save"></i><span>Save email changes</span></button>` : ""}${recipient.status === "Ready for review" ? `<button class="actionBtn" type="button" data-campaign-recipient-action="show-exclude" data-recipient-token="${escapeHtml(recipient.idempotency_token)}"><i data-lucide="ban"></i><span>Exclude</span></button>` : `<button class="actionBtn" type="button" data-campaign-recipient-action="restore" data-recipient-token="${escapeHtml(recipient.idempotency_token)}"><i data-lucide="rotate-ccw"></i><span>Restore to campaign</span></button>`}</div>${recipient.status === "Ready for review" ? `<div class="campaignExclusionForm" data-campaign-exclusion-form hidden><label>Exclusion reason</label><div class="tinyRow"><button type="button" data-campaign-exclusion-reason="Out of area">Out of area</button><button type="button" data-campaign-exclusion-reason="Already a customer">Already a customer</button><button type="button" data-campaign-exclusion-reason="Not a fit">Not a fit</button><button type="button" data-campaign-exclusion-reason="Distributor/vendor">Distributor/vendor</button></div><input data-campaign-exclusion-input maxlength="500" placeholder="Reason for excluding this recipient" /><div class="outreachActions"><button class="actionBtn primary" type="button" data-campaign-recipient-action="confirm-exclude" data-recipient-token="${escapeHtml(recipient.idempotency_token)}">Confirm exclude</button><button class="actionBtn" type="button" data-campaign-recipient-action="cancel-exclude">Cancel</button></div></div>` : ""}` : ""}${recipient.result_detail ? `<div class="status">${escapeHtml(recipient.result_detail)}</div>` : ""}
     </details>`).join("")}</div>`;
     if (!$("outreachCampaignDialog").open) $("outreachCampaignDialog").showModal();
     refreshIcons();
@@ -3505,13 +3527,20 @@
     }
   }
 
-  async function setOutreachCampaignRecipientExclusion(button, exclude){
+  function showCampaignExclusionForm(button){
+    const card = button.closest("details");
+    const form = card?.querySelector("[data-campaign-exclusion-form]");
+    if (!form) return;
+    form.hidden = false;
+    card.open = true;
+    form.querySelector("[data-campaign-exclusion-input]")?.focus();
+  }
+
+  async function setOutreachCampaignRecipientExclusion(button, exclude, reason = ""){
     const campaign = selectedOutreachCampaign;
     const token = button.dataset.recipientToken || "";
     const recipient = (campaign?.recipients || []).find(item => item.idempotency_token === token);
     if (!campaign || !recipient) return;
-    const reason = exclude ? prompt(`Why exclude ${recipient.business} from this campaign? This does not mark the business Do Not Email globally.`, "") : "";
-    if (exclude && reason === null) return;
     if (exclude && !reason.trim()) return setCampaignStatus("An exclusion reason is required.", true);
     if (!exclude && !confirm(`Restore ${recipient.business} to this campaign review?`)) return;
     button.disabled = true;
@@ -6140,8 +6169,32 @@
   $("outreachCampaignRecipients").addEventListener("click", event => {
     const button = event.target.closest("[data-campaign-recipient-action='save']");
     if (button) return saveOutreachCampaignRecipient(button);
-    const exclusionButton = event.target.closest("[data-campaign-recipient-action='exclude'], [data-campaign-recipient-action='restore']");
-    if (exclusionButton) setOutreachCampaignRecipientExclusion(exclusionButton, exclusionButton.dataset.campaignRecipientAction === "exclude");
+    const showExcludeButton = event.target.closest("[data-campaign-recipient-action='show-exclude']");
+    if (showExcludeButton) {
+      event.preventDefault();
+      event.stopPropagation();
+      return showCampaignExclusionForm(showExcludeButton);
+    }
+    const quickPick = event.target.closest("[data-campaign-exclusion-reason]");
+    if (quickPick) {
+      const form = quickPick.closest("[data-campaign-exclusion-form]");
+      const input = form?.querySelector("[data-campaign-exclusion-input]");
+      if (input) { input.value = quickPick.dataset.campaignExclusionReason || ""; input.focus(); }
+      return;
+    }
+    const confirmExcludeButton = event.target.closest("[data-campaign-recipient-action='confirm-exclude']");
+    if (confirmExcludeButton) {
+      const reason = confirmExcludeButton.closest("[data-campaign-exclusion-form]")?.querySelector("[data-campaign-exclusion-input]")?.value || "";
+      return setOutreachCampaignRecipientExclusion(confirmExcludeButton, true, reason);
+    }
+    const cancelExcludeButton = event.target.closest("[data-campaign-recipient-action='cancel-exclude']");
+    if (cancelExcludeButton) {
+      const form = cancelExcludeButton.closest("[data-campaign-exclusion-form]");
+      if (form) form.hidden = true;
+      return;
+    }
+    const restoreButton = event.target.closest("[data-campaign-recipient-action='restore']");
+    if (restoreButton) setOutreachCampaignRecipientExclusion(restoreButton, false);
   });
   $("approveOutreachCampaignBtn").addEventListener("click", () => approveOutreachCampaign().catch(error => setCampaignStatus(error.message || String(error), true)));
   $("campaignSegmentConfirm").addEventListener("change", refreshCampaignApprovalControl);
