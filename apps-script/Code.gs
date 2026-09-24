@@ -3627,17 +3627,20 @@ function cachedBadgerInvoices_(bypassCache) {
   }
 
   const invoices = readBadgerInvoices_();
-  if (!bypassCache) {
-    try {
-      const serialized = JSON.stringify(invoices);
-      const chunks = serialized.match(new RegExp(`[\\s\\S]{1,${BADGER_INVOICE_CACHE_CHUNK_SIZE}}`, "g")) || ["[]"];
-      chunks.forEach((chunk, index) => cache.put(`${BADGER_INVOICE_CACHE_PREFIX}:part:${index}`, chunk, BADGER_INVOICE_CACHE_TTL_SECONDS));
-      cache.put(manifestKey, JSON.stringify({ parts:chunks.length }), BADGER_INVOICE_CACHE_TTL_SECONDS);
-    } catch (error) {
-      console.warn("Badger invoice cache write failed: " + String(error && error.message || error));
-    }
-  }
+  if (!bypassCache) cacheBadgerInvoices_(invoices, cache);
   return invoices;
+}
+
+function cacheBadgerInvoices_(invoices, cache) {
+  const targetCache = cache || CacheService.getScriptCache();
+  try {
+    const serialized = JSON.stringify(invoices);
+    const chunks = serialized.match(new RegExp(`[\\s\\S]{1,${BADGER_INVOICE_CACHE_CHUNK_SIZE}}`, "g")) || ["[]"];
+    chunks.forEach((chunk, index) => targetCache.put(`${BADGER_INVOICE_CACHE_PREFIX}:part:${index}`, chunk, BADGER_INVOICE_CACHE_TTL_SECONDS));
+    targetCache.put(`${BADGER_INVOICE_CACHE_PREFIX}:manifest`, JSON.stringify({ parts:chunks.length }), BADGER_INVOICE_CACHE_TTL_SECONDS);
+  } catch (error) {
+    console.warn("Badger invoice cache write failed: " + String(error && error.message || error));
+  }
 }
 
 function buildCustomerAccounts_(applications, orders) {
@@ -3935,9 +3938,15 @@ function synchronizeApplicationAccount_(application, p, staffName) {
 function findBadgerInvoice_(invoiceNumber, bypassCache) {
   const normalized = String(invoiceNumber || "").toUpperCase().replace(/[^A-Z0-9]/g, "");
   if (!normalized) return null;
-  return cachedBadgerInvoices_(!!bypassCache).find(invoice =>
+  const match = invoices => invoices.find(invoice =>
     String(invoice.invoice_number || "").toUpperCase().replace(/[^A-Z0-9]/g, "") === normalized
   ) || null;
+  const cachedMatch = match(cachedBadgerInvoices_(!!bypassCache));
+  if (cachedMatch || bypassCache) return cachedMatch;
+
+  const refreshed = cachedBadgerInvoices_(true);
+  cacheBadgerInvoices_(refreshed);
+  return match(refreshed);
 }
 
 function reconcileBadgerForOrder_(sheet, rowNumber, h, invoiceNumber, bypassCache) {
