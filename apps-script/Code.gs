@@ -1,8 +1,9 @@
 /*********************************
  * Inventory API (JSON) for Netlify
- * App version: 2026.09.24.18
+ * App version: 2026.09.24.19
  *
  * CHANGES IN THIS VERSION
+ * - Added opt-in signed sell-sheet and wholesale-application links for click measurement without changing send approval, eligibility, receipt, or Activity Log safeguards.
  * - Added a locked-down click-engagement endpoint for signed Netlify tracking links, with duplicate suppression and no request-path schema changes.
  * - Replaced full Outreach support-tab reads for a single business with targeted record lookups, cached campaign settings, and added record timing diagnostics.
  * - Corrected all-caps business display formatting so a terminal possessive 's stays lowercase while names such as O'Brien still retain their internal capital.
@@ -124,7 +125,7 @@
  * - Use only in the staging inventory backend until testing is complete.
  *********************************/
 
-const APP_VERSION = "2026.09.24.18";
+const APP_VERSION = "2026.09.24.19";
 
 const SHEET_NAMES = {
   STORES: "Stores",
@@ -1928,6 +1929,19 @@ function outreachPlainTextToHtml_(text) {
   ).join("");
 }
 
+function outreachTrackingSignature_(target, accountId, stage, secret) {
+  const bytes = Utilities.computeHmacSha256Signature(`${target}\n${accountId}\n${stage}`, secret);
+  return Utilities.base64EncodeWebSafe(bytes).replace(/=+$/g, "");
+}
+
+function outreachTrackingUrl_(target, accountId, stage, settings, extras) {
+  const baseUrl = String(settings["Tracking base URL"] || "").trim();
+  const secret = PropertiesService.getScriptProperties().getProperty("TRACKING_LINK_SECRET") || "";
+  if (!/^https:\/\/\S+$/i.test(baseUrl) || !secret || !accountId) return "";
+  const params = Object.assign({ t:target, a:accountId, s:stage, k:outreachTrackingSignature_(target, accountId, stage, secret) }, extras || {});
+  return `${baseUrl}${baseUrl.includes("?") ? "&" : "?"}${Object.keys(params).map(key => `${encodeURIComponent(key)}=${encodeURIComponent(params[key] || "")}`).join("&")}`;
+}
+
 function outreachMessage_(row, settings, draft) {
   const stage = String(outreachValue_(row, ["next_email", "stage"]) || "Initial");
   let keys;
@@ -1941,8 +1955,20 @@ function outreachMessage_(row, settings, draft) {
 
   const contact = String(outreachValue_(row, ["contact", "contact_name", "contact_person"]) || "").trim();
   const sellSheet = String(settings["Wholesale sell-sheet URL"] || "").trim();
+  const applicationUrl = String(settings["Customer application URL"] || "").trim();
   const website = String(settings["Website URL"] || "").trim();
   const logo = String(settings["Logo URL"] || "").trim();
+  const accountId = String(row.account_id || "").trim();
+  const business = String(outreachValue_(row, ["business", "business_name"]) || "").trim();
+  const email = String(outreachValue_(row, ["email", "email_address"]) || "").trim();
+  const trackedSellSheet = outreachTrackingUrl_("sell_sheet", accountId, stage, settings);
+  const directApplication = /^https:\/\/\S+$/i.test(applicationUrl)
+    ? `${applicationUrl}${applicationUrl.includes("?") ? "&" : "?"}account_id=${encodeURIComponent(accountId)}&business=${encodeURIComponent(business)}&email=${encodeURIComponent(email)}`
+    : "";
+  const trackedApplication = outreachTrackingUrl_("application", accountId, stage, settings, { business:business, email:email });
+  const applicationLink = stage === "Initial" && (trackedApplication || directApplication)
+    ? `<p>If you would like to get the account setup started, <a href="${escapeOutreachHtml_(trackedApplication || directApplication)}">complete our short wholesale customer application</a>.</p>`
+    : "";
   const values = {
     "First Name": contact ? contact.split(/\s+/)[0] : "there",
     "Business Name": outreachDisplayBusinessName_(outreachValue_(row, ["business", "business_name"]) || "your business"),
@@ -1955,7 +1981,7 @@ function outreachMessage_(row, settings, draft) {
     "Website Footer": website && logo
       ? `<a href="${escapeOutreachHtml_(website)}"><img src="${escapeOutreachHtml_(logo)}" alt="Sturgeon Spirits"></a>`
       : "",
-    "Sell Sheet Link": sellSheet ? `<p><a href="${escapeOutreachHtml_(sellSheet)}">View our current wholesale sell sheet</a></p>` : "",
+    "Sell Sheet Link": (sellSheet ? `<p><a href="${escapeOutreachHtml_(trackedSellSheet || sellSheet)}">View our current wholesale sell sheet</a></p>` : "") + applicationLink,
   };
   const template = String(settings[keys[1]] || "");
   const parts = outreachTemplateParts_(template);

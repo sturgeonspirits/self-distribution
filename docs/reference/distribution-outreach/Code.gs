@@ -1,9 +1,10 @@
 /**
  * Sturgeon Spirits Distribution Outreach
  *
- * VERSION: 2026.09.22.9-APP
+ * VERSION: 2026.09.24.10-APP
  *
  * CHANGES IN THIS VERSION
+ * - Added opt-in signed sell-sheet and wholesale-application links for click measurement; direct links remain unchanged until tracking is configured.
  * - Allowed Karl-only app tests to render saved drafts before a prospect email is available or verified.
  * - Kept source-row identity checks and every real-recipient safety check unchanged.
  *
@@ -53,7 +54,7 @@
  * Sends through the authenticated Zoho Mail API account.
  */
 
-const OUTREACH_VERSION = '2026.09.22.9-APP';
+const OUTREACH_VERSION = '2026.09.24.10-APP';
 
 const OUTREACH = Object.freeze({
   ENVIRONMENT: 'STAGING_PILOT',
@@ -849,6 +850,21 @@ function validateCampaignSettings_(settings, isTest) {
   }
 }
 
+function trackingSignature_(target, accountId, stage, secret) {
+  const bytes = Utilities.computeHmacSha256Signature(target + '\n' + accountId + '\n' + stage, secret);
+  return Utilities.base64EncodeWebSafe(bytes).replace(/=+$/g, '');
+}
+
+function trackingUrl_(target, accountId, stage, settings, extras) {
+  const baseUrl = String(settings['Tracking base URL'] || '').trim();
+  const secret = PropertiesService.getScriptProperties().getProperty('TRACKING_LINK_SECRET') || '';
+  if (!/^https:\/\/\S+$/i.test(baseUrl) || !secret || !accountId) return '';
+  const params = Object.assign({ t:target, a:accountId, s:stage, k:trackingSignature_(target, accountId, stage, secret) }, extras || {});
+  return baseUrl + (baseUrl.indexOf('?') >= 0 ? '&' : '?') + Object.keys(params).map(function (key) {
+    return encodeURIComponent(key) + '=' + encodeURIComponent(params[key] || '');
+  }).join('&');
+}
+
 function templateValues_(row, settings, stage, accountId) {
   const contact = String(row[OUTREACH.COL.CONTACT - 1] || '').trim();
   const firstName = contact ? contact.split(/\s+/)[0] : 'there';
@@ -856,15 +872,19 @@ function templateValues_(row, settings, stage, accountId) {
   const website = String(settings['Website URL'] || '').trim();
   const logo = String(settings['Logo URL'] || '').trim();
   const applicationUrl = String(settings['Customer application URL'] || '').trim();
-  const sellSheetLink = sellSheet ? '<p><a href="' + escapeHtml_(sellSheet) + '">View our current wholesale sell sheet</a></p>' : '';
+  const business = String(row[OUTREACH.COL.BUSINESS - 1] || '');
+  const email = String(row[OUTREACH.COL.EMAIL - 1] || '');
+  const trackedSellSheet = trackingUrl_('sell_sheet', accountId, stage, settings);
+  const sellSheetLink = sellSheet ? '<p><a href="' + escapeHtml_(trackedSellSheet || sellSheet) + '">View our current wholesale sell sheet</a></p>' : '';
   const applicationHref = /^https:\/\/\S+$/i.test(applicationUrl)
     ? applicationUrl + (applicationUrl.indexOf('?') >= 0 ? '&' : '?') +
       'account_id=' + encodeURIComponent(accountId || '') +
-      '&business=' + encodeURIComponent(String(row[OUTREACH.COL.BUSINESS - 1] || '')) +
-      '&email=' + encodeURIComponent(String(row[OUTREACH.COL.EMAIL - 1] || ''))
+      '&business=' + encodeURIComponent(business) +
+      '&email=' + encodeURIComponent(email)
     : '';
-  const applicationLink = stage === 'Initial' && applicationHref ?
-    '<p>If you would like to get the account setup started, <a href="' + escapeHtml_(applicationHref) + '">complete our short wholesale customer application</a>.</p>' : '';
+  const trackedApplication = trackingUrl_('application', accountId, stage, settings, { business:business, email:email });
+  const applicationLink = stage === 'Initial' && (trackedApplication || applicationHref) ?
+    '<p>If you would like to get the account setup started, <a href="' + escapeHtml_(trackedApplication || applicationHref) + '">complete our short wholesale customer application</a>.</p>' : '';
   return {
     'First Name': firstName,
     'Business Name': smartTitleCase_(String(row[OUTREACH.COL.BUSINESS - 1] || 'your business')),

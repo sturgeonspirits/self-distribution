@@ -309,6 +309,12 @@ test("source contains formula protection, global error listeners, and recoverabl
   assert.match(backend, /if \(recentDuplicate\) return \{ recorded:false, duplicate:true \}/);
   const inventoryProxy = await readFile(new URL("netlify/functions/inventory.js", root), "utf8");
   assert.doesNotMatch(inventoryProxy, /recordEmailEngagement/);
+  assert.match(backend, /function outreachTrackingUrl_\(target, accountId, stage, settings, extras\)/);
+  assert.match(backend, /trackedSellSheet \|\| sellSheet/);
+  assert.match(backend, /trackedApplication \|\| directApplication/);
+  assert.match(mailer, /function trackingUrl_\(target, accountId, stage, settings, extras\)/);
+  assert.match(mailer, /trackedSellSheet \|\| sellSheet/);
+  assert.match(mailer, /trackedApplication \|\| applicationHref/);
   assert.match(backend, /function apiRepairHubStructure_\(p\)/);
   assert.match(backend, /function installNightlyHubStructureRepair\(\)/);
   assert.match(backend, /function accountIdentityLookup_\(\)/);
