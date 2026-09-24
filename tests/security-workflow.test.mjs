@@ -249,6 +249,10 @@ test("source contains formula protection, global error listeners, and recoverabl
   assert.doesNotMatch(dashboardSource, /ensureAccountIdentityModel_/);
   assert.doesNotMatch(dashboardSource, /newsletterContacts_/);
   assert.match(backend, /function outreachSlimRecord_\(/);
+  assert.match(backend, /newsletter_status:String\(program\.newsletter_status/);
+  assert.match(backend, /opened:Number\(engagement\.open_count \|\| 0\) > 0/);
+  assert.match(backend, /search_text:searchText/);
+  assert.match(index, /record\.search_text/);
   assert.match(backend, /case "outreachRecord": res = apiGetOutreachRecord_\(body\);/);
   assert.match(backend, /function apiGetOutreachRecord_\(p\)/);
   assert.match(backend, /requireFields_\(p, \["source_row"\]\)/);

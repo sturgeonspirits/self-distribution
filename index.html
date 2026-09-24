@@ -3145,6 +3145,7 @@
         record.status,
         record.outcome,
         record.relationship,
+        record.search_text,
         ...(record.fields || []).map(field => field.value),
       ]
         .map(value => String(value || "").toLowerCase())
@@ -3528,10 +3529,10 @@
             ${record.miles !== null && record.miles !== undefined && record.miles !== "" ? `<span class="badge blue">${escapeHtml(record.miles)} mi</span>` : (Number(record.craft_spirit_fit || 0) === 5 ? `<span class="badge amber">Distance needed</span>` : "")}
             ${priority ? `<span class="badge amber">${escapeHtml(priority)} priority</span>` : ""}
             ${record.outcome ? `<span class="badge">${escapeHtml(record.outcome)}</span>` : ""}
-            ${record.programs?.newsletter_status === "Subscribed" ? `<span class="badge green">Newsletter</span>` : ""}
-            ${record.programs?.ordering_status === "Active" ? `<span class="badge blue">Online ordering</span>` : ""}
-            ${Number(record.email_engagement?.open_count || 0) > 0 ? `<span class="badge blue">Estimated opened</span>` : ""}
-            ${Number(record.email_engagement?.click_count || 0) > 0 ? `<span class="badge green">Clicked</span>` : ""}
+            ${(record.newsletter_status || record.programs?.newsletter_status) === "Subscribed" ? `<span class="badge green">Newsletter</span>` : ""}
+            ${(record.ordering_status || record.programs?.ordering_status) === "Active" ? `<span class="badge blue">Online ordering</span>` : ""}
+            ${(record.opened || Number(record.email_engagement?.open_count || 0) > 0) ? `<span class="badge blue">Estimated opened</span>` : ""}
+            ${(record.clicked || Number(record.email_engagement?.click_count || 0) > 0) ? `<span class="badge green">Clicked</span>` : ""}
           </div>
           <div class="outreachActions">
             <button class="actionBtn primary actionPrimary" type="button" data-outreach-action="review" ${refreshPending ? "disabled title=\"Refreshing — try again in a moment.\"" : ""}><i data-lucide="mail-open"></i><span>Review email</span></button>

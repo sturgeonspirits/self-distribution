@@ -1,8 +1,9 @@
 /*********************************
  * Inventory API (JSON) for Netlify
- * App version: 2026.09.24.14
+ * App version: 2026.09.24.15
  *
  * CHANGES IN THIS VERSION
+ * - Added lightweight Outreach badges and search text from the Programs and Engagement support tabs for slim dashboard loads.
  * - Fixed the nightly repair trigger handler, refreshed a missed Badger invoice lookup once, and made single-record Outreach lookup accept source-row-only requests.
  * - Added an optional slim Outreach dashboard response and a single-record outreach endpoint.
  * - Moved structural and Account ID repair out of normal requests, with an optional nightly repair installer.
@@ -120,7 +121,7 @@
  * - Use only in the staging inventory backend until testing is complete.
  *********************************/
 
-const APP_VERSION = "2026.09.24.14";
+const APP_VERSION = "2026.09.24.15";
 
 const SHEET_NAMES = {
   STORES: "Stores",
@@ -1921,9 +1922,22 @@ function outreachRecord_(row, sourceRow, activityMap, settings, draftMap, progra
   return record;
 }
 
-function outreachSlimRecord_(row, sourceRow, draftMap) {
+function outreachSlimRecord_(row, sourceRow, draftMap, programMap, engagementMap) {
   const accountId = String(row.account_id || "").trim();
   const stage = String(outreachValue_(row, ["next_email", "stage"]) || "Initial").trim();
+  const program = programMap.get(accountId) || programMap.get(sourceRow) || {};
+  const engagement = engagementMap.get(accountId) || engagementMap.get(sourceRow) || {};
+  const searchText = [
+    outreachValue_(row, ["address", "street", "street_address", "address_1"]),
+    outreachValue_(row, ["zip", "zip_code", "postal_code"]),
+    outreachValue_(row, ["county"]),
+    outreachValue_(row, ["license"]),
+    outreachValue_(row, ["segment"]),
+    outreachValue_(row, ["wave"]),
+    outreachValue_(row, ["lead_source"]),
+    outreachValue_(row, ["website", "website_url", "url"]),
+    String(outreachValue_(row, ["notes"]) || "").slice(0, 200),
+  ].map(value => String(value || "").trim()).filter(Boolean).join(" ").toLowerCase();
   const record = {
     account_id:accountId,
     source_row:sourceRow,
@@ -1948,6 +1962,11 @@ function outreachSlimRecord_(row, sourceRow, draftMap) {
     miles:outreachMiles_(outreachValue_(row, ["miles", "distance", "distance_miles"])),
     email_confidence:String(outreachValue_(row, ["email_confidence"]) || "").trim(),
     relationship:String(outreachValue_(row, ["relationship"]) || "").trim(),
+    newsletter_status:String(program.newsletter_status || "Not invited"),
+    ordering_status:String(program.ordering_status || "Not offered"),
+    opened:Number(engagement.open_count || 0) > 0,
+    clicked:Number(engagement.click_count || 0) > 0,
+    search_text:searchText,
     has_saved_draft:draftMap.has(outreachDraftKey_(accountId || sourceRow, stage)),
     // Used only while assembling the server-side Today queue; omitted from slim JSON.
     queue:String(outreachValue_(row, ["queue", "queue?"]) || "").trim(),
@@ -1961,7 +1980,8 @@ function outreachSlimPayload_(record) {
   const fields = [
     "account_id", "source_row", "business", "display_business", "contact", "email", "phone", "city", "state",
     "status", "next_email", "priority", "next_follow_up", "last_emailed", "outcome", "do_not_email", "segment",
-    "wave", "top_50", "craft_spirit_fit", "miles", "email_confidence", "relationship", "weekly_eligible",
+    "wave", "top_50", "craft_spirit_fit", "miles", "email_confidence", "relationship", "newsletter_status",
+    "ordering_status", "opened", "clicked", "search_text", "weekly_eligible",
     "weekly_exclusion_reasons", "has_saved_draft",
   ];
   return fields.reduce((payload, field) => {
@@ -1987,8 +2007,10 @@ function apiGetOutreachDashboard_(p) {
   let records;
   if (slim) {
     const draftMap = outreachDraftMap_();
+    const programMap = outreachProgramMap_();
+    const engagementMap = outreachEngagementMap_();
     mark("supporting_tabs_ms");
-    records = rows.map((row, index) => outreachSlimRecord_(row, index + 2, draftMap))
+    records = rows.map((row, index) => outreachSlimRecord_(row, index + 2, draftMap, programMap, engagementMap))
       .filter(record => record.business);
   } else {
     activityMap = outreachActivityMap_();

@@ -8,8 +8,8 @@ Read this file before inspecting the repository or changing the application. Upd
 
 | Component | Source version | Deployment state |
 | --- | --- | --- |
-| Netlify web app and staff proxy | `2026.09.24.20-WEB` on `codex/work` | Phases 1 and 3 are ready for review and are not deployed. The live site is `2026.09.24.18-WEB`. This pending release uses a 9-second upstream timeout, one attempt for every read and write, a slim Outreach directory response, record-on-demand dialogs, and quiet background refreshes after Outreach saves. |
-| Inventory API Apps Script | `2026.09.24.14` on `codex/work` / `2026.09.23.11` live | Phase 2, including the review follow-ups, is ready for review and is not deployed. The live Inventory API remains version `.11`. |
+| Netlify web app and staff proxy | `2026.09.24.21-WEB` on `codex/work` | Phases 1 and 3 plus final deploy safeguards are ready for review and are not deployed. The live site is `2026.09.24.18-WEB`. This pending release uses a 9-second upstream timeout, one attempt for every read and write, a slim Outreach directory response, record-on-demand dialogs, and quiet background refreshes after Outreach saves. |
+| Inventory API Apps Script | `2026.09.24.15` on `codex/work` / `2026.09.23.11` live | Phase 2, including review follow-ups and lightweight Outreach badges/search text, is ready for review and is not deployed. The live Inventory API remains version `.11`. |
 | Distribution Outreach Apps Script | `2026.09.22.9-APP` | Source is committed; owner has not yet confirmed this exact version is deployed |
 | Public customer Netlify proxy | `2026.09.18.3-WEB` | Deployed with Netlify; unchanged by the latest staff-app UI work |
 
