@@ -1,8 +1,9 @@
 /*********************************
  * Inventory API (JSON) for Netlify
- * App version: 2026.09.24.17
+ * App version: 2026.09.24.18
  *
  * CHANGES IN THIS VERSION
+ * - Added a locked-down click-engagement endpoint for signed Netlify tracking links, with duplicate suppression and no request-path schema changes.
  * - Replaced full Outreach support-tab reads for a single business with targeted record lookups, cached campaign settings, and added record timing diagnostics.
  * - Corrected all-caps business display formatting so a terminal possessive 's stays lowercase while names such as O'Brien still retain their internal capital.
  * - Added lightweight Outreach badges and search text from the Programs and Engagement support tabs for slim dashboard loads.
@@ -123,7 +124,7 @@
  * - Use only in the staging inventory backend until testing is complete.
  *********************************/
 
-const APP_VERSION = "2026.09.24.17";
+const APP_VERSION = "2026.09.24.18";
 
 const SHEET_NAMES = {
   STORES: "Stores",
@@ -485,6 +486,8 @@ function apiGetHubSystemStatus_() {
 
 function repairHubStructure_() {
   ensureFoundationalSheets_();
+  const engagement = getOutreachSs_().getSheetByName(OUTREACH_ENGAGEMENT_SHEET_NAME);
+  if (engagement) ensureHeaderColumns_(engagement, ["Target", "Stage"]);
   return ensureAccountIdentityModel_(true);
 }
 
@@ -571,6 +574,7 @@ function handle_(e, body) {
       case "updateStoreContacts": res = apiUpdateStoreContacts_(body); break;
       case "outreachDashboard": res = apiGetOutreachDashboard_(Object.assign({}, e?.parameter || {}, body || {})); break;
       case "outreachRecord": res = apiGetOutreachRecord_(body); break;
+      case "recordEmailEngagement": res = apiRecordEmailEngagement_(body); break;
       case "outreachSendStatus": res = apiGetOutreachSendStatus_(); break;
       case "outreachNewsletterContacts": res = { newsletter_contacts:newsletterContacts_() }; break;
       case "outreachCampaigns": res = apiGetOutreachCampaigns_(); break;
@@ -1536,8 +1540,42 @@ function outreachRowsMatchingCell_(sheet, headerNames, value) {
     const values = sheet.getRange(match.getRow(), 1, 1, sheet.getLastColumn()).getValues()[0];
     const row = {};
     keys.forEach(key => row[key] = values[headers[key]]);
+    row.__source_row = match.getRow();
     return row;
   });
+}
+
+function apiRecordEmailEngagement_(p) {
+  if (!p || String(p.event_type || "") !== "click") throw new Error("Only click engagement may be recorded.");
+  const target = String(p.target || "").trim();
+  if (!["sell_sheet", "application"].includes(target)) throw new Error("Unknown email-link target.");
+  const accountId = String(p.account_id || "").trim();
+  if (!accountId) throw new Error("Missing account ID.");
+  const directory = getOutreachSheet_(OUTREACH_SHEET_NAME);
+  const accountRows = outreachRowsMatchingCell_(directory, ["account_id", "Account ID"], accountId);
+  if (!accountRows.length) throw new Error("Account not found.");
+  const engagement = getOutreachSs_().getSheetByName(OUTREACH_ENGAGEMENT_SHEET_NAME);
+  if (!engagement) throw new Error("Email Engagement tab is missing. Run repairHubStructure first.");
+  const headers = getHeaderMap_(engagement);
+  const now = new Date();
+  const recentDuplicate = outreachRowsMatchingCell_(engagement, ["account_id", "Account ID"], accountId).some(row => {
+    if (String(row.event_type || "").trim().toLowerCase() !== "click") return false;
+    if (headers.target !== undefined && String(row.target || "").trim() !== target) return false;
+    const eventAt = outreachDate_(row.event_at);
+    return !!eventAt && now.getTime() - eventAt.getTime() >= 0 && now.getTime() - eventAt.getTime() < 60000;
+  });
+  if (recentDuplicate) return { recorded:false, duplicate:true };
+  const values = Array(engagement.getLastColumn()).fill("");
+  const set = (key, value) => { if (headers[key] !== undefined) values[headers[key]] = value; };
+  set("account_id", accountId);
+  set("source_row", accountRows[0].__source_row || "");
+  set("event_type", "click");
+  set("event_at", now);
+  set("source", "Email link");
+  set("target", target);
+  set("stage", String(p.stage || "").trim());
+  engagement.appendRow(values);
+  return { recorded:true };
 }
 
 function outreachTargetedActivityMap_(accountId, business) {

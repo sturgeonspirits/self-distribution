@@ -304,6 +304,11 @@ test("source contains formula protection, global error listeners, and recoverabl
   assert.doesNotMatch(outreachRecordSource, /outreachProgramMap_\(\)/);
   assert.doesNotMatch(outreachRecordSource, /outreachEngagementMap_\(\)/);
   assert.match(index, /await new Promise\(resolve => setTimeout\(resolve, 2000\)\)/);
+  assert.match(backend, /function apiRecordEmailEngagement_\(p\)/);
+  assert.match(backend, /createTextFinder\(target\)/);
+  assert.match(backend, /if \(recentDuplicate\) return \{ recorded:false, duplicate:true \}/);
+  const inventoryProxy = await readFile(new URL("netlify/functions/inventory.js", root), "utf8");
+  assert.doesNotMatch(inventoryProxy, /recordEmailEngagement/);
   assert.match(backend, /function apiRepairHubStructure_\(p\)/);
   assert.match(backend, /function installNightlyHubStructureRepair\(\)/);
   assert.match(backend, /function accountIdentityLookup_\(\)/);
