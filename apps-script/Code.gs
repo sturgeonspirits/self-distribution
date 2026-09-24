@@ -497,7 +497,7 @@ function apiRepairHubStructure_(p) {
   }
 }
 
-function repairHubStructureNightly_() {
+function repairHubStructureNightly() {
   const lock = LockService.getScriptLock();
   if (!lock.tryLock(30000)) throw new Error("Another migration or write is in progress.");
   try {
@@ -509,7 +509,7 @@ function repairHubStructureNightly_() {
 }
 
 function installNightlyHubStructureRepair() {
-  const handler = "repairHubStructureNightly_";
+  const handler = "repairHubStructureNightly";
   ScriptApp.getProjectTriggers()
     .filter(trigger => trigger.getHandlerFunction() === handler)
     .forEach(trigger => ScriptApp.deleteTrigger(trigger));
