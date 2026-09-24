@@ -8,7 +8,7 @@ Read this file before inspecting the repository or changing the application. Upd
 
 | Component | Source version | Deployment state |
 | --- | --- | --- |
-| Netlify web app and staff proxy | `2026.09.24.22-WEB` on `codex/work` / `2026.09.24.21-WEB` live | The targeted single-record retry is committed and awaiting a future Netlify deployment. The live release uses a 9-second upstream timeout, one attempt for every read and write, a slim Outreach directory response, record-on-demand dialogs, quiet background refreshes after Outreach saves, and strict action validation. |
+| Netlify web app and staff proxy | `2026.09.24.22-WEB` | Deployed to production and verified at the staff-app URL. This release adds one safe retry for a timed-out record-only read; the live release also uses a 9-second upstream timeout, one attempt for every read and write, a slim Outreach directory response, record-on-demand dialogs, quiet background refreshes after Outreach saves, and strict action validation. |
 | Inventory API Apps Script | `2026.09.24.17` on `codex/work` / `2026.09.24.15` live | Targeted single-record support-tab reads, cached campaign settings, and the possessive-name display correction are committed and awaiting Apps Script deployment. |
 | Distribution Outreach Apps Script | `2026.09.22.9-APP` | Source is committed; owner has not yet confirmed this exact version is deployed |
 | Public customer Netlify proxy | `2026.09.18.3-WEB` | Deployed with Netlify; unchanged by the latest staff-app UI work |
