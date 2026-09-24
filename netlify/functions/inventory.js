@@ -40,7 +40,9 @@ const STAFF_ACTIONS = new Set([
   "updateStoreContacts",
 ]);
 
-const UPSTREAM_ATTEMPTS = 2;
+// Netlify's default synchronous limit is 10 seconds, so a second 9-second
+// read attempt cannot complete before the function is terminated.
+const UPSTREAM_ATTEMPTS = 1;
 const UPSTREAM_WRITE_ATTEMPTS = 1;
 const UPSTREAM_TIMEOUT_MS = 9000;
 const SEND_UPSTREAM_ATTEMPTS = 1;
