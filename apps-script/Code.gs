@@ -1,8 +1,9 @@
 /*********************************
  * Inventory API (JSON) for Netlify
- * App version: 2026.09.24.16
+ * App version: 2026.09.24.17
  *
  * CHANGES IN THIS VERSION
+ * - Replaced full Outreach support-tab reads for a single business with targeted record lookups, cached campaign settings, and added record timing diagnostics.
  * - Corrected all-caps business display formatting so a terminal possessive 's stays lowercase while names such as O'Brien still retain their internal capital.
  * - Added lightweight Outreach badges and search text from the Programs and Engagement support tabs for slim dashboard loads.
  * - Fixed the nightly repair trigger handler, refreshed a missed Badger invoice lookup once, and made single-record Outreach lookup accept source-row-only requests.
@@ -122,7 +123,7 @@
  * - Use only in the staging inventory backend until testing is complete.
  *********************************/
 
-const APP_VERSION = "2026.09.24.16";
+const APP_VERSION = "2026.09.24.17";
 
 const SHEET_NAMES = {
   STORES: "Stores",
@@ -1494,13 +1495,162 @@ function outreachActivityMap_() {
 
 function getOutreachCampaignSettings_() {
   if (__OUTREACH_CAMPAIGN_SETTINGS) return __OUTREACH_CAMPAIGN_SETTINGS;
+  const cache = CacheService.getScriptCache();
+  const cacheKey = "hub_outreach_campaign_settings_v1";
+  try {
+    const cached = JSON.parse(cache.get(cacheKey) || "null");
+    if (cached && typeof cached === "object") {
+      __OUTREACH_CAMPAIGN_SETTINGS = cached;
+      return __OUTREACH_CAMPAIGN_SETTINGS;
+    }
+  } catch (error) {
+    console.warn("Outreach campaign-settings cache read failed: " + String(error && error.message || error));
+  }
   const sheet = getOutreachSheet_("Campaign Settings");
   const values = sheet.getRange(2, 1, Math.max(1, sheet.getLastRow() - 1), 2).getValues();
   __OUTREACH_CAMPAIGN_SETTINGS = values.reduce((settings, row) => {
     if (row[0]) settings[String(row[0])] = row[1];
     return settings;
   }, {});
+  try {
+    cache.put(cacheKey, JSON.stringify(__OUTREACH_CAMPAIGN_SETTINGS), 300);
+  } catch (error) {
+    console.warn("Outreach campaign-settings cache write failed: " + String(error && error.message || error));
+  }
   return __OUTREACH_CAMPAIGN_SETTINGS;
+}
+
+function outreachRowsMatchingCell_(sheet, headerNames, value) {
+  const target = String(value || "").trim();
+  if (!sheet || !target || sheet.getLastRow() < 2) return [];
+  const headers = getHeaderMap_(sheet);
+  const headerName = headerNames.map(normalizeHeader_).find(name => headers[name] !== undefined);
+  if (headerName === undefined) return [];
+  const matches = sheet.getRange(2, headers[headerName] + 1, sheet.getLastRow() - 1, 1)
+    .createTextFinder(target)
+    .matchCase(false)
+    .matchEntireCell(true)
+    .findAll();
+  const keys = Object.keys(headers);
+  return matches.map(match => {
+    const values = sheet.getRange(match.getRow(), 1, 1, sheet.getLastColumn()).getValues()[0];
+    const row = {};
+    keys.forEach(key => row[key] = values[headers[key]]);
+    return row;
+  });
+}
+
+function outreachTargetedActivityMap_(accountId, business) {
+  const sheet = getOutreachSheet_(OUTREACH_ACTIVITY_SHEET_NAME);
+  const accountRows = outreachRowsMatchingCell_(sheet, ["account_id", "Account ID"], accountId);
+  const rows = accountRows.length ? accountRows : outreachRowsMatchingCell_(sheet, ["business", "Business Name"], business);
+  const activity = new Map();
+  rows.forEach(row => {
+    const rowBusiness = String(outreachValue_(row, ["business"]) || "").trim();
+    if (!rowBusiness) return;
+    const rowAccountId = String(row.account_id || "").trim();
+    const keys = [`business:${rowBusiness.toLowerCase()}`];
+    if (rowAccountId) keys.unshift(`account:${rowAccountId}`);
+    const item = {
+      timestamp:outreachValue_(row, ["timestamp"]),
+      stage:String(outreachValue_(row, ["message_stage", "stage"]) || ""),
+      result:String(outreachValue_(row, ["result"]) || ""),
+      detail:String(outreachValue_(row, ["error/detail", "error_detail", "detail"]) || ""),
+      subject:String(outreachValue_(row, ["subject"]) || ""),
+      message_id:String(outreachValue_(row, ["message_id"]) || ""),
+      delivered_to:String(outreachValue_(row, ["delivered_to"]) || ""),
+      idempotency_token:String(outreachValue_(row, ["idempotency_token"]) || ""),
+    };
+    keys.forEach(key => {
+      if (!activity.has(key)) activity.set(key, []);
+      activity.get(key).push(item);
+    });
+  });
+  activity.forEach(items => items.sort((a, b) => {
+    const aDate = outreachDate_(a.timestamp);
+    const bDate = outreachDate_(b.timestamp);
+    return (bDate ? bDate.getTime() : 0) - (aDate ? aDate.getTime() : 0);
+  }));
+  return activity;
+}
+
+function outreachTargetedRows_(sheet, accountId, sourceRow) {
+  const accountRows = outreachRowsMatchingCell_(sheet, ["account_id", "Account ID"], accountId);
+  return accountRows.length
+    ? accountRows
+    : outreachRowsMatchingCell_(sheet, ["source_row", "Source Row"], sourceRow);
+}
+
+function outreachTargetedDraftMap_(accountId, sourceRow) {
+  const sheet = getOutreachDraftSheet_(false);
+  const drafts = new Map();
+  outreachTargetedRows_(sheet, accountId, sourceRow).forEach(row => {
+    const rowSourceRow = Number(row.source_row || 0);
+    const rowAccountId = String(row.account_id || "").trim();
+    const stage = String(row.message_stage || "Initial").trim();
+    if (!rowSourceRow && !rowAccountId) return;
+    const draft = {
+      subject:String(row.subject || "").trim(),
+      body_text:String(row.body_text || "").trim(),
+      updated_at:row.updated_at || "",
+      updated_by:String(row.updated_by || ""),
+    };
+    if (rowAccountId) drafts.set(outreachDraftKey_(rowAccountId, stage), draft);
+    if (rowSourceRow) drafts.set(outreachDraftKey_(rowSourceRow, stage), draft);
+  });
+  return drafts;
+}
+
+function outreachTargetedProgramMap_(accountId, sourceRow) {
+  const sheet = getOutreachSs_().getSheetByName(OUTREACH_PROGRAMS_SHEET_NAME);
+  const programs = new Map();
+  outreachTargetedRows_(sheet, accountId, sourceRow).forEach(row => {
+    const rowSourceRow = Number(row.source_row || 0);
+    const rowAccountId = String(row.account_id || "").trim();
+    if (!rowSourceRow && !rowAccountId) return;
+    const program = {
+      newsletter_status:String(row.newsletter_status || "Not invited"),
+      newsletter_consent_source:String(row.newsletter_consent_source || ""),
+      newsletter_status_date:row.newsletter_status_date || "",
+      ordering_status:String(row.ordering_status || "Not offered"),
+      ordering_customer_id:String(row.ordering_customer_id || ""),
+      ordering_invite_date:row.ordering_invite_date || "",
+      ordering_portal_url:String(row.ordering_portal_url || ""),
+      notes:String(row.notes || ""),
+      updated_at:row.updated_at || "",
+    };
+    if (rowAccountId) programs.set(rowAccountId, program);
+    if (rowSourceRow) programs.set(rowSourceRow, program);
+  });
+  return programs;
+}
+
+function outreachTargetedEngagementMap_(accountId, sourceRow) {
+  const sheet = getOutreachSs_().getSheetByName(OUTREACH_ENGAGEMENT_SHEET_NAME);
+  const engagement = new Map();
+  outreachTargetedRows_(sheet, accountId, sourceRow).forEach(row => {
+    const rowSourceRow = Number(row.source_row || 0);
+    const rowAccountId = String(row.account_id || "").trim();
+    const key = rowAccountId || rowSourceRow;
+    if (!key) return;
+    if (!engagement.has(key)) {
+      engagement.set(key, { open_count:0, last_opened:"", click_count:0, last_clicked:"", reply_count:0, bounce_count:0, source:"" });
+    }
+    const summary = engagement.get(key);
+    const eventType = String(row.event_type || "").trim().toLowerCase();
+    const eventAt = outreachDate_(row.event_at);
+    const newest = (current, candidate) => {
+      const currentDate = outreachDate_(current);
+      if (!candidate) return current;
+      return !currentDate || candidate.getTime() > currentDate.getTime() ? candidate : current;
+    };
+    if (eventType === "open") { summary.open_count += 1; summary.last_opened = newest(summary.last_opened, eventAt); }
+    else if (eventType === "click") { summary.click_count += 1; summary.last_clicked = newest(summary.last_clicked, eventAt); }
+    else if (eventType === "reply") summary.reply_count += 1;
+    else if (eventType === "bounce") summary.bounce_count += 1;
+    if (row.source) summary.source = String(row.source);
+  });
+  return engagement;
 }
 
 function outreachDraftKey_(identityKey, stage) {
@@ -2084,6 +2234,14 @@ function apiGetOutreachDashboard_(p) {
 
 function apiGetOutreachRecord_(p) {
   if (!p) throw new Error("Missing body");
+  const startedAt = Date.now();
+  const timings = {};
+  let stageStartedAt = startedAt;
+  const mark = name => {
+    const now = Date.now();
+    timings[name] = now - stageStartedAt;
+    stageStartedAt = now;
+  };
   requireFields_(p, ["source_row"]);
   const sourceRow = Number(p.source_row);
   const sheet = getOutreachSheet_(OUTREACH_SHEET_NAME);
@@ -2095,22 +2253,42 @@ function apiGetOutreachRecord_(p) {
   const values = sheet.getRange(sourceRow, 1, 1, sheet.getLastColumn()).getValues()[0];
   const row = {};
   Object.keys(headers).forEach(key => row[key] = values[headers[key]]);
+  mark("directory_row_ms");
   const accountId = String(row.account_id || "").trim();
+  const business = String(outreachValue_(row, ["business", "business_name"]) || "").trim();
   const requestedAccountId = String(p.account_id || "").trim();
   if (requestedAccountId && accountId !== requestedAccountId) {
     throw new Error("Account identity changed. Refresh and try again.");
   }
 
+  const activityMap = outreachTargetedActivityMap_(accountId, business);
+  mark("activity_lookup_ms");
+  const draftMap = outreachTargetedDraftMap_(accountId, sourceRow);
+  mark("draft_lookup_ms");
+  const programMap = outreachTargetedProgramMap_(accountId, sourceRow);
+  mark("program_lookup_ms");
+  const engagementMap = outreachTargetedEngagementMap_(accountId, sourceRow);
+  mark("engagement_lookup_ms");
+  const settings = getOutreachCampaignSettings_();
+  mark("settings_ms");
+
   const record = outreachRecord_(
     row,
     sourceRow,
-    outreachActivityMap_(),
-    getOutreachCampaignSettings_(),
-    outreachDraftMap_(),
-    outreachProgramMap_(),
-    outreachEngagementMap_()
+    activityMap,
+    settings,
+    draftMap,
+    programMap,
+    engagementMap
   );
+  mark("record_build_ms");
   if (!record.business) throw new Error("Business row is empty.");
+  console.log(JSON.stringify({
+    event:"outreach_record_timing",
+    total_ms:Date.now() - startedAt,
+    stages:timings,
+    source_row:sourceRow,
+  }));
   return { record:record };
 }
 

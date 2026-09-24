@@ -1,10 +1,10 @@
 <!doctype html>
-<!-- App version: 2026.09.24.21-WEB -->
+<!-- App version: 2026.09.24.22-WEB -->
 <html>
 <head>
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover"/>
-  <meta name="app-version" content="2026.09.24.21-WEB" />
+  <meta name="app-version" content="2026.09.24.22-WEB" />
   <title>Sturgeon Distribution Hub</title>
   <style>
     :root{
@@ -2469,7 +2469,7 @@
 
   <footer style="max-width:1200px;margin:18px auto 120px;padding:0 12px;text-align:center;color:#6b7280;font-size:12px;">
     Designed by <a href="https://scriptspirit.dev" target="_blank" rel="noopener noreferrer" style="color:#1d4ed8;text-decoration:none;font-weight:700;">Script Spirit</a>
-<span id="appVersionFooter"> • Version 2026.09.24.21-WEB</span>
+<span id="appVersionFooter"> • Version 2026.09.24.22-WEB</span>
   </footer>
 
 
@@ -2492,7 +2492,7 @@
   window.addEventListener("unhandledrejection", e => console.error("Unhandled promise rejection:", e.reason));
   window.addEventListener("error", e => console.error("Unhandled error:", e.error || e.message));
   const $ = (id) => document.getElementById(id);
-  const APP_VERSION = "2026.09.24.21-WEB";
+  const APP_VERSION = "2026.09.24.22-WEB";
   $("appVersionFooter").textContent = ` • Version ${APP_VERSION}`;
 
   let cache = { stores: [], lines: [] };
@@ -3639,14 +3639,23 @@
   }
 
   async function fetchOutreachRecord(record){
-    const res = await staffApiPost({
-      action:"outreachRecord",
-      source_row:record?.source_row,
-      account_id:record?.account_id || "",
-    });
-    if (!res.ok || !res.record) throw new Error(res.error || "Business details could not be loaded.");
-    patchOutreachRecordLocally(res.record.source_row, res.record);
-    return res.record;
+    for (let attempt = 0; attempt < 2; attempt += 1) {
+      try {
+        const res = await staffApiPost({
+          action:"outreachRecord",
+          source_row:record?.source_row,
+          account_id:record?.account_id || "",
+        });
+        if (!res.ok || !res.record) throw new Error(res.error || "Business details could not be loaded.");
+        patchOutreachRecordLocally(res.record.source_row, res.record);
+        return res.record;
+      } catch (error) {
+        const timedOut = /took too long|timed out|timeout|connection failed/i.test(error?.message || String(error));
+        if (!timedOut || attempt > 0) throw error;
+        await new Promise(resolve => setTimeout(resolve, 2000));
+      }
+    }
+    throw new Error("Business details could not be loaded.");
   }
 
   function refreshOutreachAfterSave(){

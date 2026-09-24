@@ -259,6 +259,15 @@ test("source contains formula protection, global error listeners, and recoverabl
   assert.match(backend, /function apiGetOutreachRecord_\(p\)/);
   assert.match(backend, /requireFields_\(p, \["source_row"\]\)/);
   assert.match(backend, /if \(requestedAccountId && accountId !== requestedAccountId\)/);
+  const outreachRecordSource = backend.slice(backend.indexOf("function apiGetOutreachRecord_"), backend.indexOf("// Campaigns are immutable"));
+  assert.match(outreachRecordSource, /outreachTargetedActivityMap_\(accountId, business\)/);
+  assert.match(outreachRecordSource, /outreachTargetedDraftMap_\(accountId, sourceRow\)/);
+  assert.match(outreachRecordSource, /event:"outreach_record_timing"/);
+  assert.doesNotMatch(outreachRecordSource, /outreachActivityMap_\(\)/);
+  assert.doesNotMatch(outreachRecordSource, /outreachDraftMap_\(\)/);
+  assert.doesNotMatch(outreachRecordSource, /outreachProgramMap_\(\)/);
+  assert.doesNotMatch(outreachRecordSource, /outreachEngagementMap_\(\)/);
+  assert.match(index, /await new Promise\(resolve => setTimeout\(resolve, 2000\)\)/);
   assert.match(backend, /function apiRepairHubStructure_\(p\)/);
   assert.match(backend, /function installNightlyHubStructureRepair\(\)/);
   assert.match(backend, /function accountIdentityLookup_\(\)/);
