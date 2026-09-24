@@ -3576,6 +3576,57 @@ function accountHistoryItem_(timestamp, type, title, detail, id, status) {
   return { timestamp:timestamp || "", type:type, title:title, detail:detail || "", id:id || "", status:status || "" };
 }
 
+const BADGER_INVOICE_CACHE_PREFIX = "hub_badger_invoices_v1";
+const BADGER_INVOICE_CACHE_TTL_SECONDS = 900;
+const BADGER_INVOICE_CACHE_CHUNK_SIZE = 80000;
+
+function readBadgerInvoices_() {
+  const sheet = SpreadsheetApp.openById(BADGER_TRACKER_SPREADSHEET_ID).getSheetByName("Invoices");
+  if (!sheet || sheet.getLastRow() < 2) return [];
+  return getAllRowsAsObjects_(sheet).map(row => ({
+    invoice_number:String(firstPresent_(row, ["invoice_#", "invoice_number", "invoice_no"]) || ""),
+    invoice_date:firstPresent_(row, ["invoice_date", "date"]) || "",
+    customer_name:String(firstPresent_(row, ["customer_name", "customer"]) || ""),
+    amount:firstPresent_(row, ["amount_due", "amount", "total"]) || "",
+    paid:firstPresent_(row, ["paid_to_me", "paid"]) || "",
+    pdf_file_id:String(firstPresent_(row, ["pdf_file_id"]) || ""),
+  }));
+}
+
+function cachedBadgerInvoices_(bypassCache) {
+  const cache = CacheService.getScriptCache();
+  const manifestKey = `${BADGER_INVOICE_CACHE_PREFIX}:manifest`;
+  if (!bypassCache) {
+    try {
+      const manifest = JSON.parse(cache.get(manifestKey) || "null");
+      if (manifest && Number.isInteger(manifest.parts) && manifest.parts > 0) {
+        let serialized = "";
+        for (let index = 0; index < manifest.parts; index += 1) {
+          const chunk = cache.get(`${BADGER_INVOICE_CACHE_PREFIX}:part:${index}`);
+          if (chunk === null) { serialized = ""; break; }
+          serialized += chunk;
+        }
+        if (serialized) return JSON.parse(serialized);
+      }
+    } catch (error) {
+      console.warn("Badger invoice cache read failed: " + String(error && error.message || error));
+    }
+  }
+
+  const invoices = readBadgerInvoices_();
+  if (!bypassCache) {
+    try {
+      const serialized = JSON.stringify(invoices);
+      const chunks = serialized.match(new RegExp(`[\\s\\S]{1,${BADGER_INVOICE_CACHE_CHUNK_SIZE}}`, "g")) || ["[]"];
+      chunks.forEach((chunk, index) => cache.put(`${BADGER_INVOICE_CACHE_PREFIX}:part:${index}`, chunk, BADGER_INVOICE_CACHE_TTL_SECONDS));
+      cache.put(manifestKey, JSON.stringify({ parts:chunks.length }), BADGER_INVOICE_CACHE_TTL_SECONDS);
+    } catch (error) {
+      console.warn("Badger invoice cache write failed: " + String(error && error.message || error));
+    }
+  }
+  return invoices;
+}
+
 function buildCustomerAccounts_(applications, orders) {
   const identity = accountIdentityFromRows_(getAllRowsAsObjects_(getOutreachSheet_(OUTREACH_SHEET_NAME)));
   const programs = outreachProgramMap_();
@@ -3591,15 +3642,7 @@ function buildCustomerAccounts_(applications, orders) {
   const reorderRows = isHubInventoryActive_() ? getAllRowsAsObjects_(getSheet_(SHEET_NAMES.REORDERS)) : [];
   let badgerInvoices = [];
   try {
-    const badgerSheet = SpreadsheetApp.openById(BADGER_TRACKER_SPREADSHEET_ID).getSheetByName("Invoices");
-    badgerInvoices = badgerSheet ? getAllRowsAsObjects_(badgerSheet).map(row => ({
-      invoice_number:String(firstPresent_(row, ["invoice_#", "invoice_number", "invoice_no"]) || ""),
-      invoice_date:firstPresent_(row, ["invoice_date", "date"]) || "",
-      customer_name:String(firstPresent_(row, ["customer_name", "customer"]) || ""),
-      amount:firstPresent_(row, ["amount_due", "amount", "total"]) || "",
-      paid:firstPresent_(row, ["paid_to_me", "paid"]) || "",
-      pdf_file_id:String(firstPresent_(row, ["pdf_file_id"]) || ""),
-    })) : [];
+    badgerInvoices = cachedBadgerInvoices_(false);
   } catch (err) {
     console.warn("Badger invoice history was unavailable: " + String(err && err.message || err));
   }
@@ -3864,31 +3907,21 @@ function synchronizeApplicationAccount_(application, p, staffName) {
   return { account_id:account.account_id, account_link_status:"Linked and active", inventory_store_id:storeId, data_sync_status:storeId ? "Directory, ordering and inventory store synchronized" : "Directory and ordering synchronized" };
 }
 
-function findBadgerInvoice_(invoiceNumber) {
+function findBadgerInvoice_(invoiceNumber, bypassCache) {
   const normalized = String(invoiceNumber || "").toUpperCase().replace(/[^A-Z0-9]/g, "");
   if (!normalized) return null;
-  const sheet = SpreadsheetApp.openById(BADGER_TRACKER_SPREADSHEET_ID).getSheetByName("Invoices");
-  if (!sheet || sheet.getLastRow() < 2) return null;
-  const rows = getAllRowsAsObjects_(sheet);
-  const match = rows.find(row => String(firstPresent_(row, ["invoice_#", "invoice_number", "invoice_no"]) || "").toUpperCase().replace(/[^A-Z0-9]/g, "") === normalized);
-  if (!match) return null;
-  return {
-    invoice_number:String(firstPresent_(match, ["invoice_#", "invoice_number", "invoice_no"]) || ""),
-    invoice_date:firstPresent_(match, ["invoice_date", "date"]) || "",
-    customer_name:String(firstPresent_(match, ["customer_name", "customer"]) || ""),
-    amount:firstPresent_(match, ["amount_due", "amount", "total"]) || "",
-    paid:firstPresent_(match, ["paid_to_me", "paid"]) || "",
-    pdf_file_id:String(firstPresent_(match, ["pdf_file_id"]) || ""),
-  };
+  return cachedBadgerInvoices_(!!bypassCache).find(invoice =>
+    String(invoice.invoice_number || "").toUpperCase().replace(/[^A-Z0-9]/g, "") === normalized
+  ) || null;
 }
 
-function reconcileBadgerForOrder_(sheet, rowNumber, h, invoiceNumber) {
+function reconcileBadgerForOrder_(sheet, rowNumber, h, invoiceNumber, bypassCache) {
   const set = (key, value) => { if (h[key] !== undefined) sheet.getRange(rowNumber, h[key] + 1).setValue(value); };
   if (!String(invoiceNumber || "").trim()) {
     set("badger_match_status", "Not checked");
     return { matched:false, status:"Not checked" };
   }
-  const match = findBadgerInvoice_(invoiceNumber);
+  const match = findBadgerInvoice_(invoiceNumber, bypassCache);
   if (!match) {
     set("badger_match_status", "Pending parser import");
     set("integration_status", "Badger invoice not found");
@@ -4297,7 +4330,7 @@ function apiReconcileIntegrations_(p) {
     rows.forEach(raw => {
       const order = onlineOrderRecord_(raw, linesByRequest);
       if (!order.request_id) return;
-      const invoice = reconcileBadgerForOrder_(orderSheet, raw.source_row, h, order.badger_invoice_number);
+      const invoice = reconcileBadgerForOrder_(orderSheet, raw.source_row, h, order.badger_invoice_number, true);
       if (invoice.matched) badgerMatches += 1;
       if (order.delivery_status !== "Not scheduled") {
         upsertDeliveryForOrder_(order, order.lines, staffName);
