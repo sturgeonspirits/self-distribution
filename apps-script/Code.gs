@@ -469,17 +469,42 @@ function apiGetHubSystemStatus_() {
   };
 }
 
+function repairHubStructure_() {
+  ensureFoundationalSheets_();
+  return ensureAccountIdentityModel_(true);
+}
+
 function apiRepairHubStructure_(p) {
   if (!p) throw new Error("Missing repair request.");
   requireFields_(p, ["staff_name"]);
   const lock = LockService.getScriptLock();
   if (!lock.tryLock(30000)) throw new Error("Another migration or write is in progress.");
   try {
-    ensureFoundationalSheets_();
-    return { message:"Hub structure repaired.", repaired_at:new Date().toISOString() };
+    const identity = repairHubStructure_();
+    return { message:"Hub structure repaired.", repaired_at:new Date().toISOString(), accounts:identity.rows.length };
   } finally {
     lock.releaseLock();
   }
+}
+
+function repairHubStructureNightly_() {
+  const lock = LockService.getScriptLock();
+  if (!lock.tryLock(30000)) throw new Error("Another migration or write is in progress.");
+  try {
+    const identity = repairHubStructure_();
+    console.log(JSON.stringify({ event:"hub_structure_repair", accounts:identity.rows.length }));
+  } finally {
+    lock.releaseLock();
+  }
+}
+
+function installNightlyHubStructureRepair() {
+  const handler = "repairHubStructureNightly_";
+  ScriptApp.getProjectTriggers()
+    .filter(trigger => trigger.getHandlerFunction() === handler)
+    .forEach(trigger => ScriptApp.deleteTrigger(trigger));
+  ScriptApp.newTrigger(handler).timeBased().everyDays(1).atHour(3).create();
+  return { message:"Nightly Hub structure repair installed." };
 }
 
 function json_(obj) {
@@ -1068,6 +1093,10 @@ function accountIdentityFromRows_(rows) {
   return identity;
 }
 
+function accountIdentityLookup_() {
+  return accountIdentityFromRows_(getAllRowsAsObjects_(getOutreachSheet_(OUTREACH_SHEET_NAME)));
+}
+
 function findIdentityMatch_(identity, accountId, business, email, city) {
   const requestedId = String(accountId || "").trim();
   const normalizedEmail = String(email || "").trim().toLowerCase();
@@ -1246,7 +1275,7 @@ function apiCreateOutreachBusiness_(p) {
   const lock = LockService.getScriptLock();
   if (!lock.tryLock(10000)) throw new Error("Another directory update is in progress.");
   try {
-    const identity = ensureAccountIdentityModel_(true);
+    const identity = accountIdentityLookup_();
     const duplicate = duplicateBusiness_(identity, input);
     if (duplicate) throw new Error(`A matching business already exists: ${duplicate.business}.`);
     const sheet = getOutreachSheet_(OUTREACH_SHEET_NAME);
@@ -1268,8 +1297,8 @@ function apiImportOutreachBusinesses_(p) {
   const lock = LockService.getScriptLock();
   if (!lock.tryLock(30000)) throw new Error("Another directory import is in progress.");
   try {
-    let identity = ensureAccountIdentityModel_(true);
     const directory = getOutreachSheet_(OUTREACH_SHEET_NAME);
+    let identity = accountIdentityFromRows_(getAllRowsAsObjects_(directory));
     const batches = getOutreachSs_().getSheetByName(IMPORT_BATCHES_SHEET_NAME);
     const importRows = getOutreachSs_().getSheetByName(IMPORT_ROWS_SHEET_NAME);
     const batchId = permanentId_("IMP");
@@ -3228,7 +3257,7 @@ function upsertNewsletterFromApplication_(application) {
 }
 
 function resolvePublicAccount_(claimedAccountId, business, email, city, lockHeld) {
-  const identity = ensureAccountIdentityModel_(!!lockHeld);
+  const identity = accountIdentityLookup_();
   return findIdentityMatch_(identity, claimedAccountId, business, email, city);
 }
 
@@ -3776,7 +3805,7 @@ function upsertActiveAccountProgram_(account, customerId, applicationId, staffNa
 }
 
 function synchronizeApplicationAccount_(application, p, staffName) {
-  const identity = ensureAccountIdentityModel_(true);
+  const identity = accountIdentityLookup_();
   let account = String(p.account_id || application.account_id || "") ? identity.by_id.get(String(p.account_id || application.account_id || "")) : null;
   if (!account) {
     const match = findIdentityMatch_(identity, "", application.business_name, application.primary_email, application.delivery_city);
@@ -3941,7 +3970,7 @@ function apiUpdateCustomerApplication_(p) {
       set("inventory_store_id", sync.inventory_store_id || "");
       set("data_sync_status", sync.data_sync_status);
     } else if (accountId) {
-      const identity = ensureAccountIdentityModel_(true);
+      const identity = accountIdentityLookup_();
       if (!identity.by_id.has(accountId)) throw new Error("The selected Account ID does not exist in the directory.");
       set("account_id", accountId);
       set("account_link_status", "Linked by staff");
@@ -3984,7 +4013,7 @@ function apiUpdateOnlineOrderRequest_(p) {
     const business = String(row[h.business_name] || "");
     let accountId = publicText_(p.account_id || (h.account_id !== undefined ? row[h.account_id] : ""), 80, "Account ID");
     if (accountId) {
-      const identity = ensureAccountIdentityModel_(true);
+      const identity = accountIdentityLookup_();
       if (!identity.by_id.has(accountId)) throw new Error("The selected Account ID does not exist in the directory.");
     }
     const set = (key, value) => { if (h[key] !== undefined) sheet.getRange(rowNumber, h[key] + 1).setValue(value); };
@@ -4242,7 +4271,6 @@ function apiReconcileIntegrations_(p) {
   const lock = LockService.getScriptLock();
   if (!lock.tryLock(30000)) throw new Error("Another reconciliation or write is in progress.");
   try {
-    ensureAccountIdentityModel_(true);
     const orderSheet = getOnlineOrderRequestsSheet_(false);
     if (!orderSheet || orderSheet.getLastRow() < 2) return { message:"No orders need reconciliation.", checked:0, badger_matches:0, deliveries:0, attention:0 };
     ensureHeaderColumns_(orderSheet, ["Badger Invoice Number", "Invoice Status", "Delivery Status", "Integration Status", "Badger Match Status", "Delivered At"]);
