@@ -8,8 +8,8 @@ Read this file before inspecting the repository or changing the application. Upd
 
 | Component | Source version | Deployment state |
 | --- | --- | --- |
-| Netlify web app and staff proxy | `2026.09.24.29-WEB` on `codex/distribution-system-foundation` / `2026.09.24.24-WEB` live | Campaign criteria preview and the single-attempt 25-second proxy timeout are committed for review; deployment is pending. |
-| Inventory API Apps Script | `2026.09.24.26` on `codex/distribution-system-foundation` / `2026.09.24.17` live | Preview-first campaigns now store JSON criteria and calculate flexible center-to-ZIP distance; deployment is pending. |
+| Netlify web app and staff proxy | `2026.09.24.30-WEB` on `codex/distribution-system-foundation` / `2026.09.24.24-WEB` live | Campaign delivery now reconciles an uncertain recipient before stopping; sends remain one attempt with a 24-second cap. Deployment is pending. |
+| Inventory API Apps Script | `2026.09.24.27` on `codex/distribution-system-foundation` / `2026.09.24.17` live | Campaign delivery now avoids full Outreach support-map reads, batches finalization, and logs per-recipient timing; deployment is pending. |
 | Distribution Outreach Apps Script | `2026.09.24.13-APP` on `codex/work` | Signed-link rendering is committed; owner has not yet confirmed this exact version is deployed. |
 | Public customer Netlify proxy | `2026.09.18.3-WEB` | Deployed with Netlify; unchanged by the latest staff-app UI work |
 
@@ -18,6 +18,8 @@ Current Git branch: `codex/distribution-system-foundation`
 Current remote: `https://github.com/sturgeonspirits/self-distribution.git`
 
 Latest completed changes:
+
+- Campaign delivery is optimized for one recipient at a time: it reads only that directory row, performs a targeted idempotency lookup, and uses frozen campaign HTML. The browser reconciles a timeout/unknown outcome for that exact recipient and continues only when it is confirmed Sent; it never retries a send.
 
 - New campaign creation is preview-first: choose the distillery, any ZIP, or an exact ZIP-Centroids city as the center; set radius and minimum fit; optionally filter City, County, Segment, and Wave; optionally cap recipients; then explicitly confirm before a snapshot is created. New criteria are stored as JSON in `Outreach Campaigns`; the Audience text is display-only. Campaign send-time checks use the stored JSON and distinguish distance, fit, and other criteria changes. Pre-criteria campaigns remain ungated by this new rule.
 

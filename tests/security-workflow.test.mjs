@@ -570,6 +570,7 @@ test("campaign criteria preview uses centroid distances, JSON rules, and distinc
   assert.match(proxy, /\["recalculateOutreachMiles", "outreach"\]/);
   assert.match(proxy, /"previewOutreachCampaign"/);
   assert.match(proxy, /const UPSTREAM_TIMEOUT_MS = 25000/);
+  assert.match(proxy, /const SEND_UPSTREAM_TIMEOUT_MS = 24000/);
   assert.match(proxy, /const UPSTREAM_WRITE_ATTEMPTS = 1/);
   assert.match(index, /id="recalculateOutreachMilesBtn"/);
   assert.match(index, /action:"recalculateOutreachMiles"/);
@@ -579,6 +580,28 @@ test("campaign criteria preview uses centroid distances, JSON rules, and distinc
   assert.match(index, /preview_confirmed:true/);
   assert.match(index, /recipient\.city/);
   assert.match(index, /Area review needed/);
+});
+
+test("campaign send timeouts reconcile one recipient before continuing and never resend an unknown result", async () => {
+  const [backend, index] = await Promise.all([
+    readFile(new URL("apps-script/Code.gs", root), "utf8"),
+    readFile(new URL("index.html", root), "utf8"),
+  ]);
+  const sendSource = backend.slice(backend.indexOf("function apiSendOutreachCampaignBatch_"), backend.indexOf("function outreachStatusForOutcome_"));
+  const clientSource = index.slice(index.indexOf("async function sendCampaignRecipients"), index.indexOf("async function sendOutreachCampaignBatch"));
+  assert.doesNotMatch(sendSource, /outreachActivityMap_\(\)/);
+  assert.doesNotMatch(sendSource, /outreachDraftMap_\(\)/);
+  assert.doesNotMatch(sendSource, /outreachProgramMap_\(\)/);
+  assert.doesNotMatch(sendSource, /outreachEngagementMap_\(\)/);
+  assert.match(sendSource, /campaignSendLightweightRecord_\(current, sourceRow\)/);
+  assert.match(sendSource, /outreachSendEligibility_\(record, \{ skip_legacy_pilot:true \}\)/);
+  assert.match(sendSource, /outreach_campaign_send_timing/);
+  assert.match(backend, /function acceptedOutreachSendForToken_[\s\S]*?outreachRowsMatchingCell_/);
+  assert.match(clientSource, /campaignSendOutcomeIsUnknown\(error\)/);
+  assert.match(clientSource, /action:"reconcileCampaignSends", campaign_id:campaign\.campaign_id, idempotency_token:expected\.idempotency_token/);
+  assert.match(clientSource, /\["Sent", "Sent - needs recording"\]\.includes\(recipient\?\.status\)/);
+  assert.match(clientSource, /no resend was attempted/);
+  assert.match(clientSource, /continue;/);
 });
 
 test("campaign rebuild UI and first-draft save gate preserve review-before-send", async () => {

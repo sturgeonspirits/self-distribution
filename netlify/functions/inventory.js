@@ -1,7 +1,7 @@
-// App version: 2026.09.24.29-WEB
+// App version: 2026.09.24.30-WEB
 import { requireStaffSession } from "./auth.js";
 
-const APP_VERSION = "2026.09.24.29-WEB";
+const APP_VERSION = "2026.09.24.30-WEB";
 const STAFF_ACTIONS = new Set([
   "outreachDashboard",
   "outreachRecord",
@@ -51,8 +51,9 @@ const UPSTREAM_ATTEMPTS = 1;
 const UPSTREAM_WRITE_ATTEMPTS = 1;
 const UPSTREAM_TIMEOUT_MS = 25000;
 const SEND_UPSTREAM_ATTEMPTS = 1;
-// Sends, campaign creation, and campaign reads share the same safe ceiling.
-const SEND_UPSTREAM_TIMEOUT_MS = 25000;
+// Sends use the established 24-second single-attempt window; never retry an
+// uncertain send because the original request may still be holding the lock.
+const SEND_UPSTREAM_TIMEOUT_MS = 24000;
 const SEND_ACTIONS = new Set(["sendOutreachEmail", "sendOutreachTestEmail", "sendOutreachCampaignBatch"]);
 const SNAPSHOT_ACTIONS = new Set(["createOutreachCampaign"]);
 const CAMPAIGN_READ_ACTIONS = new Set(["outreachCampaigns", "outreachCampaign", "previewOutreachCampaign"]);

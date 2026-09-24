@@ -1,10 +1,10 @@
 <!doctype html>
-<!-- App version: 2026.09.24.29-WEB -->
+<!-- App version: 2026.09.24.30-WEB -->
 <html>
 <head>
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover"/>
-  <meta name="app-version" content="2026.09.24.29-WEB" />
+  <meta name="app-version" content="2026.09.24.30-WEB" />
   <meta name="theme-color" content="#536f77" />
   <link rel="icon" href="/assets/distribution-hub-icon.svg" type="image/svg+xml" />
   <link rel="manifest" href="/site.webmanifest" />
@@ -2509,7 +2509,7 @@
 
   <footer style="max-width:1200px;margin:18px auto 120px;padding:0 12px;text-align:center;color:#6b7280;font-size:12px;">
     Designed by <a href="https://scriptspirit.dev" target="_blank" rel="noopener noreferrer" style="color:#1d4ed8;text-decoration:none;font-weight:700;">Script Spirit</a>
-<span id="appVersionFooter"> • Version 2026.09.24.29-WEB</span>
+<span id="appVersionFooter"> • Version 2026.09.24.30-WEB</span>
   </footer>
 
 
@@ -2532,7 +2532,7 @@
   window.addEventListener("unhandledrejection", e => console.error("Unhandled promise rejection:", e.reason));
   window.addEventListener("error", e => console.error("Unhandled error:", e.error || e.message));
   const $ = (id) => document.getElementById(id);
-  const APP_VERSION = "2026.09.24.29-WEB";
+  const APP_VERSION = "2026.09.24.30-WEB";
   $("appVersionFooter").textContent = ` • Version ${APP_VERSION}`;
 
   let cache = { stores: [], lines: [] };
@@ -3569,29 +3569,58 @@
     $("sendRemainingCampaignBtn").disabled = !approved || campaignSendInProgress;
     $("sendOutreachCampaignBatchBtn").title = outreachCanSend ? "Send up to the next 10 approved recipients" : pendingDetail;
     $("sendRemainingCampaignBtn").title = outreachCanSend ? "Send all remaining approved recipients" : pendingDetail;
-    if (approved && !outreachCanSend && !campaignSendInProgress) {
+    if (approved && !outreachCanSend && !campaignSendInProgress && !$("outreachCampaignStatus").textContent) {
       setCampaignStatus(`Sending availability: ${pendingDetail} The server will verify again when you send.`);
     }
+  }
+
+  function campaignSendOutcomeIsUnknown(error){
+    return /timed out|timeout|unknown outcome|Zoho did not confirm|before Zoho confirmation|failed to fetch|networkerror/i.test(String(error?.message || error || ""));
   }
 
   async function sendCampaignRecipients(campaign, staffName, maximum, continueAfterBlock){
     let sent = 0, blocked = 0, remaining = Number(campaign?.counts?.["Ready to send"] || 0);
     let attempts = 0;
+    let lastBusiness = "";
+    let pendingRecipients = (campaign?.recipients || []).filter(recipient => recipient.status === "Ready to send");
     while (remaining > 0 && attempts < maximum) {
-      $("outreachCampaignStatus").textContent = `Sending… ${sent} sent • ${blocked} unresolved • ${remaining} remaining.`;
-      const res = await staffApiPost({ action:"sendOutreachCampaignBatch", campaign_id:campaign.campaign_id, approval_token:selectedCampaignApprovalToken, batch_size:1, continue_after_block:continueAfterBlock, staff_name:staffName });
-      if (!res.ok) throw new Error(res.error || "Campaign send could not continue.");
-      const previousRemaining = remaining;
-      sent += Number(res.sent || 0);
-      blocked += Number(res.blocked || 0);
-      remaining = Number(res.remaining || 0);
-      attempts += 1;
-      if (remaining >= previousRemaining && !Number(res.sent || 0)) {
-        throw new Error("Campaign send made no confirmed progress. Refresh before continuing.");
+      const expected = pendingRecipients[0] || { business:"the next recipient", idempotency_token:"" };
+      $("outreachCampaignStatus").textContent = `Sending… ${sent} sent • ${blocked} unresolved • ${remaining} remaining${lastBusiness ? ` • Last sent: ${lastBusiness}` : ""} • Sending: ${expected.business}.`;
+      try {
+        const res = await staffApiPost({ action:"sendOutreachCampaignBatch", campaign_id:campaign.campaign_id, approval_token:selectedCampaignApprovalToken, batch_size:1, continue_after_block:continueAfterBlock, staff_name:staffName });
+        if (!res.ok) throw new Error(res.error || "Campaign send could not continue.");
+        const previousRemaining = remaining;
+        sent += Number(res.sent || 0);
+        blocked += Number(res.blocked || 0);
+        remaining = Number(res.remaining || 0);
+        attempts += 1;
+        const result = (res.results || [])[0] || {};
+        if (result.business) lastBusiness = result.business;
+        if (remaining < previousRemaining) pendingRecipients = pendingRecipients.filter(recipient => recipient.idempotency_token !== expected.idempotency_token);
+        if (remaining >= previousRemaining && !Number(res.sent || 0)) {
+          throw new Error(`Campaign send made no confirmed progress for ${expected.business}. Refresh before continuing.`);
+        }
+        if (Number(res.blocked || 0) && !continueAfterBlock) break;
+      } catch (error) {
+        if (!campaignSendOutcomeIsUnknown(error)) throw error;
+        $("outreachCampaignStatus").textContent = `Checking the send outcome for ${expected.business} before deciding whether to continue…`;
+        const reconciliation = await staffApiPost({ action:"reconcileCampaignSends", campaign_id:campaign.campaign_id, idempotency_token:expected.idempotency_token, staff_name:staffName });
+        if (!reconciliation.ok) throw new Error(`Outcome unknown for ${expected.business}: ${error.message || String(error)} Reconciliation failed: ${reconciliation.error || "no response"}.`);
+        const recipient = (reconciliation.recipient_statuses || []).find(item => item.idempotency_token === expected.idempotency_token);
+        if (["Sent", "Sent - needs recording"].includes(recipient?.status)) {
+          sent += 1;
+          attempts += 1;
+          lastBusiness = recipient.business || expected.business;
+          remaining = Number(reconciliation.remaining || Math.max(0, remaining - 1));
+          pendingRecipients = pendingRecipients.filter(item => item.idempotency_token !== expected.idempotency_token);
+          $("outreachCampaignStatus").textContent = `${lastBusiness} was confirmed after reconciliation. Continuing… ${sent} sent • ${remaining} remaining.`;
+          continue;
+        }
+        const reconciledStatus = recipient?.status || "no confirmed recipient status";
+        throw new Error(`Outcome still unknown for ${expected.business}: ${error.message || String(error)} Reconciliation found ${reconciledStatus}; no resend was attempted.`);
       }
-      if (Number(res.blocked || 0) && !continueAfterBlock) break;
     }
-    return { sent, blocked, remaining, attempts };
+    return { sent, blocked, remaining, attempts, last_business:lastBusiness };
   }
 
   async function sendOutreachCampaignBatch(){
@@ -3604,7 +3633,7 @@
     try {
       const res = await sendCampaignRecipients(campaign, staffName, 10, false);
       await loadOutreachCampaigns(); await openOutreachCampaign(campaign.campaign_id);
-      $("outreachCampaignStatus").textContent = `${res.sent} sent • ${res.blocked} blocked • ${res.remaining} remaining.`;
+      $("outreachCampaignStatus").textContent = `${res.sent} sent • ${res.blocked} blocked • ${res.remaining} remaining${res.last_business ? ` • Last sent: ${res.last_business}.` : "."}`;
     } catch (error) { $("outreachCampaignStatus").textContent = error.message || String(error); }
     finally { campaignSendInProgress = false; refreshCampaignSendControls(); }
   }
@@ -3621,7 +3650,7 @@
     try {
       const res = await sendCampaignRecipients(campaign, staffName, ready, true);
       await loadOutreachCampaigns(); await openOutreachCampaign(campaign.campaign_id);
-      $("outreachCampaignStatus").textContent = `Campaign run complete: ${res.sent} sent • ${res.blocked} unresolved.`;
+      $("outreachCampaignStatus").textContent = `Campaign run complete: ${res.sent} sent • ${res.blocked} unresolved${res.last_business ? ` • Last sent: ${res.last_business}.` : "."}`;
     } catch (error) {
       $("outreachCampaignStatus").textContent = `Campaign run stopped before a confirmed result: ${error.message || String(error)} Refresh the campaign before continuing.`;
     } finally { campaignSendInProgress = false; refreshCampaignSendControls(); }
