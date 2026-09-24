@@ -509,3 +509,23 @@ test("campaign reconciliation uses targeted accepted Activity Log records withou
   assert.match(proxy, /"reconcileCampaignSends"/);
   assert.match(proxy, /\["reconcileCampaignSends", "outreach"\]/);
 });
+
+test("campaign rebuilding reconciles first and changes only review-ready snapshots", async () => {
+  const [backend, proxy] = await Promise.all([
+    readFile(new URL("apps-script/Code.gs", root), "utf8"),
+    readFile(new URL("netlify/functions/inventory.js", root), "utf8"),
+  ]);
+  const rebuildSource = backend.slice(backend.indexOf("function apiRebuildCampaignRecipients_"), backend.indexOf("function campaignRecipientFooterHtml_"));
+  assert.match(backend, /case "rebuildCampaignRecipients": res = apiRebuildCampaignRecipients_\(body\);/);
+  assert.match(rebuildSource, /if \(String\(campaign\.values\[ch\.status\] \|\| ""\) !== "Review"\) throw new Error\("Campaign must be in Review/);
+  assert.match(rebuildSource, /reconcileBlockedCampaignSends_\(sheets, campaign, recipients, staffName\)/);
+  assert.match(rebuildSource, /filter\(item => String\(item\.values\[item\.headers\.status\] \|\| ""\) === "Ready for review"\)/);
+  assert.match(rebuildSource, /campaignRecipientWasEdited_/);
+  assert.match(rebuildSource, /outreachPlainTextToHtml_\(String\(item\.values\[rh\.body_text\] \|\| ""\)\) \+ String\(message\.footer_html \|\| ""\)/);
+  assert.match(rebuildSource, /item\.values\[rh\.html\] = message\.html/);
+  assert.match(rebuildSource, /campaign\.values\[ch\.approval_token\] = ""/);
+  assert.match(rebuildSource, /REBUILD_CAMPAIGN_RECIPIENTS/);
+  assert.match(backend, /function rebuildUnsentCampaignEmails\(\)/);
+  assert.match(proxy, /"rebuildCampaignRecipients"/);
+  assert.match(proxy, /\["rebuildCampaignRecipients", "outreach"\]/);
+});

@@ -3,6 +3,7 @@
  * App version: 2026.09.24.24
  *
  * CHANGES IN THIS VERSION
+ * - Rebuilds only review-ready campaign snapshots from the current template after reconciling verified blocked sends.
  * - Reconciles campaign recipients with verified Activity Log acceptance records without resending or adding an Activity Log send row.
  * - Sends Karl-only test email HTML from the renderer's actual html field so test links retain their non-recording marker.
  * - Uses Reactivation-specific online-ordering wording for the wholesale application link in every renderer.
@@ -565,7 +566,7 @@ function handle_(e, body) {
     assertAuthorized_(e, body);
     const action = (e?.parameter?.action) || (body?.action) || "";
     if (!action) {
-      return json_({ ok:true, service:"sturgeon-distribution-hub", version:APP_VERSION, actions:["initData","listSkus","addSkuToStore","upsertProduct","submitCounts","createReorder","managerGrid","salesSinceCount","updateStoreContacts","outreachDashboard","outreachRecord","outreachSendStatus","outreachNewsletterContacts","outreachCampaigns","outreachCampaign","createOutreachCampaign","updateOutreachCampaignRecipient","setOutreachCampaignRecipientExclusion","approveOutreachCampaign","reopenOutreachCampaign","reconcileCampaignSends","sendOutreachCampaignBatch","saveOutreachDraft","sendOutreachEmail","sendOutreachTestEmail","updateOutreachOutcome","updateOutreachBusiness","updateOutreachPrograms","createOutreachBusiness","importOutreachBusinesses","upsertNewsletterContact","submitCustomerApplication","submitOnlineOrderRequest","customerWorkQueue","updateCustomerApplication","updateOnlineOrderRequest","hubSystemStatus","initializeHardenedHub","repairHubStructure","reconcileIntegrations"] });
+      return json_({ ok:true, service:"sturgeon-distribution-hub", version:APP_VERSION, actions:["initData","listSkus","addSkuToStore","upsertProduct","submitCounts","createReorder","managerGrid","salesSinceCount","updateStoreContacts","outreachDashboard","outreachRecord","outreachSendStatus","outreachNewsletterContacts","outreachCampaigns","outreachCampaign","createOutreachCampaign","updateOutreachCampaignRecipient","setOutreachCampaignRecipientExclusion","approveOutreachCampaign","reopenOutreachCampaign","reconcileCampaignSends","rebuildCampaignRecipients","sendOutreachCampaignBatch","saveOutreachDraft","sendOutreachEmail","sendOutreachTestEmail","updateOutreachOutcome","updateOutreachBusiness","updateOutreachPrograms","createOutreachBusiness","importOutreachBusinesses","upsertNewsletterContact","submitCustomerApplication","submitOnlineOrderRequest","customerWorkQueue","updateCustomerApplication","updateOnlineOrderRequest","hubSystemStatus","initializeHardenedHub","repairHubStructure","reconcileIntegrations"] });
     }
 
     let res;
@@ -592,6 +593,7 @@ function handle_(e, body) {
       case "approveOutreachCampaign": res = apiApproveOutreachCampaign_(body); break;
       case "reopenOutreachCampaign": res = apiReopenOutreachCampaign_(body); break;
       case "reconcileCampaignSends": res = apiReconcileCampaignSends_(body); break;
+      case "rebuildCampaignRecipients": res = apiRebuildCampaignRecipients_(body); break;
       case "sendOutreachCampaignBatch": res = apiSendOutreachCampaignBatch_(body); break;
       case "saveOutreachDraft": res = apiSaveOutreachDraft_(body); break;
       case "sendOutreachEmail": res = apiSendOutreachEmail_(body, false); break;
@@ -2580,6 +2582,119 @@ function apiReconcileCampaignSends_(p) {
 
 function reconcileBlockedCampaignSends() {
   const result = apiReconcileCampaignSends_({ campaign_id:"CMP-89758BA7F1B2483F84E59782BEFEAD39", staff_name:"Karl (editor)" });
+  Logger.log(JSON.stringify(result));
+  return result;
+}
+
+function campaignDirectoryRows_(sheet) {
+  const headers = getHeaderMap_(sheet);
+  const rows = sheet.getLastRow() < 2 ? [] : sheet.getRange(2, 1, sheet.getLastRow() - 1, sheet.getLastColumn()).getValues()
+    .map((values, index) => {
+      const row = {};
+      Object.keys(headers).forEach(key => row[key] = values[headers[key]]);
+      return { row:index + 2, values:row };
+    });
+  const byAccount = new Map();
+  const bySource = new Map();
+  rows.forEach(item => {
+    const accountId = String(item.values.account_id || "").trim();
+    if (accountId && !byAccount.has(accountId)) byAccount.set(accountId, item);
+    bySource.set(item.row, item);
+  });
+  return { by_account:byAccount, by_source:bySource };
+}
+
+function campaignRecipientWasEdited_(recipientToken) {
+  const auditSheet = getOutreachSheet_(HUB_AUDIT_SHEET_NAME);
+  return outreachRowsMatchingCell_(auditSheet, ["record_id", "Record ID"], recipientToken)
+    .some(row => String(outreachValue_(row, ["action"]) || "") === "EDIT_OUTREACH_CAMPAIGN_RECIPIENT");
+}
+
+function campaignRecipientChecksum_(recipient) {
+  const rh = recipient.headers;
+  return sha256_([
+    recipient.values[rh.source_row], recipient.values[rh.account_id], recipient.values[rh.business_name], recipient.values[rh.recipient_email],
+    recipient.values[rh.subject], recipient.values[rh.body_text],
+  ].join("|"));
+}
+
+function apiRebuildCampaignRecipients_(p) {
+  requireFields_(p || {}, ["campaign_id"]);
+  const lock = LockService.getScriptLock();
+  if (!lock.tryLock(20000)) throw new Error("Another campaign update is in progress. Try again in a moment.");
+  try {
+    const sheets = outreachCampaignSheets_();
+    const campaign = outreachCampaignRow_(sheets.campaigns, p.campaign_id);
+    if (!campaign) throw new Error("Campaign not found.");
+    const ch = campaign.headers;
+    if (String(campaign.values[ch.status] || "") !== "Review") throw new Error("Campaign must be in Review before unsent emails can be rebuilt.");
+    const staffName = authenticatedActor_(p, "Sturgeon Distribution Hub");
+    const recipients = campaignRecipientRows_(sheets.recipients, p.campaign_id);
+    const reconciliation = reconcileBlockedCampaignSends_(sheets, campaign, recipients, staffName);
+    const leadSheet = getOutreachSheet_(OUTREACH_SHEET_NAME);
+    const directory = campaignDirectoryRows_(leadSheet);
+    const settings = getOutreachCampaignSettings_();
+    const draftMap = outreachDraftMap_();
+    const changed = [];
+    let rebuilt = 0;
+    let rebuiltWithEditsKept = 0;
+    let skipped = 0;
+    recipients.filter(item => String(item.values[item.headers.status] || "") === "Ready for review").forEach(item => {
+      const rh = item.headers;
+      const accountId = String(item.values[rh.account_id] || "").trim();
+      const sourceRow = Number(item.values[rh.source_row] || 0);
+      const current = directory.by_account.get(accountId) || directory.by_source.get(sourceRow);
+      const currentBusiness = String(outreachValue_(current?.values || {}, ["business", "business_name"]) || "").trim();
+      const currentEmail = String(outreachValue_(current?.values || {}, ["email", "email_address"]) || "").trim().toLowerCase();
+      if (!current || currentBusiness !== String(item.values[rh.business_name] || "").trim() || currentEmail !== String(item.values[rh.recipient_email] || "").trim().toLowerCase()) {
+        item.values[rh.result_detail] = "Skipped — directory changed.";
+        item.values[rh.app_version] = APP_VERSION;
+        changed.push(item);
+        skipped += 1;
+        return;
+      }
+      const source = Object.assign({}, current.values, { next_email:"Initial", stage:"Initial" });
+      const draft = draftMap.get(outreachDraftKey_(accountId || current.row, "Initial")) || draftMap.get(outreachDraftKey_(current.row, "Initial"));
+      const message = outreachMessage_(source, settings, draft, false);
+      if (campaignRecipientWasEdited_(String(item.values[rh.idempotency_token] || ""))) {
+        item.values[rh.html] = outreachPlainTextToHtml_(String(item.values[rh.body_text] || "")) + String(message.footer_html || "");
+        if (rh.footer_html !== undefined) item.values[rh.footer_html] = String(message.footer_html || "");
+        rebuiltWithEditsKept += 1;
+      } else {
+        item.values[rh.subject] = message.subject;
+        item.values[rh.body_text] = message.body_text;
+        item.values[rh.html] = message.html;
+        if (rh.footer_html !== undefined) item.values[rh.footer_html] = String(message.footer_html || "");
+        rebuilt += 1;
+      }
+      item.values[rh.content_checksum] = campaignRecipientChecksum_(item);
+      item.values[rh.result_detail] = "Rebuilt with current template.";
+      item.values[rh.app_version] = APP_VERSION;
+      changed.push(item);
+    });
+    writeCampaignRecipientRows_(sheets.recipients, changed);
+    campaign.values[ch.audience_checksum] = sha256_(recipients.map(item => `${item.values[item.headers.source_row]}|${item.values[item.headers.recipient_email]}|${item.values[item.headers.content_checksum]}`).join("\n"));
+    campaign.values[ch.status] = "Review";
+    campaign.values[ch.approved_at] = "";
+    campaign.values[ch.approved_by] = "";
+    campaign.values[ch.approval_token] = "";
+    updateCampaignDeliveryCounts_(campaign, recipients);
+    sheets.campaigns.getRange(campaign.row, 1, 1, campaign.values.length).setValues([campaign.values]);
+    appendAudit_("REBUILD_CAMPAIGN_RECIPIENTS", "Campaign", p.campaign_id, "", staffName, OUTREACH_SHEET_NAME, OUTREACH_CAMPAIGN_RECIPIENTS_SHEET_NAME, "Review", `${rebuilt} rebuilt; ${rebuiltWithEditsKept} rebuilt with edits kept; ${skipped} skipped — directory changed; ${reconciliation.reconciled} reconciled.`);
+    return {
+      message:`${rebuilt} rebuilt; ${rebuiltWithEditsKept} rebuilt with edits kept; ${skipped} skipped; ${reconciliation.reconciled} reconciled. Campaign remains in Review and must be approved again.`,
+      rebuilt:rebuilt,
+      rebuilt_with_edits_kept:rebuiltWithEditsKept,
+      skipped:skipped,
+      reconciled:reconciliation.reconciled,
+    };
+  } finally {
+    lock.releaseLock();
+  }
+}
+
+function rebuildUnsentCampaignEmails() {
+  const result = apiRebuildCampaignRecipients_({ campaign_id:"CMP-89758BA7F1B2483F84E59782BEFEAD39", staff_name:"Karl (editor)" });
   Logger.log(JSON.stringify(result));
   return result;
 }
