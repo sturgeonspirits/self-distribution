@@ -1,7 +1,7 @@
-// App version: 2026.09.24.18-WEB
+// App version: 2026.09.24.19-WEB
 import { requireStaffSession } from "./auth.js";
 
-const APP_VERSION = "2026.09.24.18-WEB";
+const APP_VERSION = "2026.09.24.19-WEB";
 const STAFF_ACTIONS = new Set([
   "outreachDashboard",
   "outreachSendStatus",
@@ -46,6 +46,8 @@ const UPSTREAM_ATTEMPTS = 1;
 const UPSTREAM_WRITE_ATTEMPTS = 1;
 const UPSTREAM_TIMEOUT_MS = 9000;
 const SEND_UPSTREAM_ATTEMPTS = 1;
+// Keep this about one second below the site's Netlify function limit: 10 seconds
+// by default; raise it to about 25000 only when the function limit is 26 seconds.
 const SEND_UPSTREAM_TIMEOUT_MS = 9000;
 const SEND_ACTIONS = new Set(["sendOutreachEmail", "sendOutreachTestEmail", "sendOutreachCampaignBatch"]);
 const SNAPSHOT_ACTIONS = new Set(["createOutreachCampaign"]);

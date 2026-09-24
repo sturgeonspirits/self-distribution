@@ -8,18 +8,18 @@ Read this file before inspecting the repository or changing the application. Upd
 
 | Component | Source version | Deployment state |
 | --- | --- | --- |
-| Netlify web app and staff proxy | `2026.09.24.18-WEB` | Committed but not deployed. The live site remains `2026.09.24.17-WEB`. This pending release uses a 9-second upstream timeout, one attempt for every write, and quiet background refreshes after Outreach saves. |
+| Netlify web app and staff proxy | `2026.09.24.19-WEB` on `codex/work` | Phase 1 is ready for review and is not deployed. The live site is `2026.09.24.18-WEB`. This pending release uses a 9-second upstream timeout, one attempt for every read and write, and quiet background refreshes after Outreach saves. |
 | Inventory API Apps Script | `2026.09.24.12` source / `2026.09.23.11` live | Source is not deployed. The live Inventory API remains version `.11`. |
 | Distribution Outreach Apps Script | `2026.09.22.9-APP` | Source is committed; owner has not yet confirmed this exact version is deployed |
 | Public customer Netlify proxy | `2026.09.18.3-WEB` | Deployed with Netlify; unchanged by the latest staff-app UI work |
 
-Current Git branch: `codex/distribution-system-foundation`
+Current Git branch: `codex/work`
 
 Current remote: `https://github.com/sturgeonspirits/self-distribution.git`
 
 Latest completed changes:
 
-- Netlify web release `2026.09.24.18-WEB` is prepared locally and committed, but not deployed. It removes proxy retries for POST/write requests, uses a 9-second upstream timeout, applies known Outreach changes locally after a successful save, and reloads the list only in the background.
+- Netlify web release `2026.09.24.18-WEB` is deployed. It removes proxy retries for POST/write requests, uses a 9-second upstream timeout, applies known Outreach changes locally after a successful save, and reloads the list only in the background.
 - Campaigns can freeze every currently eligible initial prospect into a persistent, reviewable recipient/message snapshot; creation and approval never send mail.
 - Approved campaigns expose every rendered email, require explicit acknowledgement for unsegmented prospects, and deliver only a manually confirmed batch of up to 10—stopping at the first blocked record and retaining per-recipient receipts.
 - Prospect cards show the actual email and phone, or explicit `No email` and `No phone` warnings.
@@ -39,7 +39,7 @@ Latest completed changes:
 - Customer signup: https://distribution-hub.netlify.app/customer-signup.html
 - Customer order request: https://distribution-hub.netlify.app/order.html
 - Netlify project: https://app.netlify.com/projects/distribution-hub/overview
-- GitHub branch: https://github.com/sturgeonspirits/self-distribution/tree/codex/distribution-system-foundation
+- GitHub review branch: https://github.com/sturgeonspirits/self-distribution/tree/codex/work
 
 ### Apps Script projects
 
@@ -118,6 +118,13 @@ Record names only—never record their values here.
 - `ZOHO_REFRESH_TOKEN`
 
 The shared outreach secret must match in the two Apps Script projects. Zoho mail properties belong only in Distribution Outreach. Zoho OIDC client credentials and the staff-role map belong only in Netlify; they are not the API key or outreach secret.
+
+## Review branch and batched deployment policy
+
+- Work only on `codex/work`, created from `codex/distribution-system-foundation`. Never push directly to `codex/distribution-system-foundation`; Karl merges reviewed work.
+- Netlify builds are stopped for commits that touch only project status, README, docs, Apps Script, or tests. Netlify deploys must be batched.
+- Performance work Phase 1 (web safeguards) is committed on `codex/work` and awaiting review. Do not deploy it alone.
+- Deployment order: deploy Apps Script Phase 2 first, then deploy Netlify Phases 1 and 3 together as one release.
 
 ## Deployment procedures
 
