@@ -1,7 +1,7 @@
-// App version: 2026.09.24.20-WEB
+// App version: 2026.09.24.21-WEB
 import { requireStaffSession } from "./auth.js";
 
-const APP_VERSION = "2026.09.24.20-WEB";
+const APP_VERSION = "2026.09.24.21-WEB";
 const STAFF_ACTIONS = new Set([
   "outreachDashboard",
   "outreachRecord",
@@ -139,9 +139,16 @@ async function proxyResult(upstream, cors) {
   return { statusCode:upstream.ok ? 200 : 502, headers:cors, body:text };
 }
 
-function staffActionFor(event, body) {
-  if (event.httpMethod === "GET") return event.queryStringParameters?.action || "";
-  return body?.action || "";
+function requestAction_(event, body) {
+  if (event.httpMethod !== "GET") return { action:String(body?.action || ""), params:null };
+  const params = new URLSearchParams(event.rawQuery || "");
+  const actions = params.getAll("action");
+  if (actions.length > 1) return { error:"Only one action parameter is allowed." };
+  const action = actions[0] || "";
+  if (action !== String(event.queryStringParameters?.action || "")) {
+    return { error:"The request action did not match the authenticated action." };
+  }
+  return { action, params };
 }
 
 export async function handler(event) {
@@ -162,7 +169,12 @@ export async function handler(event) {
     const APPS_SCRIPT_URL = process.env.APPS_SCRIPT_URL;
     const API_KEY = process.env.API_KEY || "";
     const body = event.httpMethod === "POST" && event.body ? JSON.parse(event.body) : {};
-    const action = staffActionFor(event, body);
+    const request = requestAction_(event, body);
+    if (request.error) return response(400, cors, { ok:false, code:"INVALID_ACTION", error:request.error });
+    const action = request.action;
+    if (action && !STAFF_ACTIONS.has(action) && !ADMIN_ACTIONS.has(action)) {
+      return response(400, cors, { ok:false, code:"UNKNOWN_ACTION", error:"Unknown Inventory API action." });
+    }
 
     if (STAFF_ACTIONS.has(action) || ADMIN_ACTIONS.has(action)) {
       const staff = requireStaffSession(event);
@@ -194,12 +206,11 @@ export async function handler(event) {
     }
 
     if (event.httpMethod === "GET") {
-      let url = APPS_SCRIPT_URL;
-      const qs = event.rawQuery || "";
-      if (qs) url += `?${qs}`;
-      if (API_KEY) url += (url.includes("?") ? "&" : "?") + `api_key=${encodeURIComponent(API_KEY)}`;
+      const url = new URL(APPS_SCRIPT_URL);
+      request.params.forEach((value, key) => url.searchParams.append(key, value));
+      if (API_KEY) url.searchParams.set("api_key", API_KEY);
 
-      const resp = await fetchAppsScript(url, { method:"GET", headers:{ "Accept":"application/json" } }, CAMPAIGN_READ_ACTIONS.has(action) ? {
+      const resp = await fetchAppsScript(url.toString(), { method:"GET", headers:{ "Accept":"application/json" } }, CAMPAIGN_READ_ACTIONS.has(action) ? {
         attempts:1,
         timeoutMs:SEND_UPSTREAM_TIMEOUT_MS,
         campaignRead:true,

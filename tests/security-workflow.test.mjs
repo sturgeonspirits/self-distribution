@@ -53,6 +53,23 @@ test("every inventory action rejects a missing Zoho session before proxying", as
   assert.equal(fetches, 0);
 });
 
+test("duplicate and unknown inventory actions are rejected before authentication or proxying", async () => {
+  const { handler } = await loadFunction("netlify/functions/inventory.js", "invalid-actions");
+  process.env.APPS_SCRIPT_URL = "https://example.test/exec";
+  process.env.API_KEY = "backend-key";
+  let fetches = 0;
+  globalThis.fetch = async () => { fetches += 1; throw new Error("should not proxy"); };
+  const duplicate = event("managerGrid", { method:"GET" });
+  duplicate.rawQuery = "action=managerGrid&action=initData";
+  const duplicateResponse = await handler(duplicate);
+  assert.equal(duplicateResponse.statusCode, 400);
+  assert.equal(JSON.parse(duplicateResponse.body).code, "INVALID_ACTION");
+  const unknownResponse = await handler(event("notAnInventoryAction", { method:"GET" }));
+  assert.equal(unknownResponse.statusCode, 400);
+  assert.equal(JSON.parse(unknownResponse.body).code, "UNKNOWN_ACTION");
+  assert.equal(fetches, 0);
+});
+
 test("authenticated inventory GET and POST preserve action payload, API key, and Zoho actor", async () => {
   const { handler } = await loadFunction("netlify/functions/inventory.js", "authenticated-regression");
   process.env.APPS_SCRIPT_URL = "https://example.test/exec";
