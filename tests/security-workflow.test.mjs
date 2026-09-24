@@ -238,6 +238,11 @@ test("tracking redirect allowlists destinations and ignores invalid signatures",
   assert.equal(invalid.statusCode, 302);
   assert.equal(invalid.headers.Location, "https://example.test/sell-sheet");
   assert.equal(fetches, 0);
+  const application = await handler(goEvent({ t:"application", a:"ACC-1", s:"Initial", k:"bad", business:"Example Bar", email:"orders@example.test", url:"https://attacker.test" }));
+  assert.equal(application.statusCode, 302);
+  assert.match(application.headers.Location, /^\/customer-signup\.html\?/);
+  assert.equal(new URL(application.headers.Location, "https://distribution-hub.netlify.app").searchParams.get("business"), "Example Bar");
+  assert.doesNotMatch(application.headers.Location, /attacker\.test/);
 });
 
 test("tracking logging failure or timeout never prevents a redirect", async () => {
@@ -310,9 +315,11 @@ test("source contains formula protection, global error listeners, and recoverabl
   const inventoryProxy = await readFile(new URL("netlify/functions/inventory.js", root), "utf8");
   assert.doesNotMatch(inventoryProxy, /recordEmailEngagement/);
   assert.match(backend, /function outreachTrackingUrl_\(target, accountId, stage, settings, extras\)/);
+  assert.ok(backend.includes(String.raw`if (!/^https:\/\/\S+$/i.test(baseUrl) || !secret || !accountId) return "";`));
   assert.match(backend, /trackedSellSheet \|\| sellSheet/);
   assert.match(backend, /trackedApplication \|\| directApplication/);
   assert.match(mailer, /function trackingUrl_\(target, accountId, stage, settings, extras\)/);
+  assert.ok(mailer.includes(String.raw`if (!/^https:\/\/\S+$/i.test(baseUrl) || !secret || !accountId) return '';`));
   assert.match(mailer, /trackedSellSheet \|\| sellSheet/);
   assert.match(mailer, /trackedApplication \|\| applicationHref/);
   assert.match(backend, /function apiRepairHubStructure_\(p\)/);

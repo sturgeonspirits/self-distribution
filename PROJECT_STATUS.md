@@ -8,9 +8,9 @@ Read this file before inspecting the repository or changing the application. Upd
 
 | Component | Source version | Deployment state |
 | --- | --- | --- |
-| Netlify web app and staff proxy | `2026.09.24.22-WEB` | Deployed to production and verified at the staff-app URL. This release adds one safe retry for a timed-out record-only read; the live release also uses a 9-second upstream timeout, one attempt for every read and write, a slim Outreach directory response, record-on-demand dialogs, quiet background refreshes after Outreach saves, and strict action validation. |
-| Inventory API Apps Script | `2026.09.24.17` on `codex/work` / `2026.09.24.15` live | Targeted single-record support-tab reads, cached campaign settings, and the possessive-name display correction are committed and awaiting Apps Script deployment. |
-| Distribution Outreach Apps Script | `2026.09.22.9-APP` | Source is committed; owner has not yet confirmed this exact version is deployed |
+| Netlify web app and staff proxy | `2026.09.24.23-WEB` on `codex/work` / `2026.09.24.22-WEB` live | Signed, allowlisted outreach link redirects and business-detail click display are committed; no deployment has been made. |
+| Inventory API Apps Script | `2026.09.24.19` on `codex/work` / `2026.09.24.15` live | Targeted record reads, possessive-name display correction, and signed-link click engagement recording are committed and awaiting Apps Script deployment. |
+| Distribution Outreach Apps Script | `2026.09.24.10-APP` on `codex/work` | Signed-link rendering is committed; owner has not yet confirmed this exact version is deployed. |
 | Public customer Netlify proxy | `2026.09.18.3-WEB` | Deployed with Netlify; unchanged by the latest staff-app UI work |
 
 Current Git branch: `codex/work`
@@ -102,12 +102,15 @@ Record names only—never record their values here.
 - `ZOHO_OIDC_ISSUER` (use `https://accounts.zoho.com` unless the organization uses another Zoho data center)
 - `APP_SESSION_SECRET` (a new random secret, at least 32 characters)
 - `STAFF_ROLES_JSON` (approved Zoho emails mapped to a role and permitted work areas)
+- `TRACKING_LINK_SECRET`
+- `SELL_SHEET_URL`
 
 ### Inventory API Script Properties
 
 - `API_KEY`
 - `OUTREACH_MAILER_URL`
 - `OUTREACH_MAILER_SHARED_SECRET`
+- `TRACKING_LINK_SECRET`
 
 ### Distribution Outreach Script Properties
 
@@ -116,8 +119,16 @@ Record names only—never record their values here.
 - `ZOHO_CLIENT_ID`
 - `ZOHO_CLIENT_SECRET`
 - `ZOHO_REFRESH_TOKEN`
+- `TRACKING_LINK_SECRET`
 
 The shared outreach secret must match in the two Apps Script projects. Zoho mail properties belong only in Distribution Outreach. Zoho OIDC client credentials and the staff-role map belong only in Netlify; they are not the API key or outreach secret.
+
+### Tracked outreach-link setup
+
+1. Add `TRACKING_LINK_SECRET` to Netlify and to both Apps Script projects. Use the same secret in all three places; do not record its value here.
+2. Add `SELL_SHEET_URL` to Netlify.
+3. Deploy the Netlify and Apps Script source changes, while leaving Campaign Settings `Tracking base URL` blank.
+4. Add Campaign Settings `Tracking base URL` last (for example, the Netlify `/go` path). This is the switch that enables tracked links in newly rendered outreach emails; existing campaign snapshots keep the links captured when they were created.
 
 ## Review branch and batched deployment policy
 
