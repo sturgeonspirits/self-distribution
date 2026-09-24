@@ -508,7 +508,7 @@ function handle_(e, body) {
     assertAuthorized_(e, body);
     const action = (e?.parameter?.action) || (body?.action) || "";
     if (!action) {
-      return json_({ ok:true, service:"sturgeon-distribution-hub", version:APP_VERSION, actions:["initData","listSkus","addSkuToStore","upsertProduct","submitCounts","createReorder","managerGrid","salesSinceCount","updateStoreContacts","outreachDashboard","outreachSendStatus","outreachNewsletterContacts","outreachCampaigns","outreachCampaign","createOutreachCampaign","updateOutreachCampaignRecipient","setOutreachCampaignRecipientExclusion","approveOutreachCampaign","reopenOutreachCampaign","sendOutreachCampaignBatch","saveOutreachDraft","sendOutreachEmail","sendOutreachTestEmail","updateOutreachOutcome","updateOutreachBusiness","updateOutreachPrograms","createOutreachBusiness","importOutreachBusinesses","upsertNewsletterContact","submitCustomerApplication","submitOnlineOrderRequest","customerWorkQueue","updateCustomerApplication","updateOnlineOrderRequest","hubSystemStatus","initializeHardenedHub","reconcileIntegrations"] });
+      return json_({ ok:true, service:"sturgeon-distribution-hub", version:APP_VERSION, actions:["initData","listSkus","addSkuToStore","upsertProduct","submitCounts","createReorder","managerGrid","salesSinceCount","updateStoreContacts","outreachDashboard","outreachRecord","outreachSendStatus","outreachNewsletterContacts","outreachCampaigns","outreachCampaign","createOutreachCampaign","updateOutreachCampaignRecipient","setOutreachCampaignRecipientExclusion","approveOutreachCampaign","reopenOutreachCampaign","sendOutreachCampaignBatch","saveOutreachDraft","sendOutreachEmail","sendOutreachTestEmail","updateOutreachOutcome","updateOutreachBusiness","updateOutreachPrograms","createOutreachBusiness","importOutreachBusinesses","upsertNewsletterContact","submitCustomerApplication","submitOnlineOrderRequest","customerWorkQueue","updateCustomerApplication","updateOnlineOrderRequest","hubSystemStatus","initializeHardenedHub","reconcileIntegrations"] });
     }
 
     let res;
@@ -523,6 +523,7 @@ function handle_(e, body) {
       case "salesSinceCount": res = apiGetSalesSinceCount_((e?.parameter?.store_id) || (body?.store_id) || ""); break;
       case "updateStoreContacts": res = apiUpdateStoreContacts_(body); break;
       case "outreachDashboard": res = apiGetOutreachDashboard_(Object.assign({}, e?.parameter || {}, body || {})); break;
+      case "outreachRecord": res = apiGetOutreachRecord_(body); break;
       case "outreachSendStatus": res = apiGetOutreachSendStatus_(); break;
       case "outreachNewsletterContacts": res = { newsletter_contacts:newsletterContacts_() }; break;
       case "outreachCampaigns": res = apiGetOutreachCampaigns_(); break;
@@ -2007,6 +2008,37 @@ function apiGetOutreachDashboard_(p) {
       weekly_ready: weeklyReady.length,
     },
   };
+}
+
+function apiGetOutreachRecord_(p) {
+  if (!p) throw new Error("Missing body");
+  requireFields_(p, ["source_row", "account_id"]);
+  const sourceRow = Number(p.source_row);
+  const sheet = getOutreachSheet_(OUTREACH_SHEET_NAME);
+  if (!Number.isInteger(sourceRow) || sourceRow < 2 || sourceRow > sheet.getLastRow()) {
+    throw new Error("Business row not found.");
+  }
+
+  const headers = getHeaderMap_(sheet);
+  const values = sheet.getRange(sourceRow, 1, 1, sheet.getLastColumn()).getValues()[0];
+  const row = {};
+  Object.keys(headers).forEach(key => row[key] = values[headers[key]]);
+  const accountId = String(row.account_id || "").trim();
+  if (accountId !== String(p.account_id || "").trim()) {
+    throw new Error("Account identity changed. Refresh and try again.");
+  }
+
+  const record = outreachRecord_(
+    row,
+    sourceRow,
+    outreachActivityMap_(),
+    getOutreachCampaignSettings_(),
+    outreachDraftMap_(),
+    outreachProgramMap_(),
+    outreachEngagementMap_()
+  );
+  if (!record.business) throw new Error("Business row is empty.");
+  return { record:record };
 }
 
 // Campaigns are immutable recipient/message snapshots.  They make bulk review
