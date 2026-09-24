@@ -159,6 +159,8 @@ const ORDER_CATALOG_SOURCE = "SHEETS"; // Toast remains disabled until a reviewe
 
 let __OPERATIONAL_SS = null;
 let __OUTREACH_SS = null;
+let __HUB_INVENTORY_ACTIVE = null;
+let __OUTREACH_CAMPAIGN_SETTINGS = null;
 
 function getLegacyInventorySs_() {
   return SpreadsheetApp.openById(LEGACY_INVENTORY_SPREADSHEET_ID);
@@ -173,7 +175,10 @@ function getHubConfigurationValue_(key) {
 }
 
 function isHubInventoryActive_() {
-  return getHubConfigurationValue_(HUB_MIGRATION_STATUS_KEY) === HUB_MIGRATION_ACTIVE;
+  if (__HUB_INVENTORY_ACTIVE === null) {
+    __HUB_INVENTORY_ACTIVE = getHubConfigurationValue_(HUB_MIGRATION_STATUS_KEY) === HUB_MIGRATION_ACTIVE;
+  }
+  return __HUB_INVENTORY_ACTIVE;
 }
 
 function getSs_() {
@@ -337,6 +342,7 @@ function setHubConfigurationValue_(key, value, actor) {
   row[h.updated_by] = actor || "Sturgeon Distribution Hub";
   row[h.app_version] = APP_VERSION;
   sheet.getRange(target, 1, 1, row.length).setValues([row]);
+  if (key === HUB_MIGRATION_STATUS_KEY) __HUB_INVENTORY_ACTIVE = null;
 }
 
 function appendAudit_(action, recordType, recordId, accountId, actor, source, target, result, details) {
@@ -1480,12 +1486,14 @@ function outreachActivityMap_() {
 }
 
 function getOutreachCampaignSettings_() {
+  if (__OUTREACH_CAMPAIGN_SETTINGS) return __OUTREACH_CAMPAIGN_SETTINGS;
   const sheet = getOutreachSheet_("Campaign Settings");
   const values = sheet.getRange(2, 1, Math.max(1, sheet.getLastRow() - 1), 2).getValues();
-  return values.reduce((settings, row) => {
+  __OUTREACH_CAMPAIGN_SETTINGS = values.reduce((settings, row) => {
     if (row[0]) settings[String(row[0])] = row[1];
     return settings;
   }, {});
+  return __OUTREACH_CAMPAIGN_SETTINGS;
 }
 
 function outreachDraftKey_(identityKey, stage) {
