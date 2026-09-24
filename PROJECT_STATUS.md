@@ -8,7 +8,7 @@ Read this file before inspecting the repository or changing the application. Upd
 
 | Component | Source version | Deployment state |
 | --- | --- | --- |
-| Netlify web app and staff proxy | `2026.09.24.31-WEB` on `codex/distribution-system-foundation` / `2026.09.24.24-WEB` live | Campaign review now retains legacy city context and includes city in Send remaining progress; deployment is pending. |
+| Netlify web app and staff proxy | `2026.09.24.32-WEB` on `codex/distribution-system-foundation` / `2026.09.24.24-WEB` live | Campaign approval now keeps the unsegmented-recipient confirmation and status beside the action buttons; deployment is pending. |
 | Inventory API Apps Script | `2026.09.24.28` on `codex/distribution-system-foundation` / `2026.09.24.17` live | Campaign loads backfill missing recipient cities from one directory read without altering frozen campaign records; deployment is pending. |
 | Distribution Outreach Apps Script | `2026.09.24.13-APP` on `codex/work` | Signed-link rendering is committed; owner has not yet confirmed this exact version is deployed. |
 | Public customer Netlify proxy | `2026.09.18.3-WEB` | Deployed with Netlify; unchanged by the latest staff-app UI work |
@@ -18,6 +18,8 @@ Current Git branch: `codex/distribution-system-foundation`
 Current remote: `https://github.com/sturgeonspirits/self-distribution.git`
 
 Latest completed changes:
+
+- Campaign review now places the unsegmented-recipient confirmation immediately before Approve, requires it before approval, and keeps the campaign status directly above the bottom actions.
 
 - Campaign review now fills an empty legacy recipient City from the directory by Account ID or source row with one directory data read per campaign load. Legacy rows without frozen campaign distance omit the mileage label; Send remaining identifies the business and city currently being sent.
 

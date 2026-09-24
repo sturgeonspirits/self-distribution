@@ -1,10 +1,10 @@
 <!doctype html>
-<!-- App version: 2026.09.24.31-WEB -->
+<!-- App version: 2026.09.24.32-WEB -->
 <html>
 <head>
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover"/>
-  <meta name="app-version" content="2026.09.24.31-WEB" />
+  <meta name="app-version" content="2026.09.24.32-WEB" />
   <meta name="theme-color" content="#536f77" />
   <link rel="icon" href="/assets/distribution-hub-icon.svg" type="image/svg+xml" />
   <link rel="manifest" href="/site.webmanifest" />
@@ -2319,11 +2319,10 @@
     </div>
     <div class="dlgBody">
       <div class="modeNotice" style="margin-top:0"><i data-lucide="shield-check"></i><span id="outreachCampaignNotice">Review the frozen audience before approving delivery.</span></div>
-      <div class="status" id="outreachCampaignStatus" role="status" aria-live="polite"></div>
-      <label class="checkLabel" id="campaignSegmentConfirmRow"><input id="campaignSegmentConfirm" type="checkbox" /><span>I reviewed the standard fallback message used for recipients without a tailored segment.</span></label>
       <div id="outreachCampaignRecipients"></div>
       <div class="dlgActions"><button id="rebuildCampaignRecipientsBtn" type="button">Rebuild unsent emails with current template</button></div>
-      <div class="dlgActions"><button id="reopenOutreachCampaignBtn" type="button">Reopen unsent for edits</button><button id="approveOutreachCampaignBtn" type="button">Approve campaign</button><button id="sendOutreachCampaignBatchBtn" type="button">Send next 10</button><button class="primary" id="sendRemainingCampaignBtn" type="button">Send remaining</button></div>
+      <div class="status" id="outreachCampaignStatus" role="status" aria-live="polite"></div>
+      <div class="dlgActions"><button id="reopenOutreachCampaignBtn" type="button">Reopen unsent for edits</button><label class="checkLabel" id="campaignSegmentConfirmRow"><input id="campaignSegmentConfirm" type="checkbox" /><span id="campaignSegmentConfirmLabel"></span></label><button id="approveOutreachCampaignBtn" type="button">Approve campaign</button><span class="smallMuted" id="campaignSegmentConfirmHint">Review the fallback message to enable approval.</span><button id="sendOutreachCampaignBatchBtn" type="button">Send next 10</button><button class="primary" id="sendRemainingCampaignBtn" type="button">Send remaining</button></div>
     </div>
   </dialog>
 
@@ -2509,7 +2508,7 @@
 
   <footer style="max-width:1200px;margin:18px auto 120px;padding:0 12px;text-align:center;color:#6b7280;font-size:12px;">
     Designed by <a href="https://scriptspirit.dev" target="_blank" rel="noopener noreferrer" style="color:#1d4ed8;text-decoration:none;font-weight:700;">Script Spirit</a>
-<span id="appVersionFooter"> • Version 2026.09.24.31-WEB</span>
+<span id="appVersionFooter"> • Version 2026.09.24.32-WEB</span>
   </footer>
 
 
@@ -2532,7 +2531,7 @@
   window.addEventListener("unhandledrejection", e => console.error("Unhandled promise rejection:", e.reason));
   window.addEventListener("error", e => console.error("Unhandled error:", e.error || e.message));
   const $ = (id) => document.getElementById(id);
-  const APP_VERSION = "2026.09.24.31-WEB";
+  const APP_VERSION = "2026.09.24.32-WEB";
   $("appVersionFooter").textContent = ` • Version ${APP_VERSION}`;
 
   let cache = { stores: [], lines: [] };
@@ -3437,13 +3436,17 @@
       ? "Open any recipient to edit it or exclude it from this campaign. Approval freezes the exact saved audience and messages; it still does not send email."
       : campaign.status === "Approved" ? "This audience is approved. “Send remaining” sends one verified recipient at a time, skips delivery-unknown records without retrying them, and sends no further email if the connection outcome is unknown."
       : "This campaign is closed; delivery history remains available below.";
-    $("campaignSegmentConfirmRow").hidden = campaign.status !== "Review" || !Number(campaign.unsegmented_count || 0);
+    const unsegmentedCount = Number(campaign.unsegmented_count || 0);
+    const requiresSegmentConfirmation = campaign.status === "Review" && unsegmentedCount > 0;
+    $("campaignSegmentConfirmRow").hidden = !requiresSegmentConfirmation;
+    $("campaignSegmentConfirmLabel").textContent = `I reviewed the fallback message for ${unsegmentedCount} unsegmented recipient${unsegmentedCount === 1 ? "" : "s"}.`;
     $("campaignSegmentConfirm").checked = false;
     const reopenableCount = Number(campaign.counts?.["Ready to send"] || 0) + Number(campaign.counts?.Blocked || 0);
     const canReopen = ["Review", "Approved", "Complete with blocks"].includes(campaign.status) && reopenableCount > 0;
     $("reopenOutreachCampaignBtn").hidden = !canReopen;
     $("rebuildCampaignRecipientsBtn").hidden = campaign.status !== "Review";
     $("approveOutreachCampaignBtn").hidden = campaign.status !== "Review";
+    refreshCampaignApprovalControl();
     $("sendOutreachCampaignBatchBtn").hidden = campaign.status !== "Approved";
     $("sendRemainingCampaignBtn").hidden = campaign.status !== "Approved";
     refreshCampaignSendControls();
@@ -3464,6 +3467,15 @@
     </details>`).join("")}</div>`;
     $("outreachCampaignDialog").showModal();
     refreshIcons();
+  }
+
+  function refreshCampaignApprovalControl(){
+    const campaign = selectedOutreachCampaign;
+    const requiresConfirmation = campaign?.status === "Review" && Number(campaign.unsegmented_count || 0) > 0;
+    const confirmed = $("campaignSegmentConfirm").checked;
+    const approveButton = $("approveOutreachCampaignBtn");
+    approveButton.disabled = campaign?.status !== "Review" || (requiresConfirmation && !confirmed);
+    $("campaignSegmentConfirmHint").hidden = !requiresConfirmation || confirmed;
   }
 
   async function saveOutreachCampaignRecipient(button){
@@ -6128,6 +6140,7 @@
     if (exclusionButton) setOutreachCampaignRecipientExclusion(exclusionButton, exclusionButton.dataset.campaignRecipientAction === "exclude");
   });
   $("approveOutreachCampaignBtn").addEventListener("click", () => approveOutreachCampaign().catch(error => { $("outreachCampaignStatus").textContent = error.message || String(error); }));
+  $("campaignSegmentConfirm").addEventListener("change", refreshCampaignApprovalControl);
   $("rebuildCampaignRecipientsBtn").addEventListener("click", () => rebuildCampaignRecipients());
   $("reopenOutreachCampaignBtn").addEventListener("click", () => reopenOutreachCampaign());
   $("sendOutreachCampaignBatchBtn").addEventListener("click", sendOutreachCampaignBatch);

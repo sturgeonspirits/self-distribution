@@ -629,3 +629,18 @@ test("campaign loading backfills legacy cities once and does not label absent le
   assert.match(campaignWindowSource, /campaignRecipientLocation\(recipient\)/);
   assert.match(index, /expected\.city \?/);
 });
+
+test("campaign approval confirmation is inline, counted, and required before approval", async () => {
+  const index = await readFile(new URL("index.html", root), "utf8");
+  const dialog = index.slice(index.indexOf('<dialog id="outreachCampaignDialog">'), index.indexOf('<dialog id="outreachCampaignCriteriaDialog">'));
+  const recipientsAt = dialog.indexOf('id="outreachCampaignRecipients"');
+  const statusAt = dialog.indexOf('id="outreachCampaignStatus"');
+  const confirmationAt = dialog.indexOf('id="campaignSegmentConfirmRow"');
+  const approveAt = dialog.indexOf('id="approveOutreachCampaignBtn"');
+  assert.ok(statusAt > recipientsAt, "campaign status is below the recipient list");
+  assert.ok(confirmationAt > statusAt && confirmationAt < approveAt, "confirmation sits directly before approval in the bottom actions");
+  assert.match(index, /I reviewed the fallback message for \$\{unsegmentedCount\} unsegmented recipient/);
+  assert.match(index, /function refreshCampaignApprovalControl\(\)/);
+  assert.match(index, /approveButton\.disabled = campaign\?\.status !== "Review" \|\| \(requiresConfirmation && !confirmed\)/);
+  assert.match(index, /campaignSegmentConfirm"\)\.addEventListener\("change", refreshCampaignApprovalControl\)/);
+});
