@@ -2520,6 +2520,7 @@
     : "recommended";
   let outreachFilterText = "";
   let outreachLoaded = false;
+  let outreachLoadRequest = 0;
   let outreachNewsletterLoaded = false;
   let selectedOutreachRecord = null;
   let selectedOutcome = "";
@@ -2534,6 +2535,7 @@
   let customerFilterText = "";
   let customerStatusFilter = customerView === "accounts" ? "all" : "active";
   let customerLoaded = false;
+  let customerWorkQueueLoadRequest = 0;
   let selectedCustomerRecord = null;
   let staffAccessCode = "";
   let staffSession = null;
@@ -2902,8 +2904,16 @@
   }
 
   async function loadCustomerWorkQueue(){
+    const requestId = ++customerWorkQueueLoadRequest;
     $("customerWorkflowStatus").textContent = "Loading customer work...";
-    const result = await staffApiGet({ action:"customerWorkQueue" });
+    let result;
+    try {
+      result = await staffApiGet({ action:"customerWorkQueue" });
+    } catch (error) {
+      if (requestId !== customerWorkQueueLoadRequest) return;
+      throw error;
+    }
+    if (requestId !== customerWorkQueueLoadRequest) return;
     if (!result.ok) throw new Error(result.error || "Customer work could not be loaded.");
     customerData = {
       accounts:result.accounts || [],
@@ -3567,8 +3577,16 @@
   }
 
   async function loadOutreach(){
+    const requestId = ++outreachLoadRequest;
     setOutreachStatus("Loading outreach...");
-    const res = await staffApiGet({ action:"outreachDashboard" });
+    let res;
+    try {
+      res = await staffApiGet({ action:"outreachDashboard" });
+    } catch (error) {
+      if (requestId !== outreachLoadRequest) return;
+      throw error;
+    }
+    if (requestId !== outreachLoadRequest) return;
     if (!res.ok) throw new Error(res.error || "Outreach failed to load.");
     outreachData = {
       today: res.today || [],
