@@ -492,3 +492,20 @@ test("outreach details retain the latest tracked link target without changing th
   assert.match(index, /Most recent link click target/);
   assert.match(index, /\bclicked\b/i, "the existing Clicked badge remains rendered by the app");
 });
+
+test("campaign reconciliation uses targeted accepted Activity Log records without resending", async () => {
+  const [backend, proxy] = await Promise.all([
+    readFile(new URL("apps-script/Code.gs", root), "utf8"),
+    readFile(new URL("netlify/functions/inventory.js", root), "utf8"),
+  ]);
+  const reconciliationSource = backend.slice(backend.indexOf("function campaignAcceptedActivity_"), backend.indexOf("function campaignRecipientFooterHtml_"));
+  assert.match(backend, /case "reconcileCampaignSends": res = apiReconcileCampaignSends_\(body\);/);
+  assert.match(reconciliationSource, /outreachRowsMatchingCell_\(sheet, \["idempotency_token", "Idempotency Token"\], recipientToken\)/);
+  assert.match(reconciliationSource, /result\.includes\("APP SENT"\)/);
+  assert.match(reconciliationSource, /advanceOutreachSend_\(leadSheet, directory\.row, record, "Initial", activity\.message_id, activity\.sent_at, settings\)/);
+  assert.match(reconciliationSource, /Reconciled from Activity Log: Zoho accepted\./);
+  assert.doesNotMatch(reconciliationSource, /callOutreachMailer_|appendOutreachActivity_/);
+  assert.match(backend, /function reconcileBlockedCampaignSends\(\)/);
+  assert.match(proxy, /"reconcileCampaignSends"/);
+  assert.match(proxy, /\["reconcileCampaignSends", "outreach"\]/);
+});

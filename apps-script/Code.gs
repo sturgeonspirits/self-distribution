@@ -1,8 +1,9 @@
 /*********************************
  * Inventory API (JSON) for Netlify
- * App version: 2026.09.24.23
+ * App version: 2026.09.24.24
  *
  * CHANGES IN THIS VERSION
+ * - Reconciles campaign recipients with verified Activity Log acceptance records without resending or adding an Activity Log send row.
  * - Sends Karl-only test email HTML from the renderer's actual html field so test links retain their non-recording marker.
  * - Uses Reactivation-specific online-ordering wording for the wholesale application link in every renderer.
  * - Marks tracking links in Karl-only test messages so test clicks redirect without being recorded as prospect engagement.
@@ -130,7 +131,7 @@
  * - Use only in the staging inventory backend until testing is complete.
  *********************************/
 
-const APP_VERSION = "2026.09.24.23";
+const APP_VERSION = "2026.09.24.24";
 
 const SHEET_NAMES = {
   STORES: "Stores",
@@ -564,7 +565,7 @@ function handle_(e, body) {
     assertAuthorized_(e, body);
     const action = (e?.parameter?.action) || (body?.action) || "";
     if (!action) {
-      return json_({ ok:true, service:"sturgeon-distribution-hub", version:APP_VERSION, actions:["initData","listSkus","addSkuToStore","upsertProduct","submitCounts","createReorder","managerGrid","salesSinceCount","updateStoreContacts","outreachDashboard","outreachRecord","outreachSendStatus","outreachNewsletterContacts","outreachCampaigns","outreachCampaign","createOutreachCampaign","updateOutreachCampaignRecipient","setOutreachCampaignRecipientExclusion","approveOutreachCampaign","reopenOutreachCampaign","sendOutreachCampaignBatch","saveOutreachDraft","sendOutreachEmail","sendOutreachTestEmail","updateOutreachOutcome","updateOutreachBusiness","updateOutreachPrograms","createOutreachBusiness","importOutreachBusinesses","upsertNewsletterContact","submitCustomerApplication","submitOnlineOrderRequest","customerWorkQueue","updateCustomerApplication","updateOnlineOrderRequest","hubSystemStatus","initializeHardenedHub","repairHubStructure","reconcileIntegrations"] });
+      return json_({ ok:true, service:"sturgeon-distribution-hub", version:APP_VERSION, actions:["initData","listSkus","addSkuToStore","upsertProduct","submitCounts","createReorder","managerGrid","salesSinceCount","updateStoreContacts","outreachDashboard","outreachRecord","outreachSendStatus","outreachNewsletterContacts","outreachCampaigns","outreachCampaign","createOutreachCampaign","updateOutreachCampaignRecipient","setOutreachCampaignRecipientExclusion","approveOutreachCampaign","reopenOutreachCampaign","reconcileCampaignSends","sendOutreachCampaignBatch","saveOutreachDraft","sendOutreachEmail","sendOutreachTestEmail","updateOutreachOutcome","updateOutreachBusiness","updateOutreachPrograms","createOutreachBusiness","importOutreachBusinesses","upsertNewsletterContact","submitCustomerApplication","submitOnlineOrderRequest","customerWorkQueue","updateCustomerApplication","updateOnlineOrderRequest","hubSystemStatus","initializeHardenedHub","repairHubStructure","reconcileIntegrations"] });
     }
 
     let res;
@@ -590,6 +591,7 @@ function handle_(e, body) {
       case "setOutreachCampaignRecipientExclusion": res = apiSetOutreachCampaignRecipientExclusion_(body); break;
       case "approveOutreachCampaign": res = apiApproveOutreachCampaign_(body); break;
       case "reopenOutreachCampaign": res = apiReopenOutreachCampaign_(body); break;
+      case "reconcileCampaignSends": res = apiReconcileCampaignSends_(body); break;
       case "sendOutreachCampaignBatch": res = apiSendOutreachCampaignBatch_(body); break;
       case "saveOutreachDraft": res = apiSaveOutreachDraft_(body); break;
       case "sendOutreachEmail": res = apiSendOutreachEmail_(body, false); break;
@@ -2468,6 +2470,120 @@ function apiGetOutreachCampaign_(p) {
   return { campaign:campaignObject_(campaign, campaignRecipientRows_(sheets.recipients, p.campaign_id), true) };
 }
 
+function writeCampaignRecipientRows_(sheet, recipients) {
+  if (!recipients.length) return;
+  const sorted = recipients.slice().sort((a, b) => a.row - b.row);
+  let group = [];
+  const writeGroup = () => {
+    if (!group.length) return;
+    sheet.getRange(group[0].row, 1, group.length, group[0].values.length).setValues(group.map(item => item.values));
+    group = [];
+  };
+  sorted.forEach(item => {
+    if (group.length && item.row !== group[group.length - 1].row + 1) writeGroup();
+    group.push(item);
+  });
+  writeGroup();
+}
+
+function campaignDirectoryRow_(sheet, headers, recipient) {
+  const rh = recipient.headers;
+  const accountId = String(recipient.values[rh.account_id] || "").trim();
+  const sourceRow = Number(recipient.values[rh.source_row] || 0);
+  const matched = accountId ? outreachRowsMatchingCell_(sheet, ["account_id", "Account ID"], accountId) : [];
+  if (matched.length) return { row:Number(matched[0].__source_row), values:matched[0] };
+  if (!Number.isInteger(sourceRow) || sourceRow < 2 || sourceRow > sheet.getLastRow()) return null;
+  const raw = sheet.getRange(sourceRow, 1, 1, sheet.getLastColumn()).getValues()[0];
+  const values = {};
+  Object.keys(headers).forEach(key => values[key] = raw[headers[key]]);
+  return { row:sourceRow, values:values };
+}
+
+function campaignAcceptedActivity_(accountId, recipientToken) {
+  const sheet = getOutreachSheet_(OUTREACH_ACTIVITY_SHEET_NAME);
+  const rows = outreachRowsMatchingCell_(sheet, ["idempotency_token", "Idempotency Token"], recipientToken);
+  return rows.map(row => {
+    const sentAt = outreachDate_(outreachValue_(row, ["timestamp", "sent_at"]));
+    return {
+      account_id:String(outreachValue_(row, ["account_id", "Account ID"]) || "").trim(),
+      result:String(outreachValue_(row, ["result"]) || "").trim(),
+      message_id:String(outreachValue_(row, ["message_id", "zoho_message_id", "Message ID"]) || "").trim(),
+      sent_at:sentAt,
+    };
+  }).filter(row => {
+    const result = row.result.toUpperCase();
+    return row.account_id === String(accountId || "").trim()
+      && result.includes("APP SENT")
+      && !result.includes("TEST")
+      && !!row.message_id
+      && !!row.sent_at;
+  }).sort((a, b) => b.sent_at.getTime() - a.sent_at.getTime())[0] || null;
+}
+
+function updateCampaignDeliveryCounts_(campaign, recipients) {
+  const h = campaign.headers;
+  campaign.values[h.sent_count] = recipients.filter(item => ["Sent", "Sent - needs recording"].includes(String(item.values[item.headers.status] || ""))).length;
+  campaign.values[h.blocked_count] = recipients.filter(item => String(item.values[item.headers.status] || "") === "Blocked").length;
+  campaign.values[h.app_version] = APP_VERSION;
+}
+
+function reconcileBlockedCampaignSends_(sheets, campaign, recipients, staffName) {
+  const leadSheet = getOutreachSheet_(OUTREACH_SHEET_NAME);
+  const leadHeaders = getHeaderMap_(leadSheet);
+  const settings = getOutreachCampaignSettings_();
+  const changed = [];
+  let reconciled = 0;
+  let unmatched = 0;
+  recipients.filter(item => String(item.values[item.headers.status] || "") === "Blocked").forEach(item => {
+    const rh = item.headers;
+    const accountId = String(item.values[rh.account_id] || "").trim();
+    const token = String(item.values[rh.idempotency_token] || "").trim();
+    const activity = campaignAcceptedActivity_(accountId, token);
+    if (!activity) { unmatched += 1; return; }
+    const directory = campaignDirectoryRow_(leadSheet, leadHeaders, item);
+    if (!directory) { unmatched += 1; return; }
+    const record = {
+      account_id:String(directory.values.account_id || accountId),
+      business:String(outreachValue_(directory.values, ["business", "business_name"]) || item.values[rh.business_name] || ""),
+      email:String(outreachValue_(directory.values, ["email", "email_address"]) || item.values[rh.recipient_email] || ""),
+    };
+    advanceOutreachSend_(leadSheet, directory.row, record, "Initial", activity.message_id, activity.sent_at, settings);
+    item.values[rh.status] = "Sent";
+    item.values[rh.result_detail] = "Reconciled from Activity Log: Zoho accepted.";
+    item.values[rh.zoho_message_id] = activity.message_id;
+    item.values[rh.sent_at] = activity.sent_at;
+    item.values[rh.app_version] = APP_VERSION;
+    changed.push(item);
+    reconciled += 1;
+  });
+  writeCampaignRecipientRows_(sheets.recipients, changed);
+  updateCampaignDeliveryCounts_(campaign, recipients);
+  sheets.campaigns.getRange(campaign.row, 1, 1, campaign.values.length).setValues([campaign.values]);
+  appendAudit_("RECONCILE_CAMPAIGN_SENDS", "Campaign", String(campaign.values[campaign.headers.campaign_id] || ""), "", staffName, OUTREACH_ACTIVITY_SHEET_NAME, OUTREACH_CAMPAIGN_RECIPIENTS_SHEET_NAME, "Completed", `${reconciled} reconciled; ${unmatched} blocked without a matching accepted Activity Log record.`);
+  return { reconciled:reconciled, blocked_without_match:unmatched, sent_count:Number(campaign.values[campaign.headers.sent_count] || 0), blocked_count:Number(campaign.values[campaign.headers.blocked_count] || 0), recipients:recipients };
+}
+
+function apiReconcileCampaignSends_(p) {
+  requireFields_(p || {}, ["campaign_id"]);
+  const lock = LockService.getScriptLock();
+  if (!lock.tryLock(10000)) throw new Error("Another campaign update is in progress. Try again in a moment.");
+  try {
+    const sheets = outreachCampaignSheets_();
+    const campaign = outreachCampaignRow_(sheets.campaigns, p.campaign_id);
+    if (!campaign) throw new Error("Campaign not found.");
+    const counts = reconcileBlockedCampaignSends_(sheets, campaign, campaignRecipientRows_(sheets.recipients, p.campaign_id), authenticatedActor_(p, "Sturgeon Distribution Hub"));
+    return Object.assign({ message:`${counts.reconciled} blocked recipient(s) reconciled from Activity Log. No email was sent.` }, counts);
+  } finally {
+    lock.releaseLock();
+  }
+}
+
+function reconcileBlockedCampaignSends() {
+  const result = apiReconcileCampaignSends_({ campaign_id:"CMP-89758BA7F1B2483F84E59782BEFEAD39", staff_name:"Karl (editor)" });
+  Logger.log(JSON.stringify(result));
+  return result;
+}
+
 function campaignRecipientFooterHtml_(recipient, settings, draftMap) {
   const rh = recipient.headers;
   const stored = rh.footer_html === undefined ? "" : String(recipient.values[rh.footer_html] || "");
@@ -3057,13 +3173,13 @@ function outreachAddDays_(date, days) {
   return value;
 }
 
-function finalizeOutreachSend_(sheet, rowNumber, record, stage, messageId, sentAt, staffName, idempotencyToken) {
+function advanceOutreachSend_(sheet, rowNumber, record, stage, messageId, sentAt, settings) {
   const h = getHeaderMap_(sheet);
   const setCell = (keys, value) => {
     const key = keys.find(candidate => h[candidate] !== undefined);
     if (key) sheet.getRange(rowNumber, h[key] + 1).setValue(value);
   };
-  const settings = getOutreachCampaignSettings_();
+  settings = settings || getOutreachCampaignSettings_();
   const nextStage = outreachNextStage_(stage);
   const followUpDays = stage === "Initial"
     ? Number(settings["Follow-up days"] || 7)
@@ -3075,6 +3191,11 @@ function finalizeOutreachSend_(sheet, rowNumber, record, stage, messageId, sentA
   setCell(["next_follow-up", "next_follow_up"], nextStage === "Complete" ? "" : outreachAddDays_(sentAt, followUpDays));
   setCell(["message_id", "zoho_message_id"], messageId || "");
   setCell(["record_updated_at"], new Date());
+  return nextStage;
+}
+
+function finalizeOutreachSend_(sheet, rowNumber, record, stage, messageId, sentAt, staffName, idempotencyToken) {
+  const nextStage = advanceOutreachSend_(sheet, rowNumber, record, stage, messageId, sentAt);
   appendAudit_("SEND_OUTREACH_EMAIL", "Account", record.account_id, record.account_id, staffName, OUTREACH_DRAFTS_SHEET_NAME, OUTREACH_ACTIVITY_SHEET_NAME, "Completed", `${stage}; message ${messageId || "accepted without message ID"}; token ${idempotencyToken}`);
   return nextStage;
 }
