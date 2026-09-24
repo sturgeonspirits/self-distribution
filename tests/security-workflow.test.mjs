@@ -318,10 +318,16 @@ test("source contains formula protection, global error listeners, and recoverabl
   assert.ok(backend.includes(String.raw`if (!/^https:\/\/\S+$/i.test(baseUrl) || !secret || !accountId) return "";`));
   assert.match(backend, /trackedSellSheet \|\| sellSheet/);
   assert.match(backend, /trackedApplication \|\| directApplication/);
+  const inventoryMessageSource = backend.slice(backend.indexOf("function outreachMessage_"), backend.indexOf("function outreachRecord_"));
+  assert.match(inventoryMessageSource, /const applicationLink = \(trackedApplication \|\| directApplication\)/);
+  assert.doesNotMatch(inventoryMessageSource, /stage === "Initial" && \(trackedApplication/);
   assert.match(mailer, /function trackingUrl_\(target, accountId, stage, settings, extras\)/);
   assert.ok(mailer.includes(String.raw`if (!/^https:\/\/\S+$/i.test(baseUrl) || !secret || !accountId) return '';`));
   assert.match(mailer, /trackedSellSheet \|\| sellSheet/);
   assert.match(mailer, /trackedApplication \|\| applicationHref/);
+  const mailerTemplateValuesSource = mailer.slice(mailer.indexOf("function templateValues_"), mailer.indexOf("function formatDateValue_"));
+  assert.match(mailerTemplateValuesSource, /const applicationLink = \(trackedApplication \|\| applicationHref\)/);
+  assert.doesNotMatch(mailerTemplateValuesSource, /stage === 'Initial' && \(trackedApplication/);
   assert.match(backend, /function apiRepairHubStructure_\(p\)/);
   assert.match(backend, /function installNightlyHubStructureRepair\(\)/);
   assert.match(backend, /function accountIdentityLookup_\(\)/);

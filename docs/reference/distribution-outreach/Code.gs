@@ -1,9 +1,10 @@
 /**
  * Sturgeon Spirits Distribution Outreach
  *
- * VERSION: 2026.09.24.10-APP
+ * VERSION: 2026.09.24.11-APP
  *
  * CHANGES IN THIS VERSION
+ * - Includes the wholesale application link in every outreach stage while retaining tracked-link fallback behavior.
  * - Added opt-in signed sell-sheet and wholesale-application links for click measurement; direct links remain unchanged until tracking is configured.
  * - Allowed Karl-only app tests to render saved drafts before a prospect email is available or verified.
  * - Kept source-row identity checks and every real-recipient safety check unchanged.
@@ -54,7 +55,7 @@
  * Sends through the authenticated Zoho Mail API account.
  */
 
-const OUTREACH_VERSION = '2026.09.24.10-APP';
+const OUTREACH_VERSION = '2026.09.24.11-APP';
 
 const OUTREACH = Object.freeze({
   ENVIRONMENT: 'STAGING_PILOT',
@@ -883,7 +884,7 @@ function templateValues_(row, settings, stage, accountId) {
       '&email=' + encodeURIComponent(email)
     : '';
   const trackedApplication = trackingUrl_('application', accountId, stage, settings, { business:business, email:email });
-  const applicationLink = stage === 'Initial' && (trackedApplication || applicationHref) ?
+  const applicationLink = (trackedApplication || applicationHref) ?
     '<p>If you would like to get the account setup started, <a href="' + escapeHtml_(trackedApplication || applicationHref) + '">complete our short wholesale customer application</a>.</p>' : '';
   return {
     'First Name': firstName,

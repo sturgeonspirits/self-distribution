@@ -1,8 +1,9 @@
 /*********************************
  * Inventory API (JSON) for Netlify
- * App version: 2026.09.24.19
+ * App version: 2026.09.24.20
  *
  * CHANGES IN THIS VERSION
+ * - Includes the wholesale application link in every outreach stage while retaining tracked-link fallback behavior.
  * - Shows the most recent tracked link target alongside click counts in Outreach business details.
  * - Added opt-in signed sell-sheet and wholesale-application links for click measurement without changing send approval, eligibility, receipt, or Activity Log safeguards.
  * - Added a locked-down click-engagement endpoint for signed Netlify tracking links, with duplicate suppression and no request-path schema changes.
@@ -126,7 +127,7 @@
  * - Use only in the staging inventory backend until testing is complete.
  *********************************/
 
-const APP_VERSION = "2026.09.24.19";
+const APP_VERSION = "2026.09.24.20";
 
 const SHEET_NAMES = {
   STORES: "Stores",
@@ -1975,7 +1976,7 @@ function outreachMessage_(row, settings, draft) {
     ? `${applicationUrl}${applicationUrl.includes("?") ? "&" : "?"}account_id=${encodeURIComponent(accountId)}&business=${encodeURIComponent(business)}&email=${encodeURIComponent(email)}`
     : "";
   const trackedApplication = outreachTrackingUrl_("application", accountId, stage, settings, { business:business, email:email });
-  const applicationLink = stage === "Initial" && (trackedApplication || directApplication)
+  const applicationLink = (trackedApplication || directApplication)
     ? `<p>If you would like to get the account setup started, <a href="${escapeOutreachHtml_(trackedApplication || directApplication)}">complete our short wholesale customer application</a>.</p>`
     : "";
   const values = {
