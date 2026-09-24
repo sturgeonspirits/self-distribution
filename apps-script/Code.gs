@@ -1,8 +1,9 @@
 /*********************************
  * Inventory API (JSON) for Netlify
- * App version: 2026.09.24.13
+ * App version: 2026.09.24.14
  *
  * CHANGES IN THIS VERSION
+ * - Fixed the nightly repair trigger handler, refreshed a missed Badger invoice lookup once, and made single-record Outreach lookup accept source-row-only requests.
  * - Added an optional slim Outreach dashboard response and a single-record outreach endpoint.
  * - Moved structural and Account ID repair out of normal requests, with an optional nightly repair installer.
  * - Memoized Hub configuration and campaign settings, cached Badger invoices, and reduced campaign-list reads.
@@ -119,7 +120,7 @@
  * - Use only in the staging inventory backend until testing is complete.
  *********************************/
 
-const APP_VERSION = "2026.09.24.13";
+const APP_VERSION = "2026.09.24.14";
 
 const SHEET_NAMES = {
   STORES: "Stores",
@@ -2057,7 +2058,7 @@ function apiGetOutreachDashboard_(p) {
 
 function apiGetOutreachRecord_(p) {
   if (!p) throw new Error("Missing body");
-  requireFields_(p, ["source_row", "account_id"]);
+  requireFields_(p, ["source_row"]);
   const sourceRow = Number(p.source_row);
   const sheet = getOutreachSheet_(OUTREACH_SHEET_NAME);
   if (!Number.isInteger(sourceRow) || sourceRow < 2 || sourceRow > sheet.getLastRow()) {
@@ -2069,7 +2070,8 @@ function apiGetOutreachRecord_(p) {
   const row = {};
   Object.keys(headers).forEach(key => row[key] = values[headers[key]]);
   const accountId = String(row.account_id || "").trim();
-  if (accountId !== String(p.account_id || "").trim()) {
+  const requestedAccountId = String(p.account_id || "").trim();
+  if (requestedAccountId && accountId !== requestedAccountId) {
     throw new Error("Account identity changed. Refresh and try again.");
   }
 
