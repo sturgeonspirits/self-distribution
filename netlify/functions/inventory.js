@@ -1,9 +1,10 @@
-// App version: 2026.09.24.19-WEB
+// App version: 2026.09.24.20-WEB
 import { requireStaffSession } from "./auth.js";
 
-const APP_VERSION = "2026.09.24.19-WEB";
+const APP_VERSION = "2026.09.24.20-WEB";
 const STAFF_ACTIONS = new Set([
   "outreachDashboard",
+  "outreachRecord",
   "outreachSendStatus",
   "outreachNewsletterContacts",
   "outreachCampaigns",
@@ -52,16 +53,16 @@ const SEND_UPSTREAM_TIMEOUT_MS = 9000;
 const SEND_ACTIONS = new Set(["sendOutreachEmail", "sendOutreachTestEmail", "sendOutreachCampaignBatch"]);
 const SNAPSHOT_ACTIONS = new Set(["createOutreachCampaign"]);
 const CAMPAIGN_READ_ACTIONS = new Set(["outreachCampaigns", "outreachCampaign"]);
-const ADMIN_ACTIONS = new Set(["initializeHardenedHub", "reconcileIntegrations", "upsertProduct", "addSkuToStore"]);
+const ADMIN_ACTIONS = new Set(["initializeHardenedHub", "repairHubStructure", "reconcileIntegrations", "upsertProduct", "addSkuToStore"]);
 const ACTION_AREAS = new Map([
-  ["outreachDashboard", "outreach"], ["outreachSendStatus", "outreach"], ["outreachNewsletterContacts", "outreach"],
+  ["outreachDashboard", "outreach"], ["outreachRecord", "outreach"], ["outreachSendStatus", "outreach"], ["outreachNewsletterContacts", "outreach"],
   ["outreachCampaigns", "outreach"], ["outreachCampaign", "outreach"], ["createOutreachCampaign", "outreach"], ["updateOutreachCampaignRecipient", "outreach"], ["setOutreachCampaignRecipientExclusion", "outreach"],
   ["approveOutreachCampaign", "outreach"], ["reopenOutreachCampaign", "outreach"], ["sendOutreachCampaignBatch", "outreach"],
   ["saveOutreachDraft", "outreach"], ["updateOutreachOutcome", "outreach"], ["updateOutreachBusiness", "outreach"],
   ["updateOutreachPrograms", "outreach"], ["upsertNewsletterContact", "outreach"], ["createOutreachBusiness", "outreach"],
   ["importOutreachBusinesses", "outreach"], ["sendOutreachEmail", "outreach"], ["sendOutreachTestEmail", "outreach"],
   ["customerWorkQueue", "orders"], ["updateCustomerApplication", "orders"], ["updateOnlineOrderRequest", "orders"],
-  ["hubSystemStatus", "orders"], ["initializeHardenedHub", "orders"], ["reconcileIntegrations", "orders"],
+  ["hubSystemStatus", "orders"], ["initializeHardenedHub", "orders"], ["repairHubStructure", "orders"], ["reconcileIntegrations", "orders"],
   ["initData", "inventory"], ["listSkus", "inventory"], ["addSkuToStore", "inventory"], ["upsertProduct", "inventory"],
   ["submitCounts", "inventory"], ["createReorder", "inventory"], ["managerGrid", "inventory"], ["salesSinceCount", "inventory"], ["updateStoreContacts", "inventory"],
 ]);
@@ -106,8 +107,8 @@ async function fetchAppsScript(url, options = {}, policy = {}) {
       : `Campaign review connection failed: ${String(lastError)}`);
   }
   throw new Error(lastError?.name === "AbortError"
-    ? `Google Sheets took too long to answer after ${attempts} attempts.`
-    : `Inventory API connection failed after ${attempts} attempts: ${String(lastError)}`);
+    ? `Google Sheets took too long to answer after ${attempts} ${attempts === 1 ? "attempt" : "attempts"}.`
+    : `Inventory API connection failed after ${attempts} ${attempts === 1 ? "attempt" : "attempts"}: ${String(lastError)}`);
 }
 
 function nonJsonUpstreamDetail(upstream, text) {
@@ -163,7 +164,7 @@ export async function handler(event) {
     const body = event.httpMethod === "POST" && event.body ? JSON.parse(event.body) : {};
     const action = staffActionFor(event, body);
 
-    if (STAFF_ACTIONS.has(action)) {
+    if (STAFF_ACTIONS.has(action) || ADMIN_ACTIONS.has(action)) {
       const staff = requireStaffSession(event);
       if (staff.error) return response(staff.statusCode, cors, { ok:false, error:staff.error, code:staff.code });
       const area = ACTION_AREAS.get(action);

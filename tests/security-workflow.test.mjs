@@ -234,7 +234,8 @@ test("source contains formula protection, global error listeners, and recoverabl
   assert.match(backend, /function outreachSlimRecord_\(/);
   assert.match(backend, /case "outreachRecord": res = apiGetOutreachRecord_\(body\);/);
   assert.match(backend, /function apiGetOutreachRecord_\(p\)/);
-  assert.match(backend, /requireFields_\(p, \["source_row", "account_id"\]\)/);
+  assert.match(backend, /requireFields_\(p, \["source_row"\]\)/);
+  assert.match(backend, /if \(requestedAccountId && accountId !== requestedAccountId\)/);
   assert.match(backend, /function apiRepairHubStructure_\(p\)/);
   assert.match(backend, /function installNightlyHubStructureRepair\(\)/);
   assert.match(backend, /function accountIdentityLookup_\(\)/);
