@@ -1,7 +1,7 @@
-// App version: 2026.09.24.28-WEB
+// App version: 2026.09.24.29-WEB
 import { requireStaffSession } from "./auth.js";
 
-const APP_VERSION = "2026.09.24.28-WEB";
+const APP_VERSION = "2026.09.24.29-WEB";
 const STAFF_ACTIONS = new Set([
   "outreachDashboard",
   "outreachRecord",
@@ -9,6 +9,7 @@ const STAFF_ACTIONS = new Set([
   "outreachNewsletterContacts",
   "outreachCampaigns",
   "outreachCampaign",
+  "previewOutreachCampaign",
   "createOutreachCampaign",
   "updateOutreachCampaignRecipient",
   "setOutreachCampaignRecipientExclusion",
@@ -43,23 +44,22 @@ const STAFF_ACTIONS = new Set([
   "updateStoreContacts",
 ]);
 
-// This site's function limit is verified above 17 seconds from successful
-// campaign sends. Do not reduce upstream timeouts below 20 seconds without
-// first checking the active Netlify function limit and a live campaign run.
+// The site allows roughly 26 seconds for this synchronous function. Keep these
+// requests about one second below that ceiling; writes and sends must remain
+// single-attempt because Apps Script may finish after the browser times out.
 const UPSTREAM_ATTEMPTS = 1;
 const UPSTREAM_WRITE_ATTEMPTS = 1;
-const UPSTREAM_TIMEOUT_MS = 20000;
+const UPSTREAM_TIMEOUT_MS = 25000;
 const SEND_UPSTREAM_ATTEMPTS = 1;
-// Sends, campaign creation, and campaign reads need the longer verified window.
-// Do not reduce this below 20 seconds without checking the active function limit.
-const SEND_UPSTREAM_TIMEOUT_MS = 24000;
+// Sends, campaign creation, and campaign reads share the same safe ceiling.
+const SEND_UPSTREAM_TIMEOUT_MS = 25000;
 const SEND_ACTIONS = new Set(["sendOutreachEmail", "sendOutreachTestEmail", "sendOutreachCampaignBatch"]);
 const SNAPSHOT_ACTIONS = new Set(["createOutreachCampaign"]);
-const CAMPAIGN_READ_ACTIONS = new Set(["outreachCampaigns", "outreachCampaign"]);
+const CAMPAIGN_READ_ACTIONS = new Set(["outreachCampaigns", "outreachCampaign", "previewOutreachCampaign"]);
 const ADMIN_ACTIONS = new Set(["initializeHardenedHub", "repairHubStructure", "reconcileIntegrations", "recalculateOutreachMiles", "upsertProduct", "addSkuToStore"]);
 const ACTION_AREAS = new Map([
   ["outreachDashboard", "outreach"], ["outreachRecord", "outreach"], ["outreachSendStatus", "outreach"], ["outreachNewsletterContacts", "outreach"],
-  ["outreachCampaigns", "outreach"], ["outreachCampaign", "outreach"], ["createOutreachCampaign", "outreach"], ["updateOutreachCampaignRecipient", "outreach"], ["setOutreachCampaignRecipientExclusion", "outreach"],
+  ["outreachCampaigns", "outreach"], ["outreachCampaign", "outreach"], ["previewOutreachCampaign", "outreach"], ["createOutreachCampaign", "outreach"], ["updateOutreachCampaignRecipient", "outreach"], ["setOutreachCampaignRecipientExclusion", "outreach"],
   ["approveOutreachCampaign", "outreach"], ["reopenOutreachCampaign", "outreach"], ["reconcileCampaignSends", "outreach"], ["rebuildCampaignRecipients", "outreach"], ["sendOutreachCampaignBatch", "outreach"],
   ["saveOutreachDraft", "outreach"], ["updateOutreachOutcome", "outreach"], ["updateOutreachBusiness", "outreach"],
   ["updateOutreachPrograms", "outreach"], ["upsertNewsletterContact", "outreach"], ["createOutreachBusiness", "outreach"],

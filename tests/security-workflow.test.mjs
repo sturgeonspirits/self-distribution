@@ -533,13 +533,13 @@ test("campaign rebuilding reconciles first and changes only review-ready snapsho
   assert.match(proxy, /\["rebuildCampaignRecipients", "outreach"\]/);
 });
 
-test("campaigns enforce cached ZIP mileage and fit rules before creation and sending", async () => {
+test("campaign criteria preview uses centroid distances, JSON rules, and distinct send-time exclusions", async () => {
   const [backend, index, proxy] = await Promise.all([
     readFile(new URL("apps-script/Code.gs", root), "utf8"),
     readFile(new URL("index.html", root), "utf8"),
     readFile(new URL("netlify/functions/inventory.js", root), "utf8"),
   ]);
-  const createSource = backend.slice(backend.indexOf("function apiCreateOutreachCampaign_"), backend.indexOf("function apiApproveOutreachCampaign_"));
+  const previewSource = backend.slice(backend.indexOf("function apiPreviewOutreachCampaign_"), backend.indexOf("function apiApproveOutreachCampaign_"));
   const sendSource = backend.slice(backend.indexOf("function apiSendOutreachCampaignBatch_"), backend.indexOf("function outreachStatusForOutcome_"));
   const normalizeZipSource = backend.match(/function normalizeZip_\([\s\S]*?\n\}/)?.[0];
   const normalizeZip = new Function(`${normalizeZipSource}\nreturn normalizeZip_;`)();
@@ -547,21 +547,36 @@ test("campaigns enforce cached ZIP mileage and fit rules before creation and sen
   assert.equal(normalizeZip(5000), "05000");
   assert.match(backend, /function normalizeZip_\(/);
   assert.match(backend, /function zipCentroidMap_\(/);
+  assert.match(backend, /latitude:latitude/);
+  assert.match(backend, /longitude:longitude/);
+  assert.match(backend, /function milesBetweenCoordinates_\(/);
+  assert.match(backend, /function campaignCenterForCriteria_\(/);
   assert.match(backend, /cache\.put\(cacheKey, JSON\.stringify\(Object\.fromEntries\(map\)\), 21600\)/);
   assert.match(backend, /ensureHeaderColumns_\(sheet, \["Miles Source"\]\)/);
   assert.match(backend, /function apiRecalculateOutreachMiles_\(/);
   assert.match(backend, /authenticated_staff_role.*!== "admin"/);
   assert.match(backend, /function recalculateOutreachMiles\(\)/);
-  assert.match(createSource, /const rules = \{ max_miles:maxMiles, min_fit:minFit \}/);
-  assert.match(createSource, /campaignDistanceAndFitReasons_\(record, rules\)/);
-  assert.match(createSource, /Number\(a\.miles\) - Number\(b\.miles\)/);
-  assert.match(createSource, /campaignAudienceChecksum_\(audience/);
-  assert.match(sendSource, /campaignDistanceAndFitReasons_\(record, campaignRules\)/);
-  assert.match(sendSource, /status\] = "Excluded — out of area"/);
+  assert.match(backend, /"Criteria"/);
+  assert.match(backend, /function campaignStoredCriteria_\(/);
+  assert.doesNotMatch(backend, /function campaignAudienceRules_\(/);
+  assert.match(previewSource, /function apiPreviewOutreachCampaign_\(/);
+  assert.match(previewSource, /preview_confirmed !== true/);
+  assert.match(previewSource, /campaignEligibleInitialRecords_\(criteria\)/);
+  assert.match(previewSource, /JSON\.stringify\(criteria\)/);
+  assert.match(sendSource, /campaignStoredCriteria_\(campaign\.values\[ch\.criteria\]\)/);
+  assert.match(sendSource, /Excluded — out of area/);
+  assert.match(sendSource, /Excluded — below fit/);
   assert.match(proxy, /ADMIN_ACTIONS = new Set\([\s\S]*?"recalculateOutreachMiles"/);
   assert.match(proxy, /\["recalculateOutreachMiles", "outreach"\]/);
+  assert.match(proxy, /"previewOutreachCampaign"/);
+  assert.match(proxy, /const UPSTREAM_TIMEOUT_MS = 25000/);
+  assert.match(proxy, /const UPSTREAM_WRITE_ATTEMPTS = 1/);
   assert.match(index, /id="recalculateOutreachMilesBtn"/);
   assert.match(index, /action:"recalculateOutreachMiles"/);
+  assert.match(index, /id="outreachCampaignCriteriaCenterType"/);
+  assert.match(index, /id="previewOutreachCampaignCriteriaBtn"/);
+  assert.match(index, /action:"previewOutreachCampaign"/);
+  assert.match(index, /preview_confirmed:true/);
   assert.match(index, /recipient\.city/);
   assert.match(index, /Area review needed/);
 });

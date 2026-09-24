@@ -8,16 +8,18 @@ Read this file before inspecting the repository or changing the application. Upd
 
 | Component | Source version | Deployment state |
 | --- | --- | --- |
-| Netlify web app and staff proxy | `2026.09.24.28-WEB` on `codex/distribution-system-foundation` / `2026.09.24.24-WEB` live | ZIP-mileage recalculation and the admin-only proxy action are committed for review; deployment is pending. |
-| Inventory API Apps Script | `2026.09.24.25` on `codex/distribution-system-foundation` / `2026.09.24.17` live | ZIP-centroid distance, manual mileage overrides, and the campaign distance/fit gate are committed for review; deployment is pending. |
+| Netlify web app and staff proxy | `2026.09.24.29-WEB` on `codex/distribution-system-foundation` / `2026.09.24.24-WEB` live | Campaign criteria preview and the single-attempt 25-second proxy timeout are committed for review; deployment is pending. |
+| Inventory API Apps Script | `2026.09.24.26` on `codex/distribution-system-foundation` / `2026.09.24.17` live | Preview-first campaigns now store JSON criteria and calculate flexible center-to-ZIP distance; deployment is pending. |
 | Distribution Outreach Apps Script | `2026.09.24.13-APP` on `codex/work` | Signed-link rendering is committed; owner has not yet confirmed this exact version is deployed. |
 | Public customer Netlify proxy | `2026.09.18.3-WEB` | Deployed with Netlify; unchanged by the latest staff-app UI work |
 
-Current Git branch: `codex/work`
+Current Git branch: `codex/distribution-system-foundation`
 
 Current remote: `https://github.com/sturgeonspirits/self-distribution.git`
 
 Latest completed changes:
+
+- New campaign creation is preview-first: choose the distillery, any ZIP, or an exact ZIP-Centroids city as the center; set radius and minimum fit; optionally filter City, County, Segment, and Wave; optionally cap recipients; then explicitly confirm before a snapshot is created. New criteria are stored as JSON in `Outreach Campaigns`; the Audience text is display-only. Campaign send-time checks use the stored JSON and distinguish distance, fit, and other criteria changes. Pre-criteria campaigns remain ungated by this new rule.
 
 - Netlify web release `2026.09.24.18-WEB` is deployed. It removes proxy retries for POST/write requests, uses a 9-second upstream timeout, applies known Outreach changes locally after a successful save, and reloads the list only in the background.
 - Campaigns can freeze every currently eligible initial prospect into a persistent, reviewable recipient/message snapshot; creation and approval never send mail.

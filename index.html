@@ -1,10 +1,10 @@
 <!doctype html>
-<!-- App version: 2026.09.24.28-WEB -->
+<!-- App version: 2026.09.24.29-WEB -->
 <html>
 <head>
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover"/>
-  <meta name="app-version" content="2026.09.24.28-WEB" />
+  <meta name="app-version" content="2026.09.24.29-WEB" />
   <meta name="theme-color" content="#536f77" />
   <link rel="icon" href="/assets/distribution-hub-icon.svg" type="image/svg+xml" />
   <link rel="manifest" href="/site.webmanifest" />
@@ -2327,6 +2327,31 @@
     </div>
   </dialog>
 
+  <dialog id="outreachCampaignCriteriaDialog">
+    <div class="dlgHeader">
+      <div><div class="dlgTitle">Create campaign</div><div class="smallMuted">Choose the audience criteria before recipients are frozen for review.</div></div>
+      <button id="closeOutreachCampaignCriteriaBtn" type="button">Cancel</button>
+    </div>
+    <div class="dlgBody">
+      <div class="modeNotice" style="margin-top:0"><i data-lucide="map-pin"></i><span>Distance is calculated from ZIP-centroid latitude/longitude, never the directory’s stored Miles-from-Oshkosh value. Preview first; creation only happens after you confirm the preview.</span></div>
+      <div class="workflowEditGrid">
+        <div class="full"><label>Campaign name</label><input id="outreachCampaignCriteriaName" maxlength="120" /></div>
+        <div><label>Center</label><select id="outreachCampaignCriteriaCenterType"><option value="distillery">Distillery (default)</option><option value="zip">ZIP</option><option value="city">City</option></select></div>
+        <div><label id="outreachCampaignCriteriaCenterLabel">Center value</label><input id="outreachCampaignCriteriaCenterValue" disabled placeholder="Distillery (54902)" /></div>
+        <div><label>Radius (miles)</label><input id="outreachCampaignCriteriaRadius" type="number" min="0" max="1000" step="0.1" value="15" /></div>
+        <div><label>Minimum craft-spirit fit</label><select id="outreachCampaignCriteriaFit"><option value="5">5 — strongest fit</option><option value="4">4 or better</option><option value="3">3 or better</option><option value="2">2 or better</option><option value="1">1 or better</option></select></div>
+        <div><label>City filter (optional)</label><input id="outreachCampaignCriteriaCity" maxlength="80" /></div>
+        <div><label>County filter (optional)</label><input id="outreachCampaignCriteriaCounty" maxlength="80" /></div>
+        <div><label>Segment filter (optional)</label><input id="outreachCampaignCriteriaSegment" maxlength="80" /></div>
+        <div><label>Wave filter (optional)</label><input id="outreachCampaignCriteriaWave" maxlength="80" /></div>
+        <div><label>Maximum recipients (optional)</label><input id="outreachCampaignCriteriaMaxRecipients" type="number" min="1" max="5000" step="1" /></div>
+      </div>
+      <div class="status" id="outreachCampaignCriteriaStatus" role="status" aria-live="polite"></div>
+      <div id="outreachCampaignPreview" hidden><div class="modeNotice" style="margin:12px 0"><i data-lucide="list-checks"></i><span id="outreachCampaignPreviewSummary"></span></div><div class="outreachList" id="outreachCampaignPreviewRecipients"></div></div>
+      <div class="dlgActions"><button id="cancelOutreachCampaignCriteriaBtn" type="button">Cancel</button><button id="previewOutreachCampaignCriteriaBtn" type="button">Preview audience</button><button class="primary" id="createOutreachCampaignCriteriaBtn" type="button" disabled>Confirm and freeze campaign</button></div>
+    </div>
+  </dialog>
+
   <dialog id="outcomeDialog">
     <div class="dlgHeader">
       <div>
@@ -2484,7 +2509,7 @@
 
   <footer style="max-width:1200px;margin:18px auto 120px;padding:0 12px;text-align:center;color:#6b7280;font-size:12px;">
     Designed by <a href="https://scriptspirit.dev" target="_blank" rel="noopener noreferrer" style="color:#1d4ed8;text-decoration:none;font-weight:700;">Script Spirit</a>
-<span id="appVersionFooter"> • Version 2026.09.24.28-WEB</span>
+<span id="appVersionFooter"> • Version 2026.09.24.29-WEB</span>
   </footer>
 
 
@@ -2507,7 +2532,7 @@
   window.addEventListener("unhandledrejection", e => console.error("Unhandled promise rejection:", e.reason));
   window.addEventListener("error", e => console.error("Unhandled error:", e.error || e.message));
   const $ = (id) => document.getElementById(id);
-  const APP_VERSION = "2026.09.24.28-WEB";
+  const APP_VERSION = "2026.09.24.29-WEB";
   $("appVersionFooter").textContent = ` • Version ${APP_VERSION}`;
 
   let cache = { stores: [], lines: [] };
@@ -2547,6 +2572,7 @@
   let selectedOutreachCampaign = null;
   let selectedCampaignApprovalToken = "";
   let campaignSendInProgress = false;
+  let outreachCampaignPreview = null;
 
   let customerData = { accounts:[], applications:[], orders:[], summary:{ new_applications:0, active_applications:0, new_orders:0, active_orders:0, invoice_needed:0 } };
   let customerView = ["accounts", "orders", "applications"].includes(localStorage.getItem("customer_work_view")) ? localStorage.getItem("customer_work_view") : "accounts";
@@ -3254,7 +3280,7 @@
     $("outreachAudienceCount").textContent = `${campaigns.length} campaign${campaigns.length === 1 ? "" : "s"}`;
     $("outreachList").innerHTML = `
       <article class="outreachCard priority">
-        <div class="outreachCardTop"><div><div class="businessName">New initial-prospect campaign</div><div class="contactLine">Freeze every currently eligible initial prospect into one reviewable audience. No email is sent when the campaign is created.</div></div><span class="badge amber">Draft</span></div>
+        <div class="outreachCardTop"><div><div class="businessName">New initial-prospect campaign</div><div class="contactLine">Choose a center ZIP, radius, and minimum fit before freezing eligible initial prospects into a reviewable audience. No email is sent when the campaign is created.</div></div><span class="badge amber">Draft</span></div>
         <div class="outreachActions"><button class="actionBtn primary" type="button" data-campaign-action="create"><i data-lucide="send-horizontal"></i><span>Create campaign</span></button></div>
       </article>
       ${campaigns.map(campaign => `
@@ -3269,14 +3295,107 @@
   async function createOutreachCampaign(){
     const staffName = $("outreachStaffName").value.trim();
     if (!staffName) return toast("Enter your staff name before creating a campaign.");
-    const campaignName = `Initial prospect campaign — ${new Date().toLocaleDateString(undefined, { month:"short", day:"numeric", year:"numeric" })}`;
-    if (!confirm("Create a frozen campaign for every eligible initial prospect? This creates a review snapshot only; it does not send email.")) return;
-    setOutreachStatus("Creating campaign snapshot...");
-    const res = await staffApiPost({ action:"createOutreachCampaign", campaign_name:campaignName, staff_name:staffName });
-    if (!res.ok) throw new Error(res.error || "Campaign could not be created.");
-    setOutreachStatus(`${res.recipient_count} recipients frozen for review. No email was sent.`);
-    await loadOutreachCampaigns();
-    await openOutreachCampaign(res.campaign_id);
+    $("outreachCampaignCriteriaName").value = `Initial prospect campaign — ${new Date().toLocaleDateString(undefined, { month:"short", day:"numeric", year:"numeric" })}`;
+    $("outreachCampaignCriteriaCenterType").value = "distillery";
+    $("outreachCampaignCriteriaCenterValue").value = "";
+    $("outreachCampaignCriteriaRadius").value = "15";
+    $("outreachCampaignCriteriaFit").value = "5";
+    $("outreachCampaignCriteriaCity").value = "";
+    $("outreachCampaignCriteriaCounty").value = "";
+    $("outreachCampaignCriteriaSegment").value = "";
+    $("outreachCampaignCriteriaWave").value = "";
+    $("outreachCampaignCriteriaMaxRecipients").value = "";
+    $("outreachCampaignCriteriaStatus").textContent = "";
+    outreachCampaignPreview = null;
+    $("outreachCampaignPreview").hidden = true;
+    $("createOutreachCampaignCriteriaBtn").disabled = false;
+    syncOutreachCampaignCenterInput();
+    invalidateOutreachCampaignPreview();
+    $("outreachCampaignCriteriaDialog").showModal();
+    $("outreachCampaignCriteriaName").focus();
+  }
+
+  function syncOutreachCampaignCenterInput(){
+    const type = $("outreachCampaignCriteriaCenterType").value;
+    const input = $("outreachCampaignCriteriaCenterValue");
+    const label = $("outreachCampaignCriteriaCenterLabel");
+    const isDistillery = type === "distillery";
+    input.disabled = isDistillery;
+    input.value = isDistillery ? "" : input.value;
+    label.textContent = type === "zip" ? "Center ZIP" : type === "city" ? "Center city" : "Center value";
+    input.placeholder = type === "zip" ? "e.g., 54301" : type === "city" ? "e.g., Green Bay" : "Distillery (54902)";
+    input.inputMode = type === "zip" ? "numeric" : "text";
+  }
+
+  function campaignCriteriaInput(){
+    return {
+      center_type:$("outreachCampaignCriteriaCenterType").value,
+      center_value:$("outreachCampaignCriteriaCenterValue").value.trim(),
+      radius_miles:$("outreachCampaignCriteriaRadius").value.trim(),
+      min_fit:$("outreachCampaignCriteriaFit").value,
+      city:$("outreachCampaignCriteriaCity").value.trim(),
+      county:$("outreachCampaignCriteriaCounty").value.trim(),
+      segment:$("outreachCampaignCriteriaSegment").value.trim(),
+      wave:$("outreachCampaignCriteriaWave").value.trim(),
+      max_recipients:$("outreachCampaignCriteriaMaxRecipients").value.trim(),
+    };
+  }
+
+  function invalidateOutreachCampaignPreview(){
+    outreachCampaignPreview = null;
+    $("outreachCampaignPreview").hidden = true;
+    $("createOutreachCampaignCriteriaBtn").disabled = true;
+  }
+
+  async function previewOutreachCampaignCriteria(){
+    const staffName = $("outreachStaffName").value.trim();
+    if (!staffName) return toast("Enter your staff name before previewing a campaign.");
+    const criteria = campaignCriteriaInput();
+    if (criteria.center_type === "zip" && !/^\d{5}$/.test(criteria.center_value)) return $("outreachCampaignCriteriaStatus").textContent = "Enter a five-digit center ZIP.";
+    if (criteria.center_type === "city" && !criteria.center_value) return $("outreachCampaignCriteriaStatus").textContent = "Enter a center city.";
+    const button = $("previewOutreachCampaignCriteriaBtn");
+    button.disabled = true;
+    $("outreachCampaignCriteriaStatus").textContent = "Building audience preview...";
+    try {
+      const res = await staffApiPost({ action:"previewOutreachCampaign", criteria:criteria, staff_name:staffName });
+      if (!res.ok) throw new Error(res.error || "Campaign preview could not be created.");
+      outreachCampaignPreview = { criteria:criteria, result:res };
+      $("outreachCampaignCriteriaStatus").textContent = "Preview is ready. Confirm only if this is the intended audience.";
+      $("outreachCampaignPreviewSummary").textContent = `${Number(res.recipient_count || 0)} eligible initial prospect${Number(res.recipient_count || 0) === 1 ? "" : "s"} • ${escapeHtml(res.audience || "Selected criteria")}`;
+      $("outreachCampaignPreviewRecipients").innerHTML = (res.recipients || []).length ? res.recipients.map(recipient => `<article class="outreachCard"><div class="outreachCardTop"><div><div class="businessName">${escapeHtml(recipient.business)}</div><div class="contactLine">${escapeHtml(recipient.city || "City missing")} • ${recipient.miles_from_center === null || recipient.miles_from_center === undefined ? "Miles missing" : `${escapeHtml(recipient.miles_from_center)} mi from center`} • Fit ${escapeHtml(recipient.craft_spirit_fit)}</div></div></div></article>`).join("") : `<div class="outreachEmpty"><strong>No eligible prospects match these criteria</strong><span>Change the center, radius, fit, or optional filters and preview again.</span></div>`;
+      $("outreachCampaignPreview").hidden = false;
+      $("createOutreachCampaignCriteriaBtn").disabled = !Number(res.recipient_count || 0);
+      refreshIcons();
+    } catch (error) {
+      $("outreachCampaignCriteriaStatus").textContent = error.message || String(error);
+      invalidateOutreachCampaignPreview();
+    } finally {
+      button.disabled = false;
+    }
+  }
+
+  async function submitOutreachCampaignCriteria(){
+    const staffName = $("outreachStaffName").value.trim();
+    const campaignName = $("outreachCampaignCriteriaName").value.trim();
+    if (!staffName) return toast("Enter your staff name before creating a campaign.");
+    if (!campaignName) return $("outreachCampaignCriteriaStatus").textContent = "Campaign name is required.";
+    if (!outreachCampaignPreview) return $("outreachCampaignCriteriaStatus").textContent = "Preview this audience before creating a campaign.";
+    const button = $("createOutreachCampaignCriteriaBtn");
+    button.disabled = true;
+    $("outreachCampaignCriteriaStatus").textContent = "Freezing the confirmed campaign snapshot...";
+    setOutreachStatus("Creating confirmed campaign snapshot...");
+    try {
+      const res = await staffApiPost({ action:"createOutreachCampaign", campaign_name:campaignName, criteria:outreachCampaignPreview.criteria, preview_confirmed:true, staff_name:staffName });
+      if (!res.ok) throw new Error(res.error || "Campaign could not be created.");
+      $("outreachCampaignCriteriaDialog").close();
+      setOutreachStatus(`${res.recipient_count} confirmed recipients frozen for review. No email was sent.`);
+      await loadOutreachCampaigns();
+      await openOutreachCampaign(res.campaign_id);
+    } catch (error) {
+      $("outreachCampaignCriteriaStatus").textContent = error.message || String(error);
+    } finally {
+      button.disabled = false;
+    }
   }
 
   async function recalculateOutreachMiles(){
@@ -3307,10 +3426,13 @@
     selectedCampaignApprovalToken = campaign.approval_token || "";
     $("outreachCampaignTitle").textContent = campaign.name;
     const excludedCount = Number(campaign.counts?.Excluded || 0);
-    const maxMiles = Number(campaign.audience_rules?.max_miles || 15);
-    const minFit = Number(campaign.audience_rules?.min_fit || 5);
-    const areaWarningCount = (campaign.recipients || []).filter(recipient => recipient.miles === null || recipient.miles === undefined || Number(recipient.miles) > maxMiles).length;
-    $("outreachCampaignSubtitle").textContent = `${campaign.recipient_count} frozen recipients${excludedCount ? ` • ${excludedCount} excluded` : ""} • fit ≥${minFit} • ≤${maxMiles} mi${areaWarningCount ? ` • ${areaWarningCount} need area review` : ""} • ${campaign.status}`;
+    const criteria = campaign.criteria || null;
+    const maxMiles = Number(criteria?.radius_miles || 0);
+    const centerLabel = criteria?.center?.label || "the original audience";
+    const minFit = Number(criteria?.min_fit || 0);
+    const areaWarningCount = criteria ? (campaign.recipients || []).filter(recipient => recipient.miles === null || recipient.miles === undefined || Number(recipient.miles) > maxMiles).length : 0;
+    const criteriaSummary = criteria ? `fit ≥${minFit} • ≤${maxMiles} mi of ${centerLabel}` : "Legacy campaign • no stored criteria gate";
+    $("outreachCampaignSubtitle").textContent = `${campaign.recipient_count} frozen recipients${excludedCount ? ` • ${excludedCount} excluded` : ""} • ${criteriaSummary}${areaWarningCount ? ` • ${areaWarningCount} need area review` : ""} • ${campaign.status}`;
     $("outreachCampaignNotice").textContent = campaign.status === "Review"
       ? "Open any recipient to edit it or exclude it from this campaign. Approval freezes the exact saved audience and messages; it still does not send email."
       : campaign.status === "Approved" ? "This audience is approved. “Send remaining” sends one verified recipient at a time, skips delivery-unknown records without retrying them, and sends no further email if the connection outcome is unknown."
@@ -3327,8 +3449,8 @@
     refreshCampaignSendControls();
     const editable = campaign.status === "Review";
     $("outreachCampaignRecipients").innerHTML = `<div class="outreachList">${(campaign.recipients || []).map((recipient, index) => `
-      <details class="outreachCard"><summary><strong>${escapeHtml(recipient.business)}</strong><span class="smallMuted"> • ${escapeHtml(recipient.city || "City missing")} • ${recipient.miles === null || recipient.miles === undefined || recipient.miles === "" ? "Miles missing" : `${escapeHtml(recipient.miles)} mi`} • ${escapeHtml(recipient.email)} • ${escapeHtml(recipient.status)}</span><br><span class="smallMuted">${escapeHtml(recipient.subject)}${recipient.segment ? ` • ${escapeHtml(recipient.segment)}` : " • Default Segment C"}</span></summary>
-      <div class="outreachMeta"><span class="badge">${escapeHtml(recipient.priority || "No")} priority</span><span class="badge blue">${escapeHtml(recipient.email_confidence || "Unrated")}</span>${recipient.wave ? `<span class="badge">${escapeHtml(recipient.wave)}</span>` : ""}${recipient.miles === null || recipient.miles === undefined || Number(recipient.miles) > maxMiles ? `<span class="badge amber">Area review needed</span>` : ""}</div>
+      <details class="outreachCard"><summary><strong>${escapeHtml(recipient.business)}</strong><span class="smallMuted"> • ${escapeHtml(recipient.city || "City missing")} • ${recipient.miles === null || recipient.miles === undefined || recipient.miles === "" ? "Miles missing" : `${escapeHtml(recipient.miles)} mi from ${escapeHtml(centerLabel)}`} • ${escapeHtml(recipient.email)} • ${escapeHtml(recipient.status)}</span><br><span class="smallMuted">${escapeHtml(recipient.subject)}${recipient.segment ? ` • ${escapeHtml(recipient.segment)}` : " • Default Segment C"}</span></summary>
+      <div class="outreachMeta"><span class="badge">${escapeHtml(recipient.priority || "No")} priority</span><span class="badge blue">${escapeHtml(recipient.email_confidence || "Unrated")}</span>${recipient.wave ? `<span class="badge">${escapeHtml(recipient.wave)}</span>` : ""}${criteria && (recipient.miles === null || recipient.miles === undefined || Number(recipient.miles) > maxMiles) ? `<span class="badge amber">Area review needed</span>` : ""}</div>
       <label>Subject</label><input class="emailEditor" data-campaign-subject value="${escapeHtml(recipient.subject || "")}" ${editable && recipient.status === "Ready for review" ? "" : "readonly"} />
       <label>Message</label><textarea class="emailEditor" data-campaign-body ${editable && recipient.status === "Ready for review" ? "" : "readonly"}>${escapeHtml(recipient.body_text || "")}</textarea>
       ${editable && ["Ready for review", "Excluded"].includes(recipient.status) ? `<div class="outreachActions">${recipient.status === "Ready for review" ? `<button class="actionBtn primary" type="button" data-campaign-recipient-action="save" data-recipient-token="${escapeHtml(recipient.idempotency_token)}"><i data-lucide="save"></i><span>Save email changes</span></button>` : ""}<button class="actionBtn" type="button" data-campaign-recipient-action="${recipient.status === "Excluded" ? "restore" : "exclude"}" data-recipient-token="${escapeHtml(recipient.idempotency_token)}"><i data-lucide="${recipient.status === "Excluded" ? "rotate-ccw" : "ban"}"></i><span>${recipient.status === "Excluded" ? "Restore to campaign" : "Exclude from campaign"}</span></button></div>` : ""}${recipient.result_detail ? `<div class="status">${escapeHtml(recipient.result_detail)}</div>` : ""}
@@ -5952,6 +6074,16 @@
   $("closeOutreachReviewBtn").addEventListener("click", closeOutreachReview);
   $("outreachReviewDialog").addEventListener("close", () => { outreachReviewOpenRequest += 1; });
   $("closeOutreachCampaignBtn").addEventListener("click", () => $("outreachCampaignDialog").close());
+  $("closeOutreachCampaignCriteriaBtn").addEventListener("click", () => $("outreachCampaignCriteriaDialog").close());
+  $("cancelOutreachCampaignCriteriaBtn").addEventListener("click", () => $("outreachCampaignCriteriaDialog").close());
+  $("outreachCampaignCriteriaCenterType").addEventListener("change", () => { syncOutreachCampaignCenterInput(); invalidateOutreachCampaignPreview(); });
+  ["outreachCampaignCriteriaCenterValue", "outreachCampaignCriteriaRadius", "outreachCampaignCriteriaFit", "outreachCampaignCriteriaCity", "outreachCampaignCriteriaCounty", "outreachCampaignCriteriaSegment", "outreachCampaignCriteriaWave", "outreachCampaignCriteriaMaxRecipients"].forEach(id => {
+    $(id).addEventListener("input", invalidateOutreachCampaignPreview);
+    $(id).addEventListener("change", invalidateOutreachCampaignPreview);
+  });
+  $("previewOutreachCampaignCriteriaBtn").addEventListener("click", previewOutreachCampaignCriteria);
+  $("createOutreachCampaignCriteriaBtn").addEventListener("click", submitOutreachCampaignCriteria);
+  $("outreachCampaignCriteriaDialog").addEventListener("close", () => { outreachCampaignPreview = null; });
   $("outreachCampaignRecipients").addEventListener("click", event => {
     const button = event.target.closest("[data-campaign-recipient-action='save']");
     if (button) return saveOutreachCampaignRecipient(button);
