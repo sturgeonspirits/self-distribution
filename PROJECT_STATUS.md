@@ -1,6 +1,6 @@
 # Sturgeon Distribution Hub — Project Status
 
-Last updated: 2026-09-23
+Last updated: 2026-09-24
 
 Read this file before inspecting the repository or changing the application. Update it whenever a deployment, version, service URL, known issue, or required setup step changes. Never put secret values in this file.
 
@@ -8,8 +8,8 @@ Read this file before inspecting the repository or changing the application. Upd
 
 | Component | Source version | Deployment state |
 | --- | --- | --- |
-| Netlify web app and staff proxy | `2026.09.23.15-WEB` | Deployed and verified on 2026-09-23. It displays the mailer's exact live-send safety status in the campaign dialog rather than silently disabling Send remaining. |
-| Inventory API Apps Script | `2026.09.23.11` | Source updated on 2026-09-23; deployment pending. It safely reopens genuinely unsent blocked recipients after an Activity Log check, prevents a Zoho-accepted message from returning to the resend path if recording fails, and locks approval. |
+| Netlify web app and staff proxy | `2026.09.24.18-WEB` | Committed but not deployed. The live site remains `2026.09.24.17-WEB`. This pending release uses a 9-second upstream timeout, one attempt for every write, and quiet background refreshes after Outreach saves. |
+| Inventory API Apps Script | `2026.09.24.12` source / `2026.09.23.11` live | Source is not deployed. The live Inventory API remains version `.11`. |
 | Distribution Outreach Apps Script | `2026.09.22.9-APP` | Source is committed; owner has not yet confirmed this exact version is deployed |
 | Public customer Netlify proxy | `2026.09.18.3-WEB` | Deployed with Netlify; unchanged by the latest staff-app UI work |
 
@@ -19,6 +19,7 @@ Current remote: `https://github.com/sturgeonspirits/self-distribution.git`
 
 Latest completed changes:
 
+- Netlify web release `2026.09.24.18-WEB` is prepared locally and committed, but not deployed. It removes proxy retries for POST/write requests, uses a 9-second upstream timeout, applies known Outreach changes locally after a successful save, and reloads the list only in the background.
 - Campaigns can freeze every currently eligible initial prospect into a persistent, reviewable recipient/message snapshot; creation and approval never send mail.
 - Approved campaigns expose every rendered email, require explicit acknowledgement for unsegmented prospects, and deliver only a manually confirmed batch of up to 10—stopping at the first blocked record and retaining per-recipient receipts.
 - Prospect cards show the actual email and phone, or explicit `No email` and `No phone` warnings.

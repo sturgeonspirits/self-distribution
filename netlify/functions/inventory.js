@@ -1,7 +1,7 @@
-// App version: 2026.09.23.15-WEB
+// App version: 2026.09.24.18-WEB
 import { requireStaffSession } from "./auth.js";
 
-const APP_VERSION = "2026.09.23.15-WEB";
+const APP_VERSION = "2026.09.24.18-WEB";
 const STAFF_ACTIONS = new Set([
   "outreachDashboard",
   "outreachSendStatus",
@@ -41,9 +41,10 @@ const STAFF_ACTIONS = new Set([
 ]);
 
 const UPSTREAM_ATTEMPTS = 2;
-const UPSTREAM_TIMEOUT_MS = 11000;
+const UPSTREAM_WRITE_ATTEMPTS = 1;
+const UPSTREAM_TIMEOUT_MS = 9000;
 const SEND_UPSTREAM_ATTEMPTS = 1;
-const SEND_UPSTREAM_TIMEOUT_MS = 24000;
+const SEND_UPSTREAM_TIMEOUT_MS = 9000;
 const SEND_ACTIONS = new Set(["sendOutreachEmail", "sendOutreachTestEmail", "sendOutreachCampaignBatch"]);
 const SNAPSHOT_ACTIONS = new Set(["createOutreachCampaign"]);
 const CAMPAIGN_READ_ACTIONS = new Set(["outreachCampaigns", "outreachCampaign"]);
@@ -229,7 +230,10 @@ export async function handler(event) {
       timeoutMs:SEND_UPSTREAM_TIMEOUT_MS,
       campaignRead:true,
     } : {
-      attempts:UPSTREAM_ATTEMPTS,
+      // A Google Apps Script write can finish after this function times out.
+      // Retrying it here risks a duplicate note, activity row, or update while
+      // the first request still owns the Apps Script lock.
+      attempts:UPSTREAM_WRITE_ATTEMPTS,
       timeoutMs:UPSTREAM_TIMEOUT_MS,
     });
     return proxyResult(resp, cors);

@@ -1,10 +1,10 @@
 <!doctype html>
-<!-- App version: 2026.09.24.17-WEB -->
+<!-- App version: 2026.09.24.18-WEB -->
 <html>
 <head>
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover"/>
-  <meta name="app-version" content="2026.09.24.17-WEB" />
+  <meta name="app-version" content="2026.09.24.18-WEB" />
   <title>Sturgeon Distribution Hub</title>
   <style>
     :root{
@@ -2469,7 +2469,7 @@
 
   <footer style="max-width:1200px;margin:18px auto 120px;padding:0 12px;text-align:center;color:#6b7280;font-size:12px;">
     Designed by <a href="https://scriptspirit.dev" target="_blank" rel="noopener noreferrer" style="color:#1d4ed8;text-decoration:none;font-weight:700;">Script Spirit</a>
-<span id="appVersionFooter"> • Version 2026.09.24.17-WEB</span>
+<span id="appVersionFooter"> • Version 2026.09.24.18-WEB</span>
   </footer>
 
 
@@ -2492,7 +2492,7 @@
   window.addEventListener("unhandledrejection", e => console.error("Unhandled promise rejection:", e.reason));
   window.addEventListener("error", e => console.error("Unhandled error:", e.error || e.message));
   const $ = (id) => document.getElementById(id);
-  const APP_VERSION = "2026.09.24.17-WEB";
+  const APP_VERSION = "2026.09.24.18-WEB";
   $("appVersionFooter").textContent = ` • Version ${APP_VERSION}`;
 
   let cache = { stores: [], lines: [] };
@@ -3590,6 +3590,30 @@
     if (outreachView === "campaigns") loadOutreachCampaigns().catch(handleOutreachLoadError);
   }
 
+  function patchOutreachRecordLocally(sourceRow, patch){
+    const row = Number(sourceRow);
+    if (!Number.isFinite(row)) return null;
+    let updated = null;
+    ["today", "directory", "sent"].forEach(listName => {
+      (outreachData[listName] || []).forEach(record => {
+        if (Number(record.source_row) !== row) return;
+        Object.assign(record, patch);
+        if (!updated) updated = record;
+      });
+    });
+    if (selectedOutreachRecord && Number(selectedOutreachRecord.source_row) === row) {
+      Object.assign(selectedOutreachRecord, patch);
+      if (!updated) updated = selectedOutreachRecord;
+    }
+    return updated;
+  }
+
+  function refreshOutreachAfterSave(){
+    loadOutreach().catch(() => {
+      setOutreachStatus("Saved — list refresh failed, click refresh.");
+    });
+  }
+
   function findOutreachRecordFromElement(element){
     const card = element.closest("[data-record-key]");
     if (!card) return null;
@@ -3696,15 +3720,18 @@
       });
       if (!res.ok) throw new Error(res.error || "Draft could not be saved.");
       outreachDraftOriginal = { subject:subject, body:bodyText };
-      selectedOutreachRecord.subject = subject;
-      selectedOutreachRecord.body_text = bodyText;
-      selectedOutreachRecord.has_saved_draft = true;
-      selectedOutreachRecord.draft_updated_at = res.updated_at || new Date().toISOString();
+      patchOutreachRecordLocally(selectedOutreachRecord.source_row, {
+        subject:subject,
+        body_text:bodyText,
+        has_saved_draft:true,
+        draft_updated_at:res.updated_at || new Date().toISOString(),
+      });
       $("outreachReviewSubject").value = subject;
       $("outreachReviewBody").value = bodyText;
       $("outreachDraftStatus").textContent = "Draft saved";
       updateOutreachSendState();
       toast("Email draft saved");
+      refreshOutreachAfterSave();
     } catch (err) {
       $("outreachDraftStatus").textContent = err.message || String(err);
       button.disabled = false;
@@ -3756,8 +3783,17 @@
       $("outreachDraftStatus").textContent = res.message || "Zoho accepted the email.";
       toast(testMode ? "Test email accepted" : "Email sent");
       if (!testMode) {
+        const sentAt = new Date().toISOString();
+        const currentStage = selectedOutreachRecord.next_email || "Initial";
+        patchOutreachRecordLocally(selectedOutreachRecord.source_row, {
+          status:currentStage === "Initial" ? "Sent" : currentStage === "Reactivation" ? "Reactivation sent" : "Follow-up sent",
+          next_email:res.next_stage || selectedOutreachRecord.next_email,
+          last_emailed:sentAt,
+          message_id:res.message_id || selectedOutreachRecord.message_id,
+        });
         $("outreachReviewDialog").close();
-        await loadOutreach();
+        renderOutreach();
+        refreshOutreachAfterSave();
       }
     } catch (error) {
       $("outreachDraftStatus").textContent = error.message || String(error);
@@ -4012,9 +4048,14 @@
       if (!res.ok) throw new Error(res.error || "Business information could not be saved.");
       toast(res.message || "Business updated");
       const sourceRow = selectedOutreachRecord.source_row;
-      await loadOutreach();
-      const updated = outreachData.directory.find(record => Number(record.source_row) === Number(sourceRow));
+      const patch = Object.assign({}, updates);
+      if (additionalNote) {
+        const priorNotes = String(selectedOutreachRecord.notes || "").trim();
+        patch.notes = priorNotes ? `${priorNotes}\n${additionalNote}` : additionalNote;
+      }
+      const updated = patchOutreachRecordLocally(sourceRow, patch);
       if (updated) openBusinessDetail(updated);
+      refreshOutreachAfterSave();
     } catch (err) {
       status.textContent = err.message || String(err);
       saveButton.disabled = false;
@@ -4046,9 +4087,21 @@
       if (!res.ok) throw new Error(res.error || "Program plan could not be saved.");
       toast("Program plan saved");
       const sourceRow = selectedOutreachRecord.source_row;
-      await loadOutreach();
-      const updated = outreachData.directory.find(record => Number(record.source_row) === Number(sourceRow));
+      const updated = patchOutreachRecordLocally(sourceRow, {
+        programs:{
+          newsletter_status:$("programNewsletterStatus").value,
+          newsletter_consent_source:$("programNewsletterConsentSource").value.trim(),
+          newsletter_status_date:$("programNewsletterStatusDate").value,
+          ordering_status:$("programOrderingStatus").value,
+          ordering_customer_id:$("programOrderingCustomerId").value.trim(),
+          ordering_invite_date:$("programOrderingInviteDate").value,
+          ordering_portal_url:$("programOrderingPortalUrl").value.trim(),
+          notes:$("programNotes").value.trim(),
+          updated_at:new Date().toISOString(),
+        },
+      });
       if (updated) openBusinessDetail(updated);
+      refreshOutreachAfterSave();
     } catch (err) {
       status.textContent = err.message || String(err);
       button.disabled = false;
@@ -4131,9 +4184,16 @@
         notes:$("outcomeNotes").value.trim(),
       });
       if (!res.ok) throw new Error(res.error || "Outcome could not be saved.");
+      patchOutreachRecordLocally(selectedOutreachRecord.source_row, {
+        outcome:selectedOutcome,
+        status:res.status || selectedOutreachRecord.status,
+        next_follow_up:$("outcomeFollowUpDate").value || selectedOutreachRecord.next_follow_up,
+        do_not_email:["Not interested", "Unsubscribed"].includes(selectedOutcome) || !!selectedOutreachRecord.do_not_email,
+      });
       $("outcomeDialog").close();
       toast("Outcome saved");
-      await loadOutreach();
+      renderOutreach();
+      refreshOutreachAfterSave();
     } catch (err) {
       $("outcomeStatus").textContent = err.message || String(err);
       button.disabled = false;
@@ -4175,7 +4235,37 @@
       });
       if (!result.ok) throw new Error(result.error || "Business could not be added.");
       $("addBusinessDialog").close();
-      await loadOutreach();
+      const sourceRow = Number(result.source_row || 0);
+      if (sourceRow >= 2) {
+        const newBusiness = {
+          account_id:result.account_id || "",
+          source_row:sourceRow,
+          business:$("newBusinessName").value.trim(),
+          display_business:$("newBusinessName").value.trim(),
+          contact:$("newBusinessContact").value.trim(),
+          email:$("newBusinessEmail").value.trim(),
+          phone:$("newBusinessPhone").value.trim(),
+          address:$("newBusinessAddress").value.trim(),
+          city:$("newBusinessCity").value.trim(),
+          state:$("newBusinessState").value.trim(),
+          postal_code:$("newBusinessZip").value.trim(),
+          craft_spirit_fit:Number($("newBusinessFit").value || 0),
+          miles:$("newBusinessMiles").value,
+          notes:$("newBusinessNotes").value.trim(),
+          status:"Not contacted",
+          next_email:"Initial",
+          fields:[],
+          editable_fields:{},
+          programs:{},
+          activity:[],
+        };
+        outreachData.directory = [newBusiness, ...(outreachData.directory || [])];
+        outreachData.summary = Object.assign({}, outreachData.summary, {
+          total_businesses:Number(outreachData.summary?.total_businesses || 0) + 1,
+        });
+        renderOutreach();
+      }
+      refreshOutreachAfterSave();
       toast("Business added");
     } catch (error) {
       $("addBusinessStatus").textContent = error.message || String(error);
