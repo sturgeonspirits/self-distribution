@@ -3495,6 +3495,7 @@
       const contact = String(record.contact || "").trim();
       const email = String(record.email || "").trim();
       const phone = String(record.phone || "").trim();
+      const refreshPending = !!record.refresh_pending;
       return `
         <article class="outreachCard ${priority.toLowerCase().includes("high") ? "priority" : ""}" data-record-key="${escapeHtml(outreachRecordKey(record))}">
           <div class="outreachCardTop">
@@ -3520,11 +3521,12 @@
             ${Number(record.email_engagement?.click_count || 0) > 0 ? `<span class="badge green">Clicked</span>` : ""}
           </div>
           <div class="outreachActions">
-            <button class="actionBtn primary actionPrimary" type="button" data-outreach-action="review"><i data-lucide="mail-open"></i><span>Review email</span></button>
+            <button class="actionBtn primary actionPrimary" type="button" data-outreach-action="review" ${refreshPending ? "disabled title=\"Refreshing — try again in a moment.\"" : ""}><i data-lucide="mail-open"></i><span>Review email</span></button>
             <button class="actionBtn" type="button" data-outreach-action="outcome"><i data-lucide="clipboard-check"></i><span>Log outcome</span></button>
             <button class="actionBtn" type="button" data-outreach-action="details"><i data-lucide="building-2"></i><span>Business details</span></button>
             <a class="actionBtn" href="${escapeHtml(mapsDirectionsUrl(record))}" target="_blank" rel="noopener noreferrer" aria-label="Directions to ${escapeHtml(outreachBusinessName(record))}"><i data-lucide="navigation"></i><span>Directions</span></a>
           </div>
+          ${refreshPending ? `<div class="smallMuted">Refreshing — try again in a moment.</div>` : ""}
         </article>`;
     }).join("");
     refreshIcons();
@@ -3790,7 +3792,13 @@
           next_email:res.next_stage || selectedOutreachRecord.next_email,
           last_emailed:sentAt,
           message_id:res.message_id || selectedOutreachRecord.message_id,
+          subject:"",
+          body_text:"",
+          preview_html:"",
+          has_saved_draft:false,
+          refresh_pending:true,
         });
+        outreachData.today = (outreachData.today || []).filter(record => Number(record.source_row) !== Number(selectedOutreachRecord.source_row));
         $("outreachReviewDialog").close();
         renderOutreach();
         refreshOutreachAfterSave();
@@ -4258,6 +4266,7 @@
           editable_fields:{},
           programs:{},
           activity:[],
+          refresh_pending:true,
         };
         outreachData.directory = [newBusiness, ...(outreachData.directory || [])];
         outreachData.summary = Object.assign({}, outreachData.summary, {
@@ -5727,6 +5736,7 @@
     const record = findOutreachRecordFromElement(actionButton);
     if (!record) return;
     const action = actionButton.dataset.outreachAction;
+    if (action === "review" && record.refresh_pending) return toast("Refreshing — try again in a moment.");
     if (action === "outcome") openOutcomeDialog(record);
     else if (action === "details") openBusinessDetail(record);
     else openOutreachReview(record, false);
