@@ -179,6 +179,10 @@ Add the required Netlify environment variables before the Netlify deployment; ad
 
 ## Required verification
 
+### Web release-version rule
+
+Treat the `-WEB` version as one app-wide release identifier, not a per-file label. Before every Netlify deployment, make the version identical in the `index.html` header comment, `app-version` meta tag, footer, `APP_VERSION` constant, and every deployed Netlify function's version comment/constant. Do not deploy while any of those values differ.
+
 Run the repository regression suite after every code change:
 
 ```bash
