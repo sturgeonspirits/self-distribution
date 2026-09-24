@@ -1,8 +1,10 @@
 /*********************************
  * Inventory API (JSON) for Netlify
- * App version: 2026.09.24.29
+ * App version: 2026.09.24.30
  *
  * CHANGES IN THIS VERSION
+ * - Rechecks full initial-send eligibility while freezing a campaign, using one memoized Pilot Review read and cross-row email duplicate protection.
+ * - Blocks campaign delivery when another directory row or a non-test Activity Log Initial send already used the recipient address.
  * - Builds campaign previews from directory-only eligibility records and defers rendered email creation until campaign freeze.
  * - Rejects campaign exclusion changes for recipients already marked Sent or Sent - needs recording.
  * - Backfills missing legacy campaign-recipient cities from one directory read per campaign load and omits unstored legacy mileage.
@@ -143,7 +145,7 @@
  * - Use only in the staging inventory backend until testing is complete.
  *********************************/
 
-const APP_VERSION = "2026.09.24.29";
+const APP_VERSION = "2026.09.24.30";
 
 const SHEET_NAMES = {
   STORES: "Stores",
@@ -191,6 +193,7 @@ let __OUTREACH_SS = null;
 let __HUB_INVENTORY_ACTIVE = null;
 let __OUTREACH_CAMPAIGN_SETTINGS = null;
 let __ZIP_CENTROID_MAP = null;
+let __LEGACY_PILOT_SENT_BY_EMAIL = null;
 
 function getLegacyInventorySs_() {
   return SpreadsheetApp.openById(LEGACY_INVENTORY_SPREADSHEET_ID);
@@ -2696,9 +2699,34 @@ function campaignDirectoryRecord_(row, sourceRow) {
   };
 }
 
-function campaignDirectoryInitialRecords_(criteria) {
+function initialSentActivityRow_(row) {
+  const result = String(outreachValue_(row, ["result", "send_status", "status"]) || "").toUpperCase();
+  const stage = String(outreachValue_(row, ["stage", "message_stage", "next_email"]) || "").trim().toLowerCase();
+  return stage === "initial" && result.indexOf("SENT") >= 0 && result.indexOf("TEST") < 0;
+}
+
+function campaignInitialSentEmailSet_(directoryRecords) {
+  const sentEmails = new Set((directoryRecords || [])
+    .filter(record => record.last_emailed)
+    .map(record => String(record.email || "").trim().toLowerCase())
+    .filter(Boolean));
+  const activitySheet = getOutreachSheet_(OUTREACH_ACTIVITY_SHEET_NAME);
+  if (!activitySheet || activitySheet.getLastRow() < 2) return sentEmails;
+  getAllRowsAsObjects_(activitySheet).forEach(row => {
+    if (!initialSentActivityRow_(row)) return;
+    ["intended_recipient", "delivered_to", "email", "email_address"].forEach(key => {
+      const email = String(outreachValue_(row, [key]) || "").trim().toLowerCase();
+      if (email) sentEmails.add(email);
+    });
+  });
+  return sentEmails;
+}
+
+function campaignDirectoryInitialSelection_(criteria) {
   const leadSheet = getOutreachSheet_(OUTREACH_SHEET_NAME);
-  const candidateRows = getAllRowsAsObjects_(leadSheet).map((row, index) => campaignDirectoryRecord_(row, index + 2))
+  const directoryRecords = getAllRowsAsObjects_(leadSheet).map((row, index) => campaignDirectoryRecord_(row, index + 2));
+  const initialSentEmails = campaignInitialSentEmailSet_(directoryRecords);
+  const candidateRows = directoryRecords
     .filter(record => record.relationship.toLowerCase() === "prospect" && record.next_email.toLowerCase() === "initial");
   const seenEmails = new Set();
   const eligible = candidateRows.map(record => {
@@ -2706,28 +2734,34 @@ function campaignDirectoryInitialRecords_(criteria) {
     return record;
   }).filter(record => {
     // Preview and freeze both use directory fields only for eligibility; rendered messages are intentionally deferred to freeze.
-    if (outreachSendEligibility_(record, { skip_legacy_pilot:true }).length || campaignCriteriaFailures_(record, criteria).length) return false;
+    if (outreachSendEligibility_(record, { skip_legacy_pilot:true, initial_sent_emails:initialSentEmails }).length || campaignCriteriaFailures_(record, criteria).length) return false;
     const email = String(record.email || "").trim().toLowerCase();
     if (seenEmails.has(email)) return false;
     seenEmails.add(email);
     return true;
   }).sort((a, b) => Number(a.campaign_miles) - Number(b.campaign_miles) || outreachPriorityScore_(b) - outreachPriorityScore_(a) || String(a.business).localeCompare(String(b.business)));
-  return criteria.max_recipients === null ? eligible : eligible.slice(0, criteria.max_recipients);
+  return { records:criteria.max_recipients === null ? eligible : eligible.slice(0, criteria.max_recipients), initial_sent_emails:initialSentEmails };
+}
+
+function campaignDirectoryInitialRecords_(criteria) {
+  return campaignDirectoryInitialSelection_(criteria).records;
 }
 
 function campaignEligibleInitialRecords_(criteria) {
-  const directoryRecords = campaignDirectoryInitialRecords_(criteria);
-  if (!directoryRecords.length) return [];
+  const selection = campaignDirectoryInitialSelection_(criteria);
+  const directoryRecords = selection.records;
+  if (!directoryRecords.length) return { records:[], preview_count:0, removed_by_duplicate_checks:0 };
   const activityMap = outreachActivityMap_();
   const settings = getOutreachCampaignSettings_();
   const draftMap = outreachDraftMap_();
   const programMap = outreachProgramMap_();
   const engagementMap = outreachEngagementMap_();
-  return directoryRecords.map(directoryRecord => {
+  const records = directoryRecords.map(directoryRecord => {
     const record = outreachRecord_(directoryRecord.directory_row, directoryRecord.source_row, activityMap, settings, draftMap, programMap, engagementMap);
     record.campaign_miles = directoryRecord.campaign_miles;
     return record;
-  });
+  }).filter(record => !outreachSendEligibility_(record, { initial_sent_emails:selection.initial_sent_emails }).length);
+  return { records:records, preview_count:directoryRecords.length, removed_by_duplicate_checks:directoryRecords.length - records.length };
 }
 
 function campaignRecipientSnapshotValues_(sheet, campaignId, record) {
@@ -3194,7 +3228,8 @@ function apiCreateOutreachCampaign_(p) {
   if (!lock.tryLock(10000)) throw new Error("Another campaign update is in progress. Try again in a moment.");
   try {
     const sheets = outreachCampaignSheets_();
-    const eligible = campaignEligibleInitialRecords_(criteria);
+    const eligibility = campaignEligibleInitialRecords_(criteria);
+    const eligible = eligibility.records;
     if (!eligible.length) throw new Error("No eligible initial prospects are available for a campaign.");
     const campaignId = permanentId_("CMP");
     const recipientRows = eligible.map(record => campaignRecipientSnapshotValues_(sheets.recipients, campaignId, record));
@@ -3207,7 +3242,7 @@ function apiCreateOutreachCampaign_(p) {
       const matching = sheets.campaigns.getRange(2, 1, sheets.campaigns.getLastRow() - 1, sheets.campaigns.getLastColumn()).getValues()
         .find(row => ["Review", "Approved"].includes(String(row[campaignHeaders.status] || "")) && String(row[campaignHeaders.audience_checksum] || "") === audienceChecksum);
       if (matching) {
-        return { message:"A matching active campaign already exists. No duplicate was created.", campaign_id:String(matching[campaignHeaders.campaign_id]), recipient_count:Number(matching[campaignHeaders.recipient_count] || eligible.length), audience_checksum:audienceChecksum, unsegmented_count:Number(matching[campaignHeaders.unsegmented_count] || unsegmentedCount), already_exists:true };
+        return { message:"A matching active campaign already exists. No duplicate was created.", campaign_id:String(matching[campaignHeaders.campaign_id]), recipient_count:Number(matching[campaignHeaders.recipient_count] || eligible.length), audience_checksum:audienceChecksum, unsegmented_count:Number(matching[campaignHeaders.unsegmented_count] || unsegmentedCount), preview_recipient_count:eligibility.preview_count, removed_by_duplicate_checks:eligibility.removed_by_duplicate_checks, already_exists:true };
       }
     }
     sheets.recipients.getRange(sheets.recipients.getLastRow() + 1, 1, recipientRows.length, recipientRows[0].length).setValues(recipientRows);
@@ -3219,7 +3254,7 @@ function apiCreateOutreachCampaign_(p) {
     setCampaign("sent_count", 0); setCampaign("blocked_count", 0); setCampaign("app_version", APP_VERSION); setCampaign("criteria", criteriaJson);
     sheets.campaigns.getRange(sheets.campaigns.getLastRow() + 1, 1, 1, campaignValues.length).setValues([campaignValues]);
     appendAudit_("CREATE_OUTREACH_CAMPAIGN", "Campaign", campaignId, "", authenticatedActor_(p, "Sturgeon Distribution Hub"), OUTREACH_SHEET_NAME, OUTREACH_CAMPAIGN_RECIPIENTS_SHEET_NAME, "Review", `${eligible.length} frozen recipients; ${audience}.`);
-    return { message:"Campaign created for review. No email was sent.", campaign_id:campaignId, recipient_count:eligible.length, audience_checksum:audienceChecksum, unsegmented_count:unsegmentedCount };
+    return { message:"Campaign created for review. No email was sent.", campaign_id:campaignId, recipient_count:eligible.length, audience_checksum:audienceChecksum, unsegmented_count:unsegmentedCount, preview_recipient_count:eligibility.preview_count, removed_by_duplicate_checks:eligibility.removed_by_duplicate_checks };
   } finally { lock.releaseLock(); }
 }
 
@@ -3371,10 +3406,13 @@ function apiSendOutreachCampaignBatch_(p) {
           results.push({ source_row:sourceRow, business:record.business, status:status, detail:criteriaFailures.join("; ") });
           continue;
         }
-        const reasons = outreachSendEligibility_(record, { skip_legacy_pilot:true });
-        if (reasons.length) throw new Error(reasons.join("; "));
         const token = String(item.values[rh.idempotency_token] || "");
         const prior = acceptedOutreachSendForToken_(token);
+        if (!prior && (initialSentActivityForRecipient_(record.email) || initialSentDirectoryEmailElsewhere_(record.email, sourceRow))) {
+          throw new Error("An initial email was already sent to this address on another directory row.");
+        }
+        const reasons = outreachSendEligibility_(record, { skip_legacy_pilot:true });
+        if (reasons.length) throw new Error(reasons.join("; "));
         result = prior || callOutreachMailer_({ action:"sendAppEmail", idempotency_token:token, account_id:record.account_id,
           source_row:sourceRow, business:record.business, recipient:record.email, message_stage:"Initial",
           subject:String(item.values[rh.subject] || ""), html:String(item.values[rh.html] || ""), requested_by:staffName });
@@ -3665,18 +3703,42 @@ function campaignSendLightweightRecord_(row, sourceRow) {
 }
 
 function legacyPilotSent_(record) {
-  const sheet = getOutreachSs_().getSheetByName(OUTREACH_PILOT_SHEET_NAME);
-  if (!sheet || sheet.getLastRow() < 2) return false;
-  return getAllRowsAsObjects_(sheet).some(row => {
-    const email = String(outreachValue_(row, ["email", "intended_recipient"]) || "").trim().toLowerCase();
-    const business = String(outreachValue_(row, ["business", "business_name"]) || "").trim().toLowerCase();
-    const status = String(outreachValue_(row, ["send_status", "status"]) || "").trim().toUpperCase();
-    const messageId = String(outreachValue_(row, ["message_id", "zoho_message_id"]) || "").trim();
-    const sentAt = outreachValue_(row, ["sent_at", "sent_timestamp"]);
-    return email === String(record.email || "").trim().toLowerCase()
-      && (!business || business === String(record.business || "").trim().toLowerCase())
-      && (status.indexOf("SENT") === 0 || !!messageId || !!sentAt);
-  });
+  if (!__LEGACY_PILOT_SENT_BY_EMAIL) {
+    __LEGACY_PILOT_SENT_BY_EMAIL = new Map();
+    const sheet = getOutreachSs_().getSheetByName(OUTREACH_PILOT_SHEET_NAME);
+    if (sheet && sheet.getLastRow() >= 2) getAllRowsAsObjects_(sheet).forEach(row => {
+      const email = String(outreachValue_(row, ["email", "intended_recipient"]) || "").trim().toLowerCase();
+      const business = String(outreachValue_(row, ["business", "business_name"]) || "").trim().toLowerCase();
+      const status = String(outreachValue_(row, ["send_status", "status"]) || "").trim().toUpperCase();
+      const messageId = String(outreachValue_(row, ["message_id", "zoho_message_id"]) || "").trim();
+      const sentAt = outreachValue_(row, ["sent_at", "sent_timestamp"]);
+      if (!email || !(status.indexOf("SENT") === 0 || !!messageId || !!sentAt)) return;
+      const businesses = __LEGACY_PILOT_SENT_BY_EMAIL.get(email) || new Set();
+      businesses.add(business);
+      __LEGACY_PILOT_SENT_BY_EMAIL.set(email, businesses);
+    });
+  }
+  const businesses = __LEGACY_PILOT_SENT_BY_EMAIL.get(String(record.email || "").trim().toLowerCase());
+  return !!businesses && (businesses.has("") || businesses.has(String(record.business || "").trim().toLowerCase()));
+}
+
+function initialSentActivityForRecipient_(email) {
+  const normalized = String(email || "").trim().toLowerCase();
+  if (!normalized) return false;
+  const sheet = getOutreachSheet_(OUTREACH_ACTIVITY_SHEET_NAME);
+  const headers = getHeaderMap_(sheet);
+  const recipientHeader = headers.intended_recipient !== undefined ? "intended_recipient" : headers.delivered_to !== undefined ? "delivered_to" : "";
+  if (!recipientHeader) return false;
+  // One TextFinder lookup avoids rebuilding the Activity Log during delivery.
+  return outreachRowsMatchingCell_(sheet, [recipientHeader], normalized).some(initialSentActivityRow_);
+}
+
+function initialSentDirectoryEmailElsewhere_(email, sourceRow) {
+  const normalized = String(email || "").trim().toLowerCase();
+  if (!normalized) return false;
+  const sheet = getOutreachSheet_(OUTREACH_SHEET_NAME);
+  return outreachRowsMatchingCell_(sheet, ["email", "email_address"], normalized)
+    .some(row => Number(row.__source_row) !== Number(sourceRow) && !!outreachValue_(row, ["last_emailed", "last_email"]));
 }
 
 function outreachSendEligibility_(record, options) {
@@ -3695,6 +3757,7 @@ function outreachSendEligibility_(record, options) {
   });
   if (sentForStage) reasons.push(`${stage} was already sent`);
   if (stage === "Initial") {
+    if (options?.initial_sent_emails?.has(email)) reasons.push("An initial email was already sent to this address");
     if (record.last_emailed || record.message_id || (!options?.skip_legacy_pilot && legacyPilotSent_(record))) reasons.push("An initial email was already sent");
     if (!["not contacted", "review", "approved"].includes(status)) reasons.push("Business is not eligible for initial outreach");
   } else if (stage === "Follow-up 1" || stage === "Follow-up 2") {

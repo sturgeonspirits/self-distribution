@@ -609,6 +609,30 @@ test("campaign review exclusions are inline and previews use directory fields wi
   assert.doesNotMatch(index, /escapeHtml\(res\.audience/);
 });
 
+test("campaign freeze fully rechecks duplicate sends while preview and send stay targeted", async () => {
+  const [backend, index] = await Promise.all([
+    readFile(new URL("apps-script/Code.gs", root), "utf8"),
+    readFile(new URL("index.html", root), "utf8"),
+  ]);
+  const freezeSource = backend.slice(backend.indexOf("function campaignEligibleInitialRecords_"), backend.indexOf("function campaignRecipientSnapshotValues_"));
+  const sendSource = backend.slice(backend.indexOf("function apiSendOutreachCampaignBatch_"), backend.indexOf("function campaignSendLightweightRecord_"));
+  const pilotSource = backend.slice(backend.indexOf("function legacyPilotSent_"), backend.indexOf("function initialSentActivityForRecipient_"));
+  assert.match(freezeSource, /outreachRecord_\(/);
+  assert.match(freezeSource, /outreachSendEligibility_\(record, \{ initial_sent_emails:selection\.initial_sent_emails \}\)/);
+  assert.match(freezeSource, /removed_by_duplicate_checks:directoryRecords\.length - records\.length/);
+  assert.match(backend, /function campaignInitialSentEmailSet_\(/);
+  assert.match(backend, /intended_recipient/, "preview checks Activity Log recipient fields");
+  assert.match(backend, /delivered_to/, "preview checks delivered-to fallback fields");
+  assert.match(pilotSource, /__LEGACY_PILOT_SENT_BY_EMAIL/);
+  assert.match(pilotSource, /getAllRowsAsObjects_\(sheet\)\.forEach/, "Pilot Review is read once into a memoized lookup");
+  assert.match(backend, /function initialSentActivityForRecipient_\(/);
+  assert.match(backend, /createTextFinder/, "send-time duplicate check remains targeted");
+  assert.match(sendSource, /initialSentActivityForRecipient_\(record\.email\) \|\| initialSentDirectoryEmailElsewhere_\(record\.email, sourceRow\)/);
+  assert.match(index, /previewed, \$\{frozen\} frozen — \$\{removed\} removed by duplicate checks/);
+  assert.match(index, /preview_recipient_count/);
+  assert.match(index, /removed_by_duplicate_checks/);
+});
+
 test("campaign send timeouts reconcile one recipient before continuing and never resend an unknown result", async () => {
   const [backend, index] = await Promise.all([
     readFile(new URL("apps-script/Code.gs", root), "utf8"),

@@ -1,7 +1,7 @@
-// App version: 2026.09.24.34-WEB
+// App version: 2026.09.24.35-WEB
 import { requireStaffSession } from "./auth.js";
 
-const APP_VERSION = "2026.09.24.34-WEB";
+const APP_VERSION = "2026.09.24.35-WEB";
 const STAFF_ACTIONS = new Set([
   "outreachDashboard",
   "outreachRecord",

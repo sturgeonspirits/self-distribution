@@ -1,10 +1,10 @@
 <!doctype html>
-<!-- App version: 2026.09.24.34-WEB -->
+<!-- App version: 2026.09.24.35-WEB -->
 <html>
 <head>
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover"/>
-  <meta name="app-version" content="2026.09.24.34-WEB" />
+  <meta name="app-version" content="2026.09.24.35-WEB" />
   <meta name="theme-color" content="#536f77" />
   <link rel="icon" href="/assets/distribution-hub-icon.svg" type="image/svg+xml" />
   <link rel="manifest" href="/site.webmanifest" />
@@ -2518,7 +2518,7 @@
 
   <footer style="max-width:1200px;margin:18px auto 120px;padding:0 12px;text-align:center;color:#6b7280;font-size:12px;">
     Designed by <a href="https://scriptspirit.dev" target="_blank" rel="noopener noreferrer" style="color:#1d4ed8;text-decoration:none;font-weight:700;">Script Spirit</a>
-<span id="appVersionFooter"> • Version 2026.09.24.34-WEB</span>
+<span id="appVersionFooter"> • Version 2026.09.24.35-WEB</span>
   </footer>
 
 
@@ -2541,7 +2541,7 @@
   window.addEventListener("unhandledrejection", e => console.error("Unhandled promise rejection:", e.reason));
   window.addEventListener("error", e => console.error("Unhandled error:", e.error || e.message));
   const $ = (id) => document.getElementById(id);
-  const APP_VERSION = "2026.09.24.34-WEB";
+  const APP_VERSION = "2026.09.24.35-WEB";
   $("appVersionFooter").textContent = ` • Version ${APP_VERSION}`;
 
   let cache = { stores: [], lines: [] };
@@ -3408,10 +3408,17 @@
     try {
       const res = await staffApiPost({ action:"createOutreachCampaign", campaign_name:campaignName, criteria:outreachCampaignPreview.criteria, preview_confirmed:true, staff_name:staffName });
       if (!res.ok) throw new Error(res.error || "Campaign could not be created.");
+      const previewed = Number(res.preview_recipient_count ?? outreachCampaignPreview.result?.recipient_count ?? 0);
+      const frozen = Number(res.recipient_count || 0);
+      const removed = Math.max(0, Number(res.removed_by_duplicate_checks ?? previewed - frozen));
+      const freezeMessage = previewed !== frozen
+        ? `${previewed} previewed, ${frozen} frozen — ${removed} removed by duplicate checks. No email was sent.`
+        : `${frozen} confirmed recipients frozen for review. No email was sent.`;
       $("outreachCampaignCriteriaDialog").close();
-      setOutreachStatus(`${res.recipient_count} confirmed recipients frozen for review. No email was sent.`);
+      setOutreachStatus(freezeMessage);
       await loadOutreachCampaigns();
       await openOutreachCampaign(res.campaign_id);
+      setCampaignStatus(freezeMessage);
     } catch (error) {
       $("outreachCampaignCriteriaStatus").textContent = error.message || String(error);
     } finally {
