@@ -260,6 +260,11 @@ test("source contains formula protection, global error listeners, and recoverabl
   assert.match(index, /function sendCampaignRecipients\(/);
   assert.match(index, /batch_size:1/);
   assert.doesNotMatch(index, /batch_size:10/);
+  assert.match(index, /data-outcome="Bad address"/);
+  assert.match(index, /data-outcome="Unsubscribed"/);
+  assert.match(index, /Follow-ups due/);
+  assert.match(index, /function outreachOutcomeIsInterested\(/);
+  assert.match(index, /function outreachFollowUpIsDue\(/);
   assert.match(index, /continue_after_block:continueAfterBlock/);
   assert.match(index, /sendCampaignRecipients\(campaign, staffName, ready, true\)/);
   assert.match(backend, /CacheService\.getScriptCache\(\)/);
@@ -283,6 +288,10 @@ test("source contains formula protection, global error listeners, and recoverabl
   assert.match(backend, /Campaign approved\. No email was sent\./);
   assert.match(backend, /OUTREACH_CAMPAIGN_RECIPIENTS_SHEET_NAME/);
   assert.match(backend, /batch size must be between 1 and 20/i);
+  assert.match(backend, /const OUTREACH_OUTCOME_VALUES = \[/);
+  assert.match(backend, /"Wrong contact", "Bad address", "Not interested", "Unsubscribed"/);
+  assert.match(backend, /requireValueInList\(OUTREACH_OUTCOME_VALUES, true\)/);
+  assert.match(backend, /rowRange\.setValues\(\[values\]\)/);
   assert.match(index, /Number\(campaign\.counts\?\.Blocked \|\| 0\)/);
   assert.match(await readFile(new URL("netlify/functions/inventory.js", root), "utf8"), /"sendOutreachCampaignBatch"/);
   assert.match(mailer, /if \(!testMode && !isValidEmail_\(email\)\)/);

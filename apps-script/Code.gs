@@ -115,7 +115,7 @@
  * - Use only in the staging inventory backend until testing is complete.
  *********************************/
 
-const APP_VERSION = "2026.09.23.11";
+const APP_VERSION = "2026.09.24.12";
 
 const SHEET_NAMES = {
   STORES: "Stores",
@@ -2364,10 +2364,18 @@ function outreachStatusForOutcome_(outcome) {
     "Follow up later": "Follow-up due",
     "Visit in person": "Interested",
     "Wrong contact": "Needs email",
+    "Bad address": "Needs email",
     "Not interested": "Not interested",
+    "Unsubscribed": "Do not contact",
   };
   return map[outcome] || "Replied";
 }
+
+const OUTREACH_OUTCOME_VALUES = [
+  "Interested", "Schedule tasting", "Follow up later", "Visit in person",
+  "Wrong contact", "Bad address", "Not interested", "Unsubscribed",
+];
+const OUTREACH_FOLLOW_UP_OUTCOMES = new Set(["Interested", "Schedule tasting", "Follow up later", "Visit in person"]);
 
 function appendOutreachActivity_(record, outcome, notes) {
   const sheet = getOutreachSheet_(OUTREACH_ACTIVITY_SHEET_NAME);
@@ -2712,8 +2720,14 @@ function apiUpdateOutreachOutcome_(p) {
   if (!p) throw new Error("Missing body");
   requireFields_(p, ["source_row", "business", "outcome"]);
 
-  const allowed = ["Interested", "Schedule tasting", "Follow up later", "Visit in person", "Wrong contact", "Not interested"];
-  if (!allowed.includes(String(p.outcome))) throw new Error("Unsupported outcome.");
+  const outcome = String(p.outcome || "").trim();
+  if (!OUTREACH_OUTCOME_VALUES.includes(outcome)) throw new Error("Unsupported outcome.");
+  const followUpText = String(p.next_follow_up || "").trim();
+  if (OUTREACH_FOLLOW_UP_OUTCOMES.has(outcome) && !followUpText) {
+    throw new Error(`Choose a next follow-up date for “${outcome}.”`);
+  }
+  const followUpDate = followUpText ? new Date(`${followUpText}T12:00:00`) : null;
+  if (followUpText && isNaN(followUpDate.getTime())) throw new Error("Next follow-up date is invalid.");
 
   const sheet = getOutreachSheet_(OUTREACH_SHEET_NAME);
   const rowNumber = Number(p.source_row);
@@ -2723,7 +2737,8 @@ function apiUpdateOutreachOutcome_(p) {
   if (!lock.tryLock(5000)) throw new Error("Another outreach update is in progress.");
   try {
     const h = getHeaderMap_(sheet);
-    const values = sheet.getRange(rowNumber, 1, 1, sheet.getLastColumn()).getValues()[0];
+    const rowRange = sheet.getRange(rowNumber, 1, 1, sheet.getLastColumn());
+    const values = rowRange.getValues()[0];
     const current = {};
     Object.keys(h).forEach(key => current[key] = values[h[key]]);
     const currentBusiness = String(outreachValue_(current, ["business", "business_name"]) || "").trim();
@@ -2733,21 +2748,27 @@ function apiUpdateOutreachOutcome_(p) {
     if (p.email && currentEmail !== String(p.email).trim()) throw new Error("Contact email changed in the sheet. Refresh and try again.");
     if (p.account_id && accountId !== String(p.account_id).trim()) throw new Error("Account identity changed. Refresh and try again.");
 
-    const setCell = (keys, value) => {
+    const setRowValue = (keys, value) => {
       const key = keys.find(candidate => h[candidate] !== undefined);
-      if (key) sheet.getRange(rowNumber, h[key] + 1).setValue(value);
+      if (key) values[h[key]] = value;
     };
-    const outcome = String(p.outcome);
-    setCell(["status"], outreachStatusForOutcome_(outcome));
-    setCell(["outcome"], outcome);
-    setCell(["record_updated_at"], new Date());
-    if (p.next_follow_up) setCell(["next_follow-up", "next_follow_up"], new Date(`${p.next_follow_up}T12:00:00`));
-    if (outcome === "Not interested") setCell(["do_not_email", "do_not_contact"], true);
+    setRowValue(["status"], outreachStatusForOutcome_(outcome));
+    setRowValue(["outcome"], outcome);
+    setRowValue(["record_updated_at"], new Date());
+    if (followUpDate) setRowValue(["next_follow-up", "next_follow_up"], followUpDate);
+    if (["Not interested", "Unsubscribed"].includes(outcome)) setRowValue(["do_not_email", "do_not_contact"], true);
     if (p.notes) {
       const priorNotes = String(outreachValue_(current, ["notes"]) || "").trim();
       const datedNote = `${Utilities.formatDate(new Date(), Session.getScriptTimeZone(), "yyyy-MM-dd")} - ${String(p.notes).trim()}`;
-      setCell(["notes"], priorNotes ? `${priorNotes}\n${datedNote}` : datedNote);
+      setRowValue(["notes"], priorNotes ? `${priorNotes}\n${datedNote}` : datedNote);
     }
+
+    if (h.outcome !== undefined) {
+      sheet.getRange(rowNumber, h.outcome + 1).setDataValidation(
+        SpreadsheetApp.newDataValidation().requireValueInList(OUTREACH_OUTCOME_VALUES, true).setAllowInvalid(false).build()
+      );
+    }
+    rowRange.setValues([values]);
 
     appendOutreachActivity_({ account_id:accountId, business:currentBusiness, email:currentEmail }, outcome, String(p.notes || ""));
     appendAudit_("UPDATE_OUTREACH_OUTCOME", "Account", accountId, accountId, String(p.staff_name || "Staff"), OUTREACH_SHEET_NAME, OUTREACH_SHEET_NAME, "Completed", outcome);

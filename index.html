@@ -1,10 +1,10 @@
 <!doctype html>
-<!-- App version: 2026.09.23.16-WEB -->
+<!-- App version: 2026.09.24.17-WEB -->
 <html>
 <head>
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover"/>
-  <meta name="app-version" content="2026.09.23.16-WEB" />
+  <meta name="app-version" content="2026.09.24.17-WEB" />
   <title>Sturgeon Distribution Hub</title>
   <style>
     :root{
@@ -2034,6 +2034,9 @@
         <label for="outreachAudiencePreset">Who to show</label>
         <select id="outreachAudiencePreset">
           <option value="all">All businesses</option>
+          <option value="follow_up_due">Follow-ups due</option>
+          <option value="interested">Interested</option>
+          <option value="contact_issues">Bad address or wrong contact</option>
           <option value="weekly">Weekly: Fit 5, 0–15 mi</option>
           <option value="distance_needed">Fit 5 needing distance</option>
         </select>
@@ -2324,7 +2327,9 @@
         <button class="outcomeOption" type="button" data-outcome="Follow up later">Follow up later</button>
         <button class="outcomeOption" type="button" data-outcome="Visit in person">Visit in person</button>
         <button class="outcomeOption" type="button" data-outcome="Wrong contact">Wrong contact</button>
+        <button class="outcomeOption" type="button" data-outcome="Bad address">Bad address</button>
         <button class="outcomeOption" type="button" data-outcome="Not interested">Not interested</button>
+        <button class="outcomeOption" type="button" data-outcome="Unsubscribed">Unsubscribed</button>
       </div>
       <label for="outcomeFollowUpDate">Next follow-up</label>
       <input id="outcomeFollowUpDate" type="date" />
@@ -2464,7 +2469,7 @@
 
   <footer style="max-width:1200px;margin:18px auto 120px;padding:0 12px;text-align:center;color:#6b7280;font-size:12px;">
     Designed by <a href="https://scriptspirit.dev" target="_blank" rel="noopener noreferrer" style="color:#1d4ed8;text-decoration:none;font-weight:700;">Script Spirit</a>
-<span id="appVersionFooter"> • Version 2026.09.23.16-WEB</span>
+<span id="appVersionFooter"> • Version 2026.09.24.17-WEB</span>
   </footer>
 
 
@@ -2487,7 +2492,7 @@
   window.addEventListener("unhandledrejection", e => console.error("Unhandled promise rejection:", e.reason));
   window.addEventListener("error", e => console.error("Unhandled error:", e.error || e.message));
   const $ = (id) => document.getElementById(id);
-  const APP_VERSION = "2026.09.23.16-WEB";
+  const APP_VERSION = "2026.09.24.17-WEB";
   $("appVersionFooter").textContent = ` • Version ${APP_VERSION}`;
 
   let cache = { stores: [], lines: [] };
@@ -2505,7 +2510,9 @@
   let outreachData = { today: [], directory: [], sent: [], newsletter: [], campaigns: [], summary: { due_today: 0, total_businesses: 0, waiting: 0, weekly_ready: 0 } };
   let outreachView = localStorage.getItem("outreach_view") || "today";
   if (outreachView === "leads") outreachView = "directory";
-  let outreachAudiencePreset = ["weekly", "distance_needed"].includes(localStorage.getItem("outreach_audience"))
+  const OUTREACH_AUDIENCE_PRESETS = ["weekly", "distance_needed", "follow_up_due", "interested", "contact_issues"];
+  const OUTREACH_FOLLOW_UP_OUTCOMES = ["Interested", "Schedule tasting", "Follow up later", "Visit in person"];
+  let outreachAudiencePreset = OUTREACH_AUDIENCE_PRESETS.includes(localStorage.getItem("outreach_audience"))
     ? localStorage.getItem("outreach_audience")
     : "all";
   let outreachSort = ["recommended", "distance", "fit", "business"].includes(localStorage.getItem("outreach_sort"))
@@ -3085,12 +3092,35 @@
     return d.toLocaleDateString(undefined, { month:"short", day:"numeric", year:d.getFullYear() !== new Date().getFullYear() ? "numeric" : undefined });
   }
 
+  function outreachOutcomeIsInterested(record){
+    const outcome = String(record.outcome || "").trim();
+    const status = String(record.status || "").trim();
+    return OUTREACH_FOLLOW_UP_OUTCOMES.includes(outcome) || ["Interested", "Follow-up due"].includes(status);
+  }
+
+  function outreachFollowUpIsDue(record){
+    if (record.do_not_email) return false;
+    const status = String(record.status || "").trim().toLowerCase();
+    if (status === "follow-up due") return true;
+    const next = record.next_follow_up ? new Date(`${String(record.next_follow_up).slice(0, 10)}T23:59:59`) : null;
+    return !!next && !Number.isNaN(next.getTime()) && next.getTime() <= Date.now();
+  }
+
+  function outreachHasContactIssue(record){
+    const outcome = String(record.outcome || "").trim().toLowerCase();
+    const status = String(record.status || "").trim().toLowerCase();
+    return ["wrong contact", "bad address"].includes(outcome) || status === "needs email";
+  }
+
   function outreachRecordsForView(){
     let rows = [...(outreachData[outreachView] || [])];
     if (outreachAudiencePreset === "weekly") rows = rows.filter(record => record.weekly_eligible === true);
     if (outreachAudiencePreset === "distance_needed") {
       rows = rows.filter(record => Number(record.craft_spirit_fit) === 5 && (record.miles === null || record.miles === undefined || record.miles === ""));
     }
+    if (outreachAudiencePreset === "follow_up_due") rows = rows.filter(outreachFollowUpIsDue);
+    if (outreachAudiencePreset === "interested") rows = rows.filter(outreachOutcomeIsInterested);
+    if (outreachAudiencePreset === "contact_issues") rows = rows.filter(outreachHasContactIssue);
     const query = outreachFilterText.trim().toLowerCase();
     if (query) {
       rows = rows.filter(record => [
@@ -3125,7 +3155,13 @@
       return priority ? 1 : 0;
     };
 
-    if (outreachSort === "distance") rows.sort(distanceSort);
+    const followUpTime = record => {
+      const date = record.next_follow_up ? new Date(`${String(record.next_follow_up).slice(0, 10)}T12:00:00`) : null;
+      return date && !Number.isNaN(date.getTime()) ? date.getTime() : Number.POSITIVE_INFINITY;
+    };
+    if (["follow_up_due", "interested"].includes(outreachAudiencePreset) && outreachSort === "recommended") {
+      rows.sort((a, b) => (followUpTime(a) - followUpTime(b)) || businessSort(a, b));
+    } else if (outreachSort === "distance") rows.sort(distanceSort);
     else if (outreachSort === "fit") rows.sort(fitSort);
     else if (outreachSort === "business") rows.sort(businessSort);
     else if (outreachAudiencePreset === "weekly") {
@@ -3424,13 +3460,25 @@
       ? `${records.length} ready this week`
       : outreachAudiencePreset === "distance_needed"
         ? `${records.length} need distance`
-        : `${records.length} shown`;
+        : outreachAudiencePreset === "follow_up_due"
+          ? `${records.length} follow-ups due`
+          : outreachAudiencePreset === "interested"
+            ? `${records.length} interested`
+            : outreachAudiencePreset === "contact_issues"
+              ? `${records.length} contact issues`
+              : `${records.length} shown`;
     if (!records.length) {
       const emptyDetail = outreachAudiencePreset === "weekly"
         ? "No businesses in this work stage meet every weekly audience rule."
         : outreachAudiencePreset === "distance_needed"
           ? "Every Fit 5 business in this work stage has a distance."
-          : "Try another work stage or clear the search.";
+          : outreachAudiencePreset === "follow_up_due"
+            ? "No interested businesses are due for follow-up today."
+            : outreachAudiencePreset === "interested"
+              ? "No businesses are currently marked interested."
+              : outreachAudiencePreset === "contact_issues"
+                ? "No businesses need a corrected contact or email."
+                : "Try another work stage or clear the search.";
       list.innerHTML = `<div class="outreachEmpty"><strong>Nothing in this view</strong><span>${emptyDetail}</span></div>`;
       refreshIcons();
       return;
@@ -4059,7 +4107,7 @@
     selectedOutcome = button.dataset.outcome || "";
     document.querySelectorAll(".outcomeOption").forEach(option => option.classList.toggle("active", option === button));
     $("saveOutcomeBtn").disabled = !selectedOutcome;
-    if (selectedOutcome === "Follow up later" && !$("outcomeFollowUpDate").value) {
+    if (OUTREACH_FOLLOW_UP_OUTCOMES.includes(selectedOutcome) && !$("outcomeFollowUpDate").value) {
       const date = new Date();
       date.setDate(date.getDate() + 7);
       $("outcomeFollowUpDate").value = date.toISOString().slice(0, 10);
@@ -5497,7 +5545,7 @@
   $("reconcileHubBtn").addEventListener("click", () => reconcileHubRecords().catch(handleCustomerError));
 
   $("outreachAudiencePreset").addEventListener("change", () => {
-    outreachAudiencePreset = ["weekly", "distance_needed"].includes($("outreachAudiencePreset").value)
+    outreachAudiencePreset = OUTREACH_AUDIENCE_PRESETS.includes($("outreachAudiencePreset").value)
       ? $("outreachAudiencePreset").value
       : "all";
     localStorage.setItem("outreach_audience", outreachAudiencePreset);
