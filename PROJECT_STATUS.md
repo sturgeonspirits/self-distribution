@@ -8,7 +8,7 @@ Read this file before inspecting the repository or changing the application. Upd
 
 | Component | Source version | Deployment state |
 | --- | --- | --- |
-| Netlify web app and staff proxy | `2026.09.24.24-WEB` | Deployed to production and verified: the signed `/go` route returns its allowlisted redirect with `Cache-Control: no-store`. |
+| Netlify web app and staff proxy | `2026.09.24.24-WEB` | Deployed from `codex/distribution-system-foundation` through a Netlify Git build. Verified: `/go?t=application` returns the allowlisted 302, `/go?t=nope` returns `404 Not found.`, unknown staff-proxy actions return `400 UNKNOWN_ACTION` with the `.24` header, and the staff footer reports `.24`. |
 | Inventory API Apps Script | `2026.09.24.23` on `codex/work` / `2026.09.24.17` live | Targeted record reads, possessive-name display correction, and signed-link click engagement recording are committed and awaiting Apps Script deployment. |
 | Distribution Outreach Apps Script | `2026.09.24.13-APP` on `codex/work` | Signed-link rendering is committed; owner has not yet confirmed this exact version is deployed. |
 | Public customer Netlify proxy | `2026.09.18.3-WEB` | Deployed with Netlify; unchanged by the latest staff-app UI work |
@@ -142,6 +142,8 @@ Add the required Netlify environment variables before the Netlify deployment; ad
 - Deployment order: deploy Apps Script Phase 2 first, then deploy Netlify Phases 1 and 3 together as one release.
 
 ## Deployment procedures
+
+Production deploys are Netlify Git builds from `codex/distribution-system-foundation`, triggered by Karl. Never deploy with the Netlify CLI.
 
 ### Netlify web-only change
 
