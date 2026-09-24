@@ -243,6 +243,10 @@ test("source contains formula protection, global error listeners, and recoverabl
   assert.match(backend, /const BADGER_INVOICE_CACHE_TTL_SECONDS = 900;/);
   assert.match(backend, /function cachedBadgerInvoices_\(bypassCache\)/);
   assert.match(backend, /reconcileBadgerForOrder_\(orderSheet, raw\.source_row, h, order\.badger_invoice_number, true\)/);
+  const businessUpdateSource = backend.slice(backend.indexOf("function apiUpdateOutreachBusiness_"), backend.indexOf("function apiUpdateOutreachPrograms_"));
+  assert.match(businessUpdateSource, /sheet\.getRange\(rowNumber, 1, 1, values\.length\)\.setValues\(\[values\]\)/);
+  assert.doesNotMatch(businessUpdateSource, /getRange\(rowNumber, h\[actualKey\] \+ 1\)\.setValue/);
+  assert.match(backend, /event:"customer_work_queue_timing",[\s\S]*?stages:timings/);
   const foundationalCalls = backend.match(/ensureFoundationalSheets_\(\);/g) || [];
   assert.equal(foundationalCalls.length, 2, "only initialization and repair may create foundational sheets");
   const hotPathIdentityCalls = backend.slice(backend.indexOf("function apiCreateOutreachBusiness_"), backend.indexOf("function outreachValue_") );

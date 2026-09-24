@@ -1,8 +1,12 @@
 /*********************************
  * Inventory API (JSON) for Netlify
- * App version: 2026.09.23.11
+ * App version: 2026.09.24.13
  *
  * CHANGES IN THIS VERSION
+ * - Added an optional slim Outreach dashboard response and a single-record outreach endpoint.
+ * - Moved structural and Account ID repair out of normal requests, with an optional nightly repair installer.
+ * - Memoized Hub configuration and campaign settings, cached Badger invoices, and reduced campaign-list reads.
+ * - Batched business updates and added per-stage customer work-queue timing.
  * - Allows genuinely unsent blocked campaign recipients to return to review after checking the mailer Activity Log for an accepted send.
  * - Keeps an accepted Zoho message out of the resend path when its follow-up sheet recording fails.
  * - Locks campaign approval and preserves valid idempotency tokens that begin with a hyphen.
@@ -115,7 +119,7 @@
  * - Use only in the staging inventory backend until testing is complete.
  *********************************/
 
-const APP_VERSION = "2026.09.24.12";
+const APP_VERSION = "2026.09.24.13";
 
 const SHEET_NAMES = {
   STORES: "Stores",
@@ -2153,8 +2157,16 @@ function apiGetOutreachCampaigns_() {
   const sheets = outreachCampaignSheets_();
   const h = getHeaderMap_(sheets.campaigns);
   if (sheets.campaigns.getLastRow() < 2) return { campaigns:[] };
-  const allRecipients = sheets.recipients.getLastRow() < 2 ? [] : sheets.recipients.getRange(2, 1, sheets.recipients.getLastRow() - 1, sheets.recipients.getLastColumn()).getValues()
-    .map((values, index) => ({ row:index + 2, values:values, headers:getHeaderMap_(sheets.recipients) }));
+  const recipientHeaders = getHeaderMap_(sheets.recipients);
+  const recipientCount = Math.max(0, sheets.recipients.getLastRow() - 1);
+  const recipientIds = recipientCount ? sheets.recipients.getRange(2, recipientHeaders.campaign_id + 1, recipientCount, 1).getValues() : [];
+  const recipientStatuses = recipientCount ? sheets.recipients.getRange(2, recipientHeaders.status + 1, recipientCount, 1).getValues() : [];
+  const listHeaders = { campaign_id:0, status:1 };
+  const allRecipients = recipientIds.map((id, index) => ({
+    row:index + 2,
+    values:[id[0], recipientStatuses[index]?.[0] || ""],
+    headers:listHeaders,
+  }));
   const campaigns = sheets.campaigns.getRange(2, 1, sheets.campaigns.getLastRow() - 1, sheets.campaigns.getLastColumn()).getValues()
     .map((values, index) => ({ row:index + 2, values:values, headers:h }))
     .reverse().map(campaign => campaignObject_(campaign, allRecipients.filter(item => String(item.values[item.headers.campaign_id] || "") === String(campaign.values[h.campaign_id] || "")), false));
@@ -2950,7 +2962,7 @@ function apiUpdateOutreachBusiness_(p) {
         throw new Error("Choose a listed email confidence.");
       }
       if (String(current[actualKey] ?? "").trim() === value) return;
-      sheet.getRange(rowNumber, h[actualKey] + 1).setValue(value);
+      values[h[actualKey]] = value;
       changed.push(outreachFieldLabel_(canonical));
     });
 
@@ -2960,17 +2972,18 @@ function apiUpdateOutreachBusiness_(p) {
       if (!notesKey) throw new Error("The directory does not have a Notes column.");
       const priorNotes = String(current[notesKey] || "").trim();
       const datedNote = `${Utilities.formatDate(new Date(), Session.getScriptTimeZone(), "yyyy-MM-dd")} - ${additionalNote}`;
-      sheet.getRange(rowNumber, h[notesKey] + 1).setValue(priorNotes ? `${priorNotes}\n${datedNote}` : datedNote);
+      values[h[notesKey]] = priorNotes ? `${priorNotes}\n${datedNote}` : datedNote;
       changed.push("Notes");
     }
 
     if (!changed.length) return { message:"No contact changes to save.", source_row:rowNumber, changed:[] };
+    if (h.record_updated_at !== undefined) values[h.record_updated_at] = new Date();
+    sheet.getRange(rowNumber, 1, 1, values.length).setValues([values]);
     appendOutreachActivity_(
       { account_id:accountId, business:currentBusiness, email:String(p.updates.email || currentEmail) },
       "CONTACT UPDATED",
       `Updated ${changed.join(", ")}`
     );
-    if (h.record_updated_at !== undefined) sheet.getRange(rowNumber, h.record_updated_at + 1).setValue(new Date());
     appendAudit_("UPDATE_BUSINESS", "Account", accountId, accountId, String(p.staff_name || "Staff"), OUTREACH_SHEET_NAME, OUTREACH_SHEET_NAME, "Completed", changed.join(", "));
     return { message:"Contact information saved.", account_id:accountId, source_row:rowNumber, changed:changed };
   } finally {
@@ -3736,9 +3749,17 @@ function buildCustomerAccounts_(applications, orders) {
 
 function apiGetCustomerWorkQueue_() {
   const startedAt = Date.now();
+  const timings = {};
+  let stageStartedAt = startedAt;
+  const mark = name => {
+    const now = Date.now();
+    timings[name] = now - stageStartedAt;
+    stageStartedAt = now;
+  };
   const applicationSheet = getCustomerApplicationsSheet_(false);
   const orderSheet = getOnlineOrderRequestsSheet_(false);
   const lineSheet = getOnlineOrderLinesSheet_(false);
+  mark("sheet_lookup_ms");
 
   const linesByRequest = new Map();
   rowsWithSource_(lineSheet).forEach(row => {
@@ -3758,6 +3779,7 @@ function apiGetCustomerWorkQueue_() {
       external_item_id:String(row.external_item_id || ""),
     });
   });
+  mark("order_lines_read_ms");
 
   const applications = rowsWithSource_(applicationSheet).map(customerApplicationRecord_)
     .filter(record => record.application_id)
@@ -3765,9 +3787,11 @@ function apiGetCustomerWorkQueue_() {
   const orders = rowsWithSource_(orderSheet).map(row => onlineOrderRecord_(row, linesByRequest))
     .filter(record => record.request_id)
     .sort((a, b) => recordTimestamp_(b.submitted_at) - recordTimestamp_(a.submitted_at));
+  mark("application_order_read_ms");
   orders.forEach(order => order.operational_statuses = orderOperationalStatuses_(order));
   applications.forEach(application => application.operational_statuses = application.workflow_status === "New" ? ["New"] : (application.inventory_tracking ? ["Inventory-counted"] : []));
   const accounts = buildCustomerAccounts_(applications, orders);
+  mark("account_build_ms");
   const activeApplicationStatuses = ["New", "Reviewing", "Needs information"];
   const activeOrderStatuses = ["New", "Reviewing", "Confirmed", "Invoicing", "Ready for delivery"];
 
@@ -3775,6 +3799,7 @@ function apiGetCustomerWorkQueue_() {
   console.log(JSON.stringify({
     event:"customer_work_queue_timing",
     total_ms:totalMs,
+    stages:timings,
     applications:applications.length,
     orders:orders.length,
     accounts:accounts.length,

@@ -9,7 +9,7 @@ Read this file before inspecting the repository or changing the application. Upd
 | Component | Source version | Deployment state |
 | --- | --- | --- |
 | Netlify web app and staff proxy | `2026.09.24.19-WEB` on `codex/work` | Phase 1 is ready for review and is not deployed. The live site is `2026.09.24.18-WEB`. This pending release uses a 9-second upstream timeout, one attempt for every read and write, and quiet background refreshes after Outreach saves. |
-| Inventory API Apps Script | `2026.09.24.12` source / `2026.09.23.11` live | Source is not deployed. The live Inventory API remains version `.11`. |
+| Inventory API Apps Script | `2026.09.24.13` on `codex/work` / `2026.09.23.11` live | Phase 2 is ready for review and is not deployed. The live Inventory API remains version `.11`. |
 | Distribution Outreach Apps Script | `2026.09.22.9-APP` | Source is committed; owner has not yet confirmed this exact version is deployed |
 | Public customer Netlify proxy | `2026.09.18.3-WEB` | Deployed with Netlify; unchanged by the latest staff-app UI work |
 
@@ -124,6 +124,7 @@ The shared outreach secret must match in the two Apps Script projects. Zoho mail
 - Work only on `codex/work`, created from `codex/distribution-system-foundation`. Never push directly to `codex/distribution-system-foundation`; Karl merges reviewed work.
 - Netlify builds are stopped for commits that touch only project status, README, docs, Apps Script, or tests. Netlify deploys must be batched.
 - Performance work Phase 1 (web safeguards) is committed on `codex/work` and awaiting review. Do not deploy it alone.
+- Performance work Phase 2 (Inventory API load and write reductions) is committed on `codex/work` and awaiting review. Deploy it before the batched Phase 1 and 3 Netlify release.
 - Deployment order: deploy Apps Script Phase 2 first, then deploy Netlify Phases 1 and 3 together as one release.
 
 ## Deployment procedures
