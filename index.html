@@ -1,10 +1,10 @@
 <!doctype html>
-<!-- App version: 2026.09.24.20-WEB -->
+<!-- App version: 2026.09.24.21-WEB -->
 <html>
 <head>
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover"/>
-  <meta name="app-version" content="2026.09.24.20-WEB" />
+  <meta name="app-version" content="2026.09.24.21-WEB" />
   <title>Sturgeon Distribution Hub</title>
   <style>
     :root{
@@ -2469,7 +2469,7 @@
 
   <footer style="max-width:1200px;margin:18px auto 120px;padding:0 12px;text-align:center;color:#6b7280;font-size:12px;">
     Designed by <a href="https://scriptspirit.dev" target="_blank" rel="noopener noreferrer" style="color:#1d4ed8;text-decoration:none;font-weight:700;">Script Spirit</a>
-<span id="appVersionFooter"> • Version 2026.09.24.20-WEB</span>
+<span id="appVersionFooter"> • Version 2026.09.24.21-WEB</span>
   </footer>
 
 
@@ -2492,7 +2492,7 @@
   window.addEventListener("unhandledrejection", e => console.error("Unhandled promise rejection:", e.reason));
   window.addEventListener("error", e => console.error("Unhandled error:", e.error || e.message));
   const $ = (id) => document.getElementById(id);
-  const APP_VERSION = "2026.09.24.20-WEB";
+  const APP_VERSION = "2026.09.24.21-WEB";
   $("appVersionFooter").textContent = ` • Version ${APP_VERSION}`;
 
   let cache = { stores: [], lines: [] };
@@ -2521,6 +2521,9 @@
   let outreachFilterText = "";
   let outreachLoaded = false;
   let outreachLoadRequest = 0;
+  let outreachReviewOpenRequest = 0;
+  let outreachOutcomeOpenRequest = 0;
+  let outreachDetailOpenRequest = 0;
   let outreachNewsletterLoaded = false;
   let selectedOutreachRecord = null;
   let selectedOutcome = "";
@@ -3710,6 +3713,7 @@
   }
 
   async function openOutreachReviewForRecord(record, showActivity){
+    const requestId = ++outreachReviewOpenRequest;
     selectedOutreachRecord = null;
     $("outreachReviewTitle").textContent = showActivity ? "Activity" : "Review email";
     $("outreachReviewRecipient").textContent = `${outreachBusinessName(record)} • Loading details…`;
@@ -3727,8 +3731,11 @@
     $("outreachDraftStatus").textContent = "Loading…";
     if (!$("outreachReviewDialog").open) $("outreachReviewDialog").showModal();
     try {
-      openOutreachReview(await fetchOutreachRecord(record), showActivity);
+      const fullRecord = await fetchOutreachRecord(record);
+      if (requestId !== outreachReviewOpenRequest || !$("outreachReviewDialog").open) return;
+      openOutreachReview(fullRecord, showActivity);
     } catch (error) {
+      if (requestId !== outreachReviewOpenRequest || !$("outreachReviewDialog").open) return;
       $("outreachReviewBody").value = "The business details could not be loaded. Close this dialog and try again.";
       $("outreachDraftStatus").textContent = error.message || String(error);
     }
@@ -3883,6 +3890,7 @@
 
   function closeOutreachReview(){
     if (!$("outreachReviewBody").readOnly && outreachDraftIsDirty() && !confirm("Close without saving these email changes?")) return;
+    outreachReviewOpenRequest += 1;
     $("outreachReviewDialog").close();
   }
 
@@ -3899,6 +3907,7 @@
   }
 
   async function openOutcomeDialogForRecord(record){
+    const requestId = ++outreachOutcomeOpenRequest;
     selectedOutreachRecord = null;
     selectedOutcome = "";
     $("outcomeBusiness").textContent = `${outreachBusinessName(record)} — loading…`;
@@ -3909,8 +3918,11 @@
     document.querySelectorAll(".outcomeOption").forEach(button => button.classList.remove("active"));
     if (!$("outcomeDialog").open) $("outcomeDialog").showModal();
     try {
-      openOutcomeDialog(await fetchOutreachRecord(record));
+      const fullRecord = await fetchOutreachRecord(record);
+      if (requestId !== outreachOutcomeOpenRequest || !$("outcomeDialog").open) return;
+      openOutcomeDialog(fullRecord);
     } catch (error) {
+      if (requestId !== outreachOutcomeOpenRequest || !$("outcomeDialog").open) return;
       $("outcomeBusiness").textContent = outreachBusinessName(record);
       $("outcomeStatus").textContent = error.message || String(error);
     }
@@ -4121,12 +4133,16 @@
   }
 
   async function openBusinessDetailForRecord(record){
+    const requestId = ++outreachDetailOpenRequest;
     selectedOutreachRecord = null;
     $("businessDetailBody").innerHTML = `<div class="outreachEmpty"><strong>Loading ${escapeHtml(outreachBusinessName(record))}</strong><span>Retrieving business details…</span></div>`;
     if (!$("businessDetailDialog").open) $("businessDetailDialog").showModal();
     try {
-      openBusinessDetail(await fetchOutreachRecord(record));
+      const fullRecord = await fetchOutreachRecord(record);
+      if (requestId !== outreachDetailOpenRequest || !$("businessDetailDialog").open) return;
+      openBusinessDetail(fullRecord);
     } catch (error) {
+      if (requestId !== outreachDetailOpenRequest || !$("businessDetailDialog").open) return;
       $("businessDetailBody").innerHTML = `<div class="outreachEmpty"><strong>Business details could not be loaded</strong><span>${escapeHtml(error.message || String(error))}</span></div>`;
     }
   }
@@ -5851,12 +5867,14 @@
   });
   $("saveOutcomeBtn").addEventListener("click", saveOutreachOutcome);
   $("closeOutcomeBtn").addEventListener("click", () => $("outcomeDialog").close());
+  $("outcomeDialog").addEventListener("close", () => { outreachOutcomeOpenRequest += 1; });
   $("outreachReviewSubject").addEventListener("input", updateOutreachDraftState);
   $("outreachReviewBody").addEventListener("input", updateOutreachDraftState);
   $("saveOutreachDraftBtn").addEventListener("click", saveOutreachDraft);
   $("sendOutreachEmailBtn").addEventListener("click", () => sendOutreachEmail(false));
   $("sendOutreachTestBtn").addEventListener("click", () => sendOutreachEmail(true));
   $("closeOutreachReviewBtn").addEventListener("click", closeOutreachReview);
+  $("outreachReviewDialog").addEventListener("close", () => { outreachReviewOpenRequest += 1; });
   $("closeOutreachCampaignBtn").addEventListener("click", () => $("outreachCampaignDialog").close());
   $("outreachCampaignRecipients").addEventListener("click", event => {
     const button = event.target.closest("[data-campaign-recipient-action='save']");
@@ -5869,6 +5887,7 @@
   $("sendOutreachCampaignBatchBtn").addEventListener("click", sendOutreachCampaignBatch);
   $("sendRemainingCampaignBtn").addEventListener("click", sendRemainingCampaign);
   $("closeBusinessDetailBtn").addEventListener("click", () => $("businessDetailDialog").close());
+  $("businessDetailDialog").addEventListener("close", () => { outreachDetailOpenRequest += 1; });
   $("closeNewsletterContactBtn").addEventListener("click", () => $("newsletterContactDialog").close());
   $("saveNewsletterContactBtn").addEventListener("click", saveNewsletterContact);
   $("businessDetailBody").addEventListener("click", event => {
