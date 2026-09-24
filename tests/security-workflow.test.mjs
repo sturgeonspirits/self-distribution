@@ -529,3 +529,14 @@ test("campaign rebuilding reconciles first and changes only review-ready snapsho
   assert.match(proxy, /"rebuildCampaignRecipients"/);
   assert.match(proxy, /\["rebuildCampaignRecipients", "outreach"\]/);
 });
+
+test("campaign rebuild UI and first-draft save gate preserve review-before-send", async () => {
+  const index = await readFile(new URL("index.html", root), "utf8");
+  assert.match(index, /id="rebuildCampaignRecipientsBtn"/);
+  assert.match(index, /action:"rebuildCampaignRecipients"/);
+  assert.match(index, /const ready = Number\(campaign\?\.counts\?\.\["Ready for review"\] \|\| 0\)/);
+  assert.match(index, /Re-approve before sending/);
+  assert.match(index, /\$\("saveOutreachDraftBtn"\)\.disabled = !dirty && !!selectedOutreachRecord\.has_saved_draft/);
+  assert.match(index, /if \(!selectedOutreachRecord \|\| \(selectedOutreachRecord\.has_saved_draft && !outreachDraftIsDirty\(\)\)\) return;/);
+  assert.match(index, /const saved = !!selectedOutreachRecord\?\.has_saved_draft && !outreachDraftIsDirty\(\)/);
+});

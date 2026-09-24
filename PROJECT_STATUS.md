@@ -8,8 +8,8 @@ Read this file before inspecting the repository or changing the application. Upd
 
 | Component | Source version | Deployment state |
 | --- | --- | --- |
-| Netlify web app and staff proxy | `2026.09.24.24-WEB` | Deployed from `codex/distribution-system-foundation` through a Netlify Git build. Verified: `/go?t=application` returns the allowlisted 302, `/go?t=nope` returns `404 Not found.`, unknown staff-proxy actions return `400 UNKNOWN_ACTION` with the `.24` header, and the staff footer reports `.24`. |
-| Inventory API Apps Script | `2026.09.24.23` on `codex/work` / `2026.09.24.17` live | Targeted record reads, possessive-name display correction, and signed-link click engagement recording are committed and awaiting Apps Script deployment. |
+| Netlify web app and staff proxy | `2026.09.24.25-WEB` on `codex/work` / `2026.09.24.24-WEB` live | Rebuild controls and staff-proxy actions are committed; deployment is pending. The `.24` production Git build remains verified. |
+| Inventory API Apps Script | `2026.09.24.24` on `codex/work` / `2026.09.24.17` live | Campaign reconciliation and review-ready snapshot rebuilding are committed and awaiting Apps Script deployment. |
 | Distribution Outreach Apps Script | `2026.09.24.13-APP` on `codex/work` | Signed-link rendering is committed; owner has not yet confirmed this exact version is deployed. |
 | Public customer Netlify proxy | `2026.09.18.3-WEB` | Deployed with Netlify; unchanged by the latest staff-app UI work |
 
@@ -183,7 +183,7 @@ Production deploys are Netlify Git builds from `codex/distribution-system-founda
 
 ### Web release-version rule
 
-Treat the `-WEB` version as one app-wide release identifier, not a per-file label. Before every Netlify deployment, make the version identical in the `index.html` header comment, `app-version` meta tag, footer, `APP_VERSION` constant, and every deployed Netlify function's version comment/constant. Do not deploy while any of those values differ.
+Treat the `-WEB` version as one app-wide release identifier, not a per-file label. Before every Netlify deployment, make the version identical in the `index.html` header comment, `app-version` meta tag, footer, `APP_VERSION` constant, and the staff-proxy and tracking-function version comment/constants. Do not deploy while any of those values differ.
 
 Run the repository regression suite after every code change:
 

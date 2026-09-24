@@ -1,10 +1,10 @@
 <!doctype html>
-<!-- App version: 2026.09.24.24-WEB -->
+<!-- App version: 2026.09.24.25-WEB -->
 <html>
 <head>
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover"/>
-  <meta name="app-version" content="2026.09.24.24-WEB" />
+  <meta name="app-version" content="2026.09.24.25-WEB" />
   <title>Sturgeon Distribution Hub</title>
   <style>
     :root{
@@ -2308,6 +2308,7 @@
       <div class="status" id="outreachCampaignStatus" role="status" aria-live="polite"></div>
       <label class="checkLabel" id="campaignSegmentConfirmRow"><input id="campaignSegmentConfirm" type="checkbox" /><span>I reviewed the standard fallback message used for recipients without a tailored segment.</span></label>
       <div id="outreachCampaignRecipients"></div>
+      <div class="dlgActions"><button id="rebuildCampaignRecipientsBtn" type="button">Rebuild unsent emails with current template</button></div>
       <div class="dlgActions"><button id="reopenOutreachCampaignBtn" type="button">Reopen unsent for edits</button><button id="approveOutreachCampaignBtn" type="button">Approve campaign</button><button id="sendOutreachCampaignBatchBtn" type="button">Send next 10</button><button class="primary" id="sendRemainingCampaignBtn" type="button">Send remaining</button></div>
     </div>
   </dialog>
@@ -2469,7 +2470,7 @@
 
   <footer style="max-width:1200px;margin:18px auto 120px;padding:0 12px;text-align:center;color:#6b7280;font-size:12px;">
     Designed by <a href="https://scriptspirit.dev" target="_blank" rel="noopener noreferrer" style="color:#1d4ed8;text-decoration:none;font-weight:700;">Script Spirit</a>
-<span id="appVersionFooter"> • Version 2026.09.24.24-WEB</span>
+<span id="appVersionFooter"> • Version 2026.09.24.25-WEB</span>
   </footer>
 
 
@@ -2492,7 +2493,7 @@
   window.addEventListener("unhandledrejection", e => console.error("Unhandled promise rejection:", e.reason));
   window.addEventListener("error", e => console.error("Unhandled error:", e.error || e.message));
   const $ = (id) => document.getElementById(id);
-  const APP_VERSION = "2026.09.24.24-WEB";
+  const APP_VERSION = "2026.09.24.25-WEB";
   $("appVersionFooter").textContent = ` • Version ${APP_VERSION}`;
 
   let cache = { stores: [], lines: [] };
@@ -3281,6 +3282,7 @@
     const reopenableCount = Number(campaign.counts?.["Ready to send"] || 0) + Number(campaign.counts?.Blocked || 0);
     const canReopen = ["Review", "Approved", "Complete with blocks"].includes(campaign.status) && reopenableCount > 0;
     $("reopenOutreachCampaignBtn").hidden = !canReopen;
+    $("rebuildCampaignRecipientsBtn").hidden = campaign.status !== "Review";
     $("approveOutreachCampaignBtn").hidden = campaign.status !== "Review";
     $("sendOutreachCampaignBatchBtn").hidden = campaign.status !== "Approved";
     $("sendRemainingCampaignBtn").hidden = campaign.status !== "Approved";
@@ -3373,6 +3375,29 @@
     } catch (error) {
       setCampaignStatus(`Could not reopen this campaign: ${error.message || String(error)}`, true);
       $("reopenOutreachCampaignBtn").disabled = false;
+    }
+  }
+
+  async function rebuildCampaignRecipients(){
+    const campaign = selectedOutreachCampaign;
+    const staffName = $("outreachStaffName").value.trim();
+    const ready = Number(campaign?.counts?.["Ready for review"] || 0);
+    if (!campaign || campaign.status !== "Review") return toast("Only a campaign in Review can rebuild unsent emails.");
+    if (!staffName) return toast("Enter your staff name before rebuilding the campaign.");
+    if (!ready) return toast("There are no Ready for review recipients to rebuild.");
+    if (!confirm(`Rebuild ${ready} unsent email${ready === 1 ? "" : "s"} with the current template? Edited subjects and messages will be kept, while their HTML footer is refreshed. Blocked sends will be reconciled from the Activity Log first. No email will be sent.`)) return;
+    const button = $("rebuildCampaignRecipientsBtn");
+    button.disabled = true;
+    setCampaignStatus("Reconciling blocked sends and rebuilding unsent emails...");
+    try {
+      const res = await staffApiPost({ action:"rebuildCampaignRecipients", campaign_id:campaign.campaign_id, staff_name:staffName });
+      if (!res.ok) throw new Error(res.error || "Campaign recipients could not be rebuilt.");
+      await loadOutreachCampaigns();
+      await openOutreachCampaign(campaign.campaign_id);
+      setCampaignStatus(`${Number(res.rebuilt || 0)} rebuilt; ${Number(res.rebuilt_with_edits_kept || 0)} kept edited text; ${Number(res.skipped || 0)} skipped; ${Number(res.reconciled || 0)} reconciled. Re-approve before sending.`);
+    } catch (error) {
+      setCampaignStatus(`Could not rebuild campaign emails: ${error.message || String(error)}`, true);
+      button.disabled = false;
     }
   }
 
@@ -3712,7 +3737,7 @@
         subject:$("outreachReviewSubject").value,
         body:$("outreachReviewBody").value,
       };
-      $("saveOutreachDraftBtn").disabled = true;
+      $("saveOutreachDraftBtn").disabled = !!record.has_saved_draft;
       $("outreachDraftStatus").textContent = record.has_saved_draft
         ? `Saved ${formatOutreachDate(record.draft_updated_at) || "as a draft"}`
         : "Not saved as a custom draft";
@@ -3759,11 +3784,11 @@
   function updateOutreachDraftState(){
     if (!selectedOutreachRecord || $("outreachReviewBody").readOnly) return;
     const dirty = outreachDraftIsDirty();
-    $("saveOutreachDraftBtn").disabled = !dirty;
+    $("saveOutreachDraftBtn").disabled = !dirty && !!selectedOutreachRecord.has_saved_draft;
     $("outreachDraftStatus").textContent = dirty ? "Unsaved changes" : (
       selectedOutreachRecord.has_saved_draft
         ? `Saved ${formatOutreachDate(selectedOutreachRecord.draft_updated_at) || "as a draft"}`
-        : "Not saved as a custom draft"
+        : "Not saved as a custom draft — save this review before sending"
     );
     updateOutreachSendState();
   }
@@ -3787,7 +3812,7 @@
   }
 
   async function saveOutreachDraft(){
-    if (!selectedOutreachRecord || !outreachDraftIsDirty()) return;
+    if (!selectedOutreachRecord || (selectedOutreachRecord.has_saved_draft && !outreachDraftIsDirty())) return;
     const subject = $("outreachReviewSubject").value.trim();
     const bodyText = $("outreachReviewBody").value.trim();
     if (!subject) return toast("Add a subject");
@@ -5894,6 +5919,7 @@
     if (exclusionButton) setOutreachCampaignRecipientExclusion(exclusionButton, exclusionButton.dataset.campaignRecipientAction === "exclude");
   });
   $("approveOutreachCampaignBtn").addEventListener("click", () => approveOutreachCampaign().catch(error => { $("outreachCampaignStatus").textContent = error.message || String(error); }));
+  $("rebuildCampaignRecipientsBtn").addEventListener("click", () => rebuildCampaignRecipients());
   $("reopenOutreachCampaignBtn").addEventListener("click", () => reopenOutreachCampaign());
   $("sendOutreachCampaignBatchBtn").addEventListener("click", sendOutreachCampaignBatch);
   $("sendRemainingCampaignBtn").addEventListener("click", sendRemainingCampaign);
