@@ -187,13 +187,16 @@ test("roles and workspace areas are enforced server-side and revoked users lose 
   const { handler } = await loadFunction("netlify/functions/inventory.js", "roles");
   process.env.APPS_SCRIPT_URL = "https://example.test/exec";
   process.env.APP_SESSION_SECRET = "test-session-secret-that-is-long-enough";
-  process.env.STAFF_ROLES_JSON = '{"staff@sturgeonspirits.com":{"role":"staff","areas":["inventory"]}}';
+  process.env.STAFF_ROLES_JSON = '{"staff@sturgeonspirits.com":{"role":"staff","areas":["inventory","outreach"]}}';
   let fetches = 0;
   globalThis.fetch = async () => { fetches += 1; return new Response(JSON.stringify({ ok:true }), { status:200 }); };
   const session = staffSession();
   const blocked = await handler(event("upsertProduct", { session }));
   assert.equal(blocked.statusCode, 403);
   assert.equal(JSON.parse(blocked.body).code, "STAFF_ROLE_FORBIDDEN");
+  const mileageAdminOnly = await handler(event("recalculateOutreachMiles", { session }));
+  assert.equal(mileageAdminOnly.statusCode, 403);
+  assert.equal(JSON.parse(mileageAdminOnly.body).code, "STAFF_ROLE_FORBIDDEN");
   const areaBlocked = await handler(event("customerWorkQueue", { method:"POST", session }));
   assert.equal(areaBlocked.statusCode, 403);
   assert.equal(JSON.parse(areaBlocked.body).code, "STAFF_AREA_FORBIDDEN");
@@ -528,6 +531,39 @@ test("campaign rebuilding reconciles first and changes only review-ready snapsho
   assert.match(backend, /function rebuildUnsentCampaignEmails\(\)/);
   assert.match(proxy, /"rebuildCampaignRecipients"/);
   assert.match(proxy, /\["rebuildCampaignRecipients", "outreach"\]/);
+});
+
+test("campaigns enforce cached ZIP mileage and fit rules before creation and sending", async () => {
+  const [backend, index, proxy] = await Promise.all([
+    readFile(new URL("apps-script/Code.gs", root), "utf8"),
+    readFile(new URL("index.html", root), "utf8"),
+    readFile(new URL("netlify/functions/inventory.js", root), "utf8"),
+  ]);
+  const createSource = backend.slice(backend.indexOf("function apiCreateOutreachCampaign_"), backend.indexOf("function apiApproveOutreachCampaign_"));
+  const sendSource = backend.slice(backend.indexOf("function apiSendOutreachCampaignBatch_"), backend.indexOf("function outreachStatusForOutcome_"));
+  const normalizeZipSource = backend.match(/function normalizeZip_\([\s\S]*?\n\}/)?.[0];
+  const normalizeZip = new Function(`${normalizeZipSource}\nreturn normalizeZip_;`)();
+  assert.equal(normalizeZip("53511.0"), "53511");
+  assert.equal(normalizeZip(5000), "05000");
+  assert.match(backend, /function normalizeZip_\(/);
+  assert.match(backend, /function zipCentroidMap_\(/);
+  assert.match(backend, /cache\.put\(cacheKey, JSON\.stringify\(Object\.fromEntries\(map\)\), 21600\)/);
+  assert.match(backend, /ensureHeaderColumns_\(sheet, \["Miles Source"\]\)/);
+  assert.match(backend, /function apiRecalculateOutreachMiles_\(/);
+  assert.match(backend, /authenticated_staff_role.*!== "admin"/);
+  assert.match(backend, /function recalculateOutreachMiles\(\)/);
+  assert.match(createSource, /const rules = \{ max_miles:maxMiles, min_fit:minFit \}/);
+  assert.match(createSource, /campaignDistanceAndFitReasons_\(record, rules\)/);
+  assert.match(createSource, /Number\(a\.miles\) - Number\(b\.miles\)/);
+  assert.match(createSource, /campaignAudienceChecksum_\(audience/);
+  assert.match(sendSource, /campaignDistanceAndFitReasons_\(record, campaignRules\)/);
+  assert.match(sendSource, /status\] = "Excluded — out of area"/);
+  assert.match(proxy, /ADMIN_ACTIONS = new Set\([\s\S]*?"recalculateOutreachMiles"/);
+  assert.match(proxy, /\["recalculateOutreachMiles", "outreach"\]/);
+  assert.match(index, /id="recalculateOutreachMilesBtn"/);
+  assert.match(index, /action:"recalculateOutreachMiles"/);
+  assert.match(index, /recipient\.city/);
+  assert.match(index, /Area review needed/);
 });
 
 test("campaign rebuild UI and first-draft save gate preserve review-before-send", async () => {

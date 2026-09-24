@@ -1,8 +1,10 @@
 /*********************************
  * Inventory API (JSON) for Netlify
- * App version: 2026.09.24.24
+ * App version: 2026.09.24.25
  *
  * CHANGES IN THIS VERSION
+ * - Limits campaign snapshots and send-time delivery to the stored local ZIP-distance and craft-fit rule.
+ * - Adds cached ZIP-centroid mileage, manual-mile protection, and an admin mileage-recalculation action.
  * - Rebuilds only review-ready campaign snapshots from the current template after reconciling verified blocked sends.
  * - Reconciles campaign recipients with verified Activity Log acceptance records without resending or adding an Activity Log send row.
  * - Sends Karl-only test email HTML from the renderer's actual html field so test links retain their non-recording marker.
@@ -132,7 +134,7 @@
  * - Use only in the staging inventory backend until testing is complete.
  *********************************/
 
-const APP_VERSION = "2026.09.24.24";
+const APP_VERSION = "2026.09.24.25";
 
 const SHEET_NAMES = {
   STORES: "Stores",
@@ -154,6 +156,7 @@ const OUTREACH_PROGRAMS_SHEET_NAME = "Account Programs";
 const OUTREACH_ENGAGEMENT_SHEET_NAME = "Email Engagement";
 const OUTREACH_CAMPAIGNS_SHEET_NAME = "Outreach Campaigns";
 const OUTREACH_CAMPAIGN_RECIPIENTS_SHEET_NAME = "Outreach Campaign Recipients";
+const ZIP_CENTROIDS_SHEET_NAME = "ZIP Centroids";
 const TOAST_ITEM_MAP_SHEET_NAME = "Toast Item Map";
 const NEWSLETTER_CONTACTS_SHEET_NAME = "Newsletter Contacts";
 const CUSTOMER_APPLICATIONS_SHEET_NAME = "Customer Applications";
@@ -178,6 +181,7 @@ let __OPERATIONAL_SS = null;
 let __OUTREACH_SS = null;
 let __HUB_INVENTORY_ACTIVE = null;
 let __OUTREACH_CAMPAIGN_SETTINGS = null;
+let __ZIP_CENTROID_MAP = null;
 
 function getLegacyInventorySs_() {
   return SpreadsheetApp.openById(LEGACY_INVENTORY_SPREADSHEET_ID);
@@ -566,7 +570,7 @@ function handle_(e, body) {
     assertAuthorized_(e, body);
     const action = (e?.parameter?.action) || (body?.action) || "";
     if (!action) {
-      return json_({ ok:true, service:"sturgeon-distribution-hub", version:APP_VERSION, actions:["initData","listSkus","addSkuToStore","upsertProduct","submitCounts","createReorder","managerGrid","salesSinceCount","updateStoreContacts","outreachDashboard","outreachRecord","outreachSendStatus","outreachNewsletterContacts","outreachCampaigns","outreachCampaign","createOutreachCampaign","updateOutreachCampaignRecipient","setOutreachCampaignRecipientExclusion","approveOutreachCampaign","reopenOutreachCampaign","reconcileCampaignSends","rebuildCampaignRecipients","sendOutreachCampaignBatch","saveOutreachDraft","sendOutreachEmail","sendOutreachTestEmail","updateOutreachOutcome","updateOutreachBusiness","updateOutreachPrograms","createOutreachBusiness","importOutreachBusinesses","upsertNewsletterContact","submitCustomerApplication","submitOnlineOrderRequest","customerWorkQueue","updateCustomerApplication","updateOnlineOrderRequest","hubSystemStatus","initializeHardenedHub","repairHubStructure","reconcileIntegrations"] });
+      return json_({ ok:true, service:"sturgeon-distribution-hub", version:APP_VERSION, actions:["initData","listSkus","addSkuToStore","upsertProduct","submitCounts","createReorder","managerGrid","salesSinceCount","updateStoreContacts","outreachDashboard","outreachRecord","outreachSendStatus","outreachNewsletterContacts","outreachCampaigns","outreachCampaign","createOutreachCampaign","updateOutreachCampaignRecipient","setOutreachCampaignRecipientExclusion","approveOutreachCampaign","reopenOutreachCampaign","reconcileCampaignSends","rebuildCampaignRecipients","sendOutreachCampaignBatch","saveOutreachDraft","sendOutreachEmail","sendOutreachTestEmail","updateOutreachOutcome","updateOutreachBusiness","updateOutreachPrograms","createOutreachBusiness","importOutreachBusinesses","recalculateOutreachMiles","upsertNewsletterContact","submitCustomerApplication","submitOnlineOrderRequest","customerWorkQueue","updateCustomerApplication","updateOnlineOrderRequest","hubSystemStatus","initializeHardenedHub","repairHubStructure","reconcileIntegrations"] });
     }
 
     let res;
@@ -603,6 +607,7 @@ function handle_(e, body) {
       case "updateOutreachPrograms": res = apiUpdateOutreachPrograms_(body); break;
       case "createOutreachBusiness": res = apiCreateOutreachBusiness_(body); break;
       case "importOutreachBusinesses": res = apiImportOutreachBusinesses_(body); break;
+      case "recalculateOutreachMiles": res = apiRecalculateOutreachMiles_(body); break;
       case "upsertNewsletterContact": res = apiUpsertNewsletterContact_(body); break;
       case "submitCustomerApplication": res = apiSubmitCustomerApplication_(body); break;
       case "submitOnlineOrderRequest": res = apiSubmitOnlineOrderRequest_(body); break;
@@ -1243,7 +1248,10 @@ function directoryRowFromBusiness_(sheet, p, accountId, now) {
   setDirectoryField_(row, h, ["Do Not Email"], toBool_(p.do_not_email));
   setDirectoryField_(row, h, ["Craft-Spirit Fit (1–5)", "Craft-Spirit Fit (1-5)"], String(p.craft_spirit_fit || ""));
   setDirectoryField_(row, h, ["Rating Basis"], String(p.rating_basis || ""));
-  setDirectoryField_(row, h, ["Miles"], p.miles === "" || p.miles === undefined ? "" : Number(p.miles));
+  const manualMiles = String(p.miles_source || "").trim().toLowerCase() === "manual";
+  const zipMiles = manualMiles ? outreachMiles_(p.miles) : milesForZip_(p.postal_code || p.zip);
+  setDirectoryField_(row, h, ["Miles"], zipMiles === null ? "" : zipMiles);
+  setDirectoryField_(row, h, ["Miles Source"], manualMiles ? "manual" : zipMiles === null ? "" : "zip");
   setDirectoryField_(row, h, ["Lead Source"], String(p.lead_source || "Sturgeon Distribution Hub"));
   setDirectoryField_(row, h, ["Email Confidence"], String(p.email_confidence || (p.email ? "Needs verification" : "")));
   setDirectoryField_(row, h, ["Relationship"], String(p.relationship || "Prospect"));
@@ -1278,6 +1286,7 @@ function validateBusinessInput_(p) {
     craft_spirit_fit:fit,
     rating_basis:sheetSafeText_(p.rating_basis, 1000, "Rating basis"),
     miles:miles,
+    miles_source:String(p.miles_source || "").trim().toLowerCase() === "manual" ? "manual" : "",
     lead_source:sheetSafeText_(p.lead_source || "Sturgeon Distribution Hub", 200, "Lead source"),
     email_confidence:sheetSafeText_(p.email_confidence || (email ? "Needs verification" : ""), 80, "Email confidence"),
     relationship:sheetSafeText_(p.relationship || "Prospect", 80, "Relationship"),
@@ -1392,6 +1401,62 @@ function apiImportOutreachBusinesses_(p) {
   }
 }
 
+function apiRecalculateOutreachMiles_(p) {
+  if (String(p?.authenticated_staff_role || "").trim().toLowerCase() !== "admin") throw new Error("This action requires an administrator role.");
+  const lock = LockService.getScriptLock();
+  if (!lock.tryLock(30000)) throw new Error("Another directory update is in progress. Try again in a moment.");
+  try {
+    const sheet = getOutreachSheet_(OUTREACH_SHEET_NAME);
+    const h = ensureHeaderColumns_(sheet, ["Miles Source"]); // Structural change occurs only in this admin action.
+    const zipKey = ["zip", "zip_code", "postal_code"].find(key => h[key] !== undefined);
+    const milesKey = ["miles", "distance", "distance_miles"].find(key => h[key] !== undefined);
+    if (!zipKey || !milesKey) throw new Error("Distribution Directory and Leads needs Zip Code and Miles columns.");
+    const rowCount = Math.max(0, sheet.getLastRow() - 1);
+    const counts = { updated:0, manual_kept:0, no_zip:0, unknown_zip:0 };
+    if (!rowCount) return Object.assign({ message:"No directory rows to recalculate." }, counts);
+    const directoryRows = sheet.getRange(2, 1, rowCount, sheet.getLastColumn()).getValues();
+    const nextMiles = directoryRows.map(row => [row[h[milesKey]]]);
+    const nextSources = directoryRows.map(row => [row[h.miles_source]]);
+    directoryRows.forEach((row, index) => {
+      if (String(row[h.miles_source] || "").trim().toLowerCase() === "manual") {
+        counts.manual_kept += 1;
+        return;
+      }
+      const zip = normalizeZip_(row[h[zipKey]]);
+      if (!zip) {
+        counts.no_zip += 1;
+        nextMiles[index][0] = "";
+        nextSources[index][0] = "";
+        return;
+      }
+      const miles = milesForZip_(zip);
+      if (miles === null) {
+        counts.unknown_zip += 1;
+        nextMiles[index][0] = "";
+        nextSources[index][0] = "";
+        return;
+      }
+      if (String(row[h[milesKey]]) !== String(miles) || String(row[h.miles_source] || "").trim().toLowerCase() !== "zip") counts.updated += 1;
+      nextMiles[index][0] = miles;
+      nextSources[index][0] = "zip";
+    });
+    // The two columns may not be adjacent in an existing sheet; each is one batched column write, never per-cell writes.
+    sheet.getRange(2, h[milesKey] + 1, rowCount, 1).setValues(nextMiles);
+    sheet.getRange(2, h.miles_source + 1, rowCount, 1).setValues(nextSources);
+    const actor = authenticatedActor_(p, "Sturgeon Distribution Hub");
+    appendAudit_("RECALCULATE_OUTREACH_MILES", "Distribution Directory and Leads", "", "", actor, ZIP_CENTROIDS_SHEET_NAME, OUTREACH_SHEET_NAME, "Completed", `${counts.updated} updated; ${counts.manual_kept} manual kept; ${counts.no_zip} no ZIP; ${counts.unknown_zip} unknown ZIP.`);
+    return Object.assign({ message:`Mileage recalculated: ${counts.updated} updated; ${counts.manual_kept} manual kept; ${counts.no_zip} no ZIP; ${counts.unknown_zip} unknown ZIP.` }, counts);
+  } finally {
+    lock.releaseLock();
+  }
+}
+
+function recalculateOutreachMiles() {
+  const result = apiRecalculateOutreachMiles_({ staff_name:"Karl (editor)", authenticated_staff_role:"admin" });
+  Logger.log(JSON.stringify(result));
+  return result;
+}
+
 function outreachValue_(row, keys) {
   return firstPresent_(row, keys);
 }
@@ -1448,6 +1513,69 @@ function outreachMiles_(value) {
   if (value === "" || value === null || value === undefined) return null;
   const miles = Number(value);
   return Number.isFinite(miles) ? miles : null;
+}
+
+function normalizeZip_(value) {
+  const text = String(value === null || value === undefined ? "" : value).trim().replace(/\.0+$/, "");
+  const digits = (text.match(/\d+/) || [""])[0].slice(0, 5);
+  return digits ? digits.padStart(5, "0") : "";
+}
+
+function zipCentroidMap_() {
+  if (__ZIP_CENTROID_MAP) return __ZIP_CENTROID_MAP;
+  const cache = CacheService.getScriptCache();
+  const cacheKey = "hub_zip_centroids_miles_v1";
+  try {
+    const cached = JSON.parse(cache.get(cacheKey) || "null");
+    if (cached && typeof cached === "object") {
+      __ZIP_CENTROID_MAP = new Map(Object.entries(cached));
+      return __ZIP_CENTROID_MAP;
+    }
+  } catch (error) {
+    console.warn("ZIP centroid cache read failed: " + String(error && error.message || error));
+  }
+  const sheet = getOutreachSs_().getSheetByName(ZIP_CENTROIDS_SHEET_NAME);
+  const map = new Map();
+  if (!sheet || sheet.getLastRow() < 2) return (__ZIP_CENTROID_MAP = map);
+  const headers = getHeaderMap_(sheet);
+  const zipIndex = headers.zip;
+  const milesIndex = headers.miles_from_distillery;
+  if (zipIndex === undefined || milesIndex === undefined) throw new Error("ZIP Centroids needs ZIP and Miles From Distillery columns.");
+  sheet.getRange(2, 1, sheet.getLastRow() - 1, sheet.getLastColumn()).getValues().forEach(row => {
+    const zip = normalizeZip_(row[zipIndex]);
+    const miles = outreachMiles_(row[milesIndex]);
+    if (zip && miles !== null) map.set(zip, miles);
+  });
+  __ZIP_CENTROID_MAP = map;
+  try {
+    cache.put(cacheKey, JSON.stringify(Object.fromEntries(map)), 21600);
+  } catch (error) {
+    // CacheService has a small value limit; the in-request map remains authoritative.
+    console.warn("ZIP centroid cache write failed: " + String(error && error.message || error));
+  }
+  return map;
+}
+
+function milesForZip_(zip) {
+  const normalized = normalizeZip_(zip);
+  if (!normalized) return null;
+  const miles = zipCentroidMap_().get(normalized);
+  return outreachMiles_(miles);
+}
+
+function directoryMilesSource_(row) {
+  return String(outreachValue_(row, ["miles_source"]) || "").trim().toLowerCase();
+}
+
+function setDirectoryMilesFromZip_(values, headers, zip) {
+  const sourceKey = headers.miles_source !== undefined ? "miles_source" : "";
+  if (sourceKey && String(values[headers[sourceKey]] || "").trim().toLowerCase() === "manual") return { updated:false, source:"manual", miles:outreachMiles_(values[headers.miles]) };
+  const milesKey = ["miles", "distance", "distance_miles"].find(key => headers[key] !== undefined);
+  if (!milesKey) return { updated:false, source:"", miles:null };
+  const miles = milesForZip_(zip);
+  values[headers[milesKey]] = miles === null ? "" : miles;
+  if (sourceKey) values[headers[sourceKey]] = miles === null ? "" : "zip";
+  return { updated:true, source:miles === null ? "" : "zip", miles:miles };
 }
 
 function outreachWeeklyExclusionReasons_(record) {
@@ -2389,7 +2517,7 @@ function outreachCampaignSheets_() {
       "Last Batch At", "Sent Count", "Blocked Count", "App Version"
     ]),
     recipients: ensureSheet_(ss, OUTREACH_CAMPAIGN_RECIPIENTS_SHEET_NAME, [
-      "Campaign ID", "Source Row", "Account ID", "Business Name", "Recipient Email", "Contact", "Priority",
+      "Campaign ID", "Source Row", "Account ID", "Business Name", "Recipient Email", "Contact", "City", "Miles", "Priority",
       "Email Confidence", "Segment", "Wave", "Subject", "Body Text", "HTML", "Content Checksum",
       "Status", "Result Detail", "Zoho Message ID", "Sent At", "Idempotency Token", "App Version"
     ]),
@@ -2412,6 +2540,49 @@ function campaignRecipientRows_(sheet, campaignId) {
     .filter(item => String(item.values[h.campaign_id] || "") === String(campaignId || ""));
 }
 
+function campaignAudienceRules_(audience) {
+  const text = String(audience || "");
+  const fitMatch = text.match(/fit\s*(?:≥|>=)\s*(\d+)/i);
+  const milesMatch = text.match(/(?:≤|<=)\s*(\d+(?:\.\d+)?)\s*mi/i);
+  return {
+    min_fit:fitMatch ? Number(fitMatch[1]) : 5,
+    max_miles:milesMatch ? Number(milesMatch[1]) : 15,
+  };
+}
+
+function campaignAudienceLabel_(rules) {
+  return `Initial prospects · fit ≥${rules.min_fit} · ≤${rules.max_miles} mi`;
+}
+
+function campaignDistanceAndFitReasons_(record, rules) {
+  const reasons = [];
+  const miles = outreachMiles_(record.miles);
+  if (miles === null || miles > Number(rules.max_miles)) reasons.push("out of area");
+  if (Number(record.craft_spirit_fit || 0) < Number(rules.min_fit)) reasons.push("below campaign fit");
+  return reasons;
+}
+
+function campaignRecipientSnapshotValues_(sheet, campaignId, record) {
+  const h = getHeaderMap_(sheet);
+  const values = Array(sheet.getLastColumn()).fill("");
+  const set = (key, value) => { if (h[key] !== undefined) values[h[key]] = value; };
+  const checksum = sha256_([record.source_row, record.account_id, record.business, record.email, record.subject, record.body_text].join("|"));
+  set("campaign_id", campaignId); set("source_row", record.source_row); set("account_id", record.account_id);
+  set("business_name", record.business); set("recipient_email", record.email); set("contact", record.contact);
+  set("city", record.city); set("miles", record.miles === null ? "" : record.miles); set("priority", record.priority);
+  set("email_confidence", record.email_confidence); set("segment", record.segment); set("wave", record.wave);
+  set("subject", record.subject); set("body_text", record.body_text); set("html", record.preview_html);
+  set("content_checksum", checksum); set("status", "Ready for review"); set("idempotency_token", `${campaignId}-${record.source_row}`); set("app_version", APP_VERSION);
+  return values;
+}
+
+function campaignAudienceChecksum_(audience, recipients) {
+  return sha256_([String(audience || "")].concat(recipients.map(item => {
+    const h = item.headers;
+    return `${item.values[h.source_row]}|${item.values[h.recipient_email]}|${item.values[h.content_checksum]}`;
+  })).join("\n"));
+}
+
 function campaignObject_(campaign, recipients, includeRecipients) {
   const h = campaign.headers;
   const value = key => campaign.values[h[key]];
@@ -2421,7 +2592,7 @@ function campaignObject_(campaign, recipients, includeRecipients) {
     return {
       source_row:Number(get("source_row") || 0), account_id:String(get("account_id") || ""),
       business:String(get("business_name") || ""), email:String(get("recipient_email") || ""),
-      contact:String(get("contact") || ""), priority:String(get("priority") || ""),
+      contact:String(get("contact") || ""), city:String(get("city") || ""), miles:outreachMiles_(get("miles")), priority:String(get("priority") || ""),
       email_confidence:String(get("email_confidence") || ""), segment:String(get("segment") || ""), wave:String(get("wave") || ""),
       subject:String(get("subject") || ""), body_text:String(get("body_text") || ""), preview_html:String(get("html") || ""),
       content_checksum:String(get("content_checksum") || ""), status:String(get("status") || ""),
@@ -2437,6 +2608,7 @@ function campaignObject_(campaign, recipients, includeRecipients) {
     created_at:value("created_at") || "", created_by:String(value("created_by") || ""), approved_at:value("approved_at") || "",
     approved_by:String(value("approved_by") || ""), sent_count:Number(value("sent_count") || 0), blocked_count:Number(value("blocked_count") || 0),
     counts:counts,
+    audience_rules:campaignAudienceRules_(String(value("audience") || "")),
   };
   if (includeRecipients) {
     result.recipients = recipientObjects;
@@ -2673,7 +2845,7 @@ function apiRebuildCampaignRecipients_(p) {
       changed.push(item);
     });
     writeCampaignRecipientRows_(sheets.recipients, changed);
-    campaign.values[ch.audience_checksum] = sha256_(recipients.map(item => `${item.values[item.headers.source_row]}|${item.values[item.headers.recipient_email]}|${item.values[item.headers.content_checksum]}`).join("\n"));
+    campaign.values[ch.audience_checksum] = campaignAudienceChecksum_(campaign.values[ch.audience], recipients);
     campaign.values[ch.status] = "Review";
     campaign.values[ch.approved_at] = "";
     campaign.values[ch.approved_by] = "";
@@ -2772,7 +2944,7 @@ function apiUpdateOutreachCampaignRecipient_(p) {
     recipient.values[rh.app_version] = APP_VERSION;
     sheets.recipients.getRange(recipient.row, 1, 1, recipient.values.length).setValues([recipient.values]);
     const recipients = campaignRecipientRows_(sheets.recipients, p.campaign_id);
-    campaign.values[ch.audience_checksum] = sha256_(recipients.map(item => `${item.values[item.headers.source_row]}|${item.values[item.headers.recipient_email]}|${item.values[item.headers.content_checksum]}`).join("\n"));
+    campaign.values[ch.audience_checksum] = campaignAudienceChecksum_(campaign.values[ch.audience], recipients);
     campaign.values[ch.app_version] = APP_VERSION;
     sheets.campaigns.getRange(campaign.row, 1, 1, campaign.values.length).setValues([campaign.values]);
     appendAudit_("EDIT_OUTREACH_CAMPAIGN_RECIPIENT", "Campaign recipient", String(p.idempotency_token), String(recipient.values[rh.account_id] || ""), authenticatedActor_(p, "Sturgeon Distribution Hub"), OUTREACH_CAMPAIGN_RECIPIENTS_SHEET_NAME, OUTREACH_CAMPAIGNS_SHEET_NAME, "Review", `Edited ${recipient.values[rh.business_name]}.`);
@@ -2784,6 +2956,12 @@ function apiUpdateOutreachCampaignRecipient_(p) {
 
 function apiCreateOutreachCampaign_(p) {
   const name = publicText_(p?.campaign_name || "Initial prospect campaign", 120, "Campaign name");
+  const maxMiles = p?.max_miles === undefined || String(p.max_miles).trim() === "" ? 15 : Number(p.max_miles);
+  const minFit = p?.min_fit === undefined || String(p.min_fit).trim() === "" ? 5 : Number(p.min_fit);
+  if (!Number.isFinite(maxMiles) || maxMiles < 0 || maxMiles > 1000) throw new Error("Campaign maximum miles must be from 0 to 1000.");
+  if (!Number.isInteger(minFit) || minFit < 1 || minFit > 5) throw new Error("Campaign minimum fit must be from 1 to 5.");
+  const rules = { max_miles:maxMiles, min_fit:minFit };
+  const audience = campaignAudienceLabel_(rules);
   const lock = LockService.getScriptLock();
   if (!lock.tryLock(10000)) throw new Error("Another campaign update is in progress. Try again in a moment.");
   try {
@@ -2808,20 +2986,17 @@ function apiCreateOutreachCampaign_(p) {
       if (String(record.relationship || "").trim().toLowerCase() !== "prospect") return false;
       if (String(record.next_email || "Initial").trim().toLowerCase() !== "initial") return false;
       if (outreachSendEligibility_(record).length) return false;
+      if (campaignDistanceAndFitReasons_(record, rules).length) return false;
       const email = String(record.email || "").trim().toLowerCase();
       if (seenEmails.has(email)) return false;
       seenEmails.add(email);
       return true;
-    }).sort((a, b) => outreachPriorityScore_(b) - outreachPriorityScore_(a) || String(a.business).localeCompare(String(b.business)));
+    }).sort((a, b) => Number(a.miles) - Number(b.miles) || outreachPriorityScore_(b) - outreachPriorityScore_(a) || String(a.business).localeCompare(String(b.business)));
     if (!eligible.length) throw new Error("No eligible initial prospects are available for a campaign.");
     const campaignId = permanentId_("CMP");
-    const recipientRows = eligible.map(record => {
-      const checksum = sha256_([record.source_row, record.account_id, record.business, record.email, record.subject, record.body_text].join("|"));
-      return [campaignId, record.source_row, record.account_id, record.business, record.email, record.contact, record.priority,
-        record.email_confidence, record.segment, record.wave, record.subject, record.body_text, record.preview_html, checksum,
-        "Ready for review", "", "", "", `${campaignId}-${record.source_row}`, APP_VERSION];
-    });
-    const audienceChecksum = sha256_(recipientRows.map(row => `${row[1]}|${row[4]}|${row[13]}`).join("\n"));
+    const recipientRows = eligible.map(record => campaignRecipientSnapshotValues_(sheets.recipients, campaignId, record));
+    const recipientHeaders = getHeaderMap_(sheets.recipients);
+    const audienceChecksum = campaignAudienceChecksum_(audience, recipientRows.map(values => ({ values:values, headers:recipientHeaders })));
     const unsegmentedCount = eligible.filter(record => !String(record.segment || "").trim()).length;
     const campaignHeaders = getHeaderMap_(sheets.campaigns);
     if (sheets.campaigns.getLastRow() >= 2) {
@@ -2832,9 +3007,9 @@ function apiCreateOutreachCampaign_(p) {
       }
     }
     sheets.recipients.getRange(sheets.recipients.getLastRow() + 1, 1, recipientRows.length, recipientRows[0].length).setValues(recipientRows);
-    sheets.campaigns.appendRow([campaignId, name, "Eligible initial prospects", "Review", eligible.length, audienceChecksum,
+    sheets.campaigns.appendRow([campaignId, name, audience, "Review", eligible.length, audienceChecksum,
       unsegmentedCount, new Date(), authenticatedActor_(p, "Sturgeon Distribution Hub"), "", "", "", "", 0, 0, APP_VERSION]);
-    appendAudit_("CREATE_OUTREACH_CAMPAIGN", "Campaign", campaignId, "", authenticatedActor_(p, "Sturgeon Distribution Hub"), OUTREACH_SHEET_NAME, OUTREACH_CAMPAIGN_RECIPIENTS_SHEET_NAME, "Review", `${eligible.length} frozen recipients.`);
+    appendAudit_("CREATE_OUTREACH_CAMPAIGN", "Campaign", campaignId, "", authenticatedActor_(p, "Sturgeon Distribution Hub"), OUTREACH_SHEET_NAME, OUTREACH_CAMPAIGN_RECIPIENTS_SHEET_NAME, "Review", `${eligible.length} frozen recipients; ${audience}.`);
     return { message:"Campaign created for review. No email was sent.", campaign_id:campaignId, recipient_count:eligible.length, audience_checksum:audienceChecksum, unsegmented_count:unsegmentedCount };
   } finally { lock.releaseLock(); }
 }
@@ -2926,7 +3101,7 @@ function apiReopenOutreachCampaign_(p) {
       if (wasBlocked) reopenedBlocked += 1;
     });
     const updatedRecipients = campaignRecipientRows_(sheets.recipients, p.campaign_id);
-    campaign.values[ch.audience_checksum] = sha256_(updatedRecipients.map(item => `${item.values[item.headers.source_row]}|${item.values[item.headers.recipient_email]}|${item.values[item.headers.content_checksum]}`).join("\n"));
+    campaign.values[ch.audience_checksum] = campaignAudienceChecksum_(campaign.values[ch.audience], updatedRecipients);
     campaign.values[ch.status] = "Review";
     campaign.values[ch.approved_at] = "";
     campaign.values[ch.approved_by] = "";
@@ -2951,6 +3126,7 @@ function apiSendOutreachCampaignBatch_(p) {
     const ch = campaign.headers;
     if (String(campaign.values[ch.status] || "") !== "Approved") throw new Error("Campaign must be approved before delivery.");
     if (String(campaign.values[ch.approval_token] || "") !== String(p.approval_token || "")) throw new Error("Campaign approval is not valid. Refresh and review again.");
+    const campaignRules = campaignAudienceRules_(campaign.values[ch.audience]);
     const recipients = campaignRecipientRows_(sheets.recipients, p.campaign_id)
       .filter(item => String(item.values[item.headers.status] || "") === "Ready to send").slice(0, requestedSize);
     if (!recipients.length) return { message:"No campaign recipients are waiting to send.", sent:0, blocked:0, remaining:0, results:[] };
@@ -2973,6 +3149,15 @@ function apiSendOutreachCampaignBatch_(p) {
         const current = {}; Object.keys(leadHeaders).forEach(key => current[key] = raw[leadHeaders[key]]);
         const record = outreachRecord_(current, sourceRow, activityMap, settings, draftMap, programMap, engagementMap);
         if (record.business !== String(item.values[rh.business_name] || "") || record.email.toLowerCase() !== String(item.values[rh.recipient_email] || "").toLowerCase()) throw new Error("Business or recipient changed after review.");
+        const areaReasons = campaignDistanceAndFitReasons_(record, campaignRules);
+        if (areaReasons.length) {
+          item.values[rh.status] = "Excluded — out of area";
+          item.values[rh.result_detail] = `Excluded at send time: ${areaReasons.join("; ")}.`;
+          item.values[rh.app_version] = APP_VERSION;
+          sheets.recipients.getRange(item.row, 1, 1, item.values.length).setValues([item.values]);
+          results.push({ source_row:sourceRow, business:record.business, status:"Excluded — out of area", detail:areaReasons.join("; ") });
+          continue;
+        }
         const reasons = outreachSendEligibility_(record);
         if (reasons.length) throw new Error(reasons.join("; "));
         const token = String(item.values[rh.idempotency_token] || "");
@@ -3472,6 +3657,8 @@ function apiUpdateOutreachBusiness_(p) {
     if (p.account_id && accountId !== String(p.account_id).trim()) throw new Error("Account identity changed. Refresh and try again.");
 
     const changed = [];
+    let milesEditedManually = false;
+    let zipChanged = false;
     Object.keys(p.updates).forEach(canonical => {
       if (!Object.prototype.hasOwnProperty.call(OUTREACH_EDITABLE_FIELD_KEYS, canonical)) return;
       const actualKey = OUTREACH_EDITABLE_FIELD_KEYS[canonical].find(key => h[key] !== undefined);
@@ -3489,8 +3676,19 @@ function apiUpdateOutreachBusiness_(p) {
       }
       if (String(current[actualKey] ?? "").trim() === value) return;
       values[h[actualKey]] = value;
+      if (canonical === "miles") milesEditedManually = true;
+      if (canonical === "postal_code") zipChanged = true;
       changed.push(outreachFieldLabel_(canonical));
     });
+
+    if (milesEditedManually) {
+      if (h.miles_source === undefined) throw new Error("Run Recalculate miles from ZIP once before saving a manual mileage override.");
+      values[h.miles_source] = "manual";
+    } else if (zipChanged) {
+      const zipKey = OUTREACH_EDITABLE_FIELD_KEYS.postal_code.find(key => h[key] !== undefined);
+      const result = setDirectoryMilesFromZip_(values, h, zipKey ? values[h[zipKey]] : "");
+      if (result.updated) changed.push("Miles from ZIP");
+    }
 
     const additionalNote = String(p.additional_note || "").trim();
     if (additionalNote) {

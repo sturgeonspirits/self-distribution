@@ -8,8 +8,8 @@ Read this file before inspecting the repository or changing the application. Upd
 
 | Component | Source version | Deployment state |
 | --- | --- | --- |
-| Netlify web app and staff proxy | `2026.09.24.27-WEB` on `codex/work` / `2026.09.24.24-WEB` live | Rebuild controls, staff-proxy actions, the brand-aligned browser/web-app icon, and restored verified proxy timeouts are pending deployment. The `.24` production Git build remains verified. |
-| Inventory API Apps Script | `2026.09.24.24` on `codex/work` / `2026.09.24.17` live | Campaign reconciliation and review-ready snapshot rebuilding are committed and awaiting Apps Script deployment. |
+| Netlify web app and staff proxy | `2026.09.24.28-WEB` on `codex/distribution-system-foundation` / `2026.09.24.24-WEB` live | ZIP-mileage recalculation and the admin-only proxy action are committed for review; deployment is pending. |
+| Inventory API Apps Script | `2026.09.24.25` on `codex/distribution-system-foundation` / `2026.09.24.17` live | ZIP-centroid distance, manual mileage overrides, and the campaign distance/fit gate are committed for review; deployment is pending. |
 | Distribution Outreach Apps Script | `2026.09.24.13-APP` on `codex/work` | Signed-link rendering is committed; owner has not yet confirmed this exact version is deployed. |
 | Public customer Netlify proxy | `2026.09.18.3-WEB` | Deployed with Netlify; unchanged by the latest staff-app UI work |
 

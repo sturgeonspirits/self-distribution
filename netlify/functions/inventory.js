@@ -1,7 +1,7 @@
-// App version: 2026.09.24.27-WEB
+// App version: 2026.09.24.28-WEB
 import { requireStaffSession } from "./auth.js";
 
-const APP_VERSION = "2026.09.24.27-WEB";
+const APP_VERSION = "2026.09.24.28-WEB";
 const STAFF_ACTIONS = new Set([
   "outreachDashboard",
   "outreachRecord",
@@ -56,14 +56,14 @@ const SEND_UPSTREAM_TIMEOUT_MS = 24000;
 const SEND_ACTIONS = new Set(["sendOutreachEmail", "sendOutreachTestEmail", "sendOutreachCampaignBatch"]);
 const SNAPSHOT_ACTIONS = new Set(["createOutreachCampaign"]);
 const CAMPAIGN_READ_ACTIONS = new Set(["outreachCampaigns", "outreachCampaign"]);
-const ADMIN_ACTIONS = new Set(["initializeHardenedHub", "repairHubStructure", "reconcileIntegrations", "upsertProduct", "addSkuToStore"]);
+const ADMIN_ACTIONS = new Set(["initializeHardenedHub", "repairHubStructure", "reconcileIntegrations", "recalculateOutreachMiles", "upsertProduct", "addSkuToStore"]);
 const ACTION_AREAS = new Map([
   ["outreachDashboard", "outreach"], ["outreachRecord", "outreach"], ["outreachSendStatus", "outreach"], ["outreachNewsletterContacts", "outreach"],
   ["outreachCampaigns", "outreach"], ["outreachCampaign", "outreach"], ["createOutreachCampaign", "outreach"], ["updateOutreachCampaignRecipient", "outreach"], ["setOutreachCampaignRecipientExclusion", "outreach"],
   ["approveOutreachCampaign", "outreach"], ["reopenOutreachCampaign", "outreach"], ["reconcileCampaignSends", "outreach"], ["rebuildCampaignRecipients", "outreach"], ["sendOutreachCampaignBatch", "outreach"],
   ["saveOutreachDraft", "outreach"], ["updateOutreachOutcome", "outreach"], ["updateOutreachBusiness", "outreach"],
   ["updateOutreachPrograms", "outreach"], ["upsertNewsletterContact", "outreach"], ["createOutreachBusiness", "outreach"],
-  ["importOutreachBusinesses", "outreach"], ["sendOutreachEmail", "outreach"], ["sendOutreachTestEmail", "outreach"],
+  ["importOutreachBusinesses", "outreach"], ["recalculateOutreachMiles", "outreach"], ["sendOutreachEmail", "outreach"], ["sendOutreachTestEmail", "outreach"],
   ["customerWorkQueue", "orders"], ["updateCustomerApplication", "orders"], ["updateOnlineOrderRequest", "orders"],
   ["hubSystemStatus", "orders"], ["initializeHardenedHub", "orders"], ["repairHubStructure", "orders"], ["reconcileIntegrations", "orders"],
   ["initData", "inventory"], ["listSkus", "inventory"], ["addSkuToStore", "inventory"], ["upsertProduct", "inventory"],

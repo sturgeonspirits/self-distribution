@@ -1,10 +1,10 @@
 <!doctype html>
-<!-- App version: 2026.09.24.27-WEB -->
+<!-- App version: 2026.09.24.28-WEB -->
 <html>
 <head>
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover"/>
-  <meta name="app-version" content="2026.09.24.27-WEB" />
+  <meta name="app-version" content="2026.09.24.28-WEB" />
   <meta name="theme-color" content="#536f77" />
   <link rel="icon" href="/assets/distribution-hub-icon.svg" type="image/svg+xml" />
   <link rel="manifest" href="/site.webmanifest" />
@@ -2027,6 +2027,17 @@
       </div>
     </div>
 
+    <details class="managerCard" id="outreachAdminPanel" hidden style="margin-bottom:12px">
+      <summary>Outreach administration</summary>
+      <div class="managerBody">
+        <div class="smallMuted">Recalculate directory mileage from the ZIP Centroids tab. Manual mileage overrides are preserved.</div>
+        <div class="btnRow" style="margin-top:10px">
+          <button id="recalculateOutreachMilesBtn" type="button"><i data-lucide="map-pin"></i><span>Recalculate miles from ZIP</span></button>
+        </div>
+        <div class="status" id="recalculateOutreachMilesStatus"></div>
+      </div>
+    </details>
+
     <div class="customerLinks" aria-label="Customer links">
       <a class="customerLink" href="/customer-signup.html" target="_blank" rel="noopener noreferrer"><i data-lucide="clipboard-list"></i><span>Customer signup</span></a>
       <a class="customerLink" href="/order.html" target="_blank" rel="noopener noreferrer"><i data-lucide="shopping-cart"></i><span>Order request</span></a>
@@ -2473,7 +2484,7 @@
 
   <footer style="max-width:1200px;margin:18px auto 120px;padding:0 12px;text-align:center;color:#6b7280;font-size:12px;">
     Designed by <a href="https://scriptspirit.dev" target="_blank" rel="noopener noreferrer" style="color:#1d4ed8;text-decoration:none;font-weight:700;">Script Spirit</a>
-<span id="appVersionFooter"> • Version 2026.09.24.27-WEB</span>
+<span id="appVersionFooter"> • Version 2026.09.24.28-WEB</span>
   </footer>
 
 
@@ -2496,7 +2507,7 @@
   window.addEventListener("unhandledrejection", e => console.error("Unhandled promise rejection:", e.reason));
   window.addEventListener("error", e => console.error("Unhandled error:", e.error || e.message));
   const $ = (id) => document.getElementById(id);
-  const APP_VERSION = "2026.09.24.27-WEB";
+  const APP_VERSION = "2026.09.24.28-WEB";
   $("appVersionFooter").textContent = ` • Version ${APP_VERSION}`;
 
   let cache = { stores: [], lines: [] };
@@ -2797,6 +2808,7 @@
     });
     const isAdmin = staffSession.role === "admin";
     ["initializeHubBtn", "reconcileHubBtn", "addExistingBtn", "addProductBtn"].forEach(id => $(id).hidden = !isAdmin);
+    $("outreachAdminPanel").hidden = !isAdmin;
     $("inventoryNavBtn").hidden = !staffSession.areas.includes("inventory");
     $("outreachNavBtn").hidden = !staffSession.areas.includes("outreach");
     $("customersNavBtn").hidden = !staffSession.areas.includes("orders");
@@ -3267,6 +3279,26 @@
     await openOutreachCampaign(res.campaign_id);
   }
 
+  async function recalculateOutreachMiles(){
+    if (staffSession?.role !== "admin") return toast("This action requires an administrator.");
+    const staffName = $("outreachStaffName").value.trim();
+    if (!staffName) return toast("Enter your staff name first.");
+    if (!confirm("Recalculate non-manual directory mileage from ZIP Centroids? Manual mileage overrides will stay unchanged.")) return;
+    const button = $("recalculateOutreachMilesBtn");
+    button.disabled = true;
+    $("recalculateOutreachMilesStatus").textContent = "Recalculating mileage from ZIPs...";
+    try {
+      const res = await staffApiPost({ action:"recalculateOutreachMiles", staff_name:staffName });
+      if (!res.ok) throw new Error(res.error || "Mileage recalculation failed.");
+      $("recalculateOutreachMilesStatus").textContent = `${Number(res.updated || 0)} updated · ${Number(res.manual_kept || 0)} manual kept · ${Number(res.no_zip || 0)} no ZIP · ${Number(res.unknown_zip || 0)} unknown ZIP.`;
+      await loadOutreach();
+    } catch (error) {
+      $("recalculateOutreachMilesStatus").textContent = error.message || String(error);
+    } finally {
+      button.disabled = false;
+    }
+  }
+
   async function openOutreachCampaign(campaignId){
     const res = await staffApiPost({ action:"outreachCampaign", campaign_id:campaignId });
     if (!res.ok) throw new Error(res.error || "Campaign could not be loaded.");
@@ -3275,7 +3307,10 @@
     selectedCampaignApprovalToken = campaign.approval_token || "";
     $("outreachCampaignTitle").textContent = campaign.name;
     const excludedCount = Number(campaign.counts?.Excluded || 0);
-    $("outreachCampaignSubtitle").textContent = `${campaign.recipient_count} frozen recipients${excludedCount ? ` • ${excludedCount} excluded` : ""} • ${campaign.status}`;
+    const maxMiles = Number(campaign.audience_rules?.max_miles || 15);
+    const minFit = Number(campaign.audience_rules?.min_fit || 5);
+    const areaWarningCount = (campaign.recipients || []).filter(recipient => recipient.miles === null || recipient.miles === undefined || Number(recipient.miles) > maxMiles).length;
+    $("outreachCampaignSubtitle").textContent = `${campaign.recipient_count} frozen recipients${excludedCount ? ` • ${excludedCount} excluded` : ""} • fit ≥${minFit} • ≤${maxMiles} mi${areaWarningCount ? ` • ${areaWarningCount} need area review` : ""} • ${campaign.status}`;
     $("outreachCampaignNotice").textContent = campaign.status === "Review"
       ? "Open any recipient to edit it or exclude it from this campaign. Approval freezes the exact saved audience and messages; it still does not send email."
       : campaign.status === "Approved" ? "This audience is approved. “Send remaining” sends one verified recipient at a time, skips delivery-unknown records without retrying them, and sends no further email if the connection outcome is unknown."
@@ -3292,8 +3327,8 @@
     refreshCampaignSendControls();
     const editable = campaign.status === "Review";
     $("outreachCampaignRecipients").innerHTML = `<div class="outreachList">${(campaign.recipients || []).map((recipient, index) => `
-      <details class="outreachCard"><summary><strong>${escapeHtml(recipient.business)}</strong><span class="smallMuted"> • ${escapeHtml(recipient.email)} • ${escapeHtml(recipient.status)}</span><br><span class="smallMuted">${escapeHtml(recipient.subject)}${recipient.segment ? ` • ${escapeHtml(recipient.segment)}` : " • Default Segment C"}</span></summary>
-      <div class="outreachMeta"><span class="badge">${escapeHtml(recipient.priority || "No")} priority</span><span class="badge blue">${escapeHtml(recipient.email_confidence || "Unrated")}</span>${recipient.wave ? `<span class="badge">${escapeHtml(recipient.wave)}</span>` : ""}</div>
+      <details class="outreachCard"><summary><strong>${escapeHtml(recipient.business)}</strong><span class="smallMuted"> • ${escapeHtml(recipient.city || "City missing")} • ${recipient.miles === null || recipient.miles === undefined || recipient.miles === "" ? "Miles missing" : `${escapeHtml(recipient.miles)} mi`} • ${escapeHtml(recipient.email)} • ${escapeHtml(recipient.status)}</span><br><span class="smallMuted">${escapeHtml(recipient.subject)}${recipient.segment ? ` • ${escapeHtml(recipient.segment)}` : " • Default Segment C"}</span></summary>
+      <div class="outreachMeta"><span class="badge">${escapeHtml(recipient.priority || "No")} priority</span><span class="badge blue">${escapeHtml(recipient.email_confidence || "Unrated")}</span>${recipient.wave ? `<span class="badge">${escapeHtml(recipient.wave)}</span>` : ""}${recipient.miles === null || recipient.miles === undefined || Number(recipient.miles) > maxMiles ? `<span class="badge amber">Area review needed</span>` : ""}</div>
       <label>Subject</label><input class="emailEditor" data-campaign-subject value="${escapeHtml(recipient.subject || "")}" ${editable && recipient.status === "Ready for review" ? "" : "readonly"} />
       <label>Message</label><textarea class="emailEditor" data-campaign-body ${editable && recipient.status === "Ready for review" ? "" : "readonly"}>${escapeHtml(recipient.body_text || "")}</textarea>
       ${editable && ["Ready for review", "Excluded"].includes(recipient.status) ? `<div class="outreachActions">${recipient.status === "Ready for review" ? `<button class="actionBtn primary" type="button" data-campaign-recipient-action="save" data-recipient-token="${escapeHtml(recipient.idempotency_token)}"><i data-lucide="save"></i><span>Save email changes</span></button>` : ""}<button class="actionBtn" type="button" data-campaign-recipient-action="${recipient.status === "Excluded" ? "restore" : "exclude"}" data-recipient-token="${escapeHtml(recipient.idempotency_token)}"><i data-lucide="${recipient.status === "Excluded" ? "rotate-ccw" : "ban"}"></i><span>${recipient.status === "Excluded" ? "Restore to campaign" : "Exclude from campaign"}</span></button></div>` : ""}${recipient.result_detail ? `<div class="status">${escapeHtml(recipient.result_detail)}</div>` : ""}
@@ -4397,6 +4432,7 @@
         address:$("newBusinessAddress").value.trim(), city:$("newBusinessCity").value.trim(),
         state:$("newBusinessState").value.trim(), postal_code:$("newBusinessZip").value.trim(),
         craft_spirit_fit:$("newBusinessFit").value, miles:$("newBusinessMiles").value,
+        miles_source:$("newBusinessMiles").value.trim() ? "manual" : "",
         notes:$("newBusinessNotes").value.trim(), lead_source:"Manual app entry",
       });
       if (!result.ok) throw new Error(result.error || "Business could not be added.");
@@ -4477,7 +4513,7 @@
       business_name:["business_name","business","company","company_name","account_name"], contact:["contact","contact_name","contact_person","name"],
       email:["email","email_address"], phone:["phone","phone_number","telephone"], address:["address","street_address","street","address_1"],
       city:["city","town"], state:["state"], postal_code:["postal_code","zip","zip_code"], craft_spirit_fit:["craft_spirit_fit","fit","fit_score"],
-      miles:["miles","distance","distance_miles"], lead_source:["lead_source","source"], notes:["notes","note"],
+      miles:["miles","distance","distance_miles"], miles_source:["miles_source","distance_source"], lead_source:["lead_source","source"], notes:["notes","note"],
     };
     const headers = matrix[0].map(normalizeCsvHeader);
     const positions = Object.fromEntries(Object.entries(aliases).map(([key, names]) => [key, headers.findIndex(header => names.includes(header))]));
@@ -5801,6 +5837,7 @@
   $("loadHubStatusBtn").addEventListener("click", () => loadHubSystemStatus().catch(handleCustomerError));
   $("initializeHubBtn").addEventListener("click", () => initializeHardenedHub().catch(handleCustomerError));
   $("reconcileHubBtn").addEventListener("click", () => reconcileHubRecords().catch(handleCustomerError));
+  $("recalculateOutreachMilesBtn").addEventListener("click", () => recalculateOutreachMiles());
 
   $("outreachAudiencePreset").addEventListener("change", () => {
     outreachAudiencePreset = OUTREACH_AUDIENCE_PRESETS.includes($("outreachAudiencePreset").value)
