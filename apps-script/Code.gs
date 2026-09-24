@@ -3,6 +3,7 @@
  * App version: 2026.09.24.19
  *
  * CHANGES IN THIS VERSION
+ * - Shows the most recent tracked link target alongside click counts in Outreach business details.
  * - Added opt-in signed sell-sheet and wholesale-application links for click measurement without changing send approval, eligibility, receipt, or Activity Log safeguards.
  * - Added a locked-down click-engagement endpoint for signed Netlify tracking links, with duplicate suppression and no request-path schema changes.
  * - Replaced full Outreach support-tab reads for a single business with targeted record lookups, cached campaign settings, and added record timing diagnostics.
@@ -1673,7 +1674,7 @@ function outreachTargetedEngagementMap_(accountId, sourceRow) {
     const key = rowAccountId || rowSourceRow;
     if (!key) return;
     if (!engagement.has(key)) {
-      engagement.set(key, { open_count:0, last_opened:"", click_count:0, last_clicked:"", reply_count:0, bounce_count:0, source:"" });
+      engagement.set(key, { open_count:0, last_opened:"", click_count:0, last_clicked:"", last_click_target:"", reply_count:0, bounce_count:0, source:"" });
     }
     const summary = engagement.get(key);
     const eventType = String(row.event_type || "").trim().toLowerCase();
@@ -1684,7 +1685,12 @@ function outreachTargetedEngagementMap_(accountId, sourceRow) {
       return !currentDate || candidate.getTime() > currentDate.getTime() ? candidate : current;
     };
     if (eventType === "open") { summary.open_count += 1; summary.last_opened = newest(summary.last_opened, eventAt); }
-    else if (eventType === "click") { summary.click_count += 1; summary.last_clicked = newest(summary.last_clicked, eventAt); }
+    else if (eventType === "click") {
+      summary.click_count += 1;
+      const latestClick = newest(summary.last_clicked, eventAt);
+      if (latestClick !== summary.last_clicked && row.target) summary.last_click_target = String(row.target);
+      summary.last_clicked = latestClick;
+    }
     else if (eventType === "reply") summary.reply_count += 1;
     else if (eventType === "bounce") summary.bounce_count += 1;
     if (row.source) summary.source = String(row.source);
@@ -1812,6 +1818,7 @@ function outreachEngagementMap_() {
         last_opened:"",
         click_count:0,
         last_clicked:"",
+        last_click_target:"",
         reply_count:0,
         bounce_count:0,
         source:"",
@@ -1830,7 +1837,9 @@ function outreachEngagementMap_() {
       summary.last_opened = newest(summary.last_opened, eventAt);
     } else if (eventType === "click") {
       summary.click_count += 1;
-      summary.last_clicked = newest(summary.last_clicked, eventAt);
+      const latestClick = newest(summary.last_clicked, eventAt);
+      if (latestClick !== summary.last_clicked && row.target) summary.last_click_target = String(row.target);
+      summary.last_clicked = latestClick;
     } else if (eventType === "reply") summary.reply_count += 1;
     else if (eventType === "bounce") summary.bounce_count += 1;
     if (row.source) summary.source = String(row.source);
@@ -2129,6 +2138,7 @@ function outreachRecord_(row, sourceRow, activityMap, settings, draftMap, progra
       last_opened:"",
       click_count:0,
       last_clicked:"",
+      last_click_target:"",
       reply_count:0,
       bounce_count:0,
       source:"Not connected",

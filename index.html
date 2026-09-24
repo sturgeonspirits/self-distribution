@@ -4105,8 +4105,9 @@
     const engagementRows = [
       { label:"Estimated opens", value:Number(record.email_engagement?.open_count || 0) },
       { label:"Last estimated open", value:record.email_engagement?.last_opened },
-      { label:"Clicks", value:Number(record.email_engagement?.click_count || 0) },
-      { label:"Last click", value:record.email_engagement?.last_clicked },
+      { label:"Link clicks (sell sheet / application)", value:Number(record.email_engagement?.click_count || 0) },
+      { label:"Last link click", value:record.email_engagement?.last_clicked },
+      { label:"Most recent link click target", value:record.email_engagement?.last_click_target },
       { label:"Replies", value:Number(record.email_engagement?.reply_count || 0) },
       { label:"Bounces", value:Number(record.email_engagement?.bounce_count || 0) },
       { label:"Tracking source", value:record.email_engagement?.source },

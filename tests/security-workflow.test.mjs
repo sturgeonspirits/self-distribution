@@ -413,3 +413,13 @@ test("formula-like staff text is stored with a literal-text prefix", async () =>
   for (const value of ["=1+1", "+SUM(A1:A2)", "-2+3", "@evil.example"]) assert.equal(sanitize(value), `'${value}`);
   assert.equal(sanitize("Normal staff note"), "Normal staff note");
 });
+
+test("outreach details retain the latest tracked link target without changing the clicked badge", async () => {
+  const backend = await readFile(new URL("apps-script/Code.gs", root), "utf8");
+  const index = await readFile(new URL("index.html", root), "utf8");
+  assert.match(backend, /last_click_target/);
+  assert.match(backend, /if \(latestClick !== summary\.last_clicked && row\.target\) summary\.last_click_target/);
+  assert.match(index, /Link clicks \(sell sheet \/ application\)/);
+  assert.match(index, /Most recent link click target/);
+  assert.match(index, /\bclicked\b/i, "the existing Clicked badge remains rendered by the app");
+});
