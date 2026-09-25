@@ -1,6 +1,10 @@
 /*********************************
  * Inventory API (JSON) for Netlify
- * App version: 2026.09.24.33
+ * App version: 2026.09.24.34
+ *
+ * CHANGES IN THIS VERSION
+ * - Invalidates Hub read caches for spreadsheet edits, direct editor writes, failed write requests, and explicit refreshes.
+ * - Limits read-cache entries to fifteen minutes and safe 45 KB chunks.
  *
  * CHANGES IN THIS VERSION
  * - Makes an external email contact mark a no-outcome prospect Sent and schedule its first follow-up.
@@ -158,7 +162,7 @@
  * - Use only in the staging inventory backend until testing is complete.
  *********************************/
 
-const APP_VERSION = "2026.09.24.33";
+const APP_VERSION = "2026.09.24.34";
 
 const SHEET_NAMES = {
   STORES: "Stores",
@@ -201,8 +205,8 @@ const HUB_MIGRATION_STATUS_KEY = "inventory_migration_status";
 const HUB_MIGRATION_ACTIVE = "ACTIVE";
 const ORDER_CATALOG_SOURCE = "SHEETS"; // Toast remains disabled until a reviewed integration is configured.
 const READ_CACHE_VERSION_KEY = "hub_read_cache_version";
-const READ_CACHE_TTL_SECONDS = 21600;
-const READ_CACHE_CHUNK_SIZE = 90000;
+const READ_CACHE_TTL_SECONDS = 900;
+const READ_CACHE_CHUNK_SIZE = 45000;
 const READ_ACTIONS = new Set(["initData", "listSkus", "managerGrid", "salesSinceCount", "outreachDashboard", "outreachRecord", "outreachSendStatus", "outreachNewsletterContacts", "outreachCampaigns", "outreachCampaign", "previewOutreachCampaign", "customerWorkQueue", "hubSystemStatus"]);
 
 let __OPERATIONAL_SS = null;
@@ -264,11 +268,22 @@ function warmHubReadCaches() {
   return { message:"Hub read caches warmed.", version:readCacheVersion_() };
 }
 
+function onHubReadCacheSpreadsheetChange(e) {
+  const version = bumpReadCacheVersion_();
+  console.log(JSON.stringify({ event:"hub_read_cache_invalidated", change_type:String(e?.changeType || "unknown"), version:version }));
+}
+
 function installHubReadCacheWarmer() {
-  const handler = "warmHubReadCaches";
-  ScriptApp.getProjectTriggers().filter(trigger => trigger.getHandlerFunction() === handler).forEach(trigger => ScriptApp.deleteTrigger(trigger));
-  ScriptApp.newTrigger(handler).timeBased().everyMinutes(10).create();
-  return { message:"Ten-minute Hub read-cache warmer installed." };
+  const warmerHandler = "warmHubReadCaches";
+  const changeHandler = "onHubReadCacheSpreadsheetChange";
+  ScriptApp.getProjectTriggers()
+    .filter(trigger => [warmerHandler, changeHandler].includes(trigger.getHandlerFunction()))
+    .forEach(trigger => ScriptApp.deleteTrigger(trigger));
+  ScriptApp.newTrigger(warmerHandler).timeBased().everyMinutes(10).create();
+  [getOutreachSs_(), SpreadsheetApp.openById(BADGER_TRACKER_SPREADSHEET_ID)].forEach(spreadsheet => {
+    ScriptApp.newTrigger(changeHandler).forSpreadsheet(spreadsheet).onChange().create();
+  });
+  return { message:"Ten-minute Hub read-cache warmer and spreadsheet-change invalidation triggers installed." };
 }
 
 function getLegacyInventorySs_() {
@@ -626,7 +641,18 @@ function repairHubStructureNightly() {
     const identity = repairHubStructure_();
     console.log(JSON.stringify({ event:"hub_structure_repair", accounts:identity.rows.length }));
   } finally {
+    bumpReadCacheVersion_();
     lock.releaseLock();
+  }
+}
+
+function repairHubStructure() {
+  try {
+    const result = apiRepairHubStructure_({ staff_name:"Karl (editor)", authenticated_staff_role:"admin" });
+    Logger.log(JSON.stringify(result));
+    return result;
+  } finally {
+    bumpReadCacheVersion_();
   }
 }
 
@@ -669,16 +695,18 @@ function doPost(e) {
   return handle_(e, body);
 }
 function handle_(e, body) {
+  const action = (e?.parameter?.action) || (body?.action) || "";
+  let invalidateReadCache = false;
   try {
     assertAuthorized_(e, body);
-    const action = (e?.parameter?.action) || (body?.action) || "";
     if (!action) {
       return json_({ ok:true, service:"sturgeon-distribution-hub", version:APP_VERSION, actions:["initData","listSkus","addSkuToStore","upsertProduct","submitCounts","createReorder","managerGrid","salesSinceCount","updateStoreContacts","outreachDashboard","outreachRecord","outreachSendStatus","outreachNewsletterContacts","outreachCampaigns","outreachCampaign","previewOutreachCampaign","createOutreachCampaign","updateOutreachCampaignRecipient","setOutreachCampaignRecipientExclusion","setOutreachCampaignRecipientExclusions","approveOutreachCampaign","reopenOutreachCampaign","reconcileCampaignSends","rebuildCampaignRecipients","sendOutreachCampaignBatch","saveOutreachDraft","sendOutreachEmail","sendOutreachTestEmail","updateOutreachOutcome","logOutreachContact","updateOutreachBusiness","updateOutreachPrograms","createOutreachBusiness","importOutreachBusinesses","recalculateOutreachMiles","backfillEngagementDetails","upsertNewsletterContact","submitCustomerApplication","submitOnlineOrderRequest","customerWorkQueue","updateCustomerApplication","updateOnlineOrderRequest","hubSystemStatus","initializeHardenedHub","repairHubStructure","reconcileIntegrations"] });
     }
 
+    invalidateReadCache = !READ_ACTIONS.has(action);
     let res;
     switch (action) {
-      case "initData": res = apiGetInitData_((e?.parameter?.store_id) || (body?.store_id) || ""); break;
+      case "initData": res = apiGetInitData_((e?.parameter?.store_id) || (body?.store_id) || "", String((e?.parameter?.refresh) || (body?.refresh) || "") === "1"); break;
       case "listSkus": res = apiListSkus_(); break;
       case "addSkuToStore": res = apiAddSkuToStore_(body); break;
       case "upsertProduct": res = apiUpsertProduct_(body); break;
@@ -718,20 +746,26 @@ function handle_(e, body) {
       case "upsertNewsletterContact": res = apiUpsertNewsletterContact_(body); break;
       case "submitCustomerApplication": res = apiSubmitCustomerApplication_(body); break;
       case "submitOnlineOrderRequest": res = apiSubmitOnlineOrderRequest_(body); break;
-      case "customerWorkQueue": res = apiGetCustomerWorkQueue_(); break;
+      case "customerWorkQueue": res = apiGetCustomerWorkQueue_(Object.assign({}, e?.parameter || {}, body || {})); break;
       case "updateCustomerApplication": res = apiUpdateCustomerApplication_(body); break;
       case "updateOnlineOrderRequest": res = apiUpdateOnlineOrderRequest_(body); break;
       case "hubSystemStatus": res = apiGetHubSystemStatus_(); break;
       case "initializeHardenedHub": res = apiInitializeHardenedHub_(body); break;
       case "repairHubStructure": res = apiRepairHubStructure_(body); break;
       case "reconcileIntegrations": res = apiReconcileIntegrations_(body); break;
-      default: throw new Error(`Unknown action: ${action}`);
+      default:
+        invalidateReadCache = false;
+        throw new Error(`Unknown action: ${action}`);
     }
 
-    if (!READ_ACTIONS.has(action)) bumpReadCacheVersion_();
     return json_(Object.assign({ ok:true, version:APP_VERSION }, res));
   } catch (err) {
     return json_({ ok:false, version:APP_VERSION, error: err?.message ? err.message : String(err) });
+  } finally {
+    if (invalidateReadCache) {
+      try { bumpReadCacheVersion_(); }
+      catch (error) { console.warn("Read cache invalidation failed: " + String(error && error.message || error)); }
+    }
   }
 }
 
@@ -1566,9 +1600,13 @@ function apiRecalculateOutreachMiles_(p) {
 }
 
 function recalculateOutreachMiles() {
-  const result = apiRecalculateOutreachMiles_({ staff_name:"Karl (editor)", authenticated_staff_role:"admin" });
-  Logger.log(JSON.stringify(result));
-  return result;
+  try {
+    const result = apiRecalculateOutreachMiles_({ staff_name:"Karl (editor)", authenticated_staff_role:"admin" });
+    Logger.log(JSON.stringify(result));
+    return result;
+  } finally {
+    bumpReadCacheVersion_();
+  }
 }
 
 function outreachValue_(row, keys) {
@@ -1896,6 +1934,16 @@ function apiBackfillEngagementDetails_(p) {
     appendAudit_("BACKFILL_ENGAGEMENT_DETAILS", "Email Engagement", "", "", actor, OUTREACH_ENGAGEMENT_SHEET_NAME, OUTREACH_SHEET_NAME, "Completed", `${updated} engagement rows updated.`);
     return { message:`${updated} engagement rows updated.`, updated:updated };
   } finally { lock.releaseLock(); }
+}
+
+function backfillEngagementDetails() {
+  try {
+    const result = apiBackfillEngagementDetails_({ staff_name:"Karl (editor)", authenticated_staff_role:"admin" });
+    Logger.log(JSON.stringify(result));
+    return result;
+  } finally {
+    bumpReadCacheVersion_();
+  }
 }
 
 function outreachTargetedActivityMap_(accountId, business) {
@@ -2545,7 +2593,8 @@ function outreachSlimPayload_(record) {
 }
 
 function apiGetOutreachDashboard_(p) {
-  if (String(p?.slim || "") === "1" && !p?._cache_bypass) {
+  const cacheBypass = !!p?._cache_bypass || String(p?.refresh || "") === "1";
+  if (String(p?.slim || "") === "1" && !cacheBypass) {
     return cachedReadPayload_("outreach_slim", () => apiGetOutreachDashboard_(Object.assign({}, p, { _cache_bypass:true })));
   }
   const slim = String(p?.slim || "") === "1";
@@ -3154,9 +3203,13 @@ function apiReconcileCampaignSends_(p) {
 }
 
 function reconcileBlockedCampaignSends() {
-  const result = apiReconcileCampaignSends_({ campaign_id:"CMP-89758BA7F1B2483F84E59782BEFEAD39", staff_name:"Karl (editor)" });
-  Logger.log(JSON.stringify(result));
-  return result;
+  try {
+    const result = apiReconcileCampaignSends_({ campaign_id:"CMP-89758BA7F1B2483F84E59782BEFEAD39", staff_name:"Karl (editor)" });
+    Logger.log(JSON.stringify(result));
+    return result;
+  } finally {
+    bumpReadCacheVersion_();
+  }
 }
 
 function campaignDirectoryRows_(sheet) {
@@ -3267,9 +3320,13 @@ function apiRebuildCampaignRecipients_(p) {
 }
 
 function rebuildUnsentCampaignEmails() {
-  const result = apiRebuildCampaignRecipients_({ campaign_id:"CMP-89758BA7F1B2483F84E59782BEFEAD39", staff_name:"Karl (editor)" });
-  Logger.log(JSON.stringify(result));
-  return result;
+  try {
+    const result = apiRebuildCampaignRecipients_({ campaign_id:"CMP-89758BA7F1B2483F84E59782BEFEAD39", staff_name:"Karl (editor)" });
+    Logger.log(JSON.stringify(result));
+    return result;
+  } finally {
+    bumpReadCacheVersion_();
+  }
 }
 
 function campaignRecipientFooterHtml_(recipient, settings, draftMap) {
@@ -5060,7 +5117,8 @@ function buildCustomerAccounts_(applications, orders) {
 }
 
 function apiGetCustomerWorkQueue_(p) {
-  if (!p?._cache_bypass) return cachedReadPayload_("customer_work_queue", () => apiGetCustomerWorkQueue_({ _cache_bypass:true }));
+  const cacheBypass = !!p?._cache_bypass || String(p?.refresh || "") === "1";
+  if (!cacheBypass) return cachedReadPayload_("customer_work_queue", () => apiGetCustomerWorkQueue_({ _cache_bypass:true }));
   const startedAt = Date.now();
   const timings = {};
   let stageStartedAt = startedAt;

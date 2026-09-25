@@ -1,10 +1,10 @@
 <!doctype html>
-<!-- App version: 2026.09.24.37-WEB -->
+<!-- App version: 2026.09.24.38-WEB -->
 <html>
 <head>
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover"/>
-  <meta name="app-version" content="2026.09.24.37-WEB" />
+  <meta name="app-version" content="2026.09.24.38-WEB" />
   <meta name="theme-color" content="#536f77" />
   <link rel="icon" href="/assets/distribution-hub-icon.svg" type="image/svg+xml" />
   <link rel="manifest" href="/site.webmanifest" />
@@ -2530,7 +2530,7 @@
 
   <footer style="max-width:1200px;margin:18px auto 120px;padding:0 12px;text-align:center;color:#6b7280;font-size:12px;">
     Designed by <a href="https://scriptspirit.dev" target="_blank" rel="noopener noreferrer" style="color:#1d4ed8;text-decoration:none;font-weight:700;">Script Spirit</a>
-<span id="appVersionFooter"> • Version 2026.09.24.37-WEB</span>
+<span id="appVersionFooter"> • Version 2026.09.24.38-WEB</span>
   </footer>
 
 
@@ -2553,7 +2553,7 @@
   window.addEventListener("unhandledrejection", e => console.error("Unhandled promise rejection:", e.reason));
   window.addEventListener("error", e => console.error("Unhandled error:", e.error || e.message));
   const $ = (id) => document.getElementById(id);
-  const APP_VERSION = "2026.09.24.37-WEB";
+  const APP_VERSION = "2026.09.24.38-WEB";
   $("appVersionFooter").textContent = ` • Version ${APP_VERSION}`;
   function screenCacheKey(screen){ return `distribution_hub:${APP_VERSION}:${staffSession?.email || "unknown"}:${screen}`; }
   function readScreenCache(screen){
@@ -2987,7 +2987,7 @@
     refreshIcons();
   }
 
-  async function loadCustomerWorkQueue(){
+  async function loadCustomerWorkQueue(forceRefresh = false){
     const requestId = ++customerWorkQueueLoadRequest;
     const cached = !customerLoaded && readScreenCache("customer-work");
     if (cached) {
@@ -2997,7 +2997,7 @@
     } else $("customerWorkflowStatus").textContent = "Loading customer work...";
     let result;
     try {
-      result = await staffApiGet({ action:"customerWorkQueue" });
+      result = await staffApiGet({ action:"customerWorkQueue", ...(forceRefresh ? { refresh:1 } : {}) });
     } catch (error) {
       if (requestId !== customerWorkQueueLoadRequest) return;
       if (cached) { $("customerWorkflowStatus").textContent = `Couldn't refresh; showing data from ${cachedTimeLabel(cached)}. Click Refresh to retry.`; return; }
@@ -3978,14 +3978,14 @@
     renderOutreach();
   }
 
-  async function loadOutreach(){
+  async function loadOutreach(forceRefresh = false){
     const requestId = ++outreachLoadRequest;
     const cached = !outreachLoaded && readScreenCache("outreach");
     if (cached) { applyOutreachPayload(cached.payload); setOutreachStatus(`Updating… showing data from ${cachedTimeLabel(cached)}.`); }
     else setOutreachStatus("Loading outreach...");
     let res;
     try {
-      res = await staffApiGet({ action:"outreachDashboard", slim:1 });
+      res = await staffApiGet({ action:"outreachDashboard", slim:1, ...(forceRefresh ? { refresh:1 } : {}) });
     } catch (error) {
       if (requestId !== outreachLoadRequest) return;
       if (cached) { setOutreachStatus(`Couldn't refresh; showing data from ${cachedTimeLabel(cached)}. Click Refresh to retry.`); return; }
@@ -5706,7 +5706,7 @@
     }
   }
 
-  async function loadStore(storeId){
+  async function loadStore(storeId, forceRefresh = false){
     const cached = readScreenCache(`inventory-store:${storeId}`);
     if (cached?.payload?.lines) {
       cache.stores = cached.payload.stores || cache.stores;
@@ -5715,7 +5715,7 @@
       setStatus(`Updating… showing data from ${cachedTimeLabel(cached)}.`);
     } else setStatus("Loading inventory...");
     let res;
-    try { res = await staffApiGet({ action:"initData", store_id: storeId }); }
+    try { res = await staffApiGet({ action:"initData", store_id: storeId, ...(forceRefresh ? { refresh:1 } : {}) }); }
     catch (error) { if (cached) { setStatus(`Couldn't refresh; showing data from ${cachedTimeLabel(cached)}. Click Refresh to retry.`); return; } throw error; }
     if (!res.ok) throw new Error("Load failed.");
 
@@ -5737,20 +5737,21 @@
     else setStatus(`Updated ${new Date().toLocaleTimeString([], { hour:"numeric", minute:"2-digit" })}${res.performance?.total_ms ? ` in ${(Number(res.performance.total_ms) / 1000).toFixed(1)}s` : ""}${res.performance?.cache_hit ? " (server cache)" : ""}.`);
   }
 
-  async function loadStartup(){
+  async function loadStartup(forceRefresh = false, preferredStoreId = ""){
     loadPrefs();
     const cached = readScreenCache("inventory-stores");
     if (cached?.payload?.stores) { cache.stores = cached.payload.stores; renderStores(cache.stores); setStatus(`Updating… showing stores from ${cachedTimeLabel(cached)}.`); }
     else setStatus("Loading stores...");
     let res;
-    try { res = await staffApiGet({ action:"initData" }); }
+    try { res = await staffApiGet({ action:"initData", ...(forceRefresh ? { refresh:1 } : {}) }); }
     catch (error) { if (cached) { inventoryLoaded = true; showInventoryAccessState(); setStatus(`Couldn't refresh; showing data from ${cachedTimeLabel(cached)}. Click Refresh to retry.`); return; } throw error; }
     if (!res.ok) throw new Error("Store list could not be loaded.");
     cache.stores = res.stores || [];
     writeScreenCache("inventory-stores", res);
     renderStores(cache.stores);
 
-    const first = $("storeSelect").value || cache.stores[0]?.store_id || "";
+    const requestedStore = preferredStoreId || $("storeSelect").value || "";
+    const first = cache.stores.some(store => String(store.store_id) === String(requestedStore)) ? requestedStore : (cache.stores[0]?.store_id || "");
     if (!first) {
       inventoryLoaded = true;
       showInventoryAccessState();
@@ -5760,7 +5761,7 @@
     }
 
     $("storeSelect").value = first;
-    await loadStore(first);
+    await loadStore(first, forceRefresh);
     inventoryLoaded = true;
     showInventoryAccessState();
     loadManagerGrid().catch(error => console.warn("Manager grid refresh failed", error));
@@ -6125,7 +6126,7 @@
   $("locShelfBtn").addEventListener("click", () => setLocationMode("shelf"));
   $("locBackBtn").addEventListener("click", () => setLocationMode("back"));
 
-  $("refreshBtn").addEventListener("click", () => loadStore($("storeSelect").value).catch(e => setStatus(e.message)));
+  $("refreshBtn").addEventListener("click", () => loadStartup(true, $("storeSelect").value).catch(e => setStatus(e.message)));
   $("refreshManagerGridBtn").addEventListener("click", loadManagerGrid);
 
   $("backToInventoryBtn").addEventListener("click", () => {
@@ -6162,11 +6163,11 @@
   $("customersNavBtn").addEventListener("click", () => setAppSection("customers"));
   $("unlockInventoryBtn").addEventListener("click", startZohoLogin);
   $("unlockOutreachBtn").addEventListener("click", startZohoLogin);
-  $("refreshOutreachBtn").addEventListener("click", () => loadOutreach().catch(handleOutreachLoadError));
+  $("refreshOutreachBtn").addEventListener("click", () => loadOutreach(true).catch(handleOutreachLoadError));
   $("backfillEngagementDetailsBtn").addEventListener("click", backfillEngagementDetails);
   $("refreshCustomersBtn").addEventListener("click", () => {
     if (!staffAccessCode) return showCustomerAccessState();
-    loadCustomerWorkQueue().catch(handleCustomerError);
+    loadCustomerWorkQueue(true).catch(handleCustomerError);
   });
   $("lockCustomersBtn").addEventListener("click", lockCustomerWorkspace);
   $("unlockCustomersBtn").addEventListener("click", startZohoLogin);

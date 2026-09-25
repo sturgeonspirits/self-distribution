@@ -8,8 +8,8 @@ Read this file before inspecting the repository or changing the application. Upd
 
 | Component | Source version | Deployment state |
 | --- | --- | --- |
-| Netlify web app and staff proxy | `2026.09.24.37-WEB` on `codex/distribution-system-foundation` / `2026.09.24.24-WEB` live | Shows cached screen data immediately and refreshes it in the background; deployment is pending review. |
-| Inventory API Apps Script | `2026.09.24.33` on `codex/distribution-system-foundation` / `2026.09.24.17` live | Uses versioned, chunked CacheService reads for dashboard, work queue, and store list; review fixes are pending deployment. |
+| Netlify web app and staff proxy | `2026.09.24.38-WEB` on `codex/distribution-system-foundation` / `2026.09.24.24-WEB` live | Refresh buttons force a current server read; deployment is pending review. |
+| Inventory API Apps Script | `2026.09.24.34` on `codex/distribution-system-foundation` / `2026.09.24.17` live | Uses short-lived, versioned CacheService reads; spreadsheet edits, editor-run writes, failed writes, and explicit refreshes invalidate or rebuild cached data. |
 | Distribution Outreach Apps Script | `2026.09.24.13-APP` on `codex/work` | Signed-link rendering is committed; owner has not yet confirmed this exact version is deployed. |
 | Public customer Netlify proxy | `2026.09.18.3-WEB` | Deployed with Netlify; unchanged by the latest staff-app UI work |
 
@@ -19,9 +19,11 @@ Current remote: `https://github.com/sturgeonspirits/self-distribution.git`
 
 Latest completed changes:
 
+- Read-cache safety fixes: Hub cache entries now expire after 15 minutes in 45 KB chunks; the cache-warmer installer also creates change triggers for the Outreach and Badger spreadsheets; editor-run maintenance functions and every API write attempt invalidate the version; and the three screen Refresh buttons request a forced current read. After this Apps Script source is deployed, run `installHubReadCacheWarmer()` once to install or replace the triggers.
+
 - Review fixes: an external email logged without an outcome now marks the business Sent and schedules the configured first follow-up; the explicit structure repair normalizes any legacy Priority `Medium` value to `Normal` in one batched column write; and bulk campaign exclusion touches only selected recipients’ Status and Result Detail cells.
 
-- Core staff reads are cache-first: the Outreach slim dashboard, Orders work queue, and Inventory store list use a six-hour, chunked CacheService payload keyed by a write-bumped version counter. A manual `installHubReadCacheWarmer()` function installs the 10-minute daytime (7am–9pm) warmer. The browser stores the most recent per-staff, per-release payload for Outreach, Campaigns, Orders, stores, and selected inventory lines, renders it immediately, and refreshes it in the background without replacing good cached data with an error.
+- Core staff reads are cache-first: the Outreach slim dashboard, Orders work queue, and Inventory store list use a 15-minute, chunked CacheService payload keyed by a write-bumped version counter. A manual `installHubReadCacheWarmer()` function installs the 10-minute daytime (7am–9pm) warmer and spreadsheet-change invalidation triggers. The browser stores the most recent per-staff, per-release payload for Outreach, Campaigns, Orders, stores, and selected inventory lines, renders it immediately, and refreshes it in the background without replacing good cached data with an error.
 
 - Campaign review now supports client-side search across business, city, ZIP, email, contact, and segment; status/area chips; sorting; and a one-lock, batched exclusion action for selected review-ready recipients. The selected campaign view is retained when that same campaign reloads.
 

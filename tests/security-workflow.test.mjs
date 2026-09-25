@@ -253,10 +253,20 @@ test("core Hub read paths use versioned cache fallbacks and timing metadata", as
   assert.match(script, /hub_read:.*scope.*version/);
   assert.match(script, /function warmHubReadCaches/);
   assert.match(script, /everyMinutes\(10\)/);
+  assert.match(script, /const READ_CACHE_TTL_SECONDS = 900/);
+  assert.match(script, /const READ_CACHE_CHUNK_SIZE = 45000/);
+  assert.match(script, /function onHubReadCacheSpreadsheetChange/);
+  assert.match(script, /\[getOutreachSs_\(\), SpreadsheetApp\.openById\(BADGER_TRACKER_SPREADSHEET_ID\)\]/);
+  assert.match(script, /forSpreadsheet\(spreadsheet\)\.onChange\(\)\.create\(\)/);
+  assert.match(script, /finally \{\s+if \(invalidateReadCache\)/);
+  assert.match(script, /String\(p\?\.refresh \|\| ""\) === "1"/);
   assert.match(script, /function campaignRecipientSummaryRows_/);
   assert.match(page, /function readScreenCache/);
   assert.match(page, /Couldn't refresh; showing data from/);
   assert.match(page, /writeScreenCache\("outreach"/);
+  assert.match(page, /loadOutreach\(true\)/);
+  assert.match(page, /loadCustomerWorkQueue\(true\)/);
+  assert.match(page, /loadStartup\(true, \$\("storeSelect"\)\.value\)/);
 });
 
 test("public customer proxy remains narrowly allowlisted", async () => {
