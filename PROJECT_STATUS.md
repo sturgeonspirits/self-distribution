@@ -8,8 +8,8 @@ Read this file before inspecting the repository or changing the application. Upd
 
 | Component | Source version | Deployment state |
 | --- | --- | --- |
-| Netlify web app and staff proxy | `2026.09.24.41-WEB` on `codex/distribution-system-foundation` / `2026.09.24.41-WEB` live | Deployed 2026-09-25 after review, including the Badger invoice ledger and browser-filtered account index. |
-| Inventory API Apps Script | `2026.09.24.40` on `codex/distribution-system-foundation` / `2026.09.24.39` live (Karl pasted and ran `repairHubStructure()` 2026-09-25; confirm the web-app deployment was updated to a new version) | Batched CSV business import; deployment is pending. |
+| Netlify web app and staff proxy | `2026.09.24.42-WEB` on `codex/distribution-system-foundation` / `2026.09.24.41-WEB` live | Refresh-timeout message now tells staff to reload in a minute; deployment is pending. |
+| Inventory API Apps Script | `2026.09.24.41` on `codex/distribution-system-foundation` / `2026.09.24.40` live | Forced Refresh saves its rebuild to the read cache even when the browser times out; deployment is pending. `2026.09.24.40` (learning Badger matching, batched CSV import) was deployed 2026-09-25 and `repairHubStructure()` has been run. |
 | Distribution Outreach Apps Script | `2026.09.24.13-APP` on `codex/work` | Signed-link rendering is committed; owner has not yet confirmed this exact version is deployed. |
 | Public customer Netlify proxy | `2026.09.18.3-WEB` | Deployed with Netlify; unchanged by the latest staff-app UI work |
 
@@ -18,6 +18,8 @@ Current Git branch: `codex/distribution-system-foundation`
 Current remote: `https://github.com/sturgeonspirits/self-distribution.git`
 
 Latest completed changes:
+
+- Refresh timeouts: the Orders & Accounts, Outreach and Inventory store-list Refresh buttons now rebuild through `cachedReadPayload_` with bypass, so the fresh result is saved even if the ~25-second proxy limit is hit. The next normal page load shows it, and the timeout message tells staff to reload in a minute instead of clicking Refresh again. Production cutover steps are in `docs/production-cutover-runbook-2026-09-25.md`.
 
 - Faster business CSV import: `importOutreachBusinesses` collects new Directory rows and Import Rows log entries in memory and writes each sheet once, instead of two `appendRow` calls per business that pushed imports of a few dozen rows past the ~25-second proxy limit. If the Directory batch is rejected (for example by data validation), it falls back to row-by-row and records each failure in Import Rows. Duplicate checks are unchanged, so re-running a timed-out import is safe.
 
@@ -97,7 +99,7 @@ Latest completed changes:
 | Customer order request | `order.html` |
 | Staff Netlify proxy | `netlify/functions/inventory.js` |
 | Public Netlify proxy | `netlify/functions/customer.js` |
-| Inventory API Apps Script | `apps-script/Code.gs` |
+| Inventory API Apps Script | `2026.09.24.41` on `codex/distribution-system-foundation` / `2026.09.24.40` live | Forced Refresh saves its rebuild to the read cache even when the browser times out; deployment is pending. `2026.09.24.40` (learning Badger matching, batched CSV import) was deployed 2026-09-25 and `repairHubStructure()` has been run. |
 | Distribution Outreach Apps Script | `docs/reference/distribution-outreach/Code.gs` |
 | Regression tests | `tests/security-workflow.test.mjs` |
 | Netlify routes | `netlify.toml` |
@@ -243,7 +245,8 @@ If a send times out or returns an unreadable response, do not retry blindly. Che
 - Zoho OIDC login and Karl's `admin` role are deployed and verified. A second, non-admin staff-account verification remains outstanding.
 - Toast remains disconnected until read-only API access and SKU mapping are verified.
 - Newsletter records exist, but newsletter sending remains disabled.
-- Campaign review exclusion needs a live verification after deploying Inventory API `2026.09.23.6`. Do not approve or send a live campaign until the configuration and a Karl-only test batch have been verified.
+- Campaigns verified live: Karl sent a 111-recipient campaign on 2026-09-25 without problems.
+- Production cutover is pending. See `docs/production-cutover-runbook-2026-09-25.md`. The Hub still reads the staging Inventory Backend copy (from 2026-09-15; missing the 2026-09-17 count) and the staging Badger Tracker.
 - Replace `STAFF_ROLES_JSON` with a dedicated, sheet-managed staff access roster. It should support immediate add/remove/change of role and permitted work areas without a Netlify environment-variable edit or redeploy, while preserving server-side authorization and audit attribution.
 
 ## Low-token workflow for future Codex tasks

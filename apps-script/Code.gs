@@ -1,8 +1,11 @@
 /*********************************
  * Inventory API (JSON) for Netlify
- * App version: 2026.09.24.40
+ * App version: 2026.09.24.41
  *
  * CHANGES IN THIS VERSION
+ * - Refresh buttons (Orders & Accounts, Outreach, Inventory store list) rebuild through the read cache and save the fresh result even when the browser request times out, so the next normal load shows current data instead of repeating a slow rebuild.
+ *
+ * CHANGES IN 2026.09.24.40
  * - Business CSV import writes new Directory rows and import-log rows in one batch per sheet instead of two appendRow calls per business, so imports finish inside the web request limit; if a batch is rejected it falls back to row-by-row and logs each failure.
  *
  * CHANGES IN 2026.09.24.39
@@ -185,7 +188,7 @@
  * - Use only in the staging inventory backend until testing is complete.
  *********************************/
 
-const APP_VERSION = "2026.09.24.40";
+const APP_VERSION = "2026.09.24.41";
 
 const SHEET_NAMES = {
   STORES: "Stores",
@@ -749,7 +752,7 @@ function handle_(e, body) {
     invalidateReadCache = !READ_ACTIONS.has(action);
     let res;
     switch (action) {
-      case "initData": res = apiGetInitData_((e?.parameter?.store_id) || (body?.store_id) || "", String((e?.parameter?.refresh) || (body?.refresh) || "") === "1"); break;
+      case "initData": res = apiGetInitData_((e?.parameter?.store_id) || (body?.store_id) || "", false, String((e?.parameter?.refresh) || (body?.refresh) || "") === "1"); break;
       case "listSkus": res = apiListSkus_(); break;
       case "addSkuToStore": res = apiAddSkuToStore_(body); break;
       case "upsertProduct": res = apiUpsertProduct_(body); break;
@@ -814,8 +817,8 @@ function handle_(e, body) {
   }
 }
 
-function apiGetInitData_(store_id, _cache_bypass) {
-  if (!store_id && !_cache_bypass) return cachedReadPayload_("inventory_stores", () => apiGetInitData_("", true));
+function apiGetInitData_(store_id, _cache_bypass, forceRefresh) {
+  if (!store_id && !_cache_bypass) return cachedReadPayload_("inventory_stores", () => apiGetInitData_("", true), !!forceRefresh);
   const startedAt = Date.now();
   const trackedAccountIds = inventoryTrackedAccountIds_();
   const stores = getAllRowsAsObjects_(getSheet_(SHEET_NAMES.STORES))
@@ -2688,9 +2691,11 @@ function outreachSlimPayload_(record) {
 }
 
 function apiGetOutreachDashboard_(p) {
-  const cacheBypass = !!p?._cache_bypass || String(p?.refresh || "") === "1";
-  if (String(p?.slim || "") === "1" && !cacheBypass) {
-    return cachedReadPayload_("outreach_slim", () => apiGetOutreachDashboard_(Object.assign({}, p, { _cache_bypass:true })));
+  const forceRefresh = String(p?.refresh || "") === "1";
+  if (String(p?.slim || "") === "1" && !p?._cache_bypass) {
+    // A forced refresh still goes through the cache helper so the fresh build is saved even if
+    // the browser request times out; the next normal load then shows current data.
+    return cachedReadPayload_("outreach_slim", () => apiGetOutreachDashboard_(Object.assign({}, p, { _cache_bypass:true })), forceRefresh);
   }
   const slim = String(p?.slim || "") === "1";
   const startedAt = Date.now();
@@ -5521,8 +5526,9 @@ function buildCustomerAccounts_(applications, orders, bypassBadgerCache) {
 }
 
 function apiGetCustomerWorkQueue_(p) {
-  const cacheBypass = !!p?._cache_bypass || String(p?.refresh || "") === "1";
-  if (!cacheBypass) return cachedReadPayload_("customer_work_queue", () => apiGetCustomerWorkQueue_({ _cache_bypass:true }));
+  const forceRefresh = String(p?.refresh || "") === "1";
+  // A forced refresh rebuilds and saves to the cache even if the browser stops waiting.
+  if (!p?._cache_bypass) return cachedReadPayload_("customer_work_queue", () => apiGetCustomerWorkQueue_({ _cache_bypass:true, _refresh_sources:forceRefresh }), forceRefresh);
   const startedAt = Date.now();
   const timings = {};
   let stageStartedAt = startedAt;
@@ -5565,7 +5571,7 @@ function apiGetCustomerWorkQueue_(p) {
   mark("application_order_read_ms");
   orders.forEach(order => order.operational_statuses = orderOperationalStatuses_(order));
   applications.forEach(application => application.operational_statuses = application.workflow_status === "New" ? ["New"] : (application.inventory_tracking ? ["Inventory-counted"] : []));
-  const ledger = buildCustomerAccounts_(applications, orders, String(p?.refresh || "") === "1");
+  const ledger = buildCustomerAccounts_(applications, orders, !!p?._refresh_sources || String(p?.refresh || "") === "1");
   const accounts = ledger.accounts;
   mark("account_build_ms");
   const activeApplicationStatuses = ["New", "Reviewing", "Needs information"];

@@ -280,6 +280,15 @@ test("staff invoice links teach customer-name matching, but ignores do not", asy
   assert.notEqual(normalize("Festival Foods -- Oshkosh #2708"), normalize("Festival Foods -- FDL"));
 });
 
+test("forced refreshes save their rebuild to the read cache", async () => {
+  const script = await readFile(new URL("apps-script/Code.gs", root), "utf8");
+  assert.match(script, /cachedReadPayload_\("customer_work_queue", \(\) => apiGetCustomerWorkQueue_\(\{ _cache_bypass:true, _refresh_sources:forceRefresh \}\), forceRefresh\)/);
+  assert.match(script, /cachedReadPayload_\("outreach_slim", [^\n]+, forceRefresh\)/);
+  assert.match(script, /cachedReadPayload_\("inventory_stores", \(\) => apiGetInitData_\("", true\), !!forceRefresh\)/);
+  const page = await readFile(new URL("index.html", root), "utf8");
+  assert.equal((page.match(/The server keeps working — reload the page in a minute to see the update\./g) || []).length, 3);
+});
+
 test("business import writes directory and log rows in batches", async () => {
   const script = await readFile(new URL("apps-script/Code.gs", root), "utf8");
   const importer = script.slice(script.indexOf("function apiImportOutreachBusinesses_"), script.indexOf("function apiRecalculateOutreachMiles_"));
