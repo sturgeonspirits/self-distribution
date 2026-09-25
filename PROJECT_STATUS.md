@@ -8,8 +8,8 @@ Read this file before inspecting the repository or changing the application. Upd
 
 | Component | Source version | Deployment state |
 | --- | --- | --- |
-| Netlify web app and staff proxy | `2026.09.24.35-WEB` on `codex/distribution-system-foundation` / `2026.09.24.24-WEB` live | Campaign creation reports preview-versus-frozen duplicate removals; deployment is pending. |
-| Inventory API Apps Script | `2026.09.24.30` on `codex/distribution-system-foundation` / `2026.09.24.17` live | Campaign freeze fully rechecks eligibility and cross-row initial-send deduplication; send-time duplicate protection is added; deployment is pending. |
+| Netlify web app and staff proxy | `2026.09.24.36-WEB` on `codex/distribution-system-foundation` / `2026.09.24.24-WEB` live | Campaign recipient review has local search/filter/sort and one-lock bulk exclusions; deployment is pending review. |
+| Inventory API Apps Script | `2026.09.24.31` on `codex/distribution-system-foundation` / `2026.09.24.17` live | Adds external contact logs, complete click-engagement rows/backfill, and High/Normal/Low priority validation; deployment is pending review. |
 | Distribution Outreach Apps Script | `2026.09.24.13-APP` on `codex/work` | Signed-link rendering is committed; owner has not yet confirmed this exact version is deployed. |
 | Public customer Netlify proxy | `2026.09.18.3-WEB` | Deployed with Netlify; unchanged by the latest staff-app UI work |
 
@@ -18,6 +18,14 @@ Current Git branch: `codex/distribution-system-foundation`
 Current remote: `https://github.com/sturgeonspirits/self-distribution.git`
 
 Latest completed changes:
+
+- Campaign review now supports client-side search across business, city, ZIP, email, contact, and segment; status/area chips; sorting; and a one-lock, batched exclusion action for selected review-ready recipients. The selected campaign view is retained when that same campaign reloads.
+
+- Email Engagement structure repair now adds Account ID, Target, and Stage. Link clicks write the directory identity, target label, stage, source, confidence, and app version; a new administrator-only backfill completes legacy blank identities. Repeated clicks inside five seconds are ignored, and a click within 60 seconds of a sent email is marked Possible link scanner.
+
+- Outreach cards and Business details can log in-person, phone, external-email, event, or other contact. Contact logs write to the Activity Log and append dated Notes; an external email advances an Initial prospect to Follow-up 1 without inventing a Zoho message ID. Business timelines include app mail, contacts/outcomes, and tracked link clicks.
+
+- Directory Priority is now explicitly High, Normal, or Low in Add business and Business details. Imports map legacy Medium to Normal; unsupported priority values are rejected before a sheet write.
 
 - Campaign preview now filters recipient addresses already used by a non-test Initial send or another directory row with Last Emailed. Campaign freeze repeats full eligibility after rendering records, memoizes the one Pilot Review read, and reports any preview-to-freeze duplicate removal. Send time repeats the address check with targeted lookups.
 

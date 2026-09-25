@@ -207,6 +207,25 @@ test("roles and workspace areas are enforced server-side and revoked users lose 
   assert.equal(fetches, 0);
 });
 
+test("campaign bulk exclusion and external contact logging remain staff-scoped", async () => {
+  const source = await readFile(new URL("netlify/functions/inventory.js", root), "utf8");
+  const script = await readFile(new URL("apps-script/Code.gs", root), "utf8");
+  assert.match(source, /"setOutreachCampaignRecipientExclusions"/);
+  assert.match(source, /"logOutreachContact"/);
+  assert.match(script, /function apiSetOutreachCampaignRecipientExclusions_/);
+  assert.match(script, /function apiLogOutreachContact_/);
+  assert.match(script, /Sent recipients cannot be excluded/);
+});
+
+test("engagement clicks retain identity and scanner protection", async () => {
+  const script = await readFile(new URL("apps-script/Code.gs", root), "utf8");
+  assert.match(script, /ensureHeaderColumns_\(engagement, \["Account ID", "Target", "Stage"\]\)/);
+  assert.match(script, /permanentId_\("ENG"\)/);
+  assert.match(script, /Possible link scanner/);
+  assert.match(script, /< 5000/);
+  assert.match(script, /function apiBackfillEngagementDetails_/);
+});
+
 test("public customer proxy remains narrowly allowlisted", async () => {
   const { handler } = await loadFunction("netlify/functions/customer.js", "public-regression");
   process.env.APPS_SCRIPT_URL = "https://example.test/exec";

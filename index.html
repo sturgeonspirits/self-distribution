@@ -1,10 +1,10 @@
 <!doctype html>
-<!-- App version: 2026.09.24.35-WEB -->
+<!-- App version: 2026.09.24.36-WEB -->
 <html>
 <head>
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover"/>
-  <meta name="app-version" content="2026.09.24.35-WEB" />
+  <meta name="app-version" content="2026.09.24.36-WEB" />
   <meta name="theme-color" content="#536f77" />
   <link rel="icon" href="/assets/distribution-hub-icon.svg" type="image/svg+xml" />
   <link rel="manifest" href="/site.webmanifest" />
@@ -336,6 +336,9 @@
       gap:8px;
       margin-top:10px;
     }
+    .campaignRecipientToolbar{position:sticky;top:0;z-index:4;margin:12px 0 8px;padding:10px;border:1px solid var(--line);border-radius:10px;background:var(--panel,#fff);box-shadow:0 4px 12px rgba(15,23,42,.08)}
+    .campaignFilterChips{display:flex;flex-wrap:wrap;gap:6px;margin:8px 0}
+    .campaignFilterChips button.active{background:#16243a;color:#fff;border-color:#16243a}
     .actionBtn{
       min-width:0;
       min-height:48px;
@@ -2043,8 +2046,10 @@
         <div class="smallMuted">Recalculate directory mileage from the ZIP Centroids tab. Manual mileage overrides are preserved.</div>
         <div class="btnRow" style="margin-top:10px">
           <button id="recalculateOutreachMilesBtn" type="button"><i data-lucide="map-pin"></i><span>Recalculate miles from ZIP</span></button>
+          <button id="backfillEngagementDetailsBtn" type="button"><i data-lucide="database-zap"></i><span>Backfill engagement details</span></button>
         </div>
         <div class="status" id="recalculateOutreachMilesStatus"></div>
+        <div class="status" id="backfillEngagementDetailsStatus"></div>
       </div>
     </details>
 
@@ -2329,6 +2334,7 @@
     </div>
     <div class="dlgBody">
       <div class="modeNotice" style="margin-top:0"><i data-lucide="shield-check"></i><span id="outreachCampaignNotice">Review the frozen audience before approving delivery.</span></div>
+      <div class="campaignRecipientToolbar" id="campaignRecipientToolbar"><input id="campaignRecipientSearch" type="search" placeholder="Search business, city, ZIP, email, contact, or segment" /><div class="campaignFilterChips" id="campaignRecipientFilters"></div><div class="grid2"><div><label for="campaignRecipientSort">Sort recipients</label><select id="campaignRecipientSort"><option value="name">Name</option><option value="city">City</option><option value="miles">Miles (closest first)</option><option value="status">Status</option></select></div><div><label for="campaignBulkExcludeReason">Exclude selected</label><div class="tinyRow"><select id="campaignBulkExcludeReason"><option value="">Choose reason</option><option>Out of area</option><option>Already a customer</option><option>Not a fit</option><option>Distributor/vendor</option></select><button id="campaignBulkExcludeBtn" type="button">Exclude selected</button></div></div></div><div class="smallMuted" id="campaignRecipientCount"></div></div>
       <div id="outreachCampaignRecipients"></div>
       <div class="dlgActions"><button id="rebuildCampaignRecipientsBtn" type="button">Rebuild unsent emails with current template</button></div>
       <div class="status" id="outreachCampaignStatus" role="status" aria-live="polite"></div>
@@ -2389,6 +2395,11 @@
         <button class="primary" id="saveOutcomeBtn" type="button" disabled>Save outcome</button>
       </div>
     </div>
+  </dialog>
+
+  <dialog id="contactLogDialog">
+    <div class="dlgHeader"><div><div class="dlgTitle">Log contact</div><div class="smallMuted" id="contactLogBusiness"></div></div><button id="closeContactLogBtn" type="button">Close</button></div>
+    <div class="dlgBody"><div class="workflowEditGrid"><div><label for="contactLogDate">Date</label><input id="contactLogDate" type="date" /></div><div><label for="contactLogChannel">Channel</label><select id="contactLogChannel"><option>In person</option><option>Phone</option><option>Email outside app</option><option>Event/tasting</option><option>Other</option></select></div><div><label for="contactLogStaff">Staff member</label><input id="contactLogStaff" /></div><div><label for="contactLogPerson">Contact person</label><input id="contactLogPerson" /></div><div><label for="contactLogOutcome">Outcome (optional)</label><select id="contactLogOutcome"><option value="">No outcome yet</option><option>Interested</option><option>Schedule tasting</option><option>Follow up later</option><option>Visit in person</option><option>Wrong contact</option><option>Bad address</option><option>Not interested</option><option>Unsubscribed</option></select></div><div><label for="contactLogFollowUp">Next follow-up</label><input id="contactLogFollowUp" type="date" /></div><div class="full"><label for="contactLogNotes">Notes</label><textarea id="contactLogNotes" placeholder="What happened and who should follow up?"></textarea></div></div><div class="status" id="contactLogStatus"></div><div class="dlgActions"><button class="primary" id="saveContactLogBtn" type="button">Save contact</button></div></div>
   </dialog>
 
   <dialog id="businessDetailDialog">
@@ -2493,6 +2504,7 @@
         <div><label for="newBusinessState">State</label><input id="newBusinessState" maxlength="2" value="WI" /></div>
         <div><label for="newBusinessZip">ZIP code</label><input id="newBusinessZip" inputmode="numeric" /></div>
         <div><label for="newBusinessFit">Craft-spirit fit</label><select id="newBusinessFit"><option value="">Not rated</option><option>1</option><option>2</option><option>3</option><option>4</option><option>5</option></select></div>
+        <div><label for="newBusinessPriority">Priority</label><select id="newBusinessPriority" required><option value="">Choose priority</option><option>High</option><option selected>Normal</option><option>Low</option></select></div>
         <div><label for="newBusinessMiles">Miles from Oshkosh</label><input id="newBusinessMiles" type="number" min="0" step="0.1" /></div>
         <div class="full"><label for="newBusinessNotes">Notes</label><textarea id="newBusinessNotes" maxlength="4000"></textarea></div>
       </div>
@@ -2518,7 +2530,7 @@
 
   <footer style="max-width:1200px;margin:18px auto 120px;padding:0 12px;text-align:center;color:#6b7280;font-size:12px;">
     Designed by <a href="https://scriptspirit.dev" target="_blank" rel="noopener noreferrer" style="color:#1d4ed8;text-decoration:none;font-weight:700;">Script Spirit</a>
-<span id="appVersionFooter"> • Version 2026.09.24.35-WEB</span>
+<span id="appVersionFooter"> • Version 2026.09.24.36-WEB</span>
   </footer>
 
 
@@ -2541,7 +2553,7 @@
   window.addEventListener("unhandledrejection", e => console.error("Unhandled promise rejection:", e.reason));
   window.addEventListener("error", e => console.error("Unhandled error:", e.error || e.message));
   const $ = (id) => document.getElementById(id);
-  const APP_VERSION = "2026.09.24.35-WEB";
+  const APP_VERSION = "2026.09.24.36-WEB";
   $("appVersionFooter").textContent = ` • Version ${APP_VERSION}`;
 
   let cache = { stores: [], lines: [] };
@@ -2581,6 +2593,15 @@
   let selectedOutreachCampaign = null;
   let selectedCampaignApprovalToken = "";
   let campaignSegmentConfirmation = { campaignId:"", confirmed:false };
+  let campaignRecipientView = { campaignId:"", search:"", filter:"", sort:"name", selected:new Set() };
+  function matchesCampaignRecipientFilter_(recipient, filter){
+    const status = String(recipient.status || "").toLowerCase();
+    if (filter === "ready-review") return status === "ready for review";
+    if (filter === "ready-send") return status === "ready to send";
+    if (filter === "sent") return status.startsWith("sent");
+    if (filter === "excluded") return status === "excluded";
+    return filter === "blocked" && status === "blocked";
+  }
   let campaignSendInProgress = false;
   let outreachCampaignPreview = null;
 
@@ -3446,11 +3467,30 @@
     }
   }
 
-  async function openOutreachCampaign(campaignId){
-    const res = await staffApiPost({ action:"outreachCampaign", campaign_id:campaignId });
+  async function backfillEngagementDetails(){
+    if (staffSession?.role !== "admin") return toast("This action requires an administrator.");
+    const staffName = $("outreachStaffName").value.trim();
+    if (!staffName) return toast("Enter your staff name first.");
+    const button = $("backfillEngagementDetailsBtn");
+    button.disabled = true;
+    $("backfillEngagementDetailsStatus").textContent = "Backfilling engagement details...";
+    try {
+      const res = await staffApiPost({ action:"backfillEngagementDetails", staff_name:staffName });
+      if (!res.ok) throw new Error(res.error || "Engagement backfill failed.");
+      $("backfillEngagementDetailsStatus").textContent = res.message || "Engagement details backfilled.";
+      loadOutreach().catch(() => { $("backfillEngagementDetailsStatus").textContent += " List refresh failed; click refresh."; });
+    } catch (error) { $("backfillEngagementDetailsStatus").textContent = error.message || String(error); }
+    finally { button.disabled = false; }
+  }
+
+  async function openOutreachCampaign(campaignId, clientOnly = false){
+    const res = clientOnly && selectedOutreachCampaign?.campaign_id === campaignId
+      ? { ok:true, campaign:selectedOutreachCampaign }
+      : await staffApiPost({ action:"outreachCampaign", campaign_id:campaignId });
     if (!res.ok) throw new Error(res.error || "Campaign could not be loaded.");
     selectedOutreachCampaign = res.campaign;
     const campaign = selectedOutreachCampaign;
+    if (campaignRecipientView.campaignId !== campaign.campaign_id) campaignRecipientView = { campaignId:campaign.campaign_id, search:"", filter:["Review", "Approved"].includes(campaign.status) ? "unsent" : "all", sort:"name", selected:new Set() };
     selectedCampaignApprovalToken = campaign.approval_token || "";
     $("outreachCampaignTitle").textContent = campaign.name;
     const excludedCount = Number(campaign.counts?.Excluded || 0);
@@ -3482,6 +3522,34 @@
     $("sendRemainingCampaignBtn").hidden = campaign.status !== "Approved";
     refreshCampaignSendControls();
     const editable = campaign.status === "Review";
+    const recipients = campaign.recipients || [];
+    const statusFilters = [
+      ["all", "All"], ["ready-review", "Ready for review"], ["ready-send", "Ready to send"],
+      ["sent", "Sent"], ["excluded", "Excluded"], ["blocked", "Blocked"], ["area", "Area review"],
+    ];
+    const matchesStatus = recipient => {
+      const status = String(recipient.status || "").toLowerCase();
+      if (campaignRecipientView.filter === "all") return true;
+      if (campaignRecipientView.filter === "unsent") return !status.startsWith("sent");
+      if (campaignRecipientView.filter === "ready-review") return status === "ready for review";
+      if (campaignRecipientView.filter === "ready-send") return status === "ready to send";
+      if (campaignRecipientView.filter === "sent") return status.startsWith("sent");
+      if (campaignRecipientView.filter === "excluded") return status === "excluded";
+      if (campaignRecipientView.filter === "blocked") return status === "blocked";
+      return campaignRecipientView.filter === "area" && (!!criteria && (recipient.miles === null || recipient.miles === undefined || Number(recipient.miles) > maxMiles));
+    };
+    const query = campaignRecipientView.search.toLowerCase();
+    const shownRecipients = recipients.filter(recipient => matchesStatus(recipient) && (!query || [recipient.business, recipient.city, recipient.postal_code, recipient.email, recipient.contact, recipient.segment].some(value => String(value || "").toLowerCase().includes(query))))
+      .sort((a, b) => campaignRecipientView.sort === "city" ? String(a.city || "").localeCompare(String(b.city || "")) : campaignRecipientView.sort === "miles" ? (Number(a.miles ?? Infinity) - Number(b.miles ?? Infinity)) : campaignRecipientView.sort === "status" ? String(a.status || "").localeCompare(String(b.status || "")) : String(a.business || "").localeCompare(String(b.business || "")));
+    $("campaignRecipientSearch").value = campaignRecipientView.search;
+    $("campaignRecipientSort").value = campaignRecipientView.sort;
+    $("campaignRecipientFilters").innerHTML = (campaign.status === "Review" || campaign.status === "Approved" ? [["unsent", "Unsent"]] : []).concat(statusFilters).map(([value, label]) => {
+      const count = value === "all" ? recipients.length : value === "unsent" ? recipients.filter(item => !String(item.status || "").toLowerCase().startsWith("sent")).length : value === "area" ? areaWarningCount : recipients.filter(item => matchesCampaignRecipientFilter_(item, value)).length;
+      return `<button type="button" class="${campaignRecipientView.filter === value ? "active" : ""}" data-campaign-filter="${value}">${escapeHtml(label)} (${count})</button>`;
+    }).join("");
+    $("campaignRecipientCount").textContent = `Showing ${shownRecipients.length} of ${recipients.length} recipients`;
+    $("campaignBulkExcludeBtn").hidden = !editable;
+    $("campaignBulkExcludeReason").hidden = !editable;
     const campaignRecipientLocation = recipient => {
       const parts = [escapeHtml(recipient.city || "City missing")];
       const hasMiles = recipient.miles !== null && recipient.miles !== undefined && recipient.miles !== "";
@@ -3489,8 +3557,8 @@
       else if (criteria) parts.push("Miles missing");
       return parts.join(" • ");
     };
-    $("outreachCampaignRecipients").innerHTML = `<div class="outreachList">${(campaign.recipients || []).map((recipient, index) => `
-      <details class="outreachCard"><summary><strong>${escapeHtml(recipient.business)}</strong><span class="smallMuted"> • ${campaignRecipientLocation(recipient)} • ${escapeHtml(recipient.email)} • ${escapeHtml(recipient.status)}</span>${editable && recipient.status === "Ready for review" ? `<button class="actionBtn" type="button" data-campaign-recipient-action="show-exclude" data-recipient-token="${escapeHtml(recipient.idempotency_token)}"><i data-lucide="ban"></i><span>Exclude</span></button>` : ""}<br><span class="smallMuted">${escapeHtml(recipient.subject)}${recipient.segment ? ` • ${escapeHtml(recipient.segment)}` : " • Default Segment C"}</span></summary>
+    $("outreachCampaignRecipients").innerHTML = `<div class="outreachList">${shownRecipients.map((recipient, index) => `
+      <details class="outreachCard"><summary>${editable && recipient.status === "Ready for review" ? `<input type="checkbox" data-campaign-recipient-select="${escapeHtml(recipient.idempotency_token)}" ${campaignRecipientView.selected.has(recipient.idempotency_token) ? "checked" : ""} aria-label="Select ${escapeHtml(recipient.business)}" />` : ""}<strong>${escapeHtml(recipient.business)}</strong><span class="smallMuted"> • ${campaignRecipientLocation(recipient)}${recipient.postal_code ? ` • ${escapeHtml(recipient.postal_code)}` : ""} • ${escapeHtml(recipient.email)} • ${escapeHtml(recipient.status)}</span>${editable && recipient.status === "Ready for review" ? `<button class="actionBtn" type="button" data-campaign-recipient-action="show-exclude" data-recipient-token="${escapeHtml(recipient.idempotency_token)}"><i data-lucide="ban"></i><span>Exclude</span></button>` : ""}<br><span class="smallMuted">${escapeHtml(recipient.subject)}${recipient.segment ? ` • ${escapeHtml(recipient.segment)}` : " • Default Segment C"}</span></summary>
       <div class="outreachMeta"><span class="badge">${escapeHtml(recipient.priority || "No")} priority</span><span class="badge blue">${escapeHtml(recipient.email_confidence || "Unrated")}</span>${recipient.wave ? `<span class="badge">${escapeHtml(recipient.wave)}</span>` : ""}${criteria && (recipient.miles === null || recipient.miles === undefined || Number(recipient.miles) > maxMiles) ? `<span class="badge amber">Area review needed</span>` : ""}</div>
       <label>Subject</label><input class="emailEditor" data-campaign-subject value="${escapeHtml(recipient.subject || "")}" ${editable && recipient.status === "Ready for review" ? "" : "readonly"} />
       <label>Message</label><textarea class="emailEditor" data-campaign-body ${editable && recipient.status === "Ready for review" ? "" : "readonly"}>${escapeHtml(recipient.body_text || "")}</textarea>
@@ -3562,6 +3630,26 @@
       setCampaignStatus(error.message || String(error), true);
       button.disabled = false;
     }
+  }
+
+  async function excludeSelectedCampaignRecipients(){
+    const campaign = selectedOutreachCampaign;
+    const tokens = Array.from(campaignRecipientView.selected);
+    const reason = $("campaignBulkExcludeReason").value;
+    if (!campaign || !tokens.length) return setCampaignStatus("Select one or more Ready for review recipients first.", true);
+    if (!reason) return setCampaignStatus("Choose one exclusion reason for the selected recipients.", true);
+    const button = $("campaignBulkExcludeBtn");
+    button.disabled = true;
+    setCampaignStatus(`Excluding ${tokens.length} selected recipient${tokens.length === 1 ? "" : "s"}...`);
+    try {
+      const res = await staffApiPost({ action:"setOutreachCampaignRecipientExclusions", campaign_id:campaign.campaign_id, idempotency_tokens:tokens, reason:reason });
+      if (!res.ok) throw new Error(res.error || "Selected recipients could not be excluded.");
+      campaignRecipientView.selected.clear();
+      await loadOutreachCampaigns();
+      await openOutreachCampaign(campaign.campaign_id);
+      setCampaignStatus(res.message || "Selected recipients excluded. No email was sent.");
+    } catch (error) { setCampaignStatus(error.message || String(error), true); }
+    finally { button.disabled = false; }
   }
 
   async function approveOutreachCampaign(){
@@ -3811,6 +3899,7 @@
           <div class="outreachActions">
             <button class="actionBtn primary actionPrimary" type="button" data-outreach-action="review" ${refreshPending ? "disabled title=\"Refreshing — try again in a moment.\"" : ""}><i data-lucide="mail-open"></i><span>Review email</span></button>
             <button class="actionBtn" type="button" data-outreach-action="outcome"><i data-lucide="clipboard-check"></i><span>Log outcome</span></button>
+            <button class="actionBtn" type="button" data-outreach-action="contact"><i data-lucide="phone-call"></i><span>Log contact</span></button>
             <button class="actionBtn" type="button" data-outreach-action="details"><i data-lucide="building-2"></i><span>Business details</span></button>
             <a class="actionBtn" href="${escapeHtml(mapsDirectionsUrl(record))}" target="_blank" rel="noopener noreferrer" aria-label="Directions to ${escapeHtml(outreachBusinessName(record))}"><i data-lucide="navigation"></i><span>Directions</span></a>
           </div>
@@ -4248,6 +4337,7 @@
       { key:"state", label:"State", type:"text" },
       { key:"postal_code", label:"ZIP", type:"text" },
       { key:"craft_spirit_fit", label:"Craft-spirit fit (1–5)", type:"number", attributes:'min="1" max="5" step="1" inputmode="numeric"' },
+      { key:"priority", label:"Priority", options:["High", "Normal", "Low"] },
       { key:"miles", label:"Miles from Oshkosh", type:"number", attributes:'min="0" step="0.1" inputmode="decimal"' },
       { key:"rating_basis", label:"Why this fit rating?", type:"text", full:true },
       { key:"email_confidence", label:"Email confidence", options:["", "Confirmed", "Published", "Supplied", "Needs verification"] },
@@ -4386,7 +4476,9 @@
       { label:"Bounces", value:Number(record.email_engagement?.bounce_count || 0) },
       { label:"Tracking source", value:record.email_engagement?.source },
     ];
-    const activity = Array.isArray(record.activity) ? record.activity : [];
+    const activity = Array.isArray(record.activity) ? record.activity.slice() : [];
+    if (record.email_engagement?.last_clicked) activity.push({ result:"LINK CLICKED", stage:"Email engagement", timestamp:record.email_engagement.last_clicked, detail:record.email_engagement.last_click_target ? `Most recent target: ${record.email_engagement.last_click_target}` : "Tracked email link" });
+    activity.sort((a, b) => new Date(b.timestamp || 0).getTime() - new Date(a.timestamp || 0).getTime());
     const activityHtml = activity.length
       ? `<div class="activityTimeline">${activity.map(item => `
           <div class="activityItem">
@@ -4400,6 +4492,7 @@
       <div class="businessDetailHero">
         <h3>${escapeHtml(outreachBusinessName(record))}</h3>
         <p>${escapeHtml([record.city, record.relationship, record.status].filter(Boolean).join(" • ") || "Directory record")}</p>
+        <div class="outreachActions"><button class="actionBtn" type="button" id="logContactFromDetailBtn"><i data-lucide="phone-call"></i><span>Log contact</span></button><button class="actionBtn" type="button" id="logOutcomeFromDetailBtn"><i data-lucide="clipboard-check"></i><span>Log outcome</span></button></div>
       </div>
       ${contactEditHtml(record)}
       ${programEditHtml(record)}
@@ -4411,7 +4504,7 @@
         <section class="detailSection"><h4>Optional programs</h4>${detailRowsHtml(programRows)}</section>
         <section class="detailSection"><h4>Email engagement</h4>${detailRowsHtml(engagementRows)}<p class="smallMuted" style="margin:10px 0 0">Opens are estimates. Clicks, replies, and orders are stronger engagement signals.</p></section>
         <section class="detailSection"><h4>Notes</h4>${detailRowsHtml([{ label:"Notes", value:record.notes }, { label:"Outcome", value:record.outcome }])}</section>
-        <section class="detailSection full"><h4>Activity</h4>${activityHtml}</section>
+        <section class="detailSection full"><h4>Timeline</h4>${activityHtml}</section>
         <section class="detailSection full"><h4>All spreadsheet fields</h4>${detailRowsHtml(allFields)}</section>
       </div>`;
     if (!$("businessDetailDialog").open) $("businessDetailDialog").showModal();
@@ -4612,6 +4705,42 @@
     }
   }
 
+  async function openContactLogForRecord(record){
+    const fullRecord = await fetchOutreachRecord(record);
+    selectedOutreachRecord = fullRecord;
+    $("contactLogBusiness").textContent = outreachBusinessName(fullRecord);
+    $("contactLogDate").value = new Date().toISOString().slice(0, 10);
+    $("contactLogChannel").value = "In person";
+    $("contactLogStaff").value = $("outreachStaffName").value.trim() || localStorage.getItem("customer_staff_name") || "";
+    $("contactLogPerson").value = fullRecord.contact || "";
+    $("contactLogOutcome").value = "";
+    $("contactLogFollowUp").value = "";
+    $("contactLogNotes").value = "";
+    $("contactLogStatus").textContent = "";
+    if (!$("contactLogDialog").open) $("contactLogDialog").showModal();
+  }
+
+  async function saveContactLog(){
+    const record = selectedOutreachRecord;
+    if (!record) return;
+    const button = $("saveContactLogBtn");
+    const staffName = $("contactLogStaff").value.trim();
+    if (!staffName) return $("contactLogStatus").textContent = "Enter the staff member who made contact.";
+    button.disabled = true;
+    $("contactLogStatus").textContent = "Saving contact...";
+    try {
+      const res = await staffApiPost({ action:"logOutreachContact", account_id:record.account_id, source_row:record.source_row, business:record.business, contact_date:$("contactLogDate").value, channel:$("contactLogChannel").value, staff_name:staffName, contact_person:$("contactLogPerson").value.trim(), outcome:$("contactLogOutcome").value, next_follow_up:$("contactLogFollowUp").value, notes:$("contactLogNotes").value.trim() });
+      if (!res.ok) throw new Error(res.error || "Contact could not be saved.");
+      patchOutreachRecordLocally(record.source_row, { status:res.status || record.status, next_follow_up:res.next_follow_up || record.next_follow_up, last_emailed:$("contactLogChannel").value === "Email outside app" ? $("contactLogDate").value : record.last_emailed, next_email:$("contactLogChannel").value === "Email outside app" && String(record.next_email || "").toLowerCase() === "initial" ? "Follow-up 1" : record.next_email });
+      $("contactLogDialog").close();
+      renderOutreach();
+      refreshOutreachRecordAfterSave(record);
+    } catch (error) {
+      $("contactLogStatus").textContent = error.message || String(error);
+      button.disabled = false;
+    }
+  }
+
   function requireDirectoryAccess(message){
     if (staffAccessCode) return true;
     showOutreachAccessState();
@@ -4624,6 +4753,7 @@
     ["newBusinessName","newBusinessContact","newBusinessEmail","newBusinessPhone","newBusinessAddress","newBusinessCity","newBusinessZip","newBusinessMiles","newBusinessNotes"].forEach(id => { $(id).value = ""; });
     $("newBusinessState").value = "WI";
     $("newBusinessFit").value = "";
+    $("newBusinessPriority").value = "Normal";
     $("addBusinessStatus").textContent = "";
     $("addBusinessDialog").showModal();
   }
@@ -4632,6 +4762,7 @@
     const staffName = $("customerStaffName").value.trim() || localStorage.getItem("customer_staff_name") || "";
     if (!staffName) return $("addBusinessStatus").textContent = "Enter your staff name in Customers before saving.";
     if (!$("newBusinessName").value.trim()) return $("addBusinessStatus").textContent = "Business name is required.";
+    if (!["High", "Normal", "Low"].includes($("newBusinessPriority").value)) return $("addBusinessStatus").textContent = "Choose High, Normal, or Low priority.";
     const button = $("saveNewBusinessBtn");
     button.disabled = true;
     $("addBusinessStatus").textContent = "Adding business...";
@@ -4642,7 +4773,7 @@
         email:$("newBusinessEmail").value.trim(), phone:$("newBusinessPhone").value.trim(),
         address:$("newBusinessAddress").value.trim(), city:$("newBusinessCity").value.trim(),
         state:$("newBusinessState").value.trim(), postal_code:$("newBusinessZip").value.trim(),
-        craft_spirit_fit:$("newBusinessFit").value, miles:$("newBusinessMiles").value,
+        craft_spirit_fit:$("newBusinessFit").value, priority:$("newBusinessPriority").value, miles:$("newBusinessMiles").value,
         miles_source:$("newBusinessMiles").value.trim() ? "manual" : "",
         notes:$("newBusinessNotes").value.trim(), lead_source:"Manual app entry",
       });
@@ -4663,6 +4794,7 @@
           state:$("newBusinessState").value.trim(),
           postal_code:$("newBusinessZip").value.trim(),
           craft_spirit_fit:Number($("newBusinessFit").value || 0),
+          priority:$("newBusinessPriority").value,
           miles:$("newBusinessMiles").value,
           notes:$("newBusinessNotes").value.trim(),
           status:"Not contacted",
@@ -5995,6 +6127,7 @@
   $("unlockInventoryBtn").addEventListener("click", startZohoLogin);
   $("unlockOutreachBtn").addEventListener("click", startZohoLogin);
   $("refreshOutreachBtn").addEventListener("click", () => loadOutreach().catch(handleOutreachLoadError));
+  $("backfillEngagementDetailsBtn").addEventListener("click", backfillEngagementDetails);
   $("refreshCustomersBtn").addEventListener("click", () => {
     if (!staffAccessCode) return showCustomerAccessState();
     loadCustomerWorkQueue().catch(handleCustomerError);
@@ -6145,6 +6278,7 @@
     const action = actionButton.dataset.outreachAction;
     if (action === "review" && record.refresh_pending) return toast("Refreshing — try again in a moment.");
     if (action === "outcome") openOutcomeDialogForRecord(record);
+    else if (action === "contact") openContactLogForRecord(record).catch(error => toast(error.message || String(error)));
     else if (action === "details") openBusinessDetailForRecord(record);
     else openOutreachReviewForRecord(record, false);
   });
@@ -6154,6 +6288,8 @@
   });
   $("saveOutcomeBtn").addEventListener("click", saveOutreachOutcome);
   $("closeOutcomeBtn").addEventListener("click", () => $("outcomeDialog").close());
+  $("closeContactLogBtn").addEventListener("click", () => $("contactLogDialog").close());
+  $("saveContactLogBtn").addEventListener("click", saveContactLog);
   $("outcomeDialog").addEventListener("close", () => { outreachOutcomeOpenRequest += 1; });
   $("outreachReviewSubject").addEventListener("input", updateOutreachDraftState);
   $("outreachReviewBody").addEventListener("input", updateOutreachDraftState);
@@ -6173,6 +6309,16 @@
   $("previewOutreachCampaignCriteriaBtn").addEventListener("click", previewOutreachCampaignCriteria);
   $("createOutreachCampaignCriteriaBtn").addEventListener("click", submitOutreachCampaignCriteria);
   $("outreachCampaignCriteriaDialog").addEventListener("close", () => { outreachCampaignPreview = null; });
+  $("campaignRecipientSearch").addEventListener("input", () => { campaignRecipientView.search = $("campaignRecipientSearch").value; openOutreachCampaign(selectedOutreachCampaign?.campaign_id, true); });
+  $("campaignRecipientSort").addEventListener("change", () => { campaignRecipientView.sort = $("campaignRecipientSort").value; openOutreachCampaign(selectedOutreachCampaign?.campaign_id, true); });
+  $("campaignRecipientFilters").addEventListener("click", event => { const button = event.target.closest("[data-campaign-filter]"); if (!button) return; campaignRecipientView.filter = button.dataset.campaignFilter; openOutreachCampaign(selectedOutreachCampaign?.campaign_id, true); });
+  $("campaignBulkExcludeBtn").addEventListener("click", excludeSelectedCampaignRecipients);
+  $("outreachCampaignRecipients").addEventListener("change", event => {
+    const checkbox = event.target.closest("[data-campaign-recipient-select]");
+    if (!checkbox) return;
+    const token = checkbox.dataset.campaignRecipientSelect;
+    if (checkbox.checked) campaignRecipientView.selected.add(token); else campaignRecipientView.selected.delete(token);
+  });
   $("outreachCampaignRecipients").addEventListener("click", event => {
     const button = event.target.closest("[data-campaign-recipient-action='save']");
     if (button) return saveOutreachCampaignRecipient(button);
@@ -6216,6 +6362,8 @@
   $("businessDetailBody").addEventListener("click", event => {
     if (event.target.closest("#saveBusinessEditBtn")) saveBusinessEdits();
     if (event.target.closest("#saveProgramSettingsBtn")) saveProgramSettings();
+    if (event.target.closest("#logContactFromDetailBtn") && selectedOutreachRecord) openContactLogForRecord(selectedOutreachRecord).catch(error => toast(error.message || String(error)));
+    if (event.target.closest("#logOutcomeFromDetailBtn") && selectedOutreachRecord) openOutcomeDialog(selectedOutreachRecord);
   });
 
   refreshIcons();
