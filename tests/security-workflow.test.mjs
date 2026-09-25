@@ -244,6 +244,8 @@ test("Badger invoice links are staff-scoped and ledger matching stays account-ba
   assert.match(ledger, /cachedBadgerLocationNames_\(/);
   assert.match(ledger, /assignedInvoiceAccounts/);
   assert.match(ledger, /conflictingOrderInvoiceKeys\.has\(invoiceKey\)/);
+  assert.match(ledger, /const ignoredInvoiceKeys = new Set\(\)/);
+  assert.match(ledger, /ignoredInvoiceKeys\.has\(invoiceKey\)/);
   assert.match(ledger, /linkedInvoices\.length > 0/);
   assert.match(ledger, /unmatched_badger_invoices/);
   assert.match(ledger, /ignored_badger_invoices/);
@@ -278,6 +280,12 @@ test("staff invoice links teach customer-name matching, but ignores do not", asy
   assert.equal(normalize("Sunken PaddleCiderworks LLC"), normalize("Sunken Paddle Ciderworks"));
   assert.equal(normalize("The Crimson Still LLC"), normalize("Crimson Still"));
   assert.notEqual(normalize("Festival Foods -- Oshkosh #2708"), normalize("Festival Foods -- FDL"));
+  const aliases = script.slice(script.indexOf("function readBadgerCustomerAliases_"), script.indexOf("function readBadgerInvoiceLinks_"));
+  assert.match(aliases, /byKey\.set\(key, \{ ambiguous:true \}\)/);
+  assert.match(aliases, /conflictingLooseAlias/);
+  const ledger = script.slice(script.indexOf("function buildCustomerAccounts_"), script.indexOf("function apiGetCustomerWorkQueue_"));
+  assert.match(ledger, /locationPublicKeysByInvoiceKey/);
+  assert.match(ledger, /locationKeys\.size !== 1/);
 });
 
 test("forced refreshes save their rebuild to the read cache", async () => {
@@ -295,6 +303,8 @@ test("browser sends CSV imports in small parts", async () => {
   const importer = page.slice(page.indexOf("async function runBusinessImport"), page.indexOf("async function loadHubSystemStatus"));
   assert.match(importer, /rows:parts\[index\]/);
   assert.doesNotMatch(importer, /rows:pendingBusinessImport/);
+  assert.match(importer, /importPartServerResponded = true/);
+  assert.match(importer, /The connection ended before the server confirmed this part\./);
 });
 
 test("business import writes directory and log rows in batches", async () => {

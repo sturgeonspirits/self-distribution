@@ -1,8 +1,12 @@
 /*********************************
  * Inventory API (JSON) for Netlify
- * App version: 2026.09.24.41
+ * App version: 2026.09.24.42
  *
  * CHANGES IN THIS VERSION
+ * - Keeps a staff-ignored Badger invoice out of every account ledger, including an account whose order references that invoice.
+ * - Treats conflicting loose customer-name aliases and conflicting Badger Location_Directory mappings as review-needed rather than choosing the last row and guessing an account.
+
+ * CHANGES IN 2026.09.24.41
  * - Refresh buttons (Orders & Accounts, Outreach, Inventory store list) rebuild through the read cache and save the fresh result even when the browser request times out, so the next normal load shows current data instead of repeating a slow rebuild.
  *
  * CHANGES IN 2026.09.24.40
@@ -188,7 +192,7 @@
  * - Use only in the staging inventory backend until testing is complete.
  *********************************/
 
-const APP_VERSION = "2026.09.24.41";
+const APP_VERSION = "2026.09.24.42";
 
 const SHEET_NAMES = {
   STORES: "Stores",
@@ -5186,9 +5190,22 @@ function readBadgerCustomerAliases_() {
     const key = normalizeCustomerMatchKey_(customerName) || (h.normalized_key === undefined ? "" : String(values[h.normalized_key] || "").trim());
     const accountId = String(values[h.account_id] || "").trim();
     if (!key || !accountId) return;
-    byKey.set(key, { customer_name:customerName, account_id:accountId });
+    const existing = byKey.get(key);
+    if (existing && existing.account_id !== accountId) {
+      // A loose key such as "the bar" / "bar llc" can represent different
+      // Directory accounts. Keep it in review instead of accepting whichever
+      // alias row happens to be read last.
+      byKey.set(key, { ambiguous:true });
+      return;
+    }
+    if (!existing) byKey.set(key, { customer_name:customerName, account_id:accountId });
   });
   return byKey;
+}
+
+function canonicalBadgerAliasName_(value) {
+  return String(value || "").toLowerCase().replace(/[\u2019`']/g, "")
+    .replace(/[^a-z0-9]+/g, " ").trim();
 }
 
 // Remembers "Badger customer name → Account ID" so future invoices for that customer match on their own.
@@ -5199,12 +5216,25 @@ function upsertBadgerCustomerAlias_(customerName, accountId, source, actor) {
   const sheet = getBadgerCustomerAliasesSheet_();
   const h = getHeaderMap_(sheet);
   const rows = sheet.getLastRow() < 2 ? [] : sheet.getRange(2, 1, sheet.getLastRow() - 1, sheet.getLastColumn()).getValues();
-  const existingIndex = rows.findIndex(row => {
+  const matchingRows = rows.map((row, index) => ({ row:row, index:index })).filter(item => {
+    const row = item.row;
     const rowName = h.badger_customer_name === undefined ? "" : row[h.badger_customer_name];
     const rowKey = normalizeCustomerMatchKey_(rowName) || (h.normalized_key === undefined ? "" : String(row[h.normalized_key] || "").trim());
     return rowKey === key;
   });
-  const values = existingIndex >= 0 ? rows[existingIndex].slice() : Array(sheet.getLastColumn()).fill("");
+  const canonicalName = canonicalBadgerAliasName_(customerName);
+  const conflictingLooseAlias = matchingRows.some(item => {
+    const existingAccountId = String(item.row[h.account_id] || "").trim();
+    const existingName = h.badger_customer_name === undefined ? "" : item.row[h.badger_customer_name];
+    return existingAccountId && existingAccountId !== accountId && canonicalBadgerAliasName_(existingName) !== canonicalName;
+  });
+  if (conflictingLooseAlias) {
+    console.warn(`Badger customer alias was not learned because the loose name key is already used by another account: ${key}`);
+    return false;
+  }
+  const sameName = matchingRows.find(item => canonicalBadgerAliasName_(h.badger_customer_name === undefined ? "" : item.row[h.badger_customer_name]) === canonicalName);
+  const existingIndex = (sameName || matchingRows[0] || {}).index;
+  const values = Number.isInteger(existingIndex) ? rows[existingIndex].slice() : Array(sheet.getLastColumn()).fill("");
   const set = (column, value) => { if (h[column] !== undefined) values[h[column]] = value; };
   set("badger_customer_name", sheetSafeText_(customerName, 200, "Badger customer name"));
   set("normalized_key", key);
@@ -5213,7 +5243,7 @@ function upsertBadgerCustomerAlias_(customerName, accountId, source, actor) {
   set("linked_at", new Date());
   set("linked_by", actor);
   set("app_version", APP_VERSION);
-  sheet.getRange(existingIndex >= 0 ? existingIndex + 2 : sheet.getLastRow() + 1, 1, 1, values.length).setValues([values]);
+  sheet.getRange(Number.isInteger(existingIndex) ? existingIndex + 2 : sheet.getLastRow() + 1, 1, 1, values.length).setValues([values]);
   return true;
 }
 
@@ -5352,11 +5382,13 @@ function buildCustomerAccounts_(applications, orders, bypassBadgerCache) {
     if (!accountsByMatchKey.has(businessKey)) accountsByMatchKey.set(businessKey, new Set());
     accountsByMatchKey.get(businessKey).add(accountId);
   });
-  const locationPublicKeyByInvoiceKey = new Map();
+  const locationPublicKeysByInvoiceKey = new Map();
   locationNames.forEach(item => {
     const invoiceKey = normalizeCustomerMatchKey_(item.invoice_name);
     const publicKey = normalizeCustomerMatchKey_(item.public_name);
-    if (invoiceKey && publicKey) locationPublicKeyByInvoiceKey.set(invoiceKey, publicKey);
+    if (!invoiceKey || !publicKey) return;
+    if (!locationPublicKeysByInvoiceKey.has(invoiceKey)) locationPublicKeysByInvoiceKey.set(invoiceKey, new Set());
+    locationPublicKeysByInvoiceKey.get(invoiceKey).add(publicKey);
   });
   const orderAccountsByInvoice = new Map();
   orders.forEach(order => {
@@ -5373,11 +5405,13 @@ function buildCustomerAccounts_(applications, orders, bypassBadgerCache) {
     .map(([invoiceKey]) => invoiceKey));
   const unmatchedBadgerInvoices = [];
   const ignoredBadgerInvoices = [];
+  const ignoredInvoiceKeys = new Set();
   badgerInvoices.forEach(invoice => {
     const invoiceKey = normalizeBadgerInvoiceNumber_(invoice.invoice_number);
     const explicit = explicitInvoiceLinks.get(invoiceKey);
     const orderedAccounts = orderAccountsByInvoice.get(invoiceKey) || new Set();
     if (String(explicit?.match_method || "").trim().toLowerCase() === "ignored") {
+      ignoredInvoiceKeys.add(invoiceKey);
       ignoredBadgerInvoices.push(Object.assign({}, invoice, { match_method:"Ignored" }));
       return;
     }
@@ -5397,19 +5431,26 @@ function buildCustomerAccounts_(applications, orders, bypassBadgerCache) {
     const customerKey = normalizeCustomerMatchKey_(invoice.customer_name);
     if (!accountId && customerKey && customerAliases.has(customerKey)) {
       const alias = customerAliases.get(customerKey);
-      if (identity.by_id.has(alias.account_id)) {
+      if (alias.ambiguous) {
+        ambiguous = true;
+      } else if (identity.by_id.has(alias.account_id)) {
         accountId = alias.account_id;
         matchMethod = "Learned customer name";
       } else {
         staleReason = "The learned Account ID for this customer name is no longer in the directory";
       }
     }
-    if (!accountId && !staleReason && customerKey && locationPublicKeyByInvoiceKey.has(customerKey)) {
-      const candidates = Array.from(accountsByMatchKey.get(locationPublicKeyByInvoiceKey.get(customerKey)) || []);
-      if (candidates.length === 1) {
-        accountId = candidates[0];
-        matchMethod = "Badger location name";
-      } else if (candidates.length > 1) ambiguous = true;
+    if (!accountId && !staleReason && customerKey && locationPublicKeysByInvoiceKey.has(customerKey)) {
+      const locationKeys = locationPublicKeysByInvoiceKey.get(customerKey);
+      if (locationKeys.size !== 1) {
+        ambiguous = true;
+      } else {
+        const candidates = Array.from(accountsByMatchKey.get(Array.from(locationKeys)[0]) || []);
+        if (candidates.length === 1) {
+          accountId = candidates[0];
+          matchMethod = "Badger location name";
+        } else if (candidates.length > 1) ambiguous = true;
+      }
     }
     if (!accountId && !staleReason && customerKey) {
       const candidates = Array.from(accountsByMatchKey.get(customerKey) || []);
@@ -5476,7 +5517,7 @@ function buildCustomerAccounts_(applications, orders, bypassBadgerCache) {
     orderInvoices.forEach(item => {
       const invoiceKey = normalizeBadgerInvoiceNumber_(item.invoice_number);
       const assignedAccountId = assignedInvoiceAccounts.get(invoiceKey);
-      if (conflictingOrderInvoiceKeys.has(invoiceKey) || (assignedAccountId && assignedAccountId !== accountId)) return;
+      if (ignoredInvoiceKeys.has(invoiceKey) || conflictingOrderInvoiceKeys.has(invoiceKey) || (assignedAccountId && assignedAccountId !== accountId)) return;
       if (!invoiceKey || !invoices.some(invoice => normalizeBadgerInvoiceNumber_(invoice.invoice_number) === invoiceKey)) invoices.push(item);
     });
     const operational = new Set();
