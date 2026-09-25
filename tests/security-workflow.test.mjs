@@ -254,6 +254,19 @@ test("every staff request shows busy feedback", async () => {
   assert.match(page, /button\.is-busy \{ opacity:\.6; cursor:progress; pointer-events:none; \}/);
 });
 
+test("first inventory load reports on the Inventory screen and retries once", async () => {
+  const page = await readFile(new URL("index.html", root), "utf8");
+  assert.doesNotMatch(page, /loadStartup\(\)\.catch\(handleCustomerError\)/);
+  assert.match(page, /if \(staffAccessCode && !inventoryLoaded\) startInventory\(\);/);
+  const start = page.slice(page.indexOf("function startInventory"), page.indexOf("async function loadStartup"));
+  assert.match(start, /if \(inventoryStartupPromise\) return inventoryStartupPromise;/);
+  assert.match(start, /setTimeout\(resolve, 1500\)\)\.then\(attempt\)/);
+  assert.match(start, /\$\("inventoryAccessStatus"\)\.textContent = `Couldn't load inventory/);
+  assert.match(page, /id="retryInventoryBtn"/);
+  const startup = page.slice(page.indexOf("async function loadStartup"), page.indexOf("function resetCounts"));
+  assert.ok(startup.indexOf("const storeRequest") < startup.indexOf('staffApiGet({ action:"initData", ...('), "remembered store loads alongside the store list");
+});
+
 test("staff proxy unpacks compressed read responses", async () => {
   const { handler } = await loadFunction("netlify/functions/inventory.js", "compressed-read");
   const { gzipSync } = await import("node:zlib");

@@ -8,8 +8,8 @@ Read this file before inspecting the repository or changing the application. Upd
 
 | Component | Source version | Deployment state |
 | --- | --- | --- |
-| Netlify web app and staff proxy | `2026.09.24.48-WEB` on `codex/distribution-system-foundation` / `2026.09.24.46-WEB` live | `.47-WEB` busy feedback and `.48-WEB` Drive response relay are pending. The relay stays off until the three relay variables are set (see `docs/drive-relay-setup.md`). |
-| Inventory API Apps Script | `2026.09.24.48` on `codex/distribution-system-foundation` / `2026.09.24.47` live | `.47` (compressed reads) was deployed 2026-09-25. `.48` writes every response to a Drive relay slot when the proxy sends `relay_id`; run `setupDriveRelay()` once. Deployment is pending. |
+| Netlify web app and staff proxy | `2026.09.24.49-WEB` on `codex/distribution-system-foundation` / `2026.09.24.48-WEB` live | `.48-WEB` (busy feedback + Drive response relay) was deployed 2026-09-25 with the three relay variables set; the owner reports no timeouts since. `.49-WEB` (first Inventory load fix) is pending. |
+| Inventory API Apps Script | `2026.09.24.48` on `codex/distribution-system-foundation` / `2026.09.24.48` live | `.48` (Drive relay writes) was deployed 2026-09-25 and `setupDriveRelay()` has been run. Relay folder "Distribution Hub Relay (do not edit)" is shared Viewer with the `hub-relay` service account in Google Cloud project Distribution-hub-relay, where both service-account key-creation org policies are overridden to Off for that project only. |
 | Distribution Outreach Apps Script | `2026.09.24.13-APP` on `codex/work` | Signed-link rendering is committed; owner has not yet confirmed this exact version is deployed. |
 | Public customer Netlify proxy | `2026.09.18.3-WEB` | Deployed with Netlify; unchanged by the latest staff-app UI work |
 
@@ -18,6 +18,8 @@ Current Git branch: `codex/distribution-system-foundation`
 Current remote: `https://github.com/sturgeonspirits/self-distribution.git`
 
 Latest completed changes:
+
+- First Inventory load after sign-in (`.49-WEB`). The Inventory tab often stayed blank after sign-in while Outreach and Orders loaded, and needed a second click. Cause: the Inventory workspace stays hidden until both startup requests finish (store list, then the store's lines, one after the other), and during that time the screen showed only the sign-in panel, whose "Loading stores…" line is inside the hidden workspace. If either request failed, the error went to the Orders & Accounts status line (`handleCustomerError`), so Inventory stayed blank until the tab was clicked again, which re-ran the load. Now `startInventory()` shows "Loading inventory…" on the Inventory screen, loads the remembered store at the same time as the store list, retries once after 1.5 s, runs one load at a time, and on failure shows the error with a Try again button on the Inventory screen. Sign-in errors still go through `handleCustomerError`.
 
 - Drive response relay (`netlify/lib/drive-relay.js`, `relayedOutput_` in Code.gs). Executions and Netlify logs on 2026-09-25 showed Apps Script finishing reads and writes in 1–11 s, while Google's web-app response handoff still stalled past 25 s or returned an HTML 404 (including Approve). Compression and read retry did not fix it. Now the staff proxy sends each request once with a `relay_id`. Apps Script also writes the response text into one of 32 fixed Drive slot files (the slot is chosen by a hash that is identical on both sides and tested). The proxy reads the slot through the Drive API with a read-only service account, polling from 0.9 s, and returns whichever valid JSON arrives first (deadline 23.5 s). HTML error pages never win. Setup: `docs/drive-relay-setup.md`. Netlify variables: `GOOGLE_SA_CLIENT_EMAIL`, `GOOGLE_SA_PRIVATE_KEY`, `RELAY_MANIFEST_FILE_ID`. Script Property `RELAY_SLOT_IDS` is written by `setupDriveRelay()`.
 

@@ -1,10 +1,10 @@
 <!doctype html>
-<!-- App version: 2026.09.24.48-WEB -->
+<!-- App version: 2026.09.24.49-WEB -->
 <html>
 <head>
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover"/>
-  <meta name="app-version" content="2026.09.24.48-WEB" />
+  <meta name="app-version" content="2026.09.24.49-WEB" />
   <meta name="theme-color" content="#536f77" />
   <link rel="icon" href="/assets/distribution-hub-icon.svg" type="image/svg+xml" />
   <link rel="manifest" href="/site.webmanifest" />
@@ -1818,6 +1818,7 @@
       <div class="smallMuted" id="inventoryAccessIdentity">Use your approved Zoho work account.</div>
     </div>
     <button class="primary" id="unlockInventoryBtn" type="button"><i data-lucide="log-in"></i><span>Sign in with Zoho</span></button>
+    <button class="primary" id="retryInventoryBtn" type="button" hidden><i data-lucide="refresh-cw"></i><span>Try again</span></button>
     <div class="status" id="inventoryAccessStatus"></div>
   </div>
   <div id="inventoryWorkspace" hidden>
@@ -2540,7 +2541,7 @@
 
   <footer style="max-width:1200px;margin:18px auto 120px;padding:0 12px;text-align:center;color:#6b7280;font-size:12px;">
     Designed by <a href="https://scriptspirit.dev" target="_blank" rel="noopener noreferrer" style="color:#1d4ed8;text-decoration:none;font-weight:700;">Script Spirit</a>
-<span id="appVersionFooter"> • Version 2026.09.24.48-WEB</span>
+<span id="appVersionFooter"> • Version 2026.09.24.49-WEB</span>
   </footer>
 
 
@@ -2563,7 +2564,7 @@
   window.addEventListener("unhandledrejection", e => console.error("Unhandled promise rejection:", e.reason));
   window.addEventListener("error", e => console.error("Unhandled error:", e.error || e.message));
   const $ = (id) => document.getElementById(id);
-  const APP_VERSION = "2026.09.24.48-WEB";
+  const APP_VERSION = "2026.09.24.49-WEB";
   $("appVersionFooter").textContent = ` • Version ${APP_VERSION}`;
   function screenCacheKey(screen){ return `distribution_hub:${APP_VERSION}:${staffSession?.email || "unknown"}:${screen}`; }
   function readScreenCache(screen){
@@ -2642,6 +2643,8 @@
   let staffAccessCode = "";
   let staffSession = null;
   let inventoryLoaded = false;
+  let inventoryLoadFailed = false;
+  let inventoryStartupPromise = null;
   let outreachCanSend = false;
   let outreachTestSendAvailable = false;
   let outreachSendConfigurationDetail = "";
@@ -2794,7 +2797,7 @@
       if (staffAccessCode && !customerLoaded) loadCustomerWorkQueue().catch(handleCustomerError);
     } else {
       showInventoryAccessState();
-      if (staffAccessCode && !inventoryLoaded) loadStartup().catch(handleCustomerError);
+      if (staffAccessCode && !inventoryLoaded) startInventory();
       if (inventoryLoaded) {
         updateSummaryUi();
         updateViewChrome();
@@ -2811,9 +2814,20 @@
 
   function showInventoryAccessState(){
     const unlocked = !!staffAccessCode && inventoryLoaded;
+    const signedInLoading = !!staffAccessCode && !inventoryLoaded;
     $("inventoryAccessPanel").hidden = unlocked;
     $("inventoryWorkspace").hidden = !unlocked;
-    if (!unlocked) {
+    // Signed in but still loading: show progress (or the load error) here instead of a sign-in prompt.
+    $("unlockInventoryBtn").hidden = signedInLoading;
+    $("retryInventoryBtn").hidden = !(signedInLoading && inventoryLoadFailed);
+    if (signedInLoading) {
+      if (!inventoryLoadFailed) $("inventoryAccessStatus").textContent = "Loading inventory…";
+      if (activeAppSection === "inventory") {
+        $("hdrStore").textContent = "Loading…";
+        $("hdrChanged").textContent = "";
+        $("bottomBar").hidden = true;
+      }
+    } else if (!unlocked) {
       $("inventoryAccessIdentity").textContent = "Use your approved Zoho work account.";
       if (activeAppSection === "inventory") {
         $("hdrStore").textContent = "Locked";
@@ -5932,7 +5946,7 @@
     }
   }
 
-  async function loadStore(storeId, forceRefresh = false){
+  async function loadStore(storeId, forceRefresh = false, preloaded = null){
     const cached = readScreenCache(`inventory-store:${storeId}`);
     if (cached?.payload?.lines) {
       cache.stores = cached.payload.stores || cache.stores;
@@ -5940,8 +5954,8 @@
       render();
       setStatus(`Updating… showing data from ${cachedTimeLabel(cached)}.`);
     } else setStatus("Loading inventory...");
-    let res;
-    try { res = await staffApiGet({ action:"initData", store_id: storeId, ...(forceRefresh ? { refresh:1 } : {}) }); }
+    let res = preloaded;
+    if (!res) try { res = await staffApiGet({ action:"initData", store_id: storeId, ...(forceRefresh ? { refresh:1 } : {}) }); }
     catch (error) { if (cached) { setStatus(`Couldn't refresh; showing data from ${cachedTimeLabel(cached)}. Click Refresh to retry.`); return; } throw error; }
     if (!res.ok) throw new Error("Load failed.");
 
@@ -5963,11 +5977,39 @@
     else setStatus(`Updated ${new Date().toLocaleTimeString([], { hour:"numeric", minute:"2-digit" })}${res.performance?.total_ms ? ` in ${(Number(res.performance.total_ms) / 1000).toFixed(1)}s` : ""}${res.performance?.cache_hit ? " (server cache)" : ""}.`);
   }
 
+  // First inventory load after sign-in. One run at a time; one automatic retry; errors are shown on the
+  // Inventory screen itself (they used to go to the Orders & Accounts status line, leaving Inventory blank).
+  function startInventory(){
+    if (inventoryStartupPromise) return inventoryStartupPromise;
+    inventoryLoadFailed = false;
+    showInventoryAccessState();
+    const attempt = () => loadStartup();
+    inventoryStartupPromise = attempt()
+      .catch(error => {
+        if (error?.staffAuth) throw error;
+        $("inventoryAccessStatus").textContent = "Still loading inventory…";
+        return new Promise(resolve => setTimeout(resolve, 1500)).then(attempt);
+      })
+      .catch(error => {
+        if (error?.staffAuth) { handleCustomerError(error); return; }
+        inventoryLoadFailed = true;
+        $("inventoryAccessStatus").textContent = `Couldn't load inventory (${error?.message || "connection problem"}).`;
+        showInventoryAccessState();
+      })
+      .finally(() => { inventoryStartupPromise = null; });
+    return inventoryStartupPromise;
+  }
+
   async function loadStartup(forceRefresh = false, preferredStoreId = ""){
     loadPrefs();
     const cached = readScreenCache("inventory-stores");
     if (cached?.payload?.stores) { cache.stores = cached.payload.stores; renderStores(cache.stores); setStatus(`Updating… showing stores from ${cachedTimeLabel(cached)}.`); }
     else setStatus("Loading stores...");
+    // Start loading the remembered store at the same time as the store list, instead of one after the other.
+    const rememberedStore = preferredStoreId || localStorage.getItem("inv_store") || "";
+    const storeRequest = rememberedStore
+      ? staffApiGet({ action:"initData", store_id:rememberedStore, ...(forceRefresh ? { refresh:1 } : {}) }).catch(error => ({ ok:false, error }))
+      : null;
     let res;
     try { res = await staffApiGet({ action:"initData", ...(forceRefresh ? { refresh:1 } : {}) }); }
     catch (error) { if (cached) { inventoryLoaded = true; showInventoryAccessState(); setStatus(`Couldn't refresh (${error?.message || "connection problem"}); showing data from ${cachedTimeLabel(cached)}. Reload the page in a minute to try again.`); return; } throw error; }
@@ -5987,8 +6029,10 @@
     }
 
     $("storeSelect").value = first;
-    await loadStore(first, forceRefresh);
+    const early = storeRequest && String(first) === String(rememberedStore) ? await storeRequest : null;
+    await loadStore(first, forceRefresh, early?.ok ? early : null);
     inventoryLoaded = true;
+    inventoryLoadFailed = false;
     showInventoryAccessState();
     loadManagerGrid().catch(error => console.warn("Manager grid refresh failed", error));
   }
@@ -6353,6 +6397,7 @@
   $("locBackBtn").addEventListener("click", () => setLocationMode("back"));
 
   $("refreshBtn").addEventListener("click", () => loadStartup(true, $("storeSelect").value).catch(e => setStatus(e.message)));
+  $("retryInventoryBtn").addEventListener("click", () => startInventory());
   $("refreshManagerGridBtn").addEventListener("click", loadManagerGrid);
 
   $("backToInventoryBtn").addEventListener("click", () => {
