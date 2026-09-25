@@ -289,6 +289,14 @@ test("forced refreshes save their rebuild to the read cache", async () => {
   assert.equal((page.match(/The server keeps working — reload the page in a minute to see the update\./g) || []).length, 3);
 });
 
+test("browser sends CSV imports in small parts", async () => {
+  const page = await readFile(new URL("index.html", root), "utf8");
+  assert.match(page, /const BUSINESS_IMPORT_CHUNK_SIZE = 20;/);
+  const importer = page.slice(page.indexOf("async function runBusinessImport"), page.indexOf("async function loadHubSystemStatus"));
+  assert.match(importer, /rows:parts\[index\]/);
+  assert.doesNotMatch(importer, /rows:pendingBusinessImport/);
+});
+
 test("business import writes directory and log rows in batches", async () => {
   const script = await readFile(new URL("apps-script/Code.gs", root), "utf8");
   const importer = script.slice(script.indexOf("function apiImportOutreachBusinesses_"), script.indexOf("function apiRecalculateOutreachMiles_"));

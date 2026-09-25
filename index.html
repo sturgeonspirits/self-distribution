@@ -1,10 +1,10 @@
 <!doctype html>
-<!-- App version: 2026.09.24.42-WEB -->
+<!-- App version: 2026.09.24.43-WEB -->
 <html>
 <head>
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover"/>
-  <meta name="app-version" content="2026.09.24.42-WEB" />
+  <meta name="app-version" content="2026.09.24.43-WEB" />
   <meta name="theme-color" content="#536f77" />
   <link rel="icon" href="/assets/distribution-hub-icon.svg" type="image/svg+xml" />
   <link rel="manifest" href="/site.webmanifest" />
@@ -2532,7 +2532,7 @@
 
   <footer style="max-width:1200px;margin:18px auto 120px;padding:0 12px;text-align:center;color:#6b7280;font-size:12px;">
     Designed by <a href="https://scriptspirit.dev" target="_blank" rel="noopener noreferrer" style="color:#1d4ed8;text-decoration:none;font-weight:700;">Script Spirit</a>
-<span id="appVersionFooter"> • Version 2026.09.24.42-WEB</span>
+<span id="appVersionFooter"> • Version 2026.09.24.43-WEB</span>
   </footer>
 
 
@@ -2555,7 +2555,7 @@
   window.addEventListener("unhandledrejection", e => console.error("Unhandled promise rejection:", e.reason));
   window.addEventListener("error", e => console.error("Unhandled error:", e.error || e.message));
   const $ = (id) => document.getElementById(id);
-  const APP_VERSION = "2026.09.24.42-WEB";
+  const APP_VERSION = "2026.09.24.43-WEB";
   $("appVersionFooter").textContent = ` • Version ${APP_VERSION}`;
   function screenCacheKey(screen){ return `distribution_hub:${APP_VERSION}:${staffSession?.email || "unknown"}:${screen}`; }
   function readScreenCache(screen){
@@ -5004,21 +5004,45 @@
     $("runBusinessImportBtn").disabled = false;
   }
 
+  const BUSINESS_IMPORT_CHUNK_SIZE = 20;
+
   async function runBusinessImport(){
     const staffName = $("customerStaffName").value.trim() || localStorage.getItem("customer_staff_name") || "";
     if (!staffName) return $("importBusinessesStatus").textContent = "Enter your staff name in Customers before importing.";
     const file = $("businessCsvFile").files[0];
     const button = $("runBusinessImportBtn");
     button.disabled = true;
-    $("importBusinessesStatus").textContent = "Importing and checking duplicates...";
+    // Send the file in small parts so each request finishes well inside the ~25-second
+    // server limit. Every part is duplicate-checked, so re-running after a stop is safe.
+    const rows = pendingBusinessImport.slice();
+    const parts = [];
+    for (let index = 0; index < rows.length; index += BUSINESS_IMPORT_CHUNK_SIZE) parts.push(rows.slice(index, index + BUSINESS_IMPORT_CHUNK_SIZE));
+    const totals = { created:0, skipped:0, errors:0 };
+    const sourceName = file?.name || "CSV import";
+    let completedParts = 0;
     try {
-      const result = await staffApiPost({ action:"importOutreachBusinesses", staff_name:staffName, source_name:file?.name || "CSV import", rows:pendingBusinessImport });
-      if (!result.ok) throw new Error(result.error || "Import failed.");
-      $("importBusinessesStatus").textContent = result.message;
+      for (let index = 0; index < parts.length; index += 1) {
+        $("importBusinessesStatus").textContent = parts.length > 1
+          ? `Importing part ${index + 1} of ${parts.length} and checking duplicates...`
+          : "Importing and checking duplicates...";
+        const result = await staffApiPost({
+          action:"importOutreachBusinesses",
+          staff_name:staffName,
+          source_name:parts.length > 1 ? `${sourceName} (part ${index + 1} of ${parts.length})` : sourceName,
+          rows:parts[index],
+        });
+        if (!result.ok) throw new Error(result.error || "Import failed.");
+        totals.created += Number(result.created || 0);
+        totals.skipped += Number(result.skipped || 0);
+        totals.errors += Number(result.errors || 0);
+        completedParts += 1;
+      }
+      $("importBusinessesStatus").textContent = `Import complete: ${totals.created} created, ${totals.skipped} skipped, ${totals.errors} errors.`;
       loadOutreach().catch(() => { $("importBusinessesStatus").textContent += " List refresh failed; click Refresh."; });
       toast("Business import complete");
     } catch (error) {
-      $("importBusinessesStatus").textContent = error.message || String(error);
+      const done = completedParts ? ` Parts finished before the stop: ${completedParts} of ${parts.length} (${totals.created} created, ${totals.skipped} skipped, ${totals.errors} errors).` : "";
+      $("importBusinessesStatus").textContent = `${error.message || String(error)}${done} The stopped part may still finish on the server. Wait a minute, then run the import again; businesses already added are skipped.`;
       if (error.staffAuth) handleCustomerError(error);
       button.disabled = false;
     }

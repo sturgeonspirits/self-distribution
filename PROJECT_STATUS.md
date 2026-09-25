@@ -8,7 +8,7 @@ Read this file before inspecting the repository or changing the application. Upd
 
 | Component | Source version | Deployment state |
 | --- | --- | --- |
-| Netlify web app and staff proxy | `2026.09.24.42-WEB` on `codex/distribution-system-foundation` / `2026.09.24.41-WEB` live | Refresh-timeout message now tells staff to reload in a minute; deployment is pending. |
+| Netlify web app and staff proxy | `2026.09.24.43-WEB` on `codex/distribution-system-foundation` / `2026.09.24.41-WEB` live | CSV import sends 20 businesses per request; the refresh-timeout message tells staff to reload in a minute. Deployment is pending. |
 | Inventory API Apps Script | `2026.09.24.41` on `codex/distribution-system-foundation` / `2026.09.24.40` live | Forced Refresh saves its rebuild to the read cache even when the browser times out; deployment is pending. `2026.09.24.40` (learning Badger matching, batched CSV import) was deployed 2026-09-25 and `repairHubStructure()` has been run. |
 | Distribution Outreach Apps Script | `2026.09.24.13-APP` on `codex/work` | Signed-link rendering is committed; owner has not yet confirmed this exact version is deployed. |
 | Public customer Netlify proxy | `2026.09.18.3-WEB` | Deployed with Netlify; unchanged by the latest staff-app UI work |
@@ -18,6 +18,8 @@ Current Git branch: `codex/distribution-system-foundation`
 Current remote: `https://github.com/sturgeonspirits/self-distribution.git`
 
 Latest completed changes:
+
+- CSV business import is split into parts in the browser: 20 businesses per `importOutreachBusinesses` request, sent one after another with progress shown. Even with batched writes, a full 100+ row file could still exceed the ~25-second proxy limit on the large Directory sheet. Each part is duplicate-checked and logged as its own Import Batch ("file.csv (part 2 of 6)"). If a part stops, the message shows what finished and that re-running is safe.
 
 - Refresh timeouts: the Orders & Accounts, Outreach and Inventory store-list Refresh buttons now rebuild through `cachedReadPayload_` with bypass, so the fresh result is saved even if the ~25-second proxy limit is hit. The next normal page load shows it, and the timeout message tells staff to reload in a minute instead of clicking Refresh again. Production cutover steps are in `docs/production-cutover-runbook-2026-09-25.md`.
 
