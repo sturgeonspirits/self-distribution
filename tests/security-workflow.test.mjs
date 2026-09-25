@@ -280,6 +280,15 @@ test("staff invoice links teach customer-name matching, but ignores do not", asy
   assert.notEqual(normalize("Festival Foods -- Oshkosh #2708"), normalize("Festival Foods -- FDL"));
 });
 
+test("business import writes directory and log rows in batches", async () => {
+  const script = await readFile(new URL("apps-script/Code.gs", root), "utf8");
+  const importer = script.slice(script.indexOf("function apiImportOutreachBusinesses_"), script.indexOf("function apiRecalculateOutreachMiles_"));
+  assert.match(importer, /directory\.getRange\(directoryStartRow, 1, pendingDirectoryRows\.length, directoryWidth\)\.setValues/);
+  assert.match(importer, /importRows\.getRange\(importRows\.getLastRow\(\) \+ 1, 1, importLogRows\.length/);
+  assert.doesNotMatch(importer, /importRows\.appendRow/);
+  assert.match(importer, /retrying row by row/);
+});
+
 test("account ID repair writes only identity columns and isolates tab failures", async () => {
   const script = await readFile(new URL("apps-script/Code.gs", root), "utf8");
   const backfill = script.slice(script.indexOf("function backfillAccountIdsInSheet_"), script.indexOf("function ensureAccountIdentityModel_"));

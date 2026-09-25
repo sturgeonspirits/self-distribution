@@ -1,8 +1,11 @@
 /*********************************
  * Inventory API (JSON) for Netlify
- * App version: 2026.09.24.39
+ * App version: 2026.09.24.40
  *
  * CHANGES IN THIS VERSION
+ * - Business CSV import writes new Directory rows and import-log rows in one batch per sheet instead of two appendRow calls per business, so imports finish inside the web request limit; if a batch is rejected it falls back to row-by-row and logs each failure.
+ *
+ * CHANGES IN 2026.09.24.39
  * - Badger invoice matching learns: a staff link also saves the Badger customer name in "Badger Customer Aliases", so later invoices for that customer match automatically.
  * - Uses the Badger Tracker Location_Directory (Invoice Name → Public Name) to match legal names to Directory businesses.
  * - Customer-name comparison ignores case, punctuation, spacing, a leading "The", and trailing LLC/Inc./Co./Corp.
@@ -182,7 +185,7 @@
  * - Use only in the staging inventory backend until testing is complete.
  *********************************/
 
-const APP_VERSION = "2026.09.24.39";
+const APP_VERSION = "2026.09.24.40";
 
 const SHEET_NAMES = {
   STORES: "Stores",
@@ -1557,6 +1560,12 @@ function apiImportOutreachBusinesses_(p) {
     let created = 0;
     let skipped = 0;
     let errors = 0;
+    // Collect rows in memory and write them in one batch per sheet; per-row appendRow calls made
+    // imports of a few dozen businesses exceed the web request time limit.
+    const directoryWidth = directory.getLastColumn();
+    const directoryStartRow = directory.getLastRow() + 1;
+    const pendingDirectoryRows = [];
+    const importLogRows = [];
     p.rows.forEach((raw, index) => {
       let accountId = "";
       let status = "Error";
@@ -1577,13 +1586,13 @@ function apiImportOutreachBusinesses_(p) {
           skipped += 1;
         } else {
           accountId = permanentId_("ACC");
-          directory.appendRow(directoryRowFromBusiness_(directory, input, accountId, new Date()));
+          pendingDirectoryRows.push({ values:directoryRowFromBusiness_(directory, input, accountId, new Date()), log_index:importLogRows.length });
           status = "Created";
           detail = "Added to directory";
           created += 1;
           const createdRecord = {
             account_id:accountId,
-            source_row:directory.getLastRow(),
+            source_row:directoryStartRow + pendingDirectoryRows.length - 1,
             business:input.business_name,
             email:String(input.email || "").toLowerCase(),
             city:String(input.city || ""),
@@ -1604,8 +1613,29 @@ function apiImportOutreachBusinesses_(p) {
         detail = String(error.message || error).slice(0, 1000);
       }
       const normalizedJson = safeJson_(normalizedForLog);
-      importRows.appendRow([batchId, index + 2, accountId, raw.business_name || raw.business || "", raw.email || "", raw.city || "", normalizedJson, sha256_(normalizedJson), status, detail, new Date(), APP_VERSION]);
+      importLogRows.push([batchId, index + 2, accountId, raw.business_name || raw.business || "", raw.email || "", raw.city || "", normalizedJson, sha256_(normalizedJson), status, detail, new Date(), APP_VERSION]);
     });
+    if (pendingDirectoryRows.length) {
+      try {
+        directory.getRange(directoryStartRow, 1, pendingDirectoryRows.length, directoryWidth).setValues(pendingDirectoryRows.map(item => item.values));
+      } catch (batchError) {
+        // A single invalid cell (for example a data-validation rule) rejects the whole batch.
+        // Fall back to row-by-row so valid businesses still import and each failure is logged.
+        console.warn("Directory batch import failed; retrying row by row: " + String(batchError && batchError.message || batchError));
+        pendingDirectoryRows.forEach(item => {
+          try {
+            directory.appendRow(item.values);
+          } catch (rowError) {
+            const logRow = importLogRows[item.log_index];
+            logRow[8] = "Error";
+            logRow[9] = String(rowError && rowError.message || rowError).slice(0, 1000);
+            created -= 1;
+            errors += 1;
+          }
+        });
+      }
+    }
+    if (importLogRows.length) importRows.getRange(importRows.getLastRow() + 1, 1, importLogRows.length, importLogRows[0].length).setValues(importLogRows);
     batches.appendRow([batchId, new Date(), staffName, sourceName, sourceHash, p.rows.length, created, skipped, errors, errors ? "Completed with errors" : "Completed", new Date(), APP_VERSION]);
     appendAudit_("IMPORT_BUSINESSES", "Import Batch", batchId, "", staffName, sourceName, OUTREACH_SHEET_NAME, errors ? "Completed with errors" : "Completed", `${created} created; ${skipped} skipped; ${errors} errors.`);
     return { message:`Import complete: ${created} created, ${skipped} skipped, ${errors} errors.`, batch_id:batchId, created:created, skipped:skipped, errors:errors };
