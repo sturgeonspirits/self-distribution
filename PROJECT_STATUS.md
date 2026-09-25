@@ -8,8 +8,8 @@ Read this file before inspecting the repository or changing the application. Upd
 
 | Component | Source version | Deployment state |
 | --- | --- | --- |
-| Netlify web app and staff proxy | `2026.09.24.41-WEB` on `codex/distribution-system-foundation` / `2026.09.24.24-WEB` live | Filters a cached account index entirely in the browser; deployment is pending review. |
-| Inventory API Apps Script | `2026.09.24.38` on `codex/distribution-system-foundation` / `2026.09.24.17` live | Account ID repair writes only the Account ID column and isolates per-tab failures; deployment is pending review. |
+| Netlify web app and staff proxy | `2026.09.24.41-WEB` on `codex/distribution-system-foundation` / `2026.09.24.41-WEB` live | Deployed 2026-09-25 after review, including the Badger invoice ledger and browser-filtered account index. |
+| Inventory API Apps Script | `2026.09.24.38` on `codex/distribution-system-foundation` / `2026.09.24.38` live | Deployed 2026-09-25 (existing web-app deployment updated to a new version); `repairHubStructure()` has been run and the `Badger Invoice Links` tab exists. Run `installHubReadCacheWarmer()` and `installNightlyHubStructureRepair()` once if not yet done. |
 | Distribution Outreach Apps Script | `2026.09.24.13-APP` on `codex/work` | Signed-link rendering is committed; owner has not yet confirmed this exact version is deployed. |
 | Public customer Netlify proxy | `2026.09.18.3-WEB` | Deployed with Netlify; unchanged by the latest staff-app UI work |
 
