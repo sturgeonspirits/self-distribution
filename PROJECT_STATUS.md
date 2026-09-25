@@ -8,8 +8,8 @@ Read this file before inspecting the repository or changing the application. Upd
 
 | Component | Source version | Deployment state |
 | --- | --- | --- |
-| Netlify web app and staff proxy | `2026.09.24.44-WEB` on `codex/distribution-system-foundation` / `2026.09.24.43-WEB` live | `2026.09.24.43-WEB` was deployed 2026-09-25. The `.44-WEB` CSV-message correction is reviewed and ready to deploy. |
-| Inventory API Apps Script | `2026.09.24.43` on `codex/distribution-system-foundation` / `2026.09.24.41` live | `2026.09.24.41` was deployed 2026-09-25. `.42` (review corrections) and `.43` (learned-alias precedence) are reviewed and ready to deploy together. |
+| Netlify web app and staff proxy | `2026.09.24.44-WEB` on `codex/distribution-system-foundation` / `2026.09.24.44-WEB` live | Deployed 2026-09-25, including the reviewed CSV-message correction. |
+| Inventory API Apps Script | `2026.09.24.45` on `codex/distribution-system-foundation` / `2026.09.24.43` live | `.45` adds the SKUs "Out of Stock" checkbox for the order page; deployment is pending. `.43` was deployed 2026-09-25. (`.44` was an abandoned Toast-stock build; if it was pasted, replace it with `.45`.) |
 | Distribution Outreach Apps Script | `2026.09.24.13-APP` on `codex/work` | Signed-link rendering is committed; owner has not yet confirmed this exact version is deployed. |
 | Public customer Netlify proxy | `2026.09.18.3-WEB` | Deployed with Netlify; unchanged by the latest staff-app UI work |
 
@@ -18,6 +18,8 @@ Current Git branch: `codex/distribution-system-foundation`
 Current remote: `https://github.com/sturgeonspirits/self-distribution.git`
 
 Latest completed changes:
+
+- Out-of-stock switch for online ordering: add a column named `Out of Stock` to the `SKUs` tab and use Insert → Checkbox on it. `listSkus` returns `out_of_stock` and `availability_status: "Out of stock"` for ticked products, and `order.html` (`2026.09.25.1`) lists them but disables them. Unticked products stay orderable with staff-confirmed availability. The code never adds the column itself, so production sheets change only by hand (see the cutover runbook, step 2).
 
 - Review corrections, ready to deploy: a Badger invoice marked Ignored can no longer reappear on an account through an order reference. Conflicting Badger `Location_Directory` mappings stay in matching review. CSV part failures distinguish a confirmed server error from an unconfirmed timeout. Learned aliases now match an exact customer name first and use the loose name key only when it points to one account (labelled "Learned customer name (similar spelling)"). Every staff link is learned, so correcting a loose-name collision teaches the right account instead of being refused. The cutover runbook is usable again: its step 3 depends on `inventory_migration_status` not being `ACTIVE`, which was verified on 2026-09-25 (the `Hub Configuration` tab has only its header row). Do not run `initializeHardenedHub` before cutover.
 
@@ -247,7 +249,7 @@ If a send times out or returns an unreadable response, do not retry blindly. Che
 - Confirm deployment of Inventory API `2026.09.22.3` and Distribution Outreach `2026.09.22.9-APP` before retesting a prospect with no email.
 - Google Sheets can still respond slowly. The app now avoids several duplicate reads and shows timeout errors, but additional profiling may be needed if Orders & Accounts repeatedly fails.
 - Zoho OIDC login and Karl's `admin` role are deployed and verified. A second, non-admin staff-account verification remains outstanding.
-- Toast remains disconnected until read-only API access and SKU mapping are verified.
+- Toast stock integration is not planned. Toast Standard API access requires a Restaurant Management Suite subscription the owner has declined (2026-09-25). The order page keeps staff-confirmed availability.
 - Newsletter records exist, but newsletter sending remains disabled.
 - Campaigns verified live: Karl sent a 111-recipient campaign on 2026-09-25 without problems.
 - Production cutover is pending. See `docs/production-cutover-runbook-2026-09-25.md`. The Hub still reads the staging Inventory Backend copy (from 2026-09-15; missing the 2026-09-17 count) and the staging Badger Tracker.

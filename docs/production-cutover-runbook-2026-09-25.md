@@ -31,7 +31,7 @@ Checked 2026-09-25: the Hub workbook's `Hub Configuration` tab has only its head
 ## Cutover day (about 30 minutes)
 
 1. **Freeze the old app.** Tell staff not to submit counts in `sturgeon-staff-distribution` from now on.
-2. **Protect production headers.** Compare the header rows of production `Stores`, `SKUs`, `Inventory`, `Counts` and `Reorders` with the staging copy. If they differ (for example the `Reorders` layout), stop and resolve before step 3. The Hub may add missing columns, and the old app must not break if you need to roll back.
+2. **Protect production headers.** Compare the header rows of production `Stores`, `SKUs`, `Inventory`, `Counts` and `Reorders` with the staging copy. If they differ (for example the `Reorders` layout), stop and resolve before step 3. The Hub may add missing columns, and the old app must not break if you need to roll back. Also add the **Out of Stock** checkbox column to the production `SKUs` tab, with the same ticks as the staging copy, so out-of-stock products stay blocked on the order page after cutover.
 3. **Point the Hub at production.** After confirming the precondition above, change these in `apps-script/Code.gs`:
    - `LEGACY_INVENTORY_SPREADSHEET_ID` to `1BO3u4N6_tEYHzOrPajckgUAcbQazL1fz9tTjVl_UNxs`
    - `BADGER_TRACKER_SPREADSHEET_ID` to `1nmHzrZLB2Kv-bLf3z0GBXbkO0XqUL-ETCxUlOlidSEk`

@@ -288,6 +288,15 @@ test("staff invoice links teach customer-name matching, but ignores do not", asy
   assert.match(ledger, /locationKeys\.size !== 1/);
 });
 
+test("SKUs Out of Stock checkbox blocks ordering without adding sheet columns", async () => {
+  const script = await readFile(new URL("apps-script/Code.gs", root), "utf8");
+  const order = await readFile(new URL("order.html", root), "utf8");
+  const catalog = script.slice(script.indexOf("function apiListSkus_"), script.indexOf("function apiAddSkuToStoreUnlocked_"));
+  assert.match(catalog, /toBool_\(firstPresent_\(s, \["out_of_stock", "out_of_stock\?"\]\)\)/);
+  assert.doesNotMatch(catalog, /ensureHeaderColumns_/);
+  assert.match(order, /outOfStock \? " disabled" : ""/);
+});
+
 test("learned aliases prefer the exact customer name and always learn staff links", async () => {
   const script = await readFile(new URL("apps-script/Code.gs", root), "utf8");
   assert.match(script, /const aliases = \{ by_name:new Map\(\), by_key:new Map\(\) \}/);

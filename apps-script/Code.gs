@@ -1,8 +1,11 @@
 /*********************************
  * Inventory API (JSON) for Netlify
- * App version: 2026.09.24.43
+ * App version: 2026.09.24.45
  *
  * CHANGES IN THIS VERSION
+ * - listSkus reads an optional "Out of Stock" checkbox column in SKUs and marks those products Out of stock for the order page.
+ *
+ * CHANGES IN 2026.09.24.43
  * - Learned Badger aliases match an exact customer name first and use the loose name key only when it points to one account. A staff link is always learned, so correcting a loose-name collision teaches the right account instead of being refused.
  *
  * CHANGES IN 2026.09.24.42
@@ -195,7 +198,7 @@
  * - Use only in the staging inventory backend until testing is complete.
  *********************************/
 
-const APP_VERSION = "2026.09.24.43";
+const APP_VERSION = "2026.09.24.45";
 
 const SHEET_NAMES = {
   STORES: "Stores",
@@ -893,6 +896,8 @@ function apiListSkus_() {
     const id = String(s.sku_id||"").trim();
     if (!id) return;
     const toast = toastMap.get(id) || {};
+    // Optional "Out of Stock" checkbox column in SKUs. Staff tick it when a product runs out.
+    const outOfStock = toBool_(firstPresent_(s, ["out_of_stock", "out_of_stock?"]));
     map.set(id,{
       sku_id:id,
       sku_name:s.sku_name,
@@ -900,14 +905,15 @@ function apiListSkus_() {
       size:s.size,
       units_per_case:Number(s.units_per_case||12),
       catalog_source:ORDER_CATALOG_SOURCE,
-      availability_status:"Not connected",
+      availability_status:outOfStock ? "Out of stock" : "Staff will confirm availability",
+      out_of_stock:outOfStock,
       external_item_id:String(toast.external_item_id || ""),
       toast_mapping_status:toast.external_item_id ? "Mapped; adapter disabled" : "Not mapped",
     });
   });
   return {
     catalog_source:ORDER_CATALOG_SOURCE,
-    availability_source:"Toast adapter disabled; staff confirms availability",
+    availability_source:"Out of Stock checkboxes in SKUs; staff confirms availability",
     skus:Array.from(map.values()).sort((a,b)=>String(a.sku_name||"").localeCompare(String(b.sku_name||""))),
   };
 }
