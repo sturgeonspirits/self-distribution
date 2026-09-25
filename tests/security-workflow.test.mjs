@@ -238,7 +238,7 @@ test("Badger invoice links are staff-scoped and ledger matching stays account-ba
   assert.match(ledger, /Orders on more than one account reference this invoice\./);
   assert.match(ledger, /matchMethod = "Linked order"/);
   assert.match(ledger, /matchMethod = "Business name"/);
-  assert.match(ledger, /matchMethod = "Learned customer name"/);
+  assert.match(ledger, /learnedMethod = "Learned customer name"/);
   assert.match(ledger, /matchMethod = "Badger location name"/);
   assert.match(ledger, /const customerAliases = readBadgerCustomerAliases_\(\)/);
   assert.match(ledger, /cachedBadgerLocationNames_\(/);
@@ -281,11 +281,21 @@ test("staff invoice links teach customer-name matching, but ignores do not", asy
   assert.equal(normalize("The Crimson Still LLC"), normalize("Crimson Still"));
   assert.notEqual(normalize("Festival Foods -- Oshkosh #2708"), normalize("Festival Foods -- FDL"));
   const aliases = script.slice(script.indexOf("function readBadgerCustomerAliases_"), script.indexOf("function readBadgerInvoiceLinks_"));
-  assert.match(aliases, /byKey\.set\(key, \{ ambiguous:true \}\)/);
-  assert.match(aliases, /conflictingLooseAlias/);
+  assert.match(aliases, /aliases\.by_name\.set\(canonicalName, \{ ambiguous:true \}\)/);
+  assert.match(aliases, /aliases\.by_key\.get\(key\)\.add\(accountId\)/);
   const ledger = script.slice(script.indexOf("function buildCustomerAccounts_"), script.indexOf("function apiGetCustomerWorkQueue_"));
   assert.match(ledger, /locationPublicKeysByInvoiceKey/);
   assert.match(ledger, /locationKeys\.size !== 1/);
+});
+
+test("learned aliases prefer the exact customer name and always learn staff links", async () => {
+  const script = await readFile(new URL("apps-script/Code.gs", root), "utf8");
+  assert.match(script, /const aliases = \{ by_name:new Map\(\), by_key:new Map\(\) \}/);
+  assert.match(script, /customerAliases\.by_name\.get\(canonicalBadgerAliasName_\(invoice\.customer_name\)\)/);
+  assert.match(script, /looseAliasAccounts\.length === 1/);
+  assert.doesNotMatch(script, /conflictingLooseAlias/);
+  const runbook = await readFile(new URL("docs/production-cutover-runbook-2026-09-25.md", root), "utf8");
+  assert.match(runbook, /Precondition: the Hub inventory migration must stay inactive/);
 });
 
 test("forced refreshes save their rebuild to the read cache", async () => {

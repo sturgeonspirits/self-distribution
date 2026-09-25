@@ -8,8 +8,8 @@ Read this file before inspecting the repository or changing the application. Upd
 
 | Component | Source version | Deployment state |
 | --- | --- | --- |
-| Netlify web app and staff proxy | `2026.09.24.44-WEB` on `codex/distribution-system-foundation` / `2026.09.24.43-WEB` live | `2026.09.24.43-WEB` was deployed 2026-09-25. The review correction in `.44-WEB` is committed only; do not deploy until reviewed. |
-| Inventory API Apps Script | `2026.09.24.42` on `codex/distribution-system-foundation` / `2026.09.24.41` live | `2026.09.24.41` was deployed 2026-09-25. The review correction in `.42` is committed only; do not deploy until reviewed. |
+| Netlify web app and staff proxy | `2026.09.24.44-WEB` on `codex/distribution-system-foundation` / `2026.09.24.43-WEB` live | `2026.09.24.43-WEB` was deployed 2026-09-25. The `.44-WEB` CSV-message correction is reviewed and ready to deploy. |
+| Inventory API Apps Script | `2026.09.24.43` on `codex/distribution-system-foundation` / `2026.09.24.41` live | `2026.09.24.41` was deployed 2026-09-25. `.42` (review corrections) and `.43` (learned-alias precedence) are reviewed and ready to deploy together. |
 | Distribution Outreach Apps Script | `2026.09.24.13-APP` on `codex/work` | Signed-link rendering is committed; owner has not yet confirmed this exact version is deployed. |
 | Public customer Netlify proxy | `2026.09.18.3-WEB` | Deployed with Netlify; unchanged by the latest staff-app UI work |
 
@@ -19,7 +19,7 @@ Current remote: `https://github.com/sturgeonspirits/self-distribution.git`
 
 Latest completed changes:
 
-- Review corrections pending deployment: a Badger invoice explicitly marked Ignored can no longer be re-added to an account through an order reference. Loose customer-name aliases and conflicting Badger `Location_Directory` mappings now stay in matching review rather than selecting whichever duplicate row was last read. CSV part failures now distinguish a confirmed server error from an unconfirmed connection timeout. The production-inventory cutover runbook is blocked because an ACTIVE Hub ignores `LEGACY_INVENTORY_SPREADSHEET_ID`; a reviewed backend-routing change is required before changing production IDs.
+- Review corrections, ready to deploy: a Badger invoice marked Ignored can no longer reappear on an account through an order reference. Conflicting Badger `Location_Directory` mappings stay in matching review. CSV part failures distinguish a confirmed server error from an unconfirmed timeout. Learned aliases now match an exact customer name first and use the loose name key only when it points to one account (labelled "Learned customer name (similar spelling)"). Every staff link is learned, so correcting a loose-name collision teaches the right account instead of being refused. The cutover runbook is usable again: its step 3 depends on `inventory_migration_status` not being `ACTIVE`, which was verified on 2026-09-25 (the `Hub Configuration` tab has only its header row). Do not run `initializeHardenedHub` before cutover.
 
 - CSV business import is split into parts in the browser: 20 businesses per `importOutreachBusinesses` request, sent one after another with progress shown. Even with batched writes, a full 100+ row file could still exceed the ~25-second proxy limit on the large Directory sheet. Each part is duplicate-checked and logged as its own Import Batch ("file.csv (part 2 of 6)"). If a part stops, the message shows what finished and that re-running is safe.
 

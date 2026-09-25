@@ -1,8 +1,11 @@
 /*********************************
  * Inventory API (JSON) for Netlify
- * App version: 2026.09.24.42
+ * App version: 2026.09.24.43
  *
  * CHANGES IN THIS VERSION
+ * - Learned Badger aliases match an exact customer name first and use the loose name key only when it points to one account. A staff link is always learned, so correcting a loose-name collision teaches the right account instead of being refused.
+ *
+ * CHANGES IN 2026.09.24.42
  * - Keeps a staff-ignored Badger invoice out of every account ledger, including an account whose order references that invoice.
  * - Treats conflicting loose customer-name aliases and conflicting Badger Location_Directory mappings as review-needed rather than choosing the last row and guessing an account.
 
@@ -192,7 +195,7 @@
  * - Use only in the staging inventory backend until testing is complete.
  *********************************/
 
-const APP_VERSION = "2026.09.24.42";
+const APP_VERSION = "2026.09.24.43";
 
 const SHEET_NAMES = {
   STORES: "Stores",
@@ -5179,28 +5182,31 @@ function getBadgerCustomerAliasesSheet_() {
   return ensureSheet_(getOutreachSs_(), BADGER_CUSTOMER_ALIASES_SHEET_NAME, BADGER_CUSTOMER_ALIAS_HEADERS);
 }
 
+// Returns learned aliases two ways:
+// - by_name: exact customer name (only case, apostrophes, punctuation and spacing ignored) → account
+// - by_key: loose key (also ignores "The" and LLC/Inc./Co./Corp.) → set of accounts
+// An exact-name alias always wins. A loose key is used only when it points to a single account.
 function readBadgerCustomerAliases_() {
+  const aliases = { by_name:new Map(), by_key:new Map() };
   const sheet = getOutreachSs_().getSheetByName(BADGER_CUSTOMER_ALIASES_SHEET_NAME);
-  const byKey = new Map();
-  if (!sheet || sheet.getLastRow() < 2) return byKey;
+  if (!sheet || sheet.getLastRow() < 2) return aliases;
   const h = getHeaderMap_(sheet);
-  if (h.account_id === undefined || (h.badger_customer_name === undefined && h.normalized_key === undefined)) return byKey;
+  if (h.account_id === undefined || (h.badger_customer_name === undefined && h.normalized_key === undefined)) return aliases;
   sheet.getRange(2, 1, sheet.getLastRow() - 1, sheet.getLastColumn()).getValues().forEach(values => {
     const customerName = h.badger_customer_name === undefined ? "" : String(values[h.badger_customer_name] || "").trim();
     const key = normalizeCustomerMatchKey_(customerName) || (h.normalized_key === undefined ? "" : String(values[h.normalized_key] || "").trim());
     const accountId = String(values[h.account_id] || "").trim();
     if (!key || !accountId) return;
-    const existing = byKey.get(key);
-    if (existing && existing.account_id !== accountId) {
-      // A loose key such as "the bar" / "bar llc" can represent different
-      // Directory accounts. Keep it in review instead of accepting whichever
-      // alias row happens to be read last.
-      byKey.set(key, { ambiguous:true });
-      return;
+    const canonicalName = canonicalBadgerAliasName_(customerName);
+    if (canonicalName) {
+      const existing = aliases.by_name.get(canonicalName);
+      if (existing && existing.account_id !== accountId) aliases.by_name.set(canonicalName, { ambiguous:true });
+      else if (!existing) aliases.by_name.set(canonicalName, { account_id:accountId });
     }
-    if (!existing) byKey.set(key, { customer_name:customerName, account_id:accountId });
+    if (!aliases.by_key.has(key)) aliases.by_key.set(key, new Set());
+    aliases.by_key.get(key).add(accountId);
   });
-  return byKey;
+  return aliases;
 }
 
 function canonicalBadgerAliasName_(value) {
@@ -5222,18 +5228,12 @@ function upsertBadgerCustomerAlias_(customerName, accountId, source, actor) {
     const rowKey = normalizeCustomerMatchKey_(rowName) || (h.normalized_key === undefined ? "" : String(row[h.normalized_key] || "").trim());
     return rowKey === key;
   });
+  // Update the row for this exact customer name if there is one; otherwise add a new row.
+  // Loose-key neighbours for other accounts are kept, so a staff correction is always learned and
+  // the reader treats that loose key as ambiguous instead of guessing.
   const canonicalName = canonicalBadgerAliasName_(customerName);
-  const conflictingLooseAlias = matchingRows.some(item => {
-    const existingAccountId = String(item.row[h.account_id] || "").trim();
-    const existingName = h.badger_customer_name === undefined ? "" : item.row[h.badger_customer_name];
-    return existingAccountId && existingAccountId !== accountId && canonicalBadgerAliasName_(existingName) !== canonicalName;
-  });
-  if (conflictingLooseAlias) {
-    console.warn(`Badger customer alias was not learned because the loose name key is already used by another account: ${key}`);
-    return false;
-  }
   const sameName = matchingRows.find(item => canonicalBadgerAliasName_(h.badger_customer_name === undefined ? "" : item.row[h.badger_customer_name]) === canonicalName);
-  const existingIndex = (sameName || matchingRows[0] || {}).index;
+  const existingIndex = (sameName || {}).index;
   const values = Number.isInteger(existingIndex) ? rows[existingIndex].slice() : Array(sheet.getLastColumn()).fill("");
   const set = (column, value) => { if (h[column] !== undefined) values[h[column]] = value; };
   set("badger_customer_name", sheetSafeText_(customerName, 200, "Badger customer name"));
@@ -5429,13 +5429,23 @@ function buildCustomerAccounts_(applications, orders, bypassBadgerCache) {
       matchMethod = "Linked order";
     }
     const customerKey = normalizeCustomerMatchKey_(invoice.customer_name);
-    if (!accountId && customerKey && customerAliases.has(customerKey)) {
-      const alias = customerAliases.get(customerKey);
-      if (alias.ambiguous) {
-        ambiguous = true;
-      } else if (identity.by_id.has(alias.account_id)) {
-        accountId = alias.account_id;
-        matchMethod = "Learned customer name";
+    const exactAlias = customerAliases.by_name.get(canonicalBadgerAliasName_(invoice.customer_name));
+    const looseAliasAccounts = customerKey ? Array.from(customerAliases.by_key.get(customerKey) || []) : [];
+    let learnedAccountId = "";
+    let learnedMethod = "";
+    if (exactAlias) {
+      if (exactAlias.ambiguous) ambiguous = true;
+      else { learnedAccountId = exactAlias.account_id; learnedMethod = "Learned customer name"; }
+    } else if (looseAliasAccounts.length === 1) {
+      learnedAccountId = looseAliasAccounts[0];
+      learnedMethod = "Learned customer name (similar spelling)";
+    } else if (looseAliasAccounts.length > 1) {
+      ambiguous = true;
+    }
+    if (!accountId && learnedAccountId) {
+      if (identity.by_id.has(learnedAccountId)) {
+        accountId = learnedAccountId;
+        matchMethod = learnedMethod;
       } else {
         staleReason = "The learned Account ID for this customer name is no longer in the directory";
       }
