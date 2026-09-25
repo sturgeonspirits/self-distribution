@@ -1,8 +1,12 @@
 /*********************************
  * Inventory API (JSON) for Netlify
- * App version: 2026.09.24.36
+ * App version: 2026.09.24.37
  *
  * CHANGES IN THIS VERSION
+ * - Replaces per-keystroke Directory reads with one compact, versioned customer-account index cached server-side and in the browser.
+ * - Keeps Badger invoice account filtering entirely in the browser after the first account-box focus.
+ *
+ * CHANGES IN 2026.09.24.36
  * - Keeps unmatched and ignored Badger invoices reviewable without loading the full Directory into the work-queue cache.
  * - Gives conflicting order references an explicit manual-review reason and prevents an overridden invoice from appearing on two accounts.
  * - Adds staff-controlled invoice ignore/restore and uses the Badger cache before a Tracker read when linking.
@@ -12,24 +16,21 @@
  * - Matches invoices by existing order, one exact directory business name, or an explicit staff-reviewed Account ID link.
  * - Keeps ambiguous invoices visible for review and refreshes Badger invoice cache data on explicit Orders & Accounts refreshes.
  *
- * CHANGES IN THIS VERSION
+ * EARLIER CHANGES
  * - Invalidates Hub read caches for spreadsheet edits, direct editor writes, failed write requests, and explicit refreshes.
  * - Limits read-cache entries to fifteen minutes and safe 45 KB chunks.
  *
- * CHANGES IN THIS VERSION
  * - Makes an external email contact mark a no-outcome prospect Sent and schedule its first follow-up.
  * - Normalizes legacy Medium priorities to Normal during the explicit structure repair.
  * - Updates bulk campaign exclusions only in their Status and Result Detail cells.
  *
- * CHANGES IN THIS VERSION
  * - Added versioned, chunked read caching and a daytime cache warmer for core Hub load paths.
  * - Added stage timing metadata to all primary staff read responses.
  *
- * CHANGES IN THIS VERSION
  * - Added campaign recipient search, filters, sorting, and batched exclusion support.
  * - Added external contact logging, engagement repair/backfill, and valid High/Normal/Low priority handling.
  *
- * CHANGES IN THIS VERSION
+ * OTHER EARLIER CHANGES
  * - Rechecks full initial-send eligibility while freezing a campaign, using one memoized Pilot Review read and cross-row email duplicate protection.
  * - Blocks campaign delivery when another directory row or a non-test Activity Log Initial send already used the recipient address.
  * - Builds campaign previews from directory-only eligibility records and defers rendered email creation until campaign freeze.
@@ -172,7 +173,7 @@
  * - Use only in the staging inventory backend until testing is complete.
  *********************************/
 
-const APP_VERSION = "2026.09.24.36";
+const APP_VERSION = "2026.09.24.37";
 
 const SHEET_NAMES = {
   STORES: "Stores",
@@ -218,7 +219,7 @@ const ORDER_CATALOG_SOURCE = "SHEETS"; // Toast remains disabled until a reviewe
 const READ_CACHE_VERSION_KEY = "hub_read_cache_version";
 const READ_CACHE_TTL_SECONDS = 900;
 const READ_CACHE_CHUNK_SIZE = 45000;
-const READ_ACTIONS = new Set(["initData", "listSkus", "managerGrid", "salesSinceCount", "outreachDashboard", "outreachRecord", "outreachSendStatus", "outreachNewsletterContacts", "outreachCampaigns", "outreachCampaign", "previewOutreachCampaign", "customerWorkQueue", "searchCustomerAccounts", "hubSystemStatus"]);
+const READ_ACTIONS = new Set(["initData", "listSkus", "managerGrid", "salesSinceCount", "outreachDashboard", "outreachRecord", "outreachSendStatus", "outreachNewsletterContacts", "outreachCampaigns", "outreachCampaign", "previewOutreachCampaign", "customerWorkQueue", "customerAccountIndex", "hubSystemStatus"]);
 
 let __OPERATIONAL_SS = null;
 let __OUTREACH_SS = null;
@@ -262,6 +263,10 @@ function cachedReadPayload_(scope, build, bypass) {
   try {
     const text = JSON.stringify(payload);
     const parts = Math.ceil(text.length / READ_CACHE_CHUNK_SIZE);
+    if (scope === "customer_account_index") {
+      console.log(JSON.stringify({ event:"customer_account_index_cache_rebuild", payload_chars:text.length, parts:parts, max_parts:20 }));
+      if (parts > 20) console.warn(`Customer account index is ${parts} cache parts; it exceeds the 20-part cache limit.`);
+    }
     if (parts > 0 && parts <= 20) {
       for (let index = 0; index < parts; index += 1) cache.put(`${key}:${index}`, text.slice(index * READ_CACHE_CHUNK_SIZE, (index + 1) * READ_CACHE_CHUNK_SIZE), READ_CACHE_TTL_SECONDS);
       cache.put(`${key}:meta`, JSON.stringify({ parts:parts }), READ_CACHE_TTL_SECONDS);
@@ -715,7 +720,7 @@ function handle_(e, body) {
   try {
     assertAuthorized_(e, body);
     if (!action) {
-      return json_({ ok:true, service:"sturgeon-distribution-hub", version:APP_VERSION, actions:["initData","listSkus","addSkuToStore","upsertProduct","submitCounts","createReorder","managerGrid","salesSinceCount","updateStoreContacts","outreachDashboard","outreachRecord","outreachSendStatus","outreachNewsletterContacts","outreachCampaigns","outreachCampaign","previewOutreachCampaign","createOutreachCampaign","updateOutreachCampaignRecipient","setOutreachCampaignRecipientExclusion","setOutreachCampaignRecipientExclusions","approveOutreachCampaign","reopenOutreachCampaign","reconcileCampaignSends","rebuildCampaignRecipients","sendOutreachCampaignBatch","saveOutreachDraft","sendOutreachEmail","sendOutreachTestEmail","updateOutreachOutcome","logOutreachContact","updateOutreachBusiness","updateOutreachPrograms","createOutreachBusiness","importOutreachBusinesses","recalculateOutreachMiles","backfillEngagementDetails","upsertNewsletterContact","submitCustomerApplication","submitOnlineOrderRequest","customerWorkQueue","searchCustomerAccounts","linkBadgerInvoice","updateCustomerApplication","updateOnlineOrderRequest","hubSystemStatus","initializeHardenedHub","repairHubStructure","reconcileIntegrations"] });
+      return json_({ ok:true, service:"sturgeon-distribution-hub", version:APP_VERSION, actions:["initData","listSkus","addSkuToStore","upsertProduct","submitCounts","createReorder","managerGrid","salesSinceCount","updateStoreContacts","outreachDashboard","outreachRecord","outreachSendStatus","outreachNewsletterContacts","outreachCampaigns","outreachCampaign","previewOutreachCampaign","createOutreachCampaign","updateOutreachCampaignRecipient","setOutreachCampaignRecipientExclusion","setOutreachCampaignRecipientExclusions","approveOutreachCampaign","reopenOutreachCampaign","reconcileCampaignSends","rebuildCampaignRecipients","sendOutreachCampaignBatch","saveOutreachDraft","sendOutreachEmail","sendOutreachTestEmail","updateOutreachOutcome","logOutreachContact","updateOutreachBusiness","updateOutreachPrograms","createOutreachBusiness","importOutreachBusinesses","recalculateOutreachMiles","backfillEngagementDetails","upsertNewsletterContact","submitCustomerApplication","submitOnlineOrderRequest","customerWorkQueue","customerAccountIndex","linkBadgerInvoice","updateCustomerApplication","updateOnlineOrderRequest","hubSystemStatus","initializeHardenedHub","repairHubStructure","reconcileIntegrations"] });
     }
 
     invalidateReadCache = !READ_ACTIONS.has(action);
@@ -762,7 +767,7 @@ function handle_(e, body) {
       case "submitCustomerApplication": res = apiSubmitCustomerApplication_(body); break;
       case "submitOnlineOrderRequest": res = apiSubmitOnlineOrderRequest_(body); break;
       case "customerWorkQueue": res = apiGetCustomerWorkQueue_(Object.assign({}, e?.parameter || {}, body || {})); break;
-      case "searchCustomerAccounts": res = apiSearchCustomerAccounts_(Object.assign({}, e?.parameter || {}, body || {})); break;
+      case "customerAccountIndex": res = apiGetCustomerAccountIndex_(Object.assign({}, e?.parameter || {}, body || {})); break;
       case "linkBadgerInvoice": res = apiLinkBadgerInvoice_(body); break;
       case "updateCustomerApplication": res = apiUpdateCustomerApplication_(body); break;
       case "updateOnlineOrderRequest": res = apiUpdateOnlineOrderRequest_(body); break;
@@ -5072,22 +5077,19 @@ function getBadgerInvoiceLinksSheet_() {
   ]);
 }
 
-function apiSearchCustomerAccounts_(p) {
-  const query = publicText_(p?.query || "", 160, "Account search").trim().toLowerCase();
-  if (query.length < 2) return { account_options:[] };
-  const matches = accountIdentityFromRows_(getAllRowsAsObjects_(getOutreachSheet_(OUTREACH_SHEET_NAME))).rows
-    .map((row, index) => ({
+function apiGetCustomerAccountIndex_(p) {
+  const cacheBypass = !!p?._cache_bypass;
+  if (!cacheBypass) return cachedReadPayload_("customer_account_index", () => apiGetCustomerAccountIndex_({ _cache_bypass:true }));
+  const accounts = accountIdentityFromRows_(getAllRowsAsObjects_(getOutreachSheet_(OUTREACH_SHEET_NAME))).rows
+    .map(row => ({
       account_id:String(row.account_id || "").trim(),
       business_name:String(outreachValue_(row, ["business", "business_name"]) || "").trim(),
       city:String(outreachValue_(row, ["city", "town"]) || "").trim(),
-      source_row:index + 2,
     }))
     .filter(item => item.account_id && item.business_name)
-    .filter(item => `${item.business_name} ${item.city} ${item.account_id}`.toLowerCase().includes(query))
     .sort((a, b) => a.business_name.localeCompare(b.business_name))
-    .slice(0, 50)
-    .map(item => Object.assign(item, { label:`${item.business_name}${item.city ? ` (${item.city})` : ""} — ${item.account_id}` }));
-  return { account_options:matches };
+    .map(({ account_id, business_name, city }) => ({ account_id, business_name, city }));
+  return { accounts:accounts };
 }
 
 function apiLinkBadgerInvoice_(p) {

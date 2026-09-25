@@ -1,10 +1,10 @@
 <!doctype html>
-<!-- App version: 2026.09.24.40-WEB -->
+<!-- App version: 2026.09.24.41-WEB -->
 <html>
 <head>
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover"/>
-  <meta name="app-version" content="2026.09.24.40-WEB" />
+  <meta name="app-version" content="2026.09.24.41-WEB" />
   <meta name="theme-color" content="#536f77" />
   <link rel="icon" href="/assets/distribution-hub-icon.svg" type="image/svg+xml" />
   <link rel="manifest" href="/site.webmanifest" />
@@ -2532,7 +2532,7 @@
 
   <footer style="max-width:1200px;margin:18px auto 120px;padding:0 12px;text-align:center;color:#6b7280;font-size:12px;">
     Designed by <a href="https://scriptspirit.dev" target="_blank" rel="noopener noreferrer" style="color:#1d4ed8;text-decoration:none;font-weight:700;">Script Spirit</a>
-<span id="appVersionFooter"> • Version 2026.09.24.40-WEB</span>
+<span id="appVersionFooter"> • Version 2026.09.24.41-WEB</span>
   </footer>
 
 
@@ -2555,7 +2555,7 @@
   window.addEventListener("unhandledrejection", e => console.error("Unhandled promise rejection:", e.reason));
   window.addEventListener("error", e => console.error("Unhandled error:", e.error || e.message));
   const $ = (id) => document.getElementById(id);
-  const APP_VERSION = "2026.09.24.40-WEB";
+  const APP_VERSION = "2026.09.24.41-WEB";
   $("appVersionFooter").textContent = ` • Version ${APP_VERSION}`;
   function screenCacheKey(screen){ return `distribution_hub:${APP_VERSION}:${staffSession?.email || "unknown"}:${screen}`; }
   function readScreenCache(screen){
@@ -2564,6 +2564,9 @@
   }
   function writeScreenCache(screen, payload){
     try { localStorage.setItem(screenCacheKey(screen), JSON.stringify({ saved_at:Date.now(), payload:payload })); } catch (_) {}
+  }
+  function clearScreenCache(screen){
+    try { localStorage.removeItem(screenCacheKey(screen)); } catch (_) {}
   }
   function cachedTimeLabel(cache){ return new Date(cache?.saved_at || Date.now()).toLocaleTimeString([], { hour:"numeric", minute:"2-digit" }); }
 
@@ -2617,9 +2620,11 @@
   let outreachCampaignPreview = null;
 
   let customerData = { accounts:[], applications:[], orders:[], unmatchedBadgerInvoices:[], ignoredBadgerInvoices:[], summary:{ new_applications:0, active_applications:0, new_orders:0, active_orders:0, invoice_needed:0, unmatched_badger_invoices:0, ignored_badger_invoices:0 } };
+  let customerAccountIndex = [];
+  let customerAccountIndexLoad = null;
   let badgerAccountPickerByLabel = new Map();
-  let badgerAccountSearchTimer = null;
-  let badgerAccountSearchRequest = 0;
+  let badgerAccountFilterTimer = null;
+  const badgerAccountDrafts = new Map();
   let customerView = ["accounts", "orders", "applications"].includes(localStorage.getItem("customer_work_view")) ? localStorage.getItem("customer_work_view") : "accounts";
   let customerFilterText = "";
   let customerStatusFilter = customerView === "accounts" ? "all" : "active";
@@ -2954,16 +2959,17 @@
       <div class="workflowCardTop"><div><h3>Badger invoices needing an account</h3><p>Link each invoice to the existing Directory Account ID. This does not enable inventory tracking.</p></div><span class="badge amber">${unmatchedInvoices.length} to match</span></div>
       <div class="workflowLineList">${unmatchedInvoices.map(invoice => `<div class="workflowLine" data-badger-invoice="${escapeHtml(invoice.invoice_number || "")}">
         <span><strong>${escapeHtml(invoice.invoice_number || "Invoice")}</strong> • ${escapeHtml(invoice.customer_name || "No Badger customer name")}<br><small>${escapeHtml([formatOutreachDate(invoice.invoice_date), invoice.amount && `Amount ${invoice.amount}`, invoice.match_reason].filter(Boolean).join(" • "))}</small></span>
-        <span class="btnRow"><input class="badgerAccountPickerInput" list="badgerAccountPicker" aria-label="Account for ${escapeHtml(invoice.invoice_number || "invoice")}" placeholder="Type business or city" autocomplete="off" /><button class="actionBtn primary" type="button" data-customer-action="link-badger-invoice">Link invoice</button><button class="actionBtn" type="button" data-customer-action="ignore-badger-invoice">Ignore / not a Directory account</button></span>
+        <span class="btnRow"><input class="badgerAccountPickerInput" list="badgerAccountPicker" aria-label="Account for ${escapeHtml(invoice.invoice_number || "invoice")}" placeholder="Type business, city, or Account ID" value="${escapeHtml(badgerAccountDrafts.get(String(invoice.invoice_number || "")) || "")}" autocomplete="off" /><button class="actionBtn primary" type="button" data-customer-action="link-badger-invoice">Link invoice</button><button class="actionBtn" type="button" data-customer-action="ignore-badger-invoice">Ignore / not a Directory account</button></span>
       </div>`).join("")}</div>
     </article>` : "";
-    const ignoredInvoiceReview = ignoredInvoices.length ? `<article class="workflowCard" data-badger-ignored="true">
-      <div class="workflowCardTop"><div><h3>Ignored Badger invoices</h3><p>These are marked as not belonging to a Directory account. Restore one to return it to matching review.</p></div><span class="badge">${ignoredInvoices.length} ignored</span></div>
+    const ignoredInvoiceReview = ignoredInvoices.length ? `<details class="workflowCard" data-badger-ignored="true">
+      <summary><strong>Ignored Badger invoices</strong> <span class="badge">${ignoredInvoices.length} ignored</span></summary>
+      <p>These are marked as not belonging to a Directory account. Restore one to return it to matching review.</p>
       <div class="workflowLineList">${ignoredInvoices.map(invoice => `<div class="workflowLine" data-badger-invoice="${escapeHtml(invoice.invoice_number || "")}">
         <span><strong>${escapeHtml(invoice.invoice_number || "Invoice")}</strong> • ${escapeHtml(invoice.customer_name || "No Badger customer name")}<br><small>${escapeHtml([formatOutreachDate(invoice.invoice_date), invoice.amount && `Amount ${invoice.amount}`].filter(Boolean).join(" • "))}</small></span>
         <span class="btnRow"><button class="actionBtn" type="button" data-customer-action="restore-badger-invoice">Restore to matching</button></span>
       </div>`).join("")}</div>
-    </article>` : "";
+    </details>` : "";
     const recordCards = records.map(record => {
       const isAccount = customerView === "accounts";
       const isOrder = customerView === "orders";
@@ -3005,7 +3011,22 @@
     refreshIcons();
   }
 
-  async function loadCustomerWorkQueue(forceRefresh = false){
+  function rememberBadgerAccountDrafts(){
+    document.querySelectorAll("[data-badger-invoice] .badgerAccountPickerInput").forEach(input => {
+      const invoiceNumber = input.closest("[data-badger-invoice]")?.dataset.badgerInvoice || "";
+      if (invoiceNumber) badgerAccountDrafts.set(invoiceNumber, input.value);
+    });
+  }
+
+  async function loadCustomerWorkQueue(forceRefresh = false, clearAccountIndex = false){
+    rememberBadgerAccountDrafts();
+    if (clearAccountIndex) {
+      customerAccountIndex = [];
+      customerAccountIndexLoad = null;
+      badgerAccountPickerByLabel = new Map();
+      $("badgerAccountPicker").innerHTML = "";
+      clearScreenCache("customer-account-index");
+    }
     const requestId = ++customerWorkQueueLoadRequest;
     const cached = !customerLoaded && readScreenCache("customer-work");
     if (cached) {
@@ -3039,28 +3060,44 @@
     $("customerWorkflowStatus").textContent = `Updated ${new Date().toLocaleTimeString([], { hour:"numeric", minute:"2-digit" })}${elapsed ? ` in ${(elapsed / 1000).toFixed(1)}s` : ""}${result.performance?.cache_hit ? " (server cache)" : ""}.`;
   }
 
-  function renderBadgerAccountPicker(options){
-    options.forEach(option => badgerAccountPickerByLabel.set(option.label, option.account_id));
-    $("badgerAccountPicker").innerHTML = options.map(option => `<option value="${escapeHtml(option.label)}"></option>`).join("");
+  function customerAccountLabel(account){
+    return `${account.business_name}${account.city ? ` (${account.city})` : ""} — ${account.account_id}`;
   }
 
-  function searchBadgerAccounts(query){
-    clearTimeout(badgerAccountSearchTimer);
-    const text = String(query || "").trim();
-    if (text.length < 2) {
-      $("badgerAccountPicker").innerHTML = "";
-      return;
+  function renderBadgerAccountPicker(accounts){
+    $("badgerAccountPicker").innerHTML = accounts.map(account => `<option value="${escapeHtml(customerAccountLabel(account))}"></option>`).join("");
+  }
+
+  function filterBadgerAccountPicker(query){
+    clearTimeout(badgerAccountFilterTimer);
+    badgerAccountFilterTimer = setTimeout(() => {
+      const text = String(query || "").trim().toLowerCase();
+      const matches = !text ? customerAccountIndex.slice(0, 25) : customerAccountIndex
+        .filter(account => `${account.business_name} ${account.city} ${account.account_id}`.toLowerCase().includes(text))
+        .slice(0, 25);
+      renderBadgerAccountPicker(matches);
+    }, 100);
+  }
+
+  async function ensureCustomerAccountIndex(){
+    if (customerAccountIndex.length) return customerAccountIndex;
+    if (customerAccountIndexLoad) return customerAccountIndexLoad;
+    const cached = readScreenCache("customer-account-index");
+    if (Array.isArray(cached?.payload?.accounts)) {
+      customerAccountIndex = cached.payload.accounts;
+      badgerAccountPickerByLabel = new Map(customerAccountIndex.map(account => [customerAccountLabel(account), account.account_id]));
+      return customerAccountIndex;
     }
-    badgerAccountSearchTimer = setTimeout(async () => {
-      const requestId = ++badgerAccountSearchRequest;
-      try {
-        const result = await staffApiGet({ action:"searchCustomerAccounts", query:text });
-        if (requestId !== badgerAccountSearchRequest || !result.ok) return;
-        renderBadgerAccountPicker(result.account_options || []);
-      } catch (_) {
-        // Keep the review card usable; linking will explain if no selected account resolves.
-      }
-    }, 180);
+    customerAccountIndexLoad = staffApiGet({ action:"customerAccountIndex" })
+      .then(result => {
+        if (!result.ok) throw new Error(result.error || "The account list could not be loaded.");
+        customerAccountIndex = result.accounts || [];
+        badgerAccountPickerByLabel = new Map(customerAccountIndex.map(account => [customerAccountLabel(account), account.account_id]));
+        writeScreenCache("customer-account-index", { accounts:customerAccountIndex });
+        return customerAccountIndex;
+      })
+      .finally(() => { customerAccountIndexLoad = null; });
+    return customerAccountIndexLoad;
   }
 
   async function updateBadgerInvoice(button, mode){
@@ -6245,7 +6282,7 @@
   $("backfillEngagementDetailsBtn").addEventListener("click", backfillEngagementDetails);
   $("refreshCustomersBtn").addEventListener("click", () => {
     if (!staffAccessCode) return showCustomerAccessState();
-    loadCustomerWorkQueue(true).catch(handleCustomerError);
+    loadCustomerWorkQueue(true, true).catch(handleCustomerError);
   });
   $("lockCustomersBtn").addEventListener("click", lockCustomerWorkspace);
   $("unlockCustomersBtn").addEventListener("click", startZohoLogin);
@@ -6306,7 +6343,18 @@
   });
   $("customerWorkflowList").addEventListener("input", event => {
     const picker = event.target.closest(".badgerAccountPickerInput");
-    if (picker) searchBadgerAccounts(picker.value);
+    if (picker) {
+      const invoiceNumber = picker.closest("[data-badger-invoice]")?.dataset.badgerInvoice || "";
+      if (invoiceNumber) badgerAccountDrafts.set(invoiceNumber, picker.value);
+      filterBadgerAccountPicker(picker.value);
+    }
+  });
+  $("customerWorkflowList").addEventListener("focusin", event => {
+    const picker = event.target.closest(".badgerAccountPickerInput");
+    if (!picker) return;
+    ensureCustomerAccountIndex()
+      .then(() => filterBadgerAccountPicker(picker.value))
+      .catch(error => { $("customerWorkflowStatus").textContent = error?.message || "The account list could not be loaded."; });
   });
   $("closeCustomerRecordBtn").addEventListener("click", () => $("customerRecordDialog").close());
   $("customerRecordBody").addEventListener("click", event => {

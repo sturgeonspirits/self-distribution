@@ -223,11 +223,15 @@ test("Badger invoice links are staff-scoped and ledger matching stays account-ba
   const page = await readFile(new URL("index.html", root), "utf8");
   assert.match(source, /"linkBadgerInvoice"/);
   assert.match(source, /\["linkBadgerInvoice", "orders"\]/);
-  assert.match(source, /"searchCustomerAccounts"/);
-  assert.match(source, /\["searchCustomerAccounts", "orders"\]/);
+  assert.doesNotMatch(source, /searchCustomerAccounts/);
+  assert.match(source, /"customerAccountIndex"/);
+  assert.match(source, /\["customerAccountIndex", "orders"\]/);
   assert.match(script, /const BADGER_INVOICE_LINKS_SHEET_NAME = "Badger Invoice Links"/);
   assert.match(script, /function apiLinkBadgerInvoice_\(p\)/);
-  assert.match(script, /function apiSearchCustomerAccounts_\(p\)/);
+  assert.doesNotMatch(script, /apiSearchCustomerAccounts_/);
+  assert.match(script, /function apiGetCustomerAccountIndex_\(p\)/);
+  assert.match(script, /cachedReadPayload_\("customer_account_index"/);
+  assert.match(script, /event:"customer_account_index_cache_rebuild"/);
   const ledger = script.slice(script.indexOf("function buildCustomerAccounts_"), script.indexOf("function apiGetCustomerWorkQueue_"));
   assert.match(ledger, /const explicitInvoiceLinks = readBadgerInvoiceLinks_\(\)/);
   assert.match(ledger, /String\(explicit\?\.match_method \|\| ""\).*=== "ignored"/);
@@ -246,10 +250,15 @@ test("Badger invoice links are staff-scoped and ledger matching stays account-ba
   assert.doesNotMatch(customerRender, /if \(!records\.length\) \{[\s\S]{0,250}return;/);
   assert.ok(customerRender.indexOf("invoiceReview") < customerRender.indexOf("emptyState"));
   assert.match(page, /<datalist id="badgerAccountPicker"><\/datalist>/);
-  assert.match(page, /function searchBadgerAccounts\(query\)/);
-  assert.match(page, /action:"searchCustomerAccounts"/);
+  assert.match(page, /function ensureCustomerAccountIndex\(\)/);
+  assert.match(page, /action:"customerAccountIndex"/);
+  assert.match(page, /function filterBadgerAccountPicker\(query\)/);
+  const accountInputHandler = page.slice(page.indexOf('$("customerWorkflowList").addEventListener("input"'), page.indexOf('$("customerWorkflowList").addEventListener("focusin"'));
+  assert.match(accountInputHandler, /filterBadgerAccountPicker\(picker\.value\)/);
+  assert.doesNotMatch(accountInputHandler, /staffApi/);
   assert.match(page, /Ignore \/ not a Directory account/);
   assert.match(page, /Restore to matching/);
+  assert.match(page, /<details class="workflowCard" data-badger-ignored="true">/);
   assert.doesNotMatch(page, /customerData\.accountOptions/);
 });
 

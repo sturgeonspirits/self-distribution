@@ -8,8 +8,8 @@ Read this file before inspecting the repository or changing the application. Upd
 
 | Component | Source version | Deployment state |
 | --- | --- | --- |
-| Netlify web app and staff proxy | `2026.09.24.40-WEB` on `codex/distribution-system-foundation` / `2026.09.24.24-WEB` live | Uses a shared on-demand account picker for ledger review; deployment is pending review. |
-| Inventory API Apps Script | `2026.09.24.36` on `codex/distribution-system-foundation` / `2026.09.24.17` live | Adds safer invoice conflict, ignore, and restore handling; deployment is pending review. |
+| Netlify web app and staff proxy | `2026.09.24.41-WEB` on `codex/distribution-system-foundation` / `2026.09.24.24-WEB` live | Filters a cached account index entirely in the browser; deployment is pending review. |
+| Inventory API Apps Script | `2026.09.24.37` on `codex/distribution-system-foundation` / `2026.09.24.17` live | Caches the compact customer-account index under the normal read-cache version; deployment is pending review. |
 | Distribution Outreach Apps Script | `2026.09.24.13-APP` on `codex/work` | Signed-link rendering is committed; owner has not yet confirmed this exact version is deployed. |
 | Public customer Netlify proxy | `2026.09.18.3-WEB` | Deployed with Netlify; unchanged by the latest staff-app UI work |
 
@@ -19,7 +19,7 @@ Current remote: `https://github.com/sturgeonspirits/self-distribution.git`
 
 Latest completed changes:
 
-- Account-level Badger invoice ledger: Orders & Accounts attaches Badger Tracker invoices to the existing permanent Directory Account ID even if no inventory store is tracked. Match precedence is an explicit manual link, then one existing order link, then one unique exact business-name match. Conflicting or unmatched invoices stay in a staff review card; staff can explicitly link, ignore, or restore an invoice without changing the Badger Tracker source. The picker searches Directory business name and city on demand rather than storing the whole Directory in the work-queue cache. After deploying the Apps Script source, run `repairHubStructure()` once to create the `Badger Invoice Links` tab.
+- Account-level Badger invoice ledger: Orders & Accounts attaches Badger Tracker invoices to the existing permanent Directory Account ID even if no inventory store is tracked. Match precedence is an explicit manual link, then one existing order link, then one unique exact business-name match. Conflicting or unmatched invoices stay in a staff review card; staff can explicitly link, ignore, or restore an invoice without changing the Badger Tracker source. On first account-box focus, the app loads a compact server-cached account index once; every subsequent business/city/Account ID match is browser-only. After deploying the Apps Script source, run `repairHubStructure()` once to create the `Badger Invoice Links` tab.
 
 - Read-cache safety fixes: Hub cache entries now expire after 15 minutes in 45 KB chunks; the cache-warmer installer also creates change triggers for the Outreach and Badger spreadsheets; editor-run maintenance functions and every API write attempt invalidate the version; and the three screen Refresh buttons request a forced current read. After this Apps Script source is deployed, run `installHubReadCacheWarmer()` once to install or replace the triggers.
 
