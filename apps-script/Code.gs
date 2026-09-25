@@ -1,8 +1,11 @@
 /*********************************
  * Inventory API (JSON) for Netlify
- * App version: 2026.09.24.47
+ * App version: 2026.09.24.48
  *
  * CHANGES IN THIS VERSION
+ * - Drive response relay: when the staff proxy sends relay_id, every response is also written to a fixed Drive slot file that the proxy reads directly, bypassing the stalling web-app response handoff. Run setupDriveRelay() once.
+ *
+ * CHANGES IN 2026.09.24.47
  * - Read responses over 50 KB are sent gzip+base64 when the staff proxy asks (gz=1). The 647 KB Outreach list was stalling in Google's response handoff even though it built in ~2 seconds.
  *
  * CHANGES IN 2026.09.24.46
@@ -205,7 +208,7 @@
  * - Use only in the staging inventory backend until testing is complete.
  *********************************/
 
-const APP_VERSION = "2026.09.24.47";
+const APP_VERSION = "2026.09.24.48";
 
 const SHEET_NAMES = {
   STORES: "Stores",
@@ -743,11 +746,83 @@ function installNightlyHubStructureRepair() {
   return { message:"Nightly Hub structure repair installed." };
 }
 
-function compressedJson_(payload) {
+function compressedText_(payload) {
   const text = JSON.stringify(payload);
-  if (text.length < 50000) return ContentService.createTextOutput(text).setMimeType(ContentService.MimeType.JSON);
+  if (text.length < 50000) return text;
   const packed = Utilities.base64Encode(Utilities.gzip(Utilities.newBlob(text, "application/json")).getBytes());
-  return ContentService.createTextOutput(JSON.stringify({ ok:true, version:APP_VERSION, gzip_b64:packed })).setMimeType(ContentService.MimeType.JSON);
+  return JSON.stringify({ ok:true, version:APP_VERSION, gzip_b64:packed });
+}
+
+// ---------------------------------------------------------------------------
+// Drive response relay. Google's web-app response handoff to Netlify stalls or
+// returns 404 even when this script finishes in seconds. When the staff proxy
+// sends relay_id, the response text is ALSO written to one of a fixed set of
+// Drive "slot" files, which the proxy reads directly with a service account.
+// The proxy uses whichever copy arrives first. Nothing is executed twice.
+// Run setupDriveRelay() once; see PROJECT_STATUS.md for the Netlify settings.
+// ---------------------------------------------------------------------------
+const RELAY_SLOT_COUNT = 32;
+const RELAY_SLOT_IDS_PROPERTY = "RELAY_SLOT_IDS";
+let __RELAY_SLOT_IDS = null;
+
+// Must match relaySlotIndex() in netlify/lib/drive-relay.js exactly.
+function relaySlotIndex_(relayId) {
+  let hash = 0;
+  const text = String(relayId || "");
+  for (let index = 0; index < text.length; index += 1) hash = (Math.imul(hash, 31) + text.charCodeAt(index)) >>> 0;
+  return hash % RELAY_SLOT_COUNT;
+}
+
+function relaySlotIds_() {
+  if (__RELAY_SLOT_IDS) return __RELAY_SLOT_IDS;
+  try { __RELAY_SLOT_IDS = JSON.parse(PropertiesService.getScriptProperties().getProperty(RELAY_SLOT_IDS_PROPERTY) || "[]"); }
+  catch (_) { __RELAY_SLOT_IDS = []; }
+  return __RELAY_SLOT_IDS;
+}
+
+function relayedOutput_(e, text) {
+  const relayId = String(e?.parameter?.relay_id || "");
+  if (/^[A-Za-z0-9-]{20,80}$/.test(relayId)) {
+    const ids = relaySlotIds_();
+    if (ids.length === RELAY_SLOT_COUNT) {
+      try {
+        DriveApp.getFileById(ids[relaySlotIndex_(relayId)]).setContent(JSON.stringify({ relay_id:relayId, written_at:new Date().toISOString(), body:text }));
+      } catch (error) {
+        console.warn("Drive relay write failed: " + String(error && error.message || error));
+      }
+    }
+  }
+  return ContentService.createTextOutput(text).setMimeType(ContentService.MimeType.JSON);
+}
+
+/** Run once from the editor. Creates the relay folder, 32 slot files and a manifest. */
+function setupDriveRelay() {
+  const props = PropertiesService.getScriptProperties();
+  let ids = [];
+  try { ids = JSON.parse(props.getProperty(RELAY_SLOT_IDS_PROPERTY) || "[]"); } catch (_) {}
+  let folder;
+  if (ids.length === RELAY_SLOT_COUNT) {
+    folder = DriveApp.getFileById(ids[0]).getParents().next();
+  } else {
+    folder = DriveApp.createFolder("Distribution Hub Relay (do not edit)");
+    ids = [];
+    for (let index = 0; index < RELAY_SLOT_COUNT; index += 1) {
+      ids.push(folder.createFile(`relay-slot-${String(index).padStart(2, "0")}.json`, "{}", "application/json").getId());
+    }
+    props.setProperty(RELAY_SLOT_IDS_PROPERTY, JSON.stringify(ids));
+  }
+  const manifestName = "relay-manifest.json";
+  const existing = folder.getFilesByName(manifestName);
+  const manifest = existing.hasNext() ? existing.next() : folder.createFile(manifestName, "{}", "application/json");
+  manifest.setContent(JSON.stringify({ slots:ids }));
+  __RELAY_SLOT_IDS = ids;
+  const result = {
+    folder_url:folder.getUrl(),
+    RELAY_MANIFEST_FILE_ID:manifest.getId(),
+    next_steps:"Share this folder (Viewer) with the service account email, then set GOOGLE_SA_CLIENT_EMAIL, GOOGLE_SA_PRIVATE_KEY and RELAY_MANIFEST_FILE_ID in Netlify.",
+  };
+  Logger.log(JSON.stringify(result, null, 2));
+  return result;
 }
 
 function json_(obj) {
@@ -848,10 +923,10 @@ function handle_(e, body) {
     const payload = Object.assign({ ok:true, version:APP_VERSION }, res);
     // Large read responses stall intermittently in Google's web-app response handoff.
     // When the staff proxy asks (gz=1), send big payloads gzip+base64; the proxy unpacks them.
-    if (READ_ACTIONS.has(action) && String(e?.parameter?.gz || "") === "1") return compressedJson_(payload);
-    return json_(payload);
+    const text = READ_ACTIONS.has(action) && String(e?.parameter?.gz || "") === "1" ? compressedText_(payload) : JSON.stringify(payload);
+    return relayedOutput_(e, text);
   } catch (err) {
-    return json_({ ok:false, version:APP_VERSION, error: err?.message ? err.message : String(err) });
+    return relayedOutput_(e, JSON.stringify({ ok:false, version:APP_VERSION, error: err?.message ? err.message : String(err) }));
   } finally {
     if (invalidateReadCache) {
       try { bumpReadCacheVersion_(); }

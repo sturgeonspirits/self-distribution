@@ -8,8 +8,8 @@ Read this file before inspecting the repository or changing the application. Upd
 
 | Component | Source version | Deployment state |
 | --- | --- | --- |
-| Netlify web app and staff proxy | `2026.09.24.47-WEB` on `codex/distribution-system-foundation` / `2026.09.24.46-WEB` live | `.46-WEB` (compressed reads, read retry, real error messages) was deployed 2026-09-25. `.47-WEB` adds instant busy feedback (top progress bar, dimmed pressed button) and a "Loading campaigns…" status; deployment is pending. |
-| Inventory API Apps Script | `2026.09.24.47` on `codex/distribution-system-foundation` / `2026.09.24.46` live | Compresses read responses over 50 KB when asked (`gz=1`). Deploy together with `.46-WEB`; the order does not matter, because uncompressed responses still work. |
+| Netlify web app and staff proxy | `2026.09.24.48-WEB` on `codex/distribution-system-foundation` / `2026.09.24.46-WEB` live | `.47-WEB` busy feedback and `.48-WEB` Drive response relay are pending. The relay stays off until the three relay variables are set (see `docs/drive-relay-setup.md`). |
+| Inventory API Apps Script | `2026.09.24.48` on `codex/distribution-system-foundation` / `2026.09.24.47` live | `.47` (compressed reads) was deployed 2026-09-25. `.48` writes every response to a Drive relay slot when the proxy sends `relay_id`; run `setupDriveRelay()` once. Deployment is pending. |
 | Distribution Outreach Apps Script | `2026.09.24.13-APP` on `codex/work` | Signed-link rendering is committed; owner has not yet confirmed this exact version is deployed. |
 | Public customer Netlify proxy | `2026.09.18.3-WEB` | Deployed with Netlify; unchanged by the latest staff-app UI work |
 
@@ -18,6 +18,8 @@ Current Git branch: `codex/distribution-system-foundation`
 Current remote: `https://github.com/sturgeonspirits/self-distribution.git`
 
 Latest completed changes:
+
+- Drive response relay (`netlify/lib/drive-relay.js`, `relayedOutput_` in Code.gs). Executions and Netlify logs on 2026-09-25 showed Apps Script finishing reads and writes in 1–11 s, while Google's web-app response handoff still stalled past 25 s or returned an HTML 404 (including Approve). Compression and read retry did not fix it. Now the staff proxy sends each request once with a `relay_id`. Apps Script also writes the response text into one of 32 fixed Drive slot files (the slot is chosen by a hash that is identical on both sides and tested). The proxy reads the slot through the Drive API with a read-only service account, polling from 0.9 s, and returns whichever valid JSON arrives first (deadline 23.5 s). HTML error pages never win. Setup: `docs/drive-relay-setup.md`. Netlify variables: `GOOGLE_SA_CLIENT_EMAIL`, `GOOGLE_SA_PRIVATE_KEY`, `RELAY_MANIFEST_FILE_ID`. Script Property `RELAY_SLOT_IDS` is written by `setupDriveRelay()`.
 
 - Busy feedback: `staffApiGet`/`staffApiPost` run through `withApiBusy`, which shows a thin progress bar at the top of the page while any request is in flight. It also dims and disables the button pressed within the previous 1.5 s until its request finishes, so slow responses never look like missed clicks or invite double presses. The Campaigns tab shows "Loading campaigns…" while its list loads.
 

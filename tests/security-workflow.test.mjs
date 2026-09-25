@@ -2,7 +2,7 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 import { readFile } from "node:fs/promises";
-import { createHmac } from "node:crypto";
+import { randomUUID, createHmac } from "node:crypto";
 
 const root = new URL("../", import.meta.url);
 
@@ -12,6 +12,9 @@ async function loadFunction(path, suffix = Math.random()) {
     const auth = await readFile(new URL("netlify/functions/auth.js", root), "utf8");
     const authUrl = `data:text/javascript;base64,${Buffer.from(auth).toString("base64")}`;
     source = source.replace('from "./auth.js";', `from "${authUrl}";`);
+    const relay = await readFile(new URL("netlify/lib/drive-relay.js", root), "utf8");
+    const relayUrl = `data:text/javascript;base64,${Buffer.from(relay).toString("base64")}`;
+    source = source.replace('from "../lib/drive-relay.js";', `from "${relayUrl}";`);
   }
   return import(`data:text/javascript;base64,${Buffer.from(source).toString("base64")}#${suffix}`);
 }
@@ -164,6 +167,81 @@ test("campaign snapshots use one controlled upstream attempt", async () => {
   assert.equal(calls, 1);
   assert.equal(result.statusCode, 500);
   assert.match(JSON.parse(result.body).error, /campaign creation connection failed/i);
+});
+
+test("Drive relay slot hashing matches between Apps Script and Netlify", async () => {
+  const script = await readFile(new URL("apps-script/Code.gs", root), "utf8");
+  const gsSource = script.slice(script.indexOf("function relaySlotIndex_"), script.indexOf("function relaySlotIds_"));
+  const gsIndex = new Function("RELAY_SLOT_COUNT", `${gsSource}; return relaySlotIndex_;`)(32);
+  const relay = await readFile(new URL("netlify/lib/drive-relay.js", root), "utf8");
+  const { relaySlotIndex } = await import(`data:text/javascript;base64,${Buffer.from(relay).toString("base64")}`);
+  for (let index = 0; index < 200; index += 1) {
+    const id = randomUUID();
+    assert.equal(gsIndex(id), relaySlotIndex(id));
+  }
+});
+
+async function relayHandler(suffix, directBehavior) {
+  const { generateKeyPairSync } = await import("node:crypto");
+  const { privateKey } = generateKeyPairSync("rsa", { modulusLength:2048 });
+  process.env.APPS_SCRIPT_URL = "https://script.google.test/exec";
+  process.env.API_KEY = "backend-key";
+  process.env.APP_SESSION_SECRET = "test-session-secret-that-is-long-enough";
+  process.env.STAFF_ROLES_JSON = '{"staff@sturgeonspirits.com":"staff"}';
+  process.env.GOOGLE_SA_CLIENT_EMAIL = "relay@example.iam.gserviceaccount.com";
+  process.env.GOOGLE_SA_PRIVATE_KEY = privateKey.export({ type:"pkcs8", format:"pem" }).replace(/\n/g, "\\n");
+  process.env.RELAY_MANIFEST_FILE_ID = "manifest-id";
+  const slots = Array.from({ length:32 }, (_, index) => `slot-${index}`);
+  const calls = { apps:0, relayId:"" };
+  const relayed = { ok:true, source:"relay", records:[1, 2, 3] };
+  globalThis.fetch = async (url, options = {}) => {
+    const text = String(url);
+    if (text.startsWith("https://oauth2.googleapis.com/token")) return new Response(JSON.stringify({ access_token:"token", expires_in:3600 }), { status:200 });
+    if (text.includes("/drive/v3/files/manifest-id")) return new Response(JSON.stringify({ slots }), { status:200 });
+    if (text.includes("/drive/v3/files/slot-")) {
+      return new Response(JSON.stringify(calls.relayId ? { relay_id:calls.relayId, body:JSON.stringify(relayed) } : {}), { status:200 });
+    }
+    calls.apps += 1;
+    calls.relayId = new URL(text).searchParams.get("relay_id") || "";
+    return directBehavior(options);
+  };
+  const { handler } = await loadFunction("netlify/functions/inventory.js", suffix);
+  return { handler, calls, relayed };
+}
+
+function clearRelayEnv() {
+  delete process.env.GOOGLE_SA_CLIENT_EMAIL;
+  delete process.env.GOOGLE_SA_PRIVATE_KEY;
+  delete process.env.RELAY_MANIFEST_FILE_ID;
+}
+
+test("Drive relay answers when Google's direct response stalls or returns an HTML 404", async () => {
+  try {
+    const stalled = await relayHandler("relay-stall", options => new Promise((_, reject) => options.signal.addEventListener("abort", () => reject(Object.assign(new Error("aborted"), { name:"AbortError" })))));
+    const result = await stalled.handler(event("outreachDashboard", { method:"GET", session:staffSession() }));
+    assert.equal(stalled.calls.apps, 1);
+    assert.equal(result.statusCode, 200);
+    assert.deepEqual(JSON.parse(result.body), stalled.relayed);
+
+    const htmlError = await relayHandler("relay-404", async () => new Response("<html><title>Page Not Found</title></html>", { status:404, headers:{ "content-type":"text/html" } }));
+    const post = await htmlError.handler(event("approveOutreachCampaign", { method:"POST", session:staffSession(), body:{ campaign_id:"CMP-1", audience_checksum:"x", recipient_count:1 } }));
+    assert.equal(htmlError.calls.apps, 1, "a write is sent to Apps Script exactly once");
+    assert.equal(post.statusCode, 200);
+    assert.deepEqual(JSON.parse(post.body), htmlError.relayed);
+  } finally {
+    clearRelayEnv();
+  }
+});
+
+test("Drive relay still uses a fast direct response", async () => {
+  try {
+    const fast = await relayHandler("relay-fast", async () => new Response(JSON.stringify({ ok:true, source:"direct" }), { status:200, headers:{ "content-type":"application/json" } }));
+    const result = await fast.handler(event("outreachCampaigns", { method:"GET", session:staffSession() }));
+    assert.equal(result.statusCode, 200);
+    assert.equal(JSON.parse(result.body).source, "direct");
+  } finally {
+    clearRelayEnv();
+  }
 });
 
 test("every staff request shows busy feedback", async () => {
@@ -321,7 +399,7 @@ test("staff invoice links teach customer-name matching, but ignores do not", asy
 test("large read responses are compressed and reads retry within the proxy limit", async () => {
   const script = await readFile(new URL("apps-script/Code.gs", root), "utf8");
   const proxy = await readFile(new URL("netlify/functions/inventory.js", root), "utf8");
-  assert.match(script, /if \(READ_ACTIONS\.has\(action\) && String\(e\?\.parameter\?\.gz \|\| ""\) === "1"\) return compressedJson_\(payload\)/);
+  assert.match(script, /READ_ACTIONS\.has\(action\) && String\(e\?\.parameter\?\.gz \|\| ""\) === "1" \? compressedText_\(payload\)/);
   assert.match(script, /Utilities\.gzip\(/);
   assert.match(proxy, /import \{ gunzipSync \} from "node:zlib";/);
   assert.match(proxy, /url\.searchParams\.set\("gz", "1"\)/);

@@ -1,8 +1,9 @@
-// App version: 2026.09.24.47-WEB
+// App version: 2026.09.24.48-WEB
 import { gunzipSync } from "node:zlib";
 import { requireStaffSession } from "./auth.js";
+import { fetchWithDriveRelay, relayConfig } from "../lib/drive-relay.js";
 
-const APP_VERSION = "2026.09.24.47-WEB";
+const APP_VERSION = "2026.09.24.48-WEB";
 const STAFF_ACTIONS = new Set([
   "outreachDashboard",
   "outreachRecord",
@@ -102,24 +103,42 @@ async function fetchAppsScript(url, options = {}, policy = {}) {
       console.warn("Inventory API upstream attempt failed", { attempt, error:String(error) });
     }
   }
+  throw upstreamFailure(policy, lastError, attempts);
+}
+
+function upstreamFailure(policy, lastError, attempts) {
   if (policy.send) {
-    throw new Error(lastError?.name === "AbortError"
+    return new Error(lastError?.name === "AbortError"
       ? "Zoho did not confirm the send before the connection timed out. The outcome is unknown; check Activity Log and Zoho before retrying."
       : `The send connection failed before Zoho confirmation: ${String(lastError)}`);
   }
   if (policy.snapshot) {
-    throw new Error(lastError?.name === "AbortError"
+    return new Error(lastError?.name === "AbortError"
       ? "Campaign creation did not finish before the connection timed out. Do not create another campaign yet; refresh Campaigns after one minute to check whether the snapshot completed."
       : `Campaign creation connection failed: ${String(lastError)}`);
   }
   if (policy.campaignRead) {
-    throw new Error(lastError?.name === "AbortError"
+    return new Error(lastError?.name === "AbortError"
       ? "Campaign review took too long to load. The campaign remains unchanged; wait a minute and refresh Campaigns."
       : `Campaign review connection failed: ${String(lastError)}`);
   }
-  throw new Error(lastError?.name === "AbortError"
+  return new Error(lastError?.name === "AbortError"
     ? `Google Sheets took too long to answer after ${attempts} ${attempts === 1 ? "attempt" : "attempts"}.`
     : `Inventory API connection failed after ${attempts} ${attempts === 1 ? "attempt" : "attempts"}: ${String(lastError)}`);
+}
+
+// When the Drive relay is configured, send the request once and take whichever arrives
+// first: Google's normal response or the relay copy in Drive. Otherwise use the old path.
+const RELAY_DEADLINE_MS = 23500;
+async function fetchUpstream(url, options, policy = {}) {
+  const config = relayConfig();
+  if (!config.enabled) return fetchAppsScript(url, options, policy);
+  try {
+    return await fetchWithDriveRelay(url, options, { deadlineMs:RELAY_DEADLINE_MS, config });
+  } catch (error) {
+    console.warn("Inventory API relay request failed", { error:String(error) });
+    throw upstreamFailure(policy, error, 1);
+  }
 }
 
 function nonJsonUpstreamDetail(upstream, text) {
@@ -235,7 +254,7 @@ export async function handler(event) {
 
       // Reads are safe to repeat. The server usually answers in 2-8 s, but Google's response
       // handoff sometimes stalls; give each attempt 11.5 s and try twice inside the ~26 s limit.
-      const resp = await fetchAppsScript(url.toString(), { method:"GET", headers:{ "Accept":"application/json" } }, {
+      const resp = await fetchUpstream(url.toString(), { method:"GET", headers:{ "Accept":"application/json" } }, {
         attempts:READ_UPSTREAM_ATTEMPTS,
         timeoutMs:READ_UPSTREAM_TIMEOUT_MS,
         campaignRead:CAMPAIGN_READ_ACTIONS.has(action),
@@ -254,7 +273,7 @@ export async function handler(event) {
 
     const sendRequest = SEND_ACTIONS.has(action);
     const snapshotRequest = SNAPSHOT_ACTIONS.has(action);
-    const resp = await fetchAppsScript(postUrl, {
+    const resp = await fetchUpstream(postUrl, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify(body),
