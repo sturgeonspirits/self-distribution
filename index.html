@@ -1,10 +1,10 @@
 <!doctype html>
-<!-- App version: 2026.09.24.36-WEB -->
+<!-- App version: 2026.09.24.37-WEB -->
 <html>
 <head>
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover"/>
-  <meta name="app-version" content="2026.09.24.36-WEB" />
+  <meta name="app-version" content="2026.09.24.37-WEB" />
   <meta name="theme-color" content="#536f77" />
   <link rel="icon" href="/assets/distribution-hub-icon.svg" type="image/svg+xml" />
   <link rel="manifest" href="/site.webmanifest" />
@@ -2530,7 +2530,7 @@
 
   <footer style="max-width:1200px;margin:18px auto 120px;padding:0 12px;text-align:center;color:#6b7280;font-size:12px;">
     Designed by <a href="https://scriptspirit.dev" target="_blank" rel="noopener noreferrer" style="color:#1d4ed8;text-decoration:none;font-weight:700;">Script Spirit</a>
-<span id="appVersionFooter"> • Version 2026.09.24.36-WEB</span>
+<span id="appVersionFooter"> • Version 2026.09.24.37-WEB</span>
   </footer>
 
 
@@ -2553,8 +2553,17 @@
   window.addEventListener("unhandledrejection", e => console.error("Unhandled promise rejection:", e.reason));
   window.addEventListener("error", e => console.error("Unhandled error:", e.error || e.message));
   const $ = (id) => document.getElementById(id);
-  const APP_VERSION = "2026.09.24.36-WEB";
+  const APP_VERSION = "2026.09.24.37-WEB";
   $("appVersionFooter").textContent = ` • Version ${APP_VERSION}`;
+  function screenCacheKey(screen){ return `distribution_hub:${APP_VERSION}:${staffSession?.email || "unknown"}:${screen}`; }
+  function readScreenCache(screen){
+    try { const value = JSON.parse(localStorage.getItem(screenCacheKey(screen)) || "null"); return value?.payload ? value : null; }
+    catch (_) { return null; }
+  }
+  function writeScreenCache(screen, payload){
+    try { localStorage.setItem(screenCacheKey(screen), JSON.stringify({ saved_at:Date.now(), payload:payload })); } catch (_) {}
+  }
+  function cachedTimeLabel(cache){ return new Date(cache?.saved_at || Date.now()).toLocaleTimeString([], { hour:"numeric", minute:"2-digit" }); }
 
   let cache = { stores: [], lines: [] };
   let countState = {};
@@ -2980,12 +2989,18 @@
 
   async function loadCustomerWorkQueue(){
     const requestId = ++customerWorkQueueLoadRequest;
-    $("customerWorkflowStatus").textContent = "Loading customer work...";
+    const cached = !customerLoaded && readScreenCache("customer-work");
+    if (cached) {
+      customerData = { accounts:cached.payload.accounts || [], applications:cached.payload.applications || [], orders:cached.payload.orders || [], summary:cached.payload.summary || {} };
+      customerLoaded = true; showCustomerAccessState(); renderCustomerWorkflow();
+      $("customerWorkflowStatus").textContent = `Updating… showing data from ${cachedTimeLabel(cached)}.`;
+    } else $("customerWorkflowStatus").textContent = "Loading customer work...";
     let result;
     try {
       result = await staffApiGet({ action:"customerWorkQueue" });
     } catch (error) {
       if (requestId !== customerWorkQueueLoadRequest) return;
+      if (cached) { $("customerWorkflowStatus").textContent = `Couldn't refresh; showing data from ${cachedTimeLabel(cached)}. Click Refresh to retry.`; return; }
       throw error;
     }
     if (requestId !== customerWorkQueueLoadRequest) return;
@@ -2997,10 +3012,11 @@
       summary:result.summary || {},
     };
     customerLoaded = true;
+    writeScreenCache("customer-work", result);
     showCustomerAccessState();
     renderCustomerWorkflow();
     const elapsed = Number(result.performance?.total_ms || 0);
-    $("customerWorkflowStatus").textContent = `Updated ${new Date().toLocaleTimeString([], { hour:"numeric", minute:"2-digit" })}${elapsed ? ` in ${(elapsed / 1000).toFixed(1)}s` : ""}.`;
+    $("customerWorkflowStatus").textContent = `Updated ${new Date().toLocaleTimeString([], { hour:"numeric", minute:"2-digit" })}${elapsed ? ` in ${(elapsed / 1000).toFixed(1)}s` : ""}${result.performance?.cache_hit ? " (server cache)" : ""}.`;
   }
 
   function findCustomerRecord(element){
@@ -3299,10 +3315,17 @@
   }
 
   async function loadOutreachCampaigns(){
-    const res = await staffApiGet({ action:"outreachCampaigns" });
+    const cached = !(outreachData.campaigns || []).length && readScreenCache("campaigns");
+    if (cached) { outreachData.campaigns = cached.payload.campaigns || []; renderOutreach(); setOutreachStatus(`Updating campaigns… showing data from ${cachedTimeLabel(cached)}.`); }
+    let res;
+    try { res = await staffApiGet({ action:"outreachCampaigns" }); }
+    catch (error) { if (cached) { setOutreachStatus(`Couldn't refresh campaigns; showing data from ${cachedTimeLabel(cached)}. Click Refresh to retry.`); return; } throw error; }
     if (!res.ok) throw new Error(res.error || "Campaigns could not be loaded.");
     outreachData.campaigns = res.campaigns || [];
+    writeScreenCache("campaigns", res);
     renderOutreach();
+    const elapsed = Number(res.performance?.total_ms || 0);
+    setOutreachStatus(`Campaigns updated ${new Date().toLocaleTimeString([], { hour:"numeric", minute:"2-digit" })}${elapsed ? ` in ${(elapsed / 1000).toFixed(1)}s` : ""}.`);
   }
 
   function renderOutreachCampaigns(){
@@ -3459,7 +3482,7 @@
       const res = await staffApiPost({ action:"recalculateOutreachMiles", staff_name:staffName });
       if (!res.ok) throw new Error(res.error || "Mileage recalculation failed.");
       $("recalculateOutreachMilesStatus").textContent = `${Number(res.updated || 0)} updated · ${Number(res.manual_kept || 0)} manual kept · ${Number(res.no_zip || 0)} no ZIP · ${Number(res.unknown_zip || 0)} unknown ZIP.`;
-      await loadOutreach();
+      loadOutreach().catch(() => { $("recalculateOutreachMilesStatus").textContent += " List refresh failed; click Refresh."; });
     } catch (error) {
       $("recalculateOutreachMilesStatus").textContent = error.message || String(error);
     } finally {
@@ -3943,39 +3966,37 @@
     setOutreachStatus(`Updated ${new Date().toLocaleTimeString([], { hour:"numeric", minute:"2-digit" })}.`);
   }
 
-  async function loadOutreach(){
-    const requestId = ++outreachLoadRequest;
-    setOutreachStatus("Loading outreach...");
-    let res;
-    try {
-      res = await staffApiGet({ action:"outreachDashboard", slim:1 });
-    } catch (error) {
-      if (requestId !== outreachLoadRequest) return;
-      throw error;
-    }
-    if (requestId !== outreachLoadRequest) return;
-    if (!res.ok) throw new Error(res.error || "Outreach failed to load.");
+  function applyOutreachPayload(res){
     const directory = res.directory || [];
     const recordsBySourceRow = new Map(directory.map(record => [Number(record.source_row), record]));
-    const resolveSlimRows = rows => (rows || []).map(row => {
-      if (row && typeof row === "object") return row;
-      return recordsBySourceRow.get(Number(row)) || null;
-    }).filter(Boolean);
-    outreachData = {
-      today: resolveSlimRows(res.today),
-      directory,
-      sent: resolveSlimRows(res.sent),
-      newsletter: outreachData.newsletter || [],
-      campaigns: outreachData.campaigns || [],
-      summary: res.summary || { due_today:0, total_businesses:0, waiting:0, weekly_ready:0 },
-    };
+    const resolveSlimRows = rows => (rows || []).map(row => row && typeof row === "object" ? row : recordsBySourceRow.get(Number(row)) || null).filter(Boolean);
+    outreachData = { today:resolveSlimRows(res.today), directory, sent:resolveSlimRows(res.sent), newsletter:outreachData.newsletter || [], campaigns: outreachData.campaigns || [], summary:res.summary || { due_today:0, total_businesses:0, waiting:0, weekly_ready:0 } };
     outreachIsMock = !!res.is_mock;
     outreachLoaded = true;
     if (res.is_mock) outreachNewsletterLoaded = true;
     applyOutreachSendStatus(res);
     renderOutreach();
+  }
+
+  async function loadOutreach(){
+    const requestId = ++outreachLoadRequest;
+    const cached = !outreachLoaded && readScreenCache("outreach");
+    if (cached) { applyOutreachPayload(cached.payload); setOutreachStatus(`Updating… showing data from ${cachedTimeLabel(cached)}.`); }
+    else setOutreachStatus("Loading outreach...");
+    let res;
+    try {
+      res = await staffApiGet({ action:"outreachDashboard", slim:1 });
+    } catch (error) {
+      if (requestId !== outreachLoadRequest) return;
+      if (cached) { setOutreachStatus(`Couldn't refresh; showing data from ${cachedTimeLabel(cached)}. Click Refresh to retry.`); return; }
+      throw error;
+    }
+    if (requestId !== outreachLoadRequest) return;
+    if (!res.ok) throw new Error(res.error || "Outreach failed to load.");
+    applyOutreachPayload(res);
+    writeScreenCache("outreach", res);
     const elapsed = Number(res.performance?.total_ms || 0);
-    setOutreachStatus(`Updated ${new Date().toLocaleTimeString([], { hour:"numeric", minute:"2-digit" })}${elapsed ? ` in ${(elapsed / 1000).toFixed(1)}s` : ""}.`);
+    setOutreachStatus(`Updated ${new Date().toLocaleTimeString([], { hour:"numeric", minute:"2-digit" })}${elapsed ? ` in ${(elapsed / 1000).toFixed(1)}s` : ""}${res.performance?.cache_hit ? " (server cache)" : ""}.`);
     if (!res.is_mock) loadOutreachSendStatus().catch(error => {
       setOutreachStatus(`Outreach loaded. Sending-status check failed: ${error.message || String(error)}`);
     });
@@ -4879,7 +4900,7 @@
       const result = await staffApiPost({ action:"importOutreachBusinesses", staff_name:staffName, source_name:file?.name || "CSV import", rows:pendingBusinessImport });
       if (!result.ok) throw new Error(result.error || "Import failed.");
       $("importBusinessesStatus").textContent = result.message;
-      await loadOutreach();
+      loadOutreach().catch(() => { $("importBusinessesStatus").textContent += " List refresh failed; click Refresh."; });
       toast("Business import complete");
     } catch (error) {
       $("importBusinessesStatus").textContent = error.message || String(error);
@@ -5686,12 +5707,21 @@
   }
 
   async function loadStore(storeId){
-    setStatus("Loading inventory...");
-    const res = await staffApiGet({ action:"initData", store_id: storeId });
+    const cached = readScreenCache(`inventory-store:${storeId}`);
+    if (cached?.payload?.lines) {
+      cache.stores = cached.payload.stores || cache.stores;
+      cache.lines = cached.payload.lines || [];
+      render();
+      setStatus(`Updating… showing data from ${cachedTimeLabel(cached)}.`);
+    } else setStatus("Loading inventory...");
+    let res;
+    try { res = await staffApiGet({ action:"initData", store_id: storeId }); }
+    catch (error) { if (cached) { setStatus(`Couldn't refresh; showing data from ${cachedTimeLabel(cached)}. Click Refresh to retry.`); return; } throw error; }
     if (!res.ok) throw new Error("Load failed.");
 
     cache.stores = res.stores || cache.stores;
     cache.lines = (res.lines || []).sort((a,b) => String(a.sku_name || "").localeCompare(String(b.sku_name || "")));
+    writeScreenCache(`inventory-store:${storeId}`, res);
     updateStoreContactsUi();
 
     const keep = {};
@@ -5704,14 +5734,20 @@
     savePrefs();
     render();
     if (activeView === "sold") await loadSalesSinceCount(storeId);
-    else setStatus(`Loaded ${cache.lines.length} items.`);
+    else setStatus(`Updated ${new Date().toLocaleTimeString([], { hour:"numeric", minute:"2-digit" })}${res.performance?.total_ms ? ` in ${(Number(res.performance.total_ms) / 1000).toFixed(1)}s` : ""}${res.performance?.cache_hit ? " (server cache)" : ""}.`);
   }
 
   async function loadStartup(){
     loadPrefs();
-    setStatus("Loading stores...");
-    const res = await staffApiGet({ action:"initData" });
+    const cached = readScreenCache("inventory-stores");
+    if (cached?.payload?.stores) { cache.stores = cached.payload.stores; renderStores(cache.stores); setStatus(`Updating… showing stores from ${cachedTimeLabel(cached)}.`); }
+    else setStatus("Loading stores...");
+    let res;
+    try { res = await staffApiGet({ action:"initData" }); }
+    catch (error) { if (cached) { inventoryLoaded = true; showInventoryAccessState(); setStatus(`Couldn't refresh; showing data from ${cachedTimeLabel(cached)}. Click Refresh to retry.`); return; } throw error; }
+    if (!res.ok) throw new Error("Store list could not be loaded.");
     cache.stores = res.stores || [];
+    writeScreenCache("inventory-stores", res);
     renderStores(cache.stores);
 
     const first = $("storeSelect").value || cache.stores[0]?.store_id || "";
@@ -5725,9 +5761,9 @@
 
     $("storeSelect").value = first;
     await loadStore(first);
-    await loadManagerGrid();
     inventoryLoaded = true;
     showInventoryAccessState();
+    loadManagerGrid().catch(error => console.warn("Manager grid refresh failed", error));
   }
 
   function resetCounts(){

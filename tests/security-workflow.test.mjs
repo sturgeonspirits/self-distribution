@@ -226,6 +226,19 @@ test("engagement clicks retain identity and scanner protection", async () => {
   assert.match(script, /function apiBackfillEngagementDetails_/);
 });
 
+test("core Hub read paths use versioned cache fallbacks and timing metadata", async () => {
+  const script = await readFile(new URL("apps-script/Code.gs", root), "utf8");
+  const page = await readFile(new URL("index.html", root), "utf8");
+  assert.match(script, /function cachedReadPayload_/);
+  assert.match(script, /hub_read:.*scope.*version/);
+  assert.match(script, /function warmHubReadCaches/);
+  assert.match(script, /everyMinutes\(10\)/);
+  assert.match(script, /function campaignRecipientSummaryRows_/);
+  assert.match(page, /function readScreenCache/);
+  assert.match(page, /Couldn't refresh; showing data from/);
+  assert.match(page, /writeScreenCache\("outreach"/);
+});
+
 test("public customer proxy remains narrowly allowlisted", async () => {
   const { handler } = await loadFunction("netlify/functions/customer.js", "public-regression");
   process.env.APPS_SCRIPT_URL = "https://example.test/exec";

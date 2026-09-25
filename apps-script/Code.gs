@@ -1,6 +1,10 @@
 /*********************************
  * Inventory API (JSON) for Netlify
- * App version: 2026.09.24.31
+ * App version: 2026.09.24.32
+ *
+ * CHANGES IN THIS VERSION
+ * - Added versioned, chunked read caching and a daytime cache warmer for core Hub load paths.
+ * - Added stage timing metadata to all primary staff read responses.
  *
  * CHANGES IN THIS VERSION
  * - Added campaign recipient search, filters, sorting, and batched exclusion support.
@@ -149,7 +153,7 @@
  * - Use only in the staging inventory backend until testing is complete.
  *********************************/
 
-const APP_VERSION = "2026.09.24.31";
+const APP_VERSION = "2026.09.24.32";
 
 const SHEET_NAMES = {
   STORES: "Stores",
@@ -191,6 +195,10 @@ const ACCOUNT_ID_HEADER = "Account ID";
 const HUB_MIGRATION_STATUS_KEY = "inventory_migration_status";
 const HUB_MIGRATION_ACTIVE = "ACTIVE";
 const ORDER_CATALOG_SOURCE = "SHEETS"; // Toast remains disabled until a reviewed integration is configured.
+const READ_CACHE_VERSION_KEY = "hub_read_cache_version";
+const READ_CACHE_TTL_SECONDS = 21600;
+const READ_CACHE_CHUNK_SIZE = 90000;
+const READ_ACTIONS = new Set(["initData", "listSkus", "managerGrid", "salesSinceCount", "outreachDashboard", "outreachRecord", "outreachSendStatus", "outreachNewsletterContacts", "outreachCampaigns", "outreachCampaign", "previewOutreachCampaign", "customerWorkQueue", "hubSystemStatus"]);
 
 let __OPERATIONAL_SS = null;
 let __OUTREACH_SS = null;
@@ -198,6 +206,65 @@ let __HUB_INVENTORY_ACTIVE = null;
 let __OUTREACH_CAMPAIGN_SETTINGS = null;
 let __ZIP_CENTROID_MAP = null;
 let __LEGACY_PILOT_SENT_BY_EMAIL = null;
+
+function readCacheVersion_() {
+  return PropertiesService.getScriptProperties().getProperty(READ_CACHE_VERSION_KEY) || "1";
+}
+
+function bumpReadCacheVersion_() {
+  const properties = PropertiesService.getScriptProperties();
+  const next = Number(properties.getProperty(READ_CACHE_VERSION_KEY) || "1") + 1;
+  properties.setProperty(READ_CACHE_VERSION_KEY, String(next));
+  return String(next);
+}
+
+function cachedReadPayload_(scope, build, bypass) {
+  const startedAt = Date.now();
+  const version = readCacheVersion_();
+  const cache = CacheService.getScriptCache();
+  const key = `hub_read:${scope}:${version}`;
+  if (!bypass) {
+    try {
+      const meta = JSON.parse(cache.get(`${key}:meta`) || "null");
+      if (meta && Number.isInteger(meta.parts) && meta.parts > 0 && meta.parts <= 20) {
+        const text = Array.from({ length:meta.parts }, (_, index) => cache.get(`${key}:${index}`)).join("");
+        if (text) {
+          const payload = JSON.parse(text);
+          payload.performance = Object.assign({}, payload.performance || {}, { total_ms:Date.now() - startedAt, cache_hit:true, stages:{ cache_read_ms:Date.now() - startedAt } });
+          return payload;
+        }
+      }
+    } catch (error) { console.warn("Read cache miss: " + String(error && error.message || error)); }
+  }
+  const payload = build();
+  const totalMs = Date.now() - startedAt;
+  payload.performance = Object.assign({}, payload.performance || {}, { total_ms:totalMs, cache_hit:false, stages:Object.assign({}, payload.performance?.stages || {}, { cache_build_ms:totalMs }) });
+  try {
+    const text = JSON.stringify(payload);
+    const parts = Math.ceil(text.length / READ_CACHE_CHUNK_SIZE);
+    if (parts > 0 && parts <= 20) {
+      for (let index = 0; index < parts; index += 1) cache.put(`${key}:${index}`, text.slice(index * READ_CACHE_CHUNK_SIZE, (index + 1) * READ_CACHE_CHUNK_SIZE), READ_CACHE_TTL_SECONDS);
+      cache.put(`${key}:meta`, JSON.stringify({ parts:parts }), READ_CACHE_TTL_SECONDS);
+    }
+  } catch (error) { console.warn("Read cache write skipped: " + String(error && error.message || error)); }
+  return payload;
+}
+
+function warmHubReadCaches() {
+  const hour = Number(Utilities.formatDate(new Date(), Session.getScriptTimeZone(), "H"));
+  if (hour < 7 || hour >= 21) return { message:"Skipped outside 7am–9pm." };
+  cachedReadPayload_("outreach_slim", () => apiGetOutreachDashboard_({ slim:"1", _cache_bypass:true }));
+  cachedReadPayload_("customer_work_queue", () => apiGetCustomerWorkQueue_({ _cache_bypass:true }));
+  cachedReadPayload_("inventory_stores", () => apiGetInitData_("", true));
+  return { message:"Hub read caches warmed.", version:readCacheVersion_() };
+}
+
+function installHubReadCacheWarmer() {
+  const handler = "warmHubReadCaches";
+  ScriptApp.getProjectTriggers().filter(trigger => trigger.getHandlerFunction() === handler).forEach(trigger => ScriptApp.deleteTrigger(trigger));
+  ScriptApp.newTrigger(handler).timeBased().everyMinutes(10).create();
+  return { message:"Ten-minute Hub read-cache warmer installed." };
+}
 
 function getLegacyInventorySs_() {
   return SpreadsheetApp.openById(LEGACY_INVENTORY_SPREADSHEET_ID);
@@ -641,13 +708,16 @@ function handle_(e, body) {
       default: throw new Error(`Unknown action: ${action}`);
     }
 
+    if (!READ_ACTIONS.has(action)) bumpReadCacheVersion_();
     return json_(Object.assign({ ok:true, version:APP_VERSION }, res));
   } catch (err) {
     return json_({ ok:false, version:APP_VERSION, error: err?.message ? err.message : String(err) });
   }
 }
 
-function apiGetInitData_(store_id) {
+function apiGetInitData_(store_id, _cache_bypass) {
+  if (!store_id && !_cache_bypass) return cachedReadPayload_("inventory_stores", () => apiGetInitData_("", true));
+  const startedAt = Date.now();
   const trackedAccountIds = inventoryTrackedAccountIds_();
   const stores = getAllRowsAsObjects_(getSheet_(SHEET_NAMES.STORES))
     .filter(s => inventoryStoreAllowed_(s, trackedAccountIds))
@@ -658,7 +728,7 @@ function apiGetInitData_(store_id) {
     }, storeContactFields_(s)))
     .sort((a,b)=>a.store_name.localeCompare(b.store_name));
 
-  if (!store_id) return { stores, lines: [] };
+  if (!store_id) return { stores, lines: [], performance:{ total_ms:Date.now() - startedAt, stages:{ stores_read_ms:Date.now() - startedAt } } };
   assertInventoryStoreAllowed_(store_id);
 
   const skuRows = getAllRowsAsObjects_(getSheet_(SHEET_NAMES.SKUS));
@@ -690,7 +760,7 @@ function apiGetInitData_(store_id) {
     })
     .sort((a,b)=>a.sku_name.localeCompare(b.sku_name));
 
-  return { stores, lines };
+  return { stores, lines, performance:{ total_ms:Date.now() - startedAt, stages:{ store_lines_read_ms:Date.now() - startedAt } } };
 }
 
 function apiListSkus_() {
@@ -2455,6 +2525,9 @@ function outreachSlimPayload_(record) {
 }
 
 function apiGetOutreachDashboard_(p) {
+  if (String(p?.slim || "") === "1" && !p?._cache_bypass) {
+    return cachedReadPayload_("outreach_slim", () => apiGetOutreachDashboard_(Object.assign({}, p, { _cache_bypass:true })));
+  }
   const slim = String(p?.slim || "") === "1";
   const startedAt = Date.now();
   const timings = {};
@@ -2532,7 +2605,7 @@ function apiGetOutreachDashboard_(p) {
     directory: slim ? directory.map(outreachSlimPayload_) : directory,
     sent: slim ? sent.slice(0, 50).map(record => record.source_row) : sent.slice(0, 50),
     newsletter_contacts: [],
-    performance: { total_ms:totalMs },
+    performance: { total_ms:totalMs, stages:timings },
     summary: {
       due_today: due.length,
       total_businesses: directory.length,
@@ -2599,7 +2672,7 @@ function apiGetOutreachRecord_(p) {
     stages:timings,
     source_row:sourceRow,
   }));
-  return { record:record };
+  return { record:record, performance:{ total_ms:Date.now() - startedAt, stages:timings } };
 }
 
 // Campaigns are immutable recipient/message snapshots.  They make bulk review
@@ -2631,9 +2704,18 @@ function outreachCampaignRow_(sheet, campaignId) {
 function campaignRecipientRows_(sheet, campaignId) {
   const h = getHeaderMap_(sheet);
   if (sheet.getLastRow() < 2) return [];
-  return sheet.getRange(2, 1, sheet.getLastRow() - 1, sheet.getLastColumn()).getValues()
-    .map((values, index) => ({ row:index + 2, values:values, headers:h }))
-    .filter(item => String(item.values[h.campaign_id] || "") === String(campaignId || ""));
+  const matches = sheet.getRange(2, h.campaign_id + 1, sheet.getLastRow() - 1, 1).createTextFinder(String(campaignId || ""))
+    .matchEntireCell(true).findAll();
+  return matches.map(match => ({ row:match.getRow(), values:sheet.getRange(match.getRow(), 1, 1, sheet.getLastColumn()).getValues()[0], headers:h }));
+}
+
+function campaignRecipientSummaryRows_(sheet) {
+  const h = getHeaderMap_(sheet);
+  if (sheet.getLastRow() < 2) return [];
+  const range = sheet.getRange(2, 1, sheet.getLastRow() - 1, sheet.getLastColumn());
+  const campaignIds = range.offset(0, h.campaign_id, range.getNumRows(), 1).getValues();
+  const statuses = range.offset(0, h.status, range.getNumRows(), 1).getValues();
+  return campaignIds.map((item, index) => ({ campaign_id:String(item[0] || ""), status:String(statuses[index][0] || "") }));
 }
 
 function campaignStoredCriteria_(value) {
@@ -2897,9 +2979,10 @@ function campaignObject_(campaign, recipients, includeRecipients) {
 }
 
 function apiGetOutreachCampaigns_() {
+  const startedAt = Date.now();
   const sheets = outreachCampaignSheets_();
   const h = getHeaderMap_(sheets.campaigns);
-  if (sheets.campaigns.getLastRow() < 2) return { campaigns:[] };
+  if (sheets.campaigns.getLastRow() < 2) return { campaigns:[], performance:{ total_ms:Date.now() - startedAt, stages:{ campaign_read_ms:Date.now() - startedAt } } };
   const recipientHeaders = getHeaderMap_(sheets.recipients);
   const recipientCount = Math.max(0, sheets.recipients.getLastRow() - 1);
   const recipientIds = recipientCount ? sheets.recipients.getRange(2, recipientHeaders.campaign_id + 1, recipientCount, 1).getValues() : [];
@@ -2913,14 +2996,15 @@ function apiGetOutreachCampaigns_() {
   const campaigns = sheets.campaigns.getRange(2, 1, sheets.campaigns.getLastRow() - 1, sheets.campaigns.getLastColumn()).getValues()
     .map((values, index) => ({ row:index + 2, values:values, headers:h }))
     .reverse().map(campaign => campaignObject_(campaign, allRecipients.filter(item => String(item.values[item.headers.campaign_id] || "") === String(campaign.values[h.campaign_id] || "")), false));
-  return { campaigns:campaigns };
+  return { campaigns:campaigns, performance:{ total_ms:Date.now() - startedAt, stages:{ campaign_read_ms:Date.now() - startedAt } } };
 }
 
 function apiGetOutreachCampaign_(p) {
+  const startedAt = Date.now();
   const sheets = outreachCampaignSheets_();
   const campaign = outreachCampaignRow_(sheets.campaigns, p?.campaign_id);
   if (!campaign) throw new Error("Campaign not found.");
-  return { campaign:campaignObject_(campaign, campaignRecipientRows_(sheets.recipients, p.campaign_id), true) };
+  return { campaign:campaignObject_(campaign, campaignRecipientRows_(sheets.recipients, p.campaign_id), true), performance:{ total_ms:Date.now() - startedAt, stages:{ campaign_recipient_read_ms:Date.now() - startedAt } } };
 }
 
 function writeCampaignRecipientRows_(sheet, recipients) {
@@ -3537,11 +3621,12 @@ function apiSendOutreachCampaignBatch_(p) {
         console.log(JSON.stringify({ event:"outreach_campaign_send_timing", campaign_id:p.campaign_id, source_row:sourceRow, business:recipientName, stages:timing }));
       }
     }
-    const allRecipients = campaignRecipientRows_(sheets.recipients, p.campaign_id);
-    const remaining = allRecipients.filter(item => String(item.values[item.headers.status] || "") === "Ready to send").length;
-    const needsRecording = allRecipients.filter(item => String(item.values[item.headers.status] || "") === "Sent - needs recording").length;
-    const sentTotal = allRecipients.filter(item => ["Sent", "Sent - needs recording"].includes(String(item.values[item.headers.status] || ""))).length;
-    const blockedTotal = allRecipients.filter(item => String(item.values[item.headers.status] || "") === "Blocked").length;
+    const allRecipientStatuses = campaignRecipientSummaryRows_(sheets.recipients)
+      .filter(item => item.campaign_id === String(p.campaign_id));
+    const remaining = allRecipientStatuses.filter(item => item.status === "Ready to send").length;
+    const needsRecording = allRecipientStatuses.filter(item => item.status === "Sent - needs recording").length;
+    const sentTotal = allRecipientStatuses.filter(item => ["Sent", "Sent - needs recording"].includes(item.status)).length;
+    const blockedTotal = allRecipientStatuses.filter(item => item.status === "Blocked").length;
     campaign.values[ch.last_batch_at] = new Date(); campaign.values[ch.sent_count] = sentTotal;
     campaign.values[ch.blocked_count] = blockedTotal; campaign.values[ch.app_version] = APP_VERSION;
     if (!remaining) campaign.values[ch.status] = needsRecording ? "Complete with recording warnings" : blockedTotal ? "Complete with blocks" : "Complete";
@@ -4941,7 +5026,8 @@ function buildCustomerAccounts_(applications, orders) {
   return accounts.sort((a, b) => String(a.business_name || "").localeCompare(String(b.business_name || "")));
 }
 
-function apiGetCustomerWorkQueue_() {
+function apiGetCustomerWorkQueue_(p) {
+  if (!p?._cache_bypass) return cachedReadPayload_("customer_work_queue", () => apiGetCustomerWorkQueue_({ _cache_bypass:true }));
   const startedAt = Date.now();
   const timings = {};
   let stageStartedAt = startedAt;
@@ -5013,7 +5099,7 @@ function apiGetCustomerWorkQueue_() {
       customer_accounts:accounts.length,
       reorder_due:accounts.filter(record => record.operational_statuses.includes("Reorder due")).length,
     },
-    performance:{ total_ms:totalMs },
+    performance:{ total_ms:totalMs, stages:timings },
   };
 }
 
