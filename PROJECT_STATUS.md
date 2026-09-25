@@ -8,8 +8,8 @@ Read this file before inspecting the repository or changing the application. Upd
 
 | Component | Source version | Deployment state |
 | --- | --- | --- |
-| Netlify web app and staff proxy | `2026.09.24.38-WEB` on `codex/distribution-system-foundation` / `2026.09.24.24-WEB` live | Refresh buttons force a current server read; deployment is pending review. |
-| Inventory API Apps Script | `2026.09.24.34` on `codex/distribution-system-foundation` / `2026.09.24.17` live | Uses short-lived, versioned CacheService reads; spreadsheet edits, editor-run writes, failed writes, and explicit refreshes invalidate or rebuild cached data. |
+| Netlify web app and staff proxy | `2026.09.24.39-WEB` on `codex/distribution-system-foundation` / `2026.09.24.24-WEB` live | Adds the staff-only Badger invoice-to-account ledger view; deployment is pending review. |
+| Inventory API Apps Script | `2026.09.24.35` on `codex/distribution-system-foundation` / `2026.09.24.17` live | Adds invoice ledger mapping while retaining short-lived, versioned CacheService reads; deployment is pending review. |
 | Distribution Outreach Apps Script | `2026.09.24.13-APP` on `codex/work` | Signed-link rendering is committed; owner has not yet confirmed this exact version is deployed. |
 | Public customer Netlify proxy | `2026.09.18.3-WEB` | Deployed with Netlify; unchanged by the latest staff-app UI work |
 
@@ -18,6 +18,8 @@ Current Git branch: `codex/distribution-system-foundation`
 Current remote: `https://github.com/sturgeonspirits/self-distribution.git`
 
 Latest completed changes:
+
+- Account-level Badger invoice ledger: Orders & Accounts now attaches Badger Tracker invoices to the existing permanent Directory Account ID even if no inventory store is tracked. It uses an existing order’s invoice link first, then a unique exact business-name match; invoices that are ambiguous or unmatched stay in a staff review card, where they can be explicitly linked without changing the Badger Tracker source. After deploying the Apps Script source, run `repairHubStructure()` once to create the `Badger Invoice Links` tab.
 
 - Read-cache safety fixes: Hub cache entries now expire after 15 minutes in 45 KB chunks; the cache-warmer installer also creates change triggers for the Outreach and Badger spreadsheets; editor-run maintenance functions and every API write attempt invalidate the version; and the three screen Refresh buttons request a forced current read. After this Apps Script source is deployed, run `installHubReadCacheWarmer()` once to install or replace the triggers.
 

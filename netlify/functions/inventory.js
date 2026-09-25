@@ -1,7 +1,7 @@
-// App version: 2026.09.24.38-WEB
+// App version: 2026.09.24.39-WEB
 import { requireStaffSession } from "./auth.js";
 
-const APP_VERSION = "2026.09.24.38-WEB";
+const APP_VERSION = "2026.09.24.39-WEB";
 const STAFF_ACTIONS = new Set([
   "outreachDashboard",
   "outreachRecord",
@@ -26,6 +26,7 @@ const STAFF_ACTIONS = new Set([
   "updateOutreachPrograms",
   "upsertNewsletterContact",
   "customerWorkQueue",
+  "linkBadgerInvoice",
   "updateCustomerApplication",
   "updateOnlineOrderRequest",
   "createOutreachBusiness",
@@ -67,7 +68,7 @@ const ACTION_AREAS = new Map([
   ["saveOutreachDraft", "outreach"], ["updateOutreachOutcome", "outreach"], ["logOutreachContact", "outreach"], ["updateOutreachBusiness", "outreach"],
   ["updateOutreachPrograms", "outreach"], ["upsertNewsletterContact", "outreach"], ["createOutreachBusiness", "outreach"],
   ["importOutreachBusinesses", "outreach"], ["recalculateOutreachMiles", "outreach"], ["backfillEngagementDetails", "outreach"], ["sendOutreachEmail", "outreach"], ["sendOutreachTestEmail", "outreach"],
-  ["customerWorkQueue", "orders"], ["updateCustomerApplication", "orders"], ["updateOnlineOrderRequest", "orders"],
+  ["customerWorkQueue", "orders"], ["linkBadgerInvoice", "orders"], ["updateCustomerApplication", "orders"], ["updateOnlineOrderRequest", "orders"],
   ["hubSystemStatus", "orders"], ["initializeHardenedHub", "orders"], ["repairHubStructure", "orders"], ["reconcileIntegrations", "orders"],
   ["initData", "inventory"], ["listSkus", "inventory"], ["addSkuToStore", "inventory"], ["upsertProduct", "inventory"],
   ["submitCounts", "inventory"], ["createReorder", "inventory"], ["managerGrid", "inventory"], ["salesSinceCount", "inventory"], ["updateStoreContacts", "inventory"],

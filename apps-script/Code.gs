@@ -1,6 +1,11 @@
 /*********************************
  * Inventory API (JSON) for Netlify
- * App version: 2026.09.24.34
+ * App version: 2026.09.24.35
+ *
+ * CHANGES IN THIS VERSION
+ * - Added an account-level Badger invoice ledger that supports accounts without inventory tracking.
+ * - Matches invoices by existing order, one exact directory business name, or an explicit staff-reviewed Account ID link.
+ * - Keeps ambiguous invoices visible for review and refreshes Badger invoice cache data on explicit Orders & Accounts refreshes.
  *
  * CHANGES IN THIS VERSION
  * - Invalidates Hub read caches for spreadsheet edits, direct editor writes, failed write requests, and explicit refreshes.
@@ -162,7 +167,7 @@
  * - Use only in the staging inventory backend until testing is complete.
  *********************************/
 
-const APP_VERSION = "2026.09.24.34";
+const APP_VERSION = "2026.09.24.35";
 
 const SHEET_NAMES = {
   STORES: "Stores",
@@ -192,6 +197,7 @@ const CUSTOMER_APPLICATION_NOTIFICATION_EMAIL = "sales@sturgeonspirits.com";
 const ONLINE_ORDER_REQUESTS_SHEET_NAME = "Online Order Requests";
 const ONLINE_ORDER_LINES_SHEET_NAME = "Online Order Lines";
 const CUSTOMER_WORKFLOW_LOG_SHEET_NAME = "Customer Workflow Log";
+const BADGER_INVOICE_LINKS_SHEET_NAME = "Badger Invoice Links";
 const HUB_CONFIGURATION_SHEET_NAME = "Hub Configuration";
 const SUBMISSION_JOURNAL_SHEET_NAME = "Submission Journal";
 const HUB_AUDIT_SHEET_NAME = "Hub Audit Log";
@@ -270,6 +276,7 @@ function warmHubReadCaches() {
 
 function onHubReadCacheSpreadsheetChange(e) {
   const version = bumpReadCacheVersion_();
+  clearBadgerInvoiceCache_();
   console.log(JSON.stringify({ event:"hub_read_cache_invalidated", change_type:String(e?.changeType || "unknown"), version:version }));
 }
 
@@ -450,6 +457,9 @@ function ensureFoundationalSheets_() {
   ensureSheet_(hub, DELIVERY_LINES_SHEET_NAME, [
     "Delivery ID", "Request ID", "Account ID", "Line Number", "SKU ID", "SKU Name", "Quantity", "Unit",
     "Bottle Equivalent", "Created At", "App Version"
+  ]);
+  ensureSheet_(hub, BADGER_INVOICE_LINKS_SHEET_NAME, [
+    "Badger Invoice Number", "Account ID", "Badger Customer Name", "Match Method", "Linked At", "Linked By", "Notes", "App Version"
   ]);
 }
 
@@ -700,7 +710,7 @@ function handle_(e, body) {
   try {
     assertAuthorized_(e, body);
     if (!action) {
-      return json_({ ok:true, service:"sturgeon-distribution-hub", version:APP_VERSION, actions:["initData","listSkus","addSkuToStore","upsertProduct","submitCounts","createReorder","managerGrid","salesSinceCount","updateStoreContacts","outreachDashboard","outreachRecord","outreachSendStatus","outreachNewsletterContacts","outreachCampaigns","outreachCampaign","previewOutreachCampaign","createOutreachCampaign","updateOutreachCampaignRecipient","setOutreachCampaignRecipientExclusion","setOutreachCampaignRecipientExclusions","approveOutreachCampaign","reopenOutreachCampaign","reconcileCampaignSends","rebuildCampaignRecipients","sendOutreachCampaignBatch","saveOutreachDraft","sendOutreachEmail","sendOutreachTestEmail","updateOutreachOutcome","logOutreachContact","updateOutreachBusiness","updateOutreachPrograms","createOutreachBusiness","importOutreachBusinesses","recalculateOutreachMiles","backfillEngagementDetails","upsertNewsletterContact","submitCustomerApplication","submitOnlineOrderRequest","customerWorkQueue","updateCustomerApplication","updateOnlineOrderRequest","hubSystemStatus","initializeHardenedHub","repairHubStructure","reconcileIntegrations"] });
+      return json_({ ok:true, service:"sturgeon-distribution-hub", version:APP_VERSION, actions:["initData","listSkus","addSkuToStore","upsertProduct","submitCounts","createReorder","managerGrid","salesSinceCount","updateStoreContacts","outreachDashboard","outreachRecord","outreachSendStatus","outreachNewsletterContacts","outreachCampaigns","outreachCampaign","previewOutreachCampaign","createOutreachCampaign","updateOutreachCampaignRecipient","setOutreachCampaignRecipientExclusion","setOutreachCampaignRecipientExclusions","approveOutreachCampaign","reopenOutreachCampaign","reconcileCampaignSends","rebuildCampaignRecipients","sendOutreachCampaignBatch","saveOutreachDraft","sendOutreachEmail","sendOutreachTestEmail","updateOutreachOutcome","logOutreachContact","updateOutreachBusiness","updateOutreachPrograms","createOutreachBusiness","importOutreachBusinesses","recalculateOutreachMiles","backfillEngagementDetails","upsertNewsletterContact","submitCustomerApplication","submitOnlineOrderRequest","customerWorkQueue","linkBadgerInvoice","updateCustomerApplication","updateOnlineOrderRequest","hubSystemStatus","initializeHardenedHub","repairHubStructure","reconcileIntegrations"] });
     }
 
     invalidateReadCache = !READ_ACTIONS.has(action);
@@ -747,6 +757,7 @@ function handle_(e, body) {
       case "submitCustomerApplication": res = apiSubmitCustomerApplication_(body); break;
       case "submitOnlineOrderRequest": res = apiSubmitOnlineOrderRequest_(body); break;
       case "customerWorkQueue": res = apiGetCustomerWorkQueue_(Object.assign({}, e?.parameter || {}, body || {})); break;
+      case "linkBadgerInvoice": res = apiLinkBadgerInvoice_(body); break;
       case "updateCustomerApplication": res = apiUpdateCustomerApplication_(body); break;
       case "updateOnlineOrderRequest": res = apiUpdateOnlineOrderRequest_(body); break;
       case "hubSystemStatus": res = apiGetHubSystemStatus_(); break;
@@ -5009,7 +5020,88 @@ function cacheBadgerInvoices_(invoices, cache) {
   }
 }
 
-function buildCustomerAccounts_(applications, orders) {
+function clearBadgerInvoiceCache_() {
+  const cache = CacheService.getScriptCache();
+  const manifestKey = `${BADGER_INVOICE_CACHE_PREFIX}:manifest`;
+  try {
+    const manifest = JSON.parse(cache.get(manifestKey) || "null");
+    cache.remove(manifestKey);
+    if (manifest && Number.isInteger(manifest.parts) && manifest.parts > 0) {
+      for (let index = 0; index < manifest.parts; index += 1) cache.remove(`${BADGER_INVOICE_CACHE_PREFIX}:part:${index}`);
+    }
+  } catch (error) {
+    console.warn("Badger invoice cache clear failed: " + String(error && error.message || error));
+  }
+}
+
+function normalizeBadgerInvoiceNumber_(value) {
+  return String(value || "").toUpperCase().replace(/[^A-Z0-9]/g, "");
+}
+
+function readBadgerInvoiceLinks_() {
+  const sheet = getOutreachSs_().getSheetByName(BADGER_INVOICE_LINKS_SHEET_NAME);
+  const byInvoice = new Map();
+  if (!sheet || sheet.getLastRow() < 2) return byInvoice;
+  const headers = getHeaderMap_(sheet);
+  if (headers.badger_invoice_number === undefined || headers.account_id === undefined) return byInvoice;
+  sheet.getRange(2, 1, sheet.getLastRow() - 1, sheet.getLastColumn()).getValues().forEach((values, index) => {
+    const invoiceNumber = String(values[headers.badger_invoice_number] || "").trim();
+    const accountId = String(values[headers.account_id] || "").trim();
+    const key = normalizeBadgerInvoiceNumber_(invoiceNumber);
+    if (!key || !accountId) return;
+    byInvoice.set(key, {
+      row:index + 2,
+      invoice_number:invoiceNumber,
+      account_id:accountId,
+      customer_name:headers.badger_customer_name === undefined ? "" : String(values[headers.badger_customer_name] || ""),
+      match_method:headers.match_method === undefined ? "Manual link" : String(values[headers.match_method] || "Manual link"),
+    });
+  });
+  return byInvoice;
+}
+
+function getBadgerInvoiceLinksSheet_() {
+  return ensureSheet_(getOutreachSs_(), BADGER_INVOICE_LINKS_SHEET_NAME, [
+    "Badger Invoice Number", "Account ID", "Badger Customer Name", "Match Method", "Linked At", "Linked By", "Notes", "App Version"
+  ]);
+}
+
+function apiLinkBadgerInvoice_(p) {
+  requireFields_(p || {}, ["invoice_number", "account_id", "staff_name"]);
+  const invoiceNumber = publicText_(p.invoice_number, 120, "Badger invoice number");
+  const invoiceKey = normalizeBadgerInvoiceNumber_(invoiceNumber);
+  const accountId = publicText_(p.account_id, 120, "Account ID");
+  if (!invoiceKey) throw new Error("Enter a valid Badger invoice number.");
+  const lock = LockService.getScriptLock();
+  if (!lock.tryLock(10000)) throw new Error("Another invoice update is in progress. Try again in a moment.");
+  try {
+    const account = accountIdentityLookup_().by_id.get(accountId);
+    if (!account) throw new Error("That Account ID is not in the Distribution Directory.");
+    const invoice = readBadgerInvoices_().find(item => normalizeBadgerInvoiceNumber_(item.invoice_number) === invoiceKey);
+    if (!invoice) throw new Error("That invoice was not found in the Badger Invoice Tracker.");
+    const sheet = getBadgerInvoiceLinksSheet_();
+    const h = getHeaderMap_(sheet);
+    const rows = sheet.getLastRow() < 2 ? [] : sheet.getRange(2, 1, sheet.getLastRow() - 1, sheet.getLastColumn()).getValues();
+    const existingIndex = rows.findIndex(row => normalizeBadgerInvoiceNumber_(row[h.badger_invoice_number]) === invoiceKey);
+    const values = existingIndex >= 0 ? rows[existingIndex].slice() : Array(sheet.getLastColumn()).fill("");
+    const set = (key, value) => { if (h[key] !== undefined) values[h[key]] = value; };
+    set("badger_invoice_number", invoice.invoice_number || invoiceNumber);
+    set("account_id", accountId);
+    set("badger_customer_name", invoice.customer_name || "");
+    set("match_method", "Manual link");
+    set("linked_at", new Date());
+    set("linked_by", authenticatedActor_(p, "Sturgeon Distribution Hub"));
+    set("notes", publicText_(p.notes || "", 1000, "Invoice-link notes"));
+    set("app_version", APP_VERSION);
+    sheet.getRange(existingIndex >= 0 ? existingIndex + 2 : sheet.getLastRow() + 1, 1, 1, values.length).setValues([values]);
+    appendAudit_("LINK_BADGER_INVOICE", "Invoice", String(invoice.invoice_number || invoiceNumber), accountId, authenticatedActor_(p, "Sturgeon Distribution Hub"), BADGER_TRACKER_SPREADSHEET_ID, BADGER_INVOICE_LINKS_SHEET_NAME, "Linked", `${invoice.customer_name || "Badger customer"} → ${account.business}`);
+    return { message:`Invoice ${invoice.invoice_number || invoiceNumber} linked to ${account.business}.`, invoice_number:String(invoice.invoice_number || invoiceNumber), account_id:accountId };
+  } finally {
+    lock.releaseLock();
+  }
+}
+
+function buildCustomerAccounts_(applications, orders, bypassBadgerCache) {
   const identity = accountIdentityFromRows_(getAllRowsAsObjects_(getOutreachSheet_(OUTREACH_SHEET_NAME)));
   const programs = outreachProgramMap_();
   const activityRows = outreachActivityRows_();
@@ -5024,10 +5116,59 @@ function buildCustomerAccounts_(applications, orders) {
   const reorderRows = isHubInventoryActive_() ? getAllRowsAsObjects_(getSheet_(SHEET_NAMES.REORDERS)) : [];
   let badgerInvoices = [];
   try {
-    badgerInvoices = cachedBadgerInvoices_(false);
+    badgerInvoices = cachedBadgerInvoices_(!!bypassBadgerCache);
+    if (bypassBadgerCache) cacheBadgerInvoices_(badgerInvoices);
   } catch (err) {
     console.warn("Badger invoice history was unavailable: " + String(err && err.message || err));
   }
+  const explicitInvoiceLinks = readBadgerInvoiceLinks_();
+  const accountsByBusiness = new Map();
+  identity.rows.forEach(row => {
+    const businessKey = normalizeBusinessKey_(outreachValue_(row, ["business", "business_name"]));
+    const accountId = String(row.account_id || "").trim();
+    if (!businessKey || !accountId) return;
+    if (!accountsByBusiness.has(businessKey)) accountsByBusiness.set(businessKey, []);
+    accountsByBusiness.get(businessKey).push(accountId);
+  });
+  const orderAccountsByInvoice = new Map();
+  orders.forEach(order => {
+    const invoiceKey = normalizeBadgerInvoiceNumber_(order.badger_invoice_number);
+    const accountId = String(order.account_id || "").trim();
+    if (!invoiceKey || !accountId) return;
+    if (!orderAccountsByInvoice.has(invoiceKey)) orderAccountsByInvoice.set(invoiceKey, new Set());
+    orderAccountsByInvoice.get(invoiceKey).add(accountId);
+  });
+  const invoicesByAccount = new Map();
+  const unmatchedBadgerInvoices = [];
+  badgerInvoices.forEach(invoice => {
+    const invoiceKey = normalizeBadgerInvoiceNumber_(invoice.invoice_number);
+    const explicit = explicitInvoiceLinks.get(invoiceKey);
+    const orderedAccounts = orderAccountsByInvoice.get(invoiceKey) || new Set();
+    const nameCandidates = accountsByBusiness.get(normalizeBusinessKey_(invoice.customer_name)) || [];
+    let accountId = explicit?.account_id || "";
+    let matchMethod = explicit ? "Manual link" : "";
+    if (!accountId && orderedAccounts.size === 1) {
+      accountId = Array.from(orderedAccounts)[0];
+      matchMethod = "Linked order";
+    }
+    if (!accountId && nameCandidates.length === 1) {
+      accountId = nameCandidates[0];
+      matchMethod = "Exact business name";
+    }
+    if (!accountId || !identity.by_id.has(accountId)) {
+      unmatchedBadgerInvoices.push(Object.assign({}, invoice, {
+        match_reason:explicit ? "Linked Account ID is no longer in the directory" : (orderedAccounts.size > 1 || nameCandidates.length > 1 ? "More than one account could match" : "No account match"),
+      }));
+      return;
+    }
+    if (!invoicesByAccount.has(accountId)) invoicesByAccount.set(accountId, []);
+    invoicesByAccount.get(accountId).push(Object.assign({}, invoice, {
+      account_id:accountId,
+      match_method:matchMethod,
+      invoice_status:/^(true|yes|y|paid|1)$/i.test(String(invoice.paid || "")) ? "Paid" : "Invoice received",
+      badger_match_status:"Matched",
+    }));
+  });
   const now = new Date();
   const accounts = [];
 
@@ -5040,12 +5181,14 @@ function buildCustomerAccounts_(applications, orders) {
     const directoryStatus = String(outreachValue_(row, ["status"]) || "").trim();
     const accountApplications = applications.filter(item => item.account_id === accountId);
     const accountOrders = orders.filter(item => item.account_id === accountId);
+    const linkedInvoices = (invoicesByAccount.get(accountId) || []).slice();
     const program = programs.get(accountId) || programs.get(index + 2) || {};
     const isCustomer = accountApplications.some(item => ["Approved", "Account active"].includes(item.workflow_status))
       || accountOrders.length > 0
       || String(program.ordering_status || "") === "Active"
       || /customer/i.test(relationship)
-      || /existing customer/i.test(directoryStatus);
+      || /existing customer/i.test(directoryStatus)
+      || linkedInvoices.length > 0;
     if (!isCustomer) return;
 
     const store = storeByAccount.get(accountId) || null;
@@ -5065,14 +5208,10 @@ function buildCustomerAccounts_(applications, orders) {
       amount:order.badger_amount,
       customer_name:order.badger_customer_name,
     }));
-    const accountInvoiceNumbers = new Set(orderInvoices.map(item => String(item.invoice_number || "").toUpperCase().replace(/[^A-Z0-9]/g, "")).filter(Boolean));
-    const invoices = badgerInvoices.filter(item => {
-      const invoiceKey = String(item.invoice_number || "").toUpperCase().replace(/[^A-Z0-9]/g, "");
-      return accountInvoiceNumbers.has(invoiceKey) || normalizeBusinessKey_(item.customer_name) === normalizeBusinessKey_(business);
-    }).map(item => Object.assign({ invoice_status:/^(true|yes|y|paid|1)$/i.test(String(item.paid || "")) ? "Paid" : "Invoice received", badger_match_status:"Matched" }, item));
+    const invoices = linkedInvoices;
     orderInvoices.forEach(item => {
-      const invoiceKey = String(item.invoice_number || "").toUpperCase().replace(/[^A-Z0-9]/g, "");
-      if (!invoiceKey || !invoices.some(invoice => String(invoice.invoice_number || "").toUpperCase().replace(/[^A-Z0-9]/g, "") === invoiceKey)) invoices.push(item);
+      const invoiceKey = normalizeBadgerInvoiceNumber_(item.invoice_number);
+      if (!invoiceKey || !invoices.some(invoice => normalizeBadgerInvoiceNumber_(invoice.invoice_number) === invoiceKey)) invoices.push(item);
     });
     const operational = new Set();
     accountApplications.forEach(item => { if (item.workflow_status === "New") operational.add("New"); });
@@ -5083,7 +5222,7 @@ function buildCustomerAccounts_(applications, orders) {
     const history = [];
     accountApplications.forEach(item => history.push(accountHistoryItem_(item.submitted_at, "Application", `Application ${item.workflow_status}`, item.staff_notes || item.customer_notes, item.application_id, item.workflow_status)));
     accountOrders.forEach(item => history.push(accountHistoryItem_(item.submitted_at, "Order", `Order ${item.workflow_status}`, `${item.line_count || item.lines.length} products; invoice ${item.invoice_status}; delivery ${item.delivery_status}`, item.request_id, item.workflow_status)));
-    invoices.forEach(item => history.push(accountHistoryItem_(item.invoice_date, "Invoice", `Invoice ${item.invoice_number || "recorded"}`, `Amount ${item.amount || "not recorded"}; ${item.invoice_status || "status not recorded"}`, item.invoice_number, item.invoice_status)));
+    invoices.forEach(item => history.push(accountHistoryItem_(item.invoice_date, "Invoice", `Invoice ${item.invoice_number || "recorded"}`, `Amount ${item.amount || "not recorded"}; ${item.invoice_status || "status not recorded"}${item.match_method ? `; ${item.match_method}` : ""}`, item.invoice_number, item.invoice_status)));
     accountDeliveries.forEach(item => history.push(accountHistoryItem_(item.delivered_at || item.updated_at || item.created_at, "Delivery", `Delivery ${item.delivery_status || "recorded"}`, `${item.lines.length} product lines; invoice ${item.badger_invoice_number || "not recorded"}`, item.delivery_id, item.delivery_status)));
     accountActivity.forEach(item => history.push(accountHistoryItem_(item.timestamp, "Outreach", String(item.result || item.message_stage || "Activity"), String(item.error_detail || item["error/detail"] || ""), item.message_id, item.result)));
     accountWorkflow.forEach(item => history.push(accountHistoryItem_(item.timestamp, String(item.record_type || "Workflow"), `${item.previous_status || ""} → ${item.new_status || ""}`, item.details, item.record_id, item.new_status)));
@@ -5113,7 +5252,17 @@ function buildCustomerAccounts_(applications, orders) {
       history:history,
     });
   });
-  return accounts.sort((a, b) => String(a.business_name || "").localeCompare(String(b.business_name || "")));
+  return {
+    accounts:accounts.sort((a, b) => String(a.business_name || "").localeCompare(String(b.business_name || ""))),
+    unmatched_badger_invoices:unmatchedBadgerInvoices.sort((a, b) => recordTimestamp_(b.invoice_date) - recordTimestamp_(a.invoice_date)),
+    account_options:identity.rows.map((row, index) => ({
+      account_id:String(row.account_id || "").trim(),
+      business_name:String(outreachValue_(row, ["business", "business_name"]) || "").trim(),
+      city:String(outreachValue_(row, ["city", "town"]) || "").trim(),
+      source_row:index + 2,
+    })).filter(item => item.account_id && item.business_name)
+      .sort((a, b) => a.business_name.localeCompare(b.business_name)),
+  };
 }
 
 function apiGetCustomerWorkQueue_(p) {
@@ -5161,7 +5310,8 @@ function apiGetCustomerWorkQueue_(p) {
   mark("application_order_read_ms");
   orders.forEach(order => order.operational_statuses = orderOperationalStatuses_(order));
   applications.forEach(application => application.operational_statuses = application.workflow_status === "New" ? ["New"] : (application.inventory_tracking ? ["Inventory-counted"] : []));
-  const accounts = buildCustomerAccounts_(applications, orders);
+  const ledger = buildCustomerAccounts_(applications, orders, String(p?.refresh || "") === "1");
+  const accounts = ledger.accounts;
   mark("account_build_ms");
   const activeApplicationStatuses = ["New", "Reviewing", "Needs information"];
   const activeOrderStatuses = ["New", "Reviewing", "Confirmed", "Invoicing", "Ready for delivery"];
@@ -5174,12 +5324,15 @@ function apiGetCustomerWorkQueue_(p) {
     applications:applications.length,
     orders:orders.length,
     accounts:accounts.length,
+    unmatched_badger_invoices:ledger.unmatched_badger_invoices.length,
   }));
 
   return {
     applications:applications,
     orders:orders,
     accounts:accounts,
+    unmatched_badger_invoices:ledger.unmatched_badger_invoices,
+    account_options:ledger.account_options,
     summary:{
       new_applications:applications.filter(record => record.workflow_status === "New").length,
       active_applications:applications.filter(record => activeApplicationStatuses.includes(record.workflow_status)).length,
@@ -5188,6 +5341,7 @@ function apiGetCustomerWorkQueue_(p) {
       invoice_needed:orders.filter(record => ["Confirmed", "Invoicing"].includes(record.workflow_status) && ["Not started", "Ready for Badger"].includes(record.invoice_status)).length,
       integration_attention:orders.filter(record => ["Needs retry", "Badger invoice not found", "Needs account match"].includes(record.integration_status)).length,
       customer_accounts:accounts.length,
+      unmatched_badger_invoices:ledger.unmatched_badger_invoices.length,
       reorder_due:accounts.filter(record => record.operational_statuses.includes("Reorder due")).length,
     },
     performance:{ total_ms:totalMs, stages:timings },

@@ -1,10 +1,10 @@
 <!doctype html>
-<!-- App version: 2026.09.24.38-WEB -->
+<!-- App version: 2026.09.24.39-WEB -->
 <html>
 <head>
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover"/>
-  <meta name="app-version" content="2026.09.24.38-WEB" />
+  <meta name="app-version" content="2026.09.24.39-WEB" />
   <meta name="theme-color" content="#536f77" />
   <link rel="icon" href="/assets/distribution-hub-icon.svg" type="image/svg+xml" />
   <link rel="manifest" href="/site.webmanifest" />
@@ -2131,6 +2131,7 @@
         <div class="outreachMetric"><strong id="newApplicationsCount">0</strong><span>New applications</span></div>
         <div class="outreachMetric"><strong id="newOrdersCount">0</strong><span>New orders</span></div>
         <div class="outreachMetric"><strong id="invoiceNeededCount">0</strong><span>Need invoice work</span></div>
+        <div class="outreachMetric"><strong id="unmatchedBadgerInvoicesCount">0</strong><span>Badger invoices to match</span></div>
       </div>
 
       <div class="workflowControls">
@@ -2530,7 +2531,7 @@
 
   <footer style="max-width:1200px;margin:18px auto 120px;padding:0 12px;text-align:center;color:#6b7280;font-size:12px;">
     Designed by <a href="https://scriptspirit.dev" target="_blank" rel="noopener noreferrer" style="color:#1d4ed8;text-decoration:none;font-weight:700;">Script Spirit</a>
-<span id="appVersionFooter"> • Version 2026.09.24.38-WEB</span>
+<span id="appVersionFooter"> • Version 2026.09.24.39-WEB</span>
   </footer>
 
 
@@ -2553,7 +2554,7 @@
   window.addEventListener("unhandledrejection", e => console.error("Unhandled promise rejection:", e.reason));
   window.addEventListener("error", e => console.error("Unhandled error:", e.error || e.message));
   const $ = (id) => document.getElementById(id);
-  const APP_VERSION = "2026.09.24.38-WEB";
+  const APP_VERSION = "2026.09.24.39-WEB";
   $("appVersionFooter").textContent = ` • Version ${APP_VERSION}`;
   function screenCacheKey(screen){ return `distribution_hub:${APP_VERSION}:${staffSession?.email || "unknown"}:${screen}`; }
   function readScreenCache(screen){
@@ -2614,7 +2615,7 @@
   let campaignSendInProgress = false;
   let outreachCampaignPreview = null;
 
-  let customerData = { accounts:[], applications:[], orders:[], summary:{ new_applications:0, active_applications:0, new_orders:0, active_orders:0, invoice_needed:0 } };
+  let customerData = { accounts:[], applications:[], orders:[], unmatchedBadgerInvoices:[], accountOptions:[], summary:{ new_applications:0, active_applications:0, new_orders:0, active_orders:0, invoice_needed:0, unmatched_badger_invoices:0 } };
   let customerView = ["accounts", "orders", "applications"].includes(localStorage.getItem("customer_work_view")) ? localStorage.getItem("customer_work_view") : "accounts";
   let customerFilterText = "";
   let customerStatusFilter = customerView === "accounts" ? "all" : "active";
@@ -2908,7 +2909,7 @@
       const operational = Array.isArray(record.operational_statuses) ? record.operational_statuses : [];
       const statusMatch = customerStatusFilter === "all"
         || (customerStatusFilter === "active"
-          ? (customerView === "accounts" ? operational.some(status => !["Delivered", "Inventory-counted"].includes(status)) : activeStatuses.includes(record.workflow_status))
+          ? (customerView === "accounts" ? (operational.some(status => !["Delivered", "Inventory-counted"].includes(status)) || Number(record.invoices?.length || 0) > 0) : activeStatuses.includes(record.workflow_status))
           : customerStatusFilter.startsWith("operational:")
             ? operational.includes(customerStatusFilter.slice("operational:".length))
             : record.workflow_status === customerStatusFilter);
@@ -2931,6 +2932,7 @@
     $("newApplicationsCount").textContent = Number(summary.new_applications || 0);
     $("newOrdersCount").textContent = Number(summary.new_orders || 0);
     $("invoiceNeededCount").textContent = Number(summary.invoice_needed || 0);
+    $("unmatchedBadgerInvoicesCount").textContent = Number(summary.unmatched_badger_invoices || 0);
     if (activeAppSection === "customers") {
       $("hdrStore").textContent = `${Number(summary.new_applications || 0)} applications`;
       $("hdrChanged").textContent = `${Number(summary.new_orders || 0)} orders`;
@@ -2948,7 +2950,15 @@
       return;
     }
 
-    list.innerHTML = records.map(record => {
+    const unmatchedInvoices = customerView === "accounts" ? (customerData.unmatchedBadgerInvoices || []) : [];
+    const invoiceReview = unmatchedInvoices.length ? `<article class="workflowCard" data-badger-review="true">
+      <div class="workflowCardTop"><div><h3>Badger invoices needing an account</h3><p>Link each invoice to the existing Directory Account ID. This does not enable inventory tracking.</p></div><span class="badge amber">${unmatchedInvoices.length} to match</span></div>
+      <div class="workflowLineList">${unmatchedInvoices.map(invoice => `<div class="workflowLine" data-badger-invoice="${escapeHtml(invoice.invoice_number || "")}">
+        <span><strong>${escapeHtml(invoice.invoice_number || "Invoice")}</strong> • ${escapeHtml(invoice.customer_name || "No Badger customer name")}<br><small>${escapeHtml([formatOutreachDate(invoice.invoice_date), invoice.amount && `Amount ${invoice.amount}`, invoice.match_reason].filter(Boolean).join(" • "))}</small></span>
+        <span class="btnRow"><select class="badgerAccountSelect" aria-label="Account for ${escapeHtml(invoice.invoice_number || "invoice")}"><option value="">Choose account…</option>${(customerData.accountOptions || []).map(account => `<option value="${escapeHtml(account.account_id)}">${escapeHtml(`${account.business_name}${account.city ? ` (${account.city})` : ""} — ${account.account_id}`)}</option>`).join("")}</select><button class="actionBtn primary" type="button" data-customer-action="link-badger-invoice">Link invoice</button></span>
+      </div>`).join("")}</div>
+    </article>` : "";
+    list.innerHTML = invoiceReview + records.map(record => {
       const isAccount = customerView === "accounts";
       const isOrder = customerView === "orders";
       const id = isAccount ? record.account_id : isOrder ? record.request_id : record.application_id;
@@ -2991,7 +3001,7 @@
     const requestId = ++customerWorkQueueLoadRequest;
     const cached = !customerLoaded && readScreenCache("customer-work");
     if (cached) {
-      customerData = { accounts:cached.payload.accounts || [], applications:cached.payload.applications || [], orders:cached.payload.orders || [], summary:cached.payload.summary || {} };
+      customerData = { accounts:cached.payload.accounts || [], applications:cached.payload.applications || [], orders:cached.payload.orders || [], unmatchedBadgerInvoices:cached.payload.unmatched_badger_invoices || [], accountOptions:cached.payload.account_options || [], summary:cached.payload.summary || {} };
       customerLoaded = true; showCustomerAccessState(); renderCustomerWorkflow();
       $("customerWorkflowStatus").textContent = `Updating… showing data from ${cachedTimeLabel(cached)}.`;
     } else $("customerWorkflowStatus").textContent = "Loading customer work...";
@@ -3009,6 +3019,8 @@
       accounts:result.accounts || [],
       applications:result.applications || [],
       orders:result.orders || [],
+      unmatchedBadgerInvoices:result.unmatched_badger_invoices || [],
+      accountOptions:result.account_options || [],
       summary:result.summary || {},
     };
     customerLoaded = true;
@@ -3017,6 +3029,32 @@
     renderCustomerWorkflow();
     const elapsed = Number(result.performance?.total_ms || 0);
     $("customerWorkflowStatus").textContent = `Updated ${new Date().toLocaleTimeString([], { hour:"numeric", minute:"2-digit" })}${elapsed ? ` in ${(elapsed / 1000).toFixed(1)}s` : ""}${result.performance?.cache_hit ? " (server cache)" : ""}.`;
+  }
+
+  async function linkBadgerInvoice(button){
+    const row = button.closest("[data-badger-invoice]");
+    const accountId = row?.querySelector(".badgerAccountSelect")?.value || "";
+    const invoiceNumber = row?.dataset.badgerInvoice || "";
+    const staffName = $("customerStaffName").value.trim();
+    if (!invoiceNumber || !accountId) {
+      $("customerWorkflowStatus").textContent = "Choose the existing account before linking this Badger invoice.";
+      return;
+    }
+    if (!staffName) {
+      $("customerWorkflowStatus").textContent = "Enter your staff name before linking an invoice.";
+      return;
+    }
+    button.disabled = true;
+    $("customerWorkflowStatus").textContent = `Linking Badger invoice ${invoiceNumber}…`;
+    try {
+      const result = await staffApiPost({ action:"linkBadgerInvoice", invoice_number:invoiceNumber, account_id:accountId, staff_name:staffName });
+      if (!result.ok) throw new Error(result.error || "The Badger invoice could not be linked.");
+      $("customerWorkflowStatus").textContent = result.message || "Invoice linked. Updating the account ledger…";
+      await loadCustomerWorkQueue(true);
+    } catch (error) {
+      $("customerWorkflowStatus").textContent = error?.message || "The Badger invoice could not be linked.";
+      button.disabled = false;
+    }
   }
 
   function findCustomerRecord(element){
@@ -3044,6 +3082,8 @@
       $("customerRecordTitle").textContent = record.business_name || "Customer account";
       $("customerRecordSubtitle").textContent = `Account • ${record.account_id}`;
       const history = record.history || [];
+      const invoices = record.invoices || [];
+      const invoiceLedgerHtml = invoices.length ? `<div class="workflowLineList">${invoices.map(invoice => `<div class="workflowLine"><span><strong>${escapeHtml(invoice.invoice_number || "Invoice")}</strong> • ${escapeHtml(invoice.customer_name || record.business_name)}<br><small>${escapeHtml(invoice.match_method || "Linked")}</small></span><strong>${escapeHtml([invoice.amount && `Amount ${invoice.amount}`, invoice.invoice_status, formatOutreachDate(invoice.invoice_date)].filter(Boolean).join(" • "))}</strong></div>`).join("")}</div>` : `<div class="smallMuted">No Badger invoices are linked to this account.</div>`;
       const historyHtml = history.length ? `<div class="activityTimeline">${history.map(item => `
         <div class="activityItem">
           <strong>${escapeHtml(item.type || "Activity")} · ${escapeHtml(item.title || item.status || "Recorded")}</strong>
@@ -3064,6 +3104,7 @@
             { label:"Invoices", value:record.invoices?.length || 0 }, { label:"Deliveries", value:record.deliveries?.length || 0 },
             { label:"Inventory reorders", value:record.reorders?.length || 0 }, { label:"History events", value:history.length },
           ])}</section>
+          <section class="detailSection full"><h4>Badger invoice ledger</h4>${invoiceLedgerHtml}</section>
           <section class="detailSection full"><h4>Order, invoice, delivery, outreach, and reorder history</h4>${historyHtml}</section>
         </div>`;
       $("customerRecordDialog").showModal();
@@ -6206,6 +6247,11 @@
     $("customerSearch").focus();
   });
   $("customerWorkflowList").addEventListener("click", event => {
+    const linkButton = event.target.closest("[data-customer-action='link-badger-invoice']");
+    if (linkButton) {
+      linkBadgerInvoice(linkButton);
+      return;
+    }
     const button = event.target.closest("[data-customer-action='open']");
     if (!button) return;
     const record = findCustomerRecord(button);
