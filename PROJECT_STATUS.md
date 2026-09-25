@@ -9,7 +9,7 @@ Read this file before inspecting the repository or changing the application. Upd
 | Component | Source version | Deployment state |
 | --- | --- | --- |
 | Netlify web app and staff proxy | `2026.09.24.41-WEB` on `codex/distribution-system-foundation` / `2026.09.24.41-WEB` live | Deployed 2026-09-25 after review, including the Badger invoice ledger and browser-filtered account index. |
-| Inventory API Apps Script | `2026.09.24.38` on `codex/distribution-system-foundation` / `2026.09.24.38` live | Deployed 2026-09-25 (existing web-app deployment updated to a new version); `repairHubStructure()` has been run and the `Badger Invoice Links` tab exists. Run `installHubReadCacheWarmer()` and `installNightlyHubStructureRepair()` once if not yet done. |
+| Inventory API Apps Script | `2026.09.24.39` on `codex/distribution-system-foundation` / `2026.09.24.38` live | Badger invoice matching learns customer names and uses the Tracker Location_Directory; deployment is pending. After deploying, run `repairHubStructure()` once to create the `Badger Customer Aliases` tab (the first staff link also creates it). |
 | Distribution Outreach Apps Script | `2026.09.24.13-APP` on `codex/work` | Signed-link rendering is committed; owner has not yet confirmed this exact version is deployed. |
 | Public customer Netlify proxy | `2026.09.18.3-WEB` | Deployed with Netlify; unchanged by the latest staff-app UI work |
 
@@ -18,6 +18,8 @@ Current Git branch: `codex/distribution-system-foundation`
 Current remote: `https://github.com/sturgeonspirits/self-distribution.git`
 
 Latest completed changes:
+
+- Learning Badger invoice matching: linking an invoice in Orders & Accounts also saves its Badger customer name → Account ID in the Hub tab `Badger Customer Aliases`, so later invoices for the same customer match automatically ("Learned customer name"); ignoring an invoice never saves an alias. The Badger Tracker `Location_Directory` tab (Invoice Name → Public Name) is also used ("Badger location name"), cached with the invoice cache. Name comparisons ignore case, punctuation, spacing, a leading "The", and trailing LLC/Inc./Co./Corp. Match order: manual invoice link → order link → learned customer name → Badger location name → business name; anything matching more than one account stays in review.
 
 - Account ID repair fix: `repairHubStructure()` and the nightly repair no longer rewrite entire tabs. The Directory write touches only Account ID and Record Created At; related tabs (Drafts, Programs, Email Engagement, Activity Log, Customer Applications, Online Order Requests, Newsletter Contacts) touch only their Account ID column. A pre-existing out-of-list value (for example in Email Engagement's validated Event Type column) no longer stops the repair, and a tab that still fails is reported in the result while the others finish.
 

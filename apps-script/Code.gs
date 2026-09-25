@@ -1,8 +1,13 @@
 /*********************************
  * Inventory API (JSON) for Netlify
- * App version: 2026.09.24.38
+ * App version: 2026.09.24.39
  *
  * CHANGES IN THIS VERSION
+ * - Badger invoice matching learns: a staff link also saves the Badger customer name in "Badger Customer Aliases", so later invoices for that customer match automatically.
+ * - Uses the Badger Tracker Location_Directory (Invoice Name → Public Name) to match legal names to Directory businesses.
+ * - Customer-name comparison ignores case, punctuation, spacing, a leading "The", and trailing LLC/Inc./Co./Corp.
+ *
+ * CHANGES IN 2026.09.24.38
  * - Account ID repair writes only the Account ID (and Directory Record Created At) columns instead of rewriting whole tabs, so data validation, formulas, and unrelated cells are untouched.
  * - Each related tab is backfilled independently; a failing tab is logged and reported in the repair result instead of stopping the repair.
  *
@@ -177,7 +182,7 @@
  * - Use only in the staging inventory backend until testing is complete.
  *********************************/
 
-const APP_VERSION = "2026.09.24.38";
+const APP_VERSION = "2026.09.24.39";
 
 const SHEET_NAMES = {
   STORES: "Stores",
@@ -208,6 +213,8 @@ const ONLINE_ORDER_REQUESTS_SHEET_NAME = "Online Order Requests";
 const ONLINE_ORDER_LINES_SHEET_NAME = "Online Order Lines";
 const CUSTOMER_WORKFLOW_LOG_SHEET_NAME = "Customer Workflow Log";
 const BADGER_INVOICE_LINKS_SHEET_NAME = "Badger Invoice Links";
+const BADGER_CUSTOMER_ALIASES_SHEET_NAME = "Badger Customer Aliases";
+const BADGER_CUSTOMER_ALIAS_HEADERS = ["Badger Customer Name", "Normalized Key", "Account ID", "Source", "Linked At", "Linked By", "App Version"];
 const HUB_CONFIGURATION_SHEET_NAME = "Hub Configuration";
 const SUBMISSION_JOURNAL_SHEET_NAME = "Submission Journal";
 const HUB_AUDIT_SHEET_NAME = "Hub Audit Log";
@@ -475,6 +482,7 @@ function ensureFoundationalSheets_() {
   ensureSheet_(hub, BADGER_INVOICE_LINKS_SHEET_NAME, [
     "Badger Invoice Number", "Account ID", "Badger Customer Name", "Match Method", "Linked At", "Linked By", "Notes", "App Version"
   ]);
+  ensureSheet_(hub, BADGER_CUSTOMER_ALIASES_SHEET_NAME, BADGER_CUSTOMER_ALIAS_HEADERS);
 }
 
 function setHubConfigurationValue_(key, value, actor) {
@@ -5069,6 +5077,7 @@ function cacheBadgerInvoices_(invoices, cache) {
 function clearBadgerInvoiceCache_() {
   const cache = CacheService.getScriptCache();
   const manifestKey = `${BADGER_INVOICE_CACHE_PREFIX}:manifest`;
+  try { cache.remove(BADGER_LOCATION_NAMES_CACHE_KEY); } catch (_) {}
   try {
     const manifest = JSON.parse(cache.get(manifestKey) || "null");
     cache.remove(manifestKey);
@@ -5082,6 +5091,95 @@ function clearBadgerInvoiceCache_() {
 
 function normalizeBadgerInvoiceNumber_(value) {
   return String(value || "").toUpperCase().replace(/[^A-Z0-9]/g, "");
+}
+
+const BADGER_CUSTOMER_NAME_SUFFIXES = new Set(["llc", "inc", "incorporated", "co", "corp", "corporation", "company", "ltd"]);
+
+// Loose customer-name key: ignores case, punctuation, spacing, a leading "The", and trailing
+// entity suffixes, so "Cujak's Wine andSpirits" and "Cujaks Wine and Spirits" compare equal.
+function normalizeCustomerMatchKey_(value) {
+  const words = String(value || "").toLowerCase().replace(/&/g, " and ").replace(/['’`]/g, "")
+    .replace(/[^a-z0-9]+/g, " ").trim().split(/\s+/).filter(Boolean);
+  while (words.length > 1 && BADGER_CUSTOMER_NAME_SUFFIXES.has(words[words.length - 1])) words.pop();
+  if (words.length > 1 && words[0] === "the") words.shift();
+  return words.join("");
+}
+
+const BADGER_LOCATION_NAMES_CACHE_KEY = "hub_badger_location_names_v1";
+
+function readBadgerLocationNames_() {
+  const sheet = SpreadsheetApp.openById(BADGER_TRACKER_SPREADSHEET_ID).getSheetByName("Location_Directory");
+  if (!sheet || sheet.getLastRow() < 2) return [];
+  return getAllRowsAsObjects_(sheet).map(row => ({
+    invoice_name:String(firstPresent_(row, ["invoice_name"]) || "").trim(),
+    public_name:String(firstPresent_(row, ["public_name"]) || "").trim(),
+  })).filter(item => item.invoice_name && item.public_name);
+}
+
+function cachedBadgerLocationNames_(bypassCache) {
+  const cache = CacheService.getScriptCache();
+  if (!bypassCache) {
+    try {
+      const cached = cache.get(BADGER_LOCATION_NAMES_CACHE_KEY);
+      if (cached) return JSON.parse(cached);
+    } catch (error) {
+      console.warn("Badger location-name cache read failed: " + String(error && error.message || error));
+    }
+  }
+  const names = readBadgerLocationNames_();
+  try {
+    const serialized = JSON.stringify(names);
+    if (serialized.length < 90000) cache.put(BADGER_LOCATION_NAMES_CACHE_KEY, serialized, BADGER_INVOICE_CACHE_TTL_SECONDS);
+  } catch (error) {
+    console.warn("Badger location-name cache write failed: " + String(error && error.message || error));
+  }
+  return names;
+}
+
+function getBadgerCustomerAliasesSheet_() {
+  return ensureSheet_(getOutreachSs_(), BADGER_CUSTOMER_ALIASES_SHEET_NAME, BADGER_CUSTOMER_ALIAS_HEADERS);
+}
+
+function readBadgerCustomerAliases_() {
+  const sheet = getOutreachSs_().getSheetByName(BADGER_CUSTOMER_ALIASES_SHEET_NAME);
+  const byKey = new Map();
+  if (!sheet || sheet.getLastRow() < 2) return byKey;
+  const h = getHeaderMap_(sheet);
+  if (h.account_id === undefined || (h.badger_customer_name === undefined && h.normalized_key === undefined)) return byKey;
+  sheet.getRange(2, 1, sheet.getLastRow() - 1, sheet.getLastColumn()).getValues().forEach(values => {
+    const customerName = h.badger_customer_name === undefined ? "" : String(values[h.badger_customer_name] || "").trim();
+    const key = normalizeCustomerMatchKey_(customerName) || (h.normalized_key === undefined ? "" : String(values[h.normalized_key] || "").trim());
+    const accountId = String(values[h.account_id] || "").trim();
+    if (!key || !accountId) return;
+    byKey.set(key, { customer_name:customerName, account_id:accountId });
+  });
+  return byKey;
+}
+
+// Remembers "Badger customer name → Account ID" so future invoices for that customer match on their own.
+// Caller must hold the script lock.
+function upsertBadgerCustomerAlias_(customerName, accountId, source, actor) {
+  const key = normalizeCustomerMatchKey_(customerName);
+  if (!key || !accountId) return false;
+  const sheet = getBadgerCustomerAliasesSheet_();
+  const h = getHeaderMap_(sheet);
+  const rows = sheet.getLastRow() < 2 ? [] : sheet.getRange(2, 1, sheet.getLastRow() - 1, sheet.getLastColumn()).getValues();
+  const existingIndex = rows.findIndex(row => {
+    const rowName = h.badger_customer_name === undefined ? "" : row[h.badger_customer_name];
+    const rowKey = normalizeCustomerMatchKey_(rowName) || (h.normalized_key === undefined ? "" : String(row[h.normalized_key] || "").trim());
+    return rowKey === key;
+  });
+  const values = existingIndex >= 0 ? rows[existingIndex].slice() : Array(sheet.getLastColumn()).fill("");
+  const set = (column, value) => { if (h[column] !== undefined) values[h[column]] = value; };
+  set("badger_customer_name", sheetSafeText_(customerName, 200, "Badger customer name"));
+  set("normalized_key", key);
+  set("account_id", accountId);
+  set("source", source);
+  set("linked_at", new Date());
+  set("linked_by", actor);
+  set("app_version", APP_VERSION);
+  sheet.getRange(existingIndex >= 0 ? existingIndex + 2 : sheet.getLastRow() + 1, 1, 1, values.length).setValues([values]);
+  return true;
 }
 
 function readBadgerInvoiceLinks_() {
@@ -5173,10 +5271,11 @@ function apiLinkBadgerInvoice_(p) {
     set("app_version", APP_VERSION);
     sheet.getRange(existingIndex >= 0 ? existingIndex + 2 : sheet.getLastRow() + 1, 1, 1, values.length).setValues([values]);
     const ignored = mode === "ignore";
+    const learned = !ignored && upsertBadgerCustomerAlias_(invoice.customer_name || "", accountId, "Staff invoice link", authenticatedActor_(p, "Sturgeon Distribution Hub"));
     appendAudit_(ignored ? "IGNORE_BADGER_INVOICE" : "LINK_BADGER_INVOICE", "Invoice", String(invoice.invoice_number || invoiceNumber), ignored ? "" : accountId, authenticatedActor_(p, "Sturgeon Distribution Hub"), BADGER_TRACKER_SPREADSHEET_ID, BADGER_INVOICE_LINKS_SHEET_NAME, ignored ? "Ignored" : "Linked", ignored ? (invoice.customer_name || "Badger customer") : `${invoice.customer_name || "Badger customer"} → ${account.business}`);
     return ignored
       ? { message:`Invoice ${invoice.invoice_number || invoiceNumber} marked as not a Directory account.`, invoice_number:String(invoice.invoice_number || invoiceNumber) }
-      : { message:`Invoice ${invoice.invoice_number || invoiceNumber} linked to ${account.business}.`, invoice_number:String(invoice.invoice_number || invoiceNumber), account_id:accountId };
+      : { message:`Invoice ${invoice.invoice_number || invoiceNumber} linked to ${account.business}.${learned ? ` Future invoices for ${invoice.customer_name} will match automatically.` : ""}`, invoice_number:String(invoice.invoice_number || invoiceNumber), account_id:accountId, learned_customer_name:learned };
   } finally {
     lock.releaseLock();
   }
@@ -5203,13 +5302,26 @@ function buildCustomerAccounts_(applications, orders, bypassBadgerCache) {
     console.warn("Badger invoice history was unavailable: " + String(err && err.message || err));
   }
   const explicitInvoiceLinks = readBadgerInvoiceLinks_();
-  const accountsByBusiness = new Map();
+  const customerAliases = readBadgerCustomerAliases_();
+  let locationNames = [];
+  try {
+    locationNames = cachedBadgerLocationNames_(!!bypassBadgerCache);
+  } catch (err) {
+    console.warn("Badger Location_Directory was unavailable: " + String(err && err.message || err));
+  }
+  const accountsByMatchKey = new Map();
   identity.rows.forEach(row => {
-    const businessKey = normalizeBusinessKey_(outreachValue_(row, ["business", "business_name"]));
+    const businessKey = normalizeCustomerMatchKey_(outreachValue_(row, ["business", "business_name"]));
     const accountId = String(row.account_id || "").trim();
     if (!businessKey || !accountId) return;
-    if (!accountsByBusiness.has(businessKey)) accountsByBusiness.set(businessKey, []);
-    accountsByBusiness.get(businessKey).push(accountId);
+    if (!accountsByMatchKey.has(businessKey)) accountsByMatchKey.set(businessKey, new Set());
+    accountsByMatchKey.get(businessKey).add(accountId);
+  });
+  const locationPublicKeyByInvoiceKey = new Map();
+  locationNames.forEach(item => {
+    const invoiceKey = normalizeCustomerMatchKey_(item.invoice_name);
+    const publicKey = normalizeCustomerMatchKey_(item.public_name);
+    if (invoiceKey && publicKey) locationPublicKeyByInvoiceKey.set(invoiceKey, publicKey);
   });
   const orderAccountsByInvoice = new Map();
   orders.forEach(order => {
@@ -5234,9 +5346,11 @@ function buildCustomerAccounts_(applications, orders, bypassBadgerCache) {
       ignoredBadgerInvoices.push(Object.assign({}, invoice, { match_method:"Ignored" }));
       return;
     }
-    const nameCandidates = accountsByBusiness.get(normalizeBusinessKey_(invoice.customer_name)) || [];
+    // Match order: manual invoice link → order link → learned customer name → Badger location name → business name.
     let accountId = explicit?.account_id || "";
-    let matchMethod = explicit ? "Manual link" : "";
+    let matchMethod = accountId ? "Manual link" : "";
+    let ambiguous = false;
+    let staleReason = accountId && !identity.by_id.has(accountId) ? "Linked Account ID is no longer in the directory" : "";
     if (!accountId && orderedAccounts.size > 1) {
       unmatchedBadgerInvoices.push(Object.assign({}, invoice, { match_reason:"Orders on more than one account reference this invoice." }));
       return;
@@ -5245,13 +5359,33 @@ function buildCustomerAccounts_(applications, orders, bypassBadgerCache) {
       accountId = Array.from(orderedAccounts)[0];
       matchMethod = "Linked order";
     }
-    if (!accountId && nameCandidates.length === 1) {
-      accountId = nameCandidates[0];
-      matchMethod = "Exact business name";
+    const customerKey = normalizeCustomerMatchKey_(invoice.customer_name);
+    if (!accountId && customerKey && customerAliases.has(customerKey)) {
+      const alias = customerAliases.get(customerKey);
+      if (identity.by_id.has(alias.account_id)) {
+        accountId = alias.account_id;
+        matchMethod = "Learned customer name";
+      } else {
+        staleReason = "The learned Account ID for this customer name is no longer in the directory";
+      }
+    }
+    if (!accountId && !staleReason && customerKey && locationPublicKeyByInvoiceKey.has(customerKey)) {
+      const candidates = Array.from(accountsByMatchKey.get(locationPublicKeyByInvoiceKey.get(customerKey)) || []);
+      if (candidates.length === 1) {
+        accountId = candidates[0];
+        matchMethod = "Badger location name";
+      } else if (candidates.length > 1) ambiguous = true;
+    }
+    if (!accountId && !staleReason && customerKey) {
+      const candidates = Array.from(accountsByMatchKey.get(customerKey) || []);
+      if (candidates.length === 1) {
+        accountId = candidates[0];
+        matchMethod = "Business name";
+      } else if (candidates.length > 1) ambiguous = true;
     }
     if (!accountId || !identity.by_id.has(accountId)) {
       unmatchedBadgerInvoices.push(Object.assign({}, invoice, {
-        match_reason:explicit ? "Linked Account ID is no longer in the directory" : (orderedAccounts.size > 1 || nameCandidates.length > 1 ? "More than one account could match" : "No account match"),
+        match_reason:staleReason || (ambiguous ? "More than one account could match" : "No account match"),
       }));
       return;
     }

@@ -237,7 +237,11 @@ test("Badger invoice links are staff-scoped and ledger matching stays account-ba
   assert.match(ledger, /String\(explicit\?\.match_method \|\| ""\).*=== "ignored"/);
   assert.match(ledger, /Orders on more than one account reference this invoice\./);
   assert.match(ledger, /matchMethod = "Linked order"/);
-  assert.match(ledger, /matchMethod = "Exact business name"/);
+  assert.match(ledger, /matchMethod = "Business name"/);
+  assert.match(ledger, /matchMethod = "Learned customer name"/);
+  assert.match(ledger, /matchMethod = "Badger location name"/);
+  assert.match(ledger, /const customerAliases = readBadgerCustomerAliases_\(\)/);
+  assert.match(ledger, /cachedBadgerLocationNames_\(/);
   assert.match(ledger, /assignedInvoiceAccounts/);
   assert.match(ledger, /conflictingOrderInvoiceKeys\.has\(invoiceKey\)/);
   assert.match(ledger, /linkedInvoices\.length > 0/);
@@ -260,6 +264,20 @@ test("Badger invoice links are staff-scoped and ledger matching stays account-ba
   assert.match(page, /Restore to matching/);
   assert.match(page, /<details class="workflowCard" data-badger-ignored="true">/);
   assert.doesNotMatch(page, /customerData\.accountOptions/);
+});
+
+test("staff invoice links teach customer-name matching, but ignores do not", async () => {
+  const script = await readFile(new URL("apps-script/Code.gs", root), "utf8");
+  const link = script.slice(script.indexOf("function apiLinkBadgerInvoice_"), script.indexOf("function buildCustomerAccounts_"));
+  assert.match(link, /const learned = !ignored && upsertBadgerCustomerAlias_\(/);
+  assert.match(script, /const BADGER_CUSTOMER_ALIASES_SHEET_NAME = "Badger Customer Aliases"/);
+  assert.match(script, /ensureSheet_\(hub, BADGER_CUSTOMER_ALIASES_SHEET_NAME/);
+  const normalizer = script.slice(script.indexOf("function normalizeCustomerMatchKey_"), script.indexOf("const BADGER_LOCATION_NAMES_CACHE_KEY"));
+  const normalize = new Function("BADGER_CUSTOMER_NAME_SUFFIXES", `${normalizer}; return normalizeCustomerMatchKey_;`)(new Set(["llc", "inc", "incorporated", "co", "corp", "corporation", "company", "ltd"]));
+  assert.equal(normalize("Cujak's Wine andSpirits"), normalize("Cujaks Wine and Spirits"));
+  assert.equal(normalize("Sunken PaddleCiderworks LLC"), normalize("Sunken Paddle Ciderworks"));
+  assert.equal(normalize("The Crimson Still LLC"), normalize("Crimson Still"));
+  assert.notEqual(normalize("Festival Foods -- Oshkosh #2708"), normalize("Festival Foods -- FDL"));
 });
 
 test("account ID repair writes only identity columns and isolates tab failures", async () => {
