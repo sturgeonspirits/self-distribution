@@ -1,7 +1,7 @@
-// App version: 2026.09.24.39-WEB
+// App version: 2026.09.24.40-WEB
 import { createHmac, timingSafeEqual } from "node:crypto";
 
-const APP_VERSION = "2026.09.24.39-WEB";
+const APP_VERSION = "2026.09.24.40-WEB";
 const TRACKED_TARGETS = new Set(["sell_sheet", "application"]);
 const BOT_USER_AGENT = /(bot|crawler|spider|preview|slackbot|facebookexternalhit|linkedinbot|twitterbot|discordbot|whatsapp|googleimageproxy|proofpoint|mimecast|barracuda|urlscan|virustotal|safelinks|security|scanner|curl|wget)/i;
 

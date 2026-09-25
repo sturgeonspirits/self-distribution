@@ -223,16 +223,34 @@ test("Badger invoice links are staff-scoped and ledger matching stays account-ba
   const page = await readFile(new URL("index.html", root), "utf8");
   assert.match(source, /"linkBadgerInvoice"/);
   assert.match(source, /\["linkBadgerInvoice", "orders"\]/);
+  assert.match(source, /"searchCustomerAccounts"/);
+  assert.match(source, /\["searchCustomerAccounts", "orders"\]/);
   assert.match(script, /const BADGER_INVOICE_LINKS_SHEET_NAME = "Badger Invoice Links"/);
   assert.match(script, /function apiLinkBadgerInvoice_\(p\)/);
+  assert.match(script, /function apiSearchCustomerAccounts_\(p\)/);
   const ledger = script.slice(script.indexOf("function buildCustomerAccounts_"), script.indexOf("function apiGetCustomerWorkQueue_"));
   assert.match(ledger, /const explicitInvoiceLinks = readBadgerInvoiceLinks_\(\)/);
+  assert.match(ledger, /String\(explicit\?\.match_method \|\| ""\).*=== "ignored"/);
+  assert.match(ledger, /Orders on more than one account reference this invoice\./);
   assert.match(ledger, /matchMethod = "Linked order"/);
   assert.match(ledger, /matchMethod = "Exact business name"/);
+  assert.match(ledger, /assignedInvoiceAccounts/);
+  assert.match(ledger, /conflictingOrderInvoiceKeys\.has\(invoiceKey\)/);
   assert.match(ledger, /linkedInvoices\.length > 0/);
   assert.match(ledger, /unmatched_badger_invoices/);
+  assert.match(ledger, /ignored_badger_invoices/);
+  assert.doesNotMatch(ledger, /account_options/);
+  assert.match(script, /cachedBadgerInvoices_\(false\)\.find/);
   assert.match(page, /Badger invoices needing an account/);
-  assert.match(page, /function linkBadgerInvoice\(button\)/);
+  const customerRender = page.slice(page.indexOf("function renderCustomerWorkflow"), page.indexOf("async function loadCustomerWorkQueue"));
+  assert.doesNotMatch(customerRender, /if \(!records\.length\) \{[\s\S]{0,250}return;/);
+  assert.ok(customerRender.indexOf("invoiceReview") < customerRender.indexOf("emptyState"));
+  assert.match(page, /<datalist id="badgerAccountPicker"><\/datalist>/);
+  assert.match(page, /function searchBadgerAccounts\(query\)/);
+  assert.match(page, /action:"searchCustomerAccounts"/);
+  assert.match(page, /Ignore \/ not a Directory account/);
+  assert.match(page, /Restore to matching/);
+  assert.doesNotMatch(page, /customerData\.accountOptions/);
 });
 
 test("contact logging schedules external email follow-up and repair normalizes legacy priority", async () => {
