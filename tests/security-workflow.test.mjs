@@ -262,6 +262,18 @@ test("Badger invoice links are staff-scoped and ledger matching stays account-ba
   assert.doesNotMatch(page, /customerData\.accountOptions/);
 });
 
+test("account ID repair writes only identity columns and isolates tab failures", async () => {
+  const script = await readFile(new URL("apps-script/Code.gs", root), "utf8");
+  const backfill = script.slice(script.indexOf("function backfillAccountIdsInSheet_"), script.indexOf("function ensureAccountIdentityModel_"));
+  assert.match(backfill, /sheet\.getRange\(2, h\.account_id \+ 1, rowCount, 1\)\.setValues\(accountIdValues\)/);
+  assert.doesNotMatch(backfill, /setValues\(rows\)/);
+  const model = script.slice(script.indexOf("function ensureAccountIdentityModel_"), script.indexOf("function setDirectoryField_"));
+  assert.doesNotMatch(model, /setValues\(rows\)/);
+  assert.match(model, /h\.record_created_at \+ 1, rowCount, 1\)\.setValues\(createdAtValues\)/);
+  assert.match(model, /account_id_backfill_failed/);
+  assert.match(script, /Account ID backfill failed on:/);
+});
+
 test("contact logging schedules external email follow-up and repair normalizes legacy priority", async () => {
   const script = await readFile(new URL("apps-script/Code.gs", root), "utf8");
   assert.match(script, /if \(!outcome\) \{\s+const settings = getOutreachCampaignSettings_\(\)/);

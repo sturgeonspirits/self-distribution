@@ -1,8 +1,12 @@
 /*********************************
  * Inventory API (JSON) for Netlify
- * App version: 2026.09.24.37
+ * App version: 2026.09.24.38
  *
  * CHANGES IN THIS VERSION
+ * - Account ID repair writes only the Account ID (and Directory Record Created At) columns instead of rewriting whole tabs, so data validation, formulas, and unrelated cells are untouched.
+ * - Each related tab is backfilled independently; a failing tab is logged and reported in the repair result instead of stopping the repair.
+ *
+ * CHANGES IN 2026.09.24.37
  * - Replaces per-keystroke Directory reads with one compact, versioned customer-account index cached server-side and in the browser.
  * - Keeps Badger invoice account filtering entirely in the browser after the first account-box focus.
  *
@@ -173,7 +177,7 @@
  * - Use only in the staging inventory backend until testing is complete.
  *********************************/
 
-const APP_VERSION = "2026.09.24.37";
+const APP_VERSION = "2026.09.24.38";
 
 const SHEET_NAMES = {
   STORES: "Stores",
@@ -648,7 +652,15 @@ function apiRepairHubStructure_(p) {
   if (!lock.tryLock(30000)) throw new Error("Another migration or write is in progress.");
   try {
     const identity = repairHubStructure_();
-    return { message:"Hub structure repaired.", repaired_at:new Date().toISOString(), accounts:identity.rows.length };
+    const failures = (identity.backfill_results || []).filter(item => !item.ok);
+    return {
+      message:failures.length
+        ? `Hub structure repaired, but Account ID backfill failed on: ${failures.map(item => `${item.sheet} (${item.error})`).join("; ")}.`
+        : "Hub structure repaired.",
+      repaired_at:new Date().toISOString(),
+      accounts:identity.rows.length,
+      backfill_results:identity.backfill_results || [],
+    };
   } finally {
     lock.releaseLock();
   }
@@ -659,7 +671,7 @@ function repairHubStructureNightly() {
   if (!lock.tryLock(30000)) throw new Error("Another migration or write is in progress.");
   try {
     const identity = repairHubStructure_();
-    console.log(JSON.stringify({ event:"hub_structure_repair", accounts:identity.rows.length }));
+    console.log(JSON.stringify({ event:"hub_structure_repair", accounts:identity.rows.length, backfill_results:identity.backfill_results || [] }));
   } finally {
     bumpReadCacheVersion_();
     lock.releaseLock();
@@ -1323,24 +1335,28 @@ function findIdentityMatch_(identity, accountId, business, email, city) {
 function backfillAccountIdsInSheet_(sheet, identity, options) {
   if (!sheet || sheet.getLastRow() < 2) return 0;
   const h = ensureHeaderColumns_(sheet, [ACCOUNT_ID_HEADER]);
-  const rows = sheet.getRange(2, 1, sheet.getLastRow() - 1, sheet.getLastColumn()).getValues();
+  const rowCount = sheet.getLastRow() - 1;
+  // Read the full rows for matching, but write back only the Account ID column so
+  // existing validation, formulas, and unrelated cells are never rewritten.
+  const rows = sheet.getRange(2, 1, rowCount, sheet.getLastColumn()).getValues();
+  const accountIdValues = rows.map(row => [row[h.account_id]]);
+  const businessKey = (options?.business_keys || ["business", "business_name"]).find(key => h[key] !== undefined);
+  const emailKey = (options?.email_keys || ["email", "primary_email", "intended_recipient"]).find(key => h[key] !== undefined);
+  const cityKey = (options?.city_keys || ["city", "delivery_city"]).find(key => h[key] !== undefined);
   let changed = 0;
-  rows.forEach(row => {
+  rows.forEach((row, index) => {
     if (String(row[h.account_id] || "").trim()) return;
     const sourceRow = h.source_row !== undefined ? Number(row[h.source_row] || 0) : 0;
     let match = sourceRow ? identity.by_row.get(sourceRow) : null;
     if (!match) {
-      const businessKey = (options?.business_keys || ["business", "business_name"]).find(key => h[key] !== undefined);
-      const emailKey = (options?.email_keys || ["email", "primary_email", "intended_recipient"]).find(key => h[key] !== undefined);
-      const cityKey = (options?.city_keys || ["city", "delivery_city"]).find(key => h[key] !== undefined);
       const result = findIdentityMatch_(identity, "", businessKey ? row[h[businessKey]] : "", emailKey ? row[h[emailKey]] : "", cityKey ? row[h[cityKey]] : "");
       match = result.record;
     }
-    if (!match) return;
-    row[h.account_id] = match.account_id;
+    if (!match || !match.account_id) return;
+    accountIdValues[index][0] = match.account_id;
     changed += 1;
   });
-  if (changed) sheet.getRange(2, 1, rows.length, rows[0].length).setValues(rows);
+  if (changed) sheet.getRange(2, h.account_id + 1, rowCount, 1).setValues(accountIdValues);
   return changed;
 }
 
@@ -1354,38 +1370,57 @@ function ensureAccountIdentityModel_(lockHeld) {
     const sheet = getOutreachSheet_(OUTREACH_SHEET_NAME);
     const h = ensureHeaderColumns_(sheet, [ACCOUNT_ID_HEADER, "Record Created At", "Record Updated At"]);
     if (sheet.getLastRow() >= 2) {
-      const rows = sheet.getRange(2, 1, sheet.getLastRow() - 1, sheet.getLastColumn()).getValues();
-      let changed = false;
+      const rowCount = sheet.getLastRow() - 1;
+      const rows = sheet.getRange(2, 1, rowCount, sheet.getLastColumn()).getValues();
+      const businessKey = h.business_name !== undefined ? "business_name" : (h.business !== undefined ? "business" : "");
+      // Only the Account ID and Record Created At columns are written back.
+      const accountIdValues = rows.map(row => [row[h.account_id]]);
+      const createdAtValues = rows.map(row => [row[h.record_created_at]]);
+      let idsChanged = false;
+      let createdChanged = false;
       const now = new Date();
       const seenAccountIds = new Set();
       rows.forEach((row, index) => {
-        const businessKey = h.business_name !== undefined ? "business_name" : (h.business !== undefined ? "business" : "");
         if (!businessKey || !String(row[h[businessKey]] || "").trim()) return;
-        if (!String(row[h.account_id] || "").trim()) {
-          row[h.account_id] = permanentId_("ACC");
-          changed = true;
+        if (!String(accountIdValues[index][0] || "").trim()) {
+          accountIdValues[index][0] = permanentId_("ACC");
+          idsChanged = true;
         }
-        const accountId = String(row[h.account_id] || "").trim();
+        const accountId = String(accountIdValues[index][0] || "").trim();
         if (seenAccountIds.has(accountId)) throw new Error(`Duplicate Account ID found on directory row ${index + 2}. Correct it before continuing.`);
         seenAccountIds.add(accountId);
-        if (!row[h.record_created_at]) {
-          row[h.record_created_at] = now;
-          changed = true;
+        if (!createdAtValues[index][0]) {
+          createdAtValues[index][0] = now;
+          createdChanged = true;
         }
       });
-      if (changed) sheet.getRange(2, 1, rows.length, rows[0].length).setValues(rows);
+      if (idsChanged) sheet.getRange(2, h.account_id + 1, rowCount, 1).setValues(accountIdValues);
+      if (createdChanged) sheet.getRange(2, h.record_created_at + 1, rowCount, 1).setValues(createdAtValues);
     }
     const identity = accountIdentityFromRows_(getAllRowsAsObjects_(sheet));
+    const backfillResults = [];
     [
-      [getOutreachSs_().getSheetByName(OUTREACH_DRAFTS_SHEET_NAME), {}],
-      [getOutreachSs_().getSheetByName(OUTREACH_PROGRAMS_SHEET_NAME), {}],
-      [getOutreachSs_().getSheetByName(OUTREACH_ENGAGEMENT_SHEET_NAME), {}],
-      [getOutreachSs_().getSheetByName(OUTREACH_ACTIVITY_SHEET_NAME), { business_keys:["business"], email_keys:["intended_recipient"] }],
-      [getOutreachSs_().getSheetByName(CUSTOMER_APPLICATIONS_SHEET_NAME), { business_keys:["business_name", "legal_business_name"], email_keys:["primary_email"], city_keys:["delivery_city"] }],
-      [getOutreachSs_().getSheetByName(ONLINE_ORDER_REQUESTS_SHEET_NAME), { business_keys:["business_name"], email_keys:["email"] }],
-      [getOutreachSs_().getSheetByName(NEWSLETTER_CONTACTS_SHEET_NAME), { business_keys:["source_business", "organization"], email_keys:["email"] }],
-    ].forEach(item => backfillAccountIdsInSheet_(item[0], identity, item[1]));
-    return accountIdentityFromRows_(getAllRowsAsObjects_(sheet));
+      [OUTREACH_DRAFTS_SHEET_NAME, {}],
+      [OUTREACH_PROGRAMS_SHEET_NAME, {}],
+      [OUTREACH_ENGAGEMENT_SHEET_NAME, {}],
+      [OUTREACH_ACTIVITY_SHEET_NAME, { business_keys:["business"], email_keys:["intended_recipient"] }],
+      [CUSTOMER_APPLICATIONS_SHEET_NAME, { business_keys:["business_name", "legal_business_name"], email_keys:["primary_email"], city_keys:["delivery_city"] }],
+      [ONLINE_ORDER_REQUESTS_SHEET_NAME, { business_keys:["business_name"], email_keys:["email"] }],
+      [NEWSLETTER_CONTACTS_SHEET_NAME, { business_keys:["source_business", "organization"], email_keys:["email"] }],
+    ].forEach(([sheetName, options]) => {
+      // Each related tab is independent: one bad tab is reported, not fatal.
+      try {
+        const filled = backfillAccountIdsInSheet_(getOutreachSs_().getSheetByName(sheetName), identity, options);
+        backfillResults.push({ sheet:sheetName, filled:filled, ok:true });
+      } catch (error) {
+        const message = String(error && error.message || error);
+        console.warn(JSON.stringify({ event:"account_id_backfill_failed", sheet:sheetName, error:message }));
+        backfillResults.push({ sheet:sheetName, filled:0, ok:false, error:message });
+      }
+    });
+    const refreshed = accountIdentityFromRows_(getAllRowsAsObjects_(sheet));
+    refreshed.backfill_results = backfillResults;
+    return refreshed;
   } finally {
     if (lock) lock.releaseLock();
   }

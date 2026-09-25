@@ -9,7 +9,7 @@ Read this file before inspecting the repository or changing the application. Upd
 | Component | Source version | Deployment state |
 | --- | --- | --- |
 | Netlify web app and staff proxy | `2026.09.24.41-WEB` on `codex/distribution-system-foundation` / `2026.09.24.24-WEB` live | Filters a cached account index entirely in the browser; deployment is pending review. |
-| Inventory API Apps Script | `2026.09.24.37` on `codex/distribution-system-foundation` / `2026.09.24.17` live | Caches the compact customer-account index under the normal read-cache version; deployment is pending review. |
+| Inventory API Apps Script | `2026.09.24.38` on `codex/distribution-system-foundation` / `2026.09.24.17` live | Account ID repair writes only the Account ID column and isolates per-tab failures; deployment is pending review. |
 | Distribution Outreach Apps Script | `2026.09.24.13-APP` on `codex/work` | Signed-link rendering is committed; owner has not yet confirmed this exact version is deployed. |
 | Public customer Netlify proxy | `2026.09.18.3-WEB` | Deployed with Netlify; unchanged by the latest staff-app UI work |
 
@@ -18,6 +18,8 @@ Current Git branch: `codex/distribution-system-foundation`
 Current remote: `https://github.com/sturgeonspirits/self-distribution.git`
 
 Latest completed changes:
+
+- Account ID repair fix: `repairHubStructure()` and the nightly repair no longer rewrite entire tabs. The Directory write touches only Account ID and Record Created At; related tabs (Drafts, Programs, Email Engagement, Activity Log, Customer Applications, Online Order Requests, Newsletter Contacts) touch only their Account ID column. A pre-existing out-of-list value (for example in Email Engagement's validated Event Type column) no longer stops the repair, and a tab that still fails is reported in the result while the others finish.
 
 - Account-level Badger invoice ledger: Orders & Accounts attaches Badger Tracker invoices to the existing permanent Directory Account ID even if no inventory store is tracked. Match precedence is an explicit manual link, then one existing order link, then one unique exact business-name match. Conflicting or unmatched invoices stay in a staff review card; staff can explicitly link, ignore, or restore an invoice without changing the Badger Tracker source. On first account-box focus, the app loads a compact server-cached account index once; every subsequent business/city/Account ID match is browser-only. After deploying the Apps Script source, run `repairHubStructure()` once to create the `Badger Invoice Links` tab.
 
