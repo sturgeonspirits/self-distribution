@@ -1,8 +1,11 @@
 /*********************************
  * Inventory API (JSON) for Netlify
- * App version: 2026.09.24.46
+ * App version: 2026.09.24.47
  *
  * CHANGES IN THIS VERSION
+ * - Read responses over 50 KB are sent gzip+base64 when the staff proxy asks (gz=1). The 647 KB Outreach list was stalling in Google's response handoff even though it built in ~2 seconds.
+ *
+ * CHANGES IN 2026.09.24.46
  * - Opening a campaign reads its recipient rows in one block instead of one sheet read per recipient.
  * - warmHubReadCaches rebuilds at most one missing cache per run, so it no longer competes with staff requests for 30+ seconds.
  *
@@ -202,7 +205,7 @@
  * - Use only in the staging inventory backend until testing is complete.
  *********************************/
 
-const APP_VERSION = "2026.09.24.46";
+const APP_VERSION = "2026.09.24.47";
 
 const SHEET_NAMES = {
   STORES: "Stores",
@@ -740,6 +743,13 @@ function installNightlyHubStructureRepair() {
   return { message:"Nightly Hub structure repair installed." };
 }
 
+function compressedJson_(payload) {
+  const text = JSON.stringify(payload);
+  if (text.length < 50000) return ContentService.createTextOutput(text).setMimeType(ContentService.MimeType.JSON);
+  const packed = Utilities.base64Encode(Utilities.gzip(Utilities.newBlob(text, "application/json")).getBytes());
+  return ContentService.createTextOutput(JSON.stringify({ ok:true, version:APP_VERSION, gzip_b64:packed })).setMimeType(ContentService.MimeType.JSON);
+}
+
 function json_(obj) {
   return ContentService.createTextOutput(JSON.stringify(obj)).setMimeType(ContentService.MimeType.JSON);
 }
@@ -835,7 +845,11 @@ function handle_(e, body) {
         throw new Error(`Unknown action: ${action}`);
     }
 
-    return json_(Object.assign({ ok:true, version:APP_VERSION }, res));
+    const payload = Object.assign({ ok:true, version:APP_VERSION }, res);
+    // Large read responses stall intermittently in Google's web-app response handoff.
+    // When the staff proxy asks (gz=1), send big payloads gzip+base64; the proxy unpacks them.
+    if (READ_ACTIONS.has(action) && String(e?.parameter?.gz || "") === "1") return compressedJson_(payload);
+    return json_(payload);
   } catch (err) {
     return json_({ ok:false, version:APP_VERSION, error: err?.message ? err.message : String(err) });
   } finally {

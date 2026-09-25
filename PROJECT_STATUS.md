@@ -8,8 +8,8 @@ Read this file before inspecting the repository or changing the application. Upd
 
 | Component | Source version | Deployment state |
 | --- | --- | --- |
-| Netlify web app and staff proxy | `2026.09.24.45-WEB` on `codex/distribution-system-foundation` / `2026.09.24.44-WEB` live | A campaign freeze that times out now waits for the new campaign and opens it; order page `2026.09.25.1` honors the SKUs Out of Stock checkbox. Deployment is pending. |
-| Inventory API Apps Script | `2026.09.24.46` on `codex/distribution-system-foundation` / `2026.09.24.43` live | `.45` adds the SKUs Out of Stock checkbox; `.46` reads a campaign's recipients in one block and makes the cache warmer rebuild one missing cache per run. Deployment is pending. `.43` was deployed 2026-09-25. (`.44` was an abandoned Toast-stock build; if it was pasted, replace it.) |
+| Netlify web app and staff proxy | `2026.09.24.46-WEB` on `codex/distribution-system-foundation` / `2026.09.24.45-WEB` live | Staff proxy unpacks compressed reads and retries read-only loads once (2 × 11.5 s); refresh errors show the real message. Deployment is pending. |
+| Inventory API Apps Script | `2026.09.24.47` on `codex/distribution-system-foundation` / `2026.09.24.46` live | Compresses read responses over 50 KB when asked (`gz=1`). Deploy together with `.46-WEB`; the order does not matter, because uncompressed responses still work. |
 | Distribution Outreach Apps Script | `2026.09.24.13-APP` on `codex/work` | Signed-link rendering is committed; owner has not yet confirmed this exact version is deployed. |
 | Public customer Netlify proxy | `2026.09.18.3-WEB` | Deployed with Netlify; unchanged by the latest staff-app UI work |
 
@@ -18,6 +18,8 @@ Current Git branch: `codex/distribution-system-foundation`
 Current remote: `https://github.com/sturgeonspirits/self-distribution.git`
 
 Latest completed changes:
+
+- Outreach load failures diagnosed 2026-09-25. The Apps Script profiler showed every screen builds in 1.2–6.1 s (Outreach 4.6 s, Orders & Accounts 6.1 s), and every tab read costs about 0.4–1 s regardless of size. Netlify logs showed `outreachDashboard` failing with a 500 after 25.1 s while the matching Apps Script `doGet` completed in 1.6–2.0 s: the 647 KB response stalled in Google's web-app response handoff. Fix: read responses over 50 KB are sent gzip+base64 (`compressedJson_`, requested by the staff proxy with `gz=1`) and unpacked in `netlify/functions/inventory.js`; read-only GETs get two 11.5 s attempts instead of one 24–25 s attempt; refresh-failure messages now include the real error. The cache warmer and change triggers were deleted by the owner the same day. The profiler lives in the owner's editor as a separate `Profiler.gs` file and is not in the repo.
 
 - Campaign timeouts on a ~700-row Directory. `campaignRecipientRows_` read each recipient row separately (100+ sheet reads per campaign open); it now reads the recipients' row block once. `warmHubReadCaches` rebuilt all three read caches in one run (30+ seconds), which competed with campaign preview and freeze; it now rebuilds at most one missing cache per run. In the browser, when Confirm and freeze hits the connection limit, the app checks the campaign list every 20 seconds for up to five minutes for the new campaign and opens it. It never re-sends the create. If the freeze succeeds but loading it back is slow, the message now says the campaign was created.
 

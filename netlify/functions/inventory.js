@@ -1,7 +1,8 @@
-// App version: 2026.09.24.45-WEB
+// App version: 2026.09.24.46-WEB
+import { gunzipSync } from "node:zlib";
 import { requireStaffSession } from "./auth.js";
 
-const APP_VERSION = "2026.09.24.45-WEB";
+const APP_VERSION = "2026.09.24.46-WEB";
 const STAFF_ACTIONS = new Set([
   "outreachDashboard",
   "outreachRecord",
@@ -55,6 +56,8 @@ const UPSTREAM_ATTEMPTS = 1;
 const UPSTREAM_WRITE_ATTEMPTS = 1;
 const UPSTREAM_TIMEOUT_MS = 25000;
 const SEND_UPSTREAM_ATTEMPTS = 1;
+const READ_UPSTREAM_ATTEMPTS = 2;
+const READ_UPSTREAM_TIMEOUT_MS = 11500;
 // Sends use the established 24-second single-attempt window; never retry an
 // uncertain send because the original request may still be holding the lock.
 const SEND_UPSTREAM_TIMEOUT_MS = 24000;
@@ -134,7 +137,8 @@ function nonJsonUpstreamDetail(upstream, text) {
 
 async function proxyResult(upstream, cors) {
   const text = await upstream.text();
-  try { JSON.parse(text); }
+  let parsed;
+  try { parsed = JSON.parse(text); }
   catch (error) {
     const detail = nonJsonUpstreamDetail(upstream, text);
     console.error("Inventory API returned non-JSON", {
@@ -143,6 +147,16 @@ async function proxyResult(upstream, cors) {
       detail,
     });
     return response(502, cors, { ok:false, code:"UPSTREAM_NON_JSON", error:detail });
+  }
+  if (parsed && typeof parsed.gzip_b64 === "string") {
+    try {
+      const unpacked = gunzipSync(Buffer.from(parsed.gzip_b64, "base64")).toString("utf8");
+      JSON.parse(unpacked);
+      return { statusCode:upstream.ok ? 200 : 502, headers:cors, body:unpacked };
+    } catch (error) {
+      console.error("Inventory API compressed payload could not be unpacked", { error:String(error) });
+      return response(502, cors, { ok:false, code:"UPSTREAM_BAD_COMPRESSION", error:"The server response could not be unpacked. Reload the page to try again." });
+    }
   }
   return { statusCode:upstream.ok ? 200 : 502, headers:cors, body:text };
 }
@@ -217,12 +231,15 @@ export async function handler(event) {
       const url = new URL(APPS_SCRIPT_URL);
       request.params.forEach((value, key) => url.searchParams.append(key, value));
       if (API_KEY) url.searchParams.set("api_key", API_KEY);
+      url.searchParams.set("gz", "1");
 
-      const resp = await fetchAppsScript(url.toString(), { method:"GET", headers:{ "Accept":"application/json" } }, CAMPAIGN_READ_ACTIONS.has(action) ? {
-        attempts:1,
-        timeoutMs:SEND_UPSTREAM_TIMEOUT_MS,
-        campaignRead:true,
-      } : {});
+      // Reads are safe to repeat. The server usually answers in 2-8 s, but Google's response
+      // handoff sometimes stalls; give each attempt 11.5 s and try twice inside the ~26 s limit.
+      const resp = await fetchAppsScript(url.toString(), { method:"GET", headers:{ "Accept":"application/json" } }, {
+        attempts:READ_UPSTREAM_ATTEMPTS,
+        timeoutMs:READ_UPSTREAM_TIMEOUT_MS,
+        campaignRead:CAMPAIGN_READ_ACTIONS.has(action),
+      });
       return proxyResult(resp, cors);
     }
 

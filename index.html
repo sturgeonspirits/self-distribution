@@ -1,10 +1,10 @@
 <!doctype html>
-<!-- App version: 2026.09.24.45-WEB -->
+<!-- App version: 2026.09.24.46-WEB -->
 <html>
 <head>
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover"/>
-  <meta name="app-version" content="2026.09.24.45-WEB" />
+  <meta name="app-version" content="2026.09.24.46-WEB" />
   <meta name="theme-color" content="#536f77" />
   <link rel="icon" href="/assets/distribution-hub-icon.svg" type="image/svg+xml" />
   <link rel="manifest" href="/site.webmanifest" />
@@ -2532,7 +2532,7 @@
 
   <footer style="max-width:1200px;margin:18px auto 120px;padding:0 12px;text-align:center;color:#6b7280;font-size:12px;">
     Designed by <a href="https://scriptspirit.dev" target="_blank" rel="noopener noreferrer" style="color:#1d4ed8;text-decoration:none;font-weight:700;">Script Spirit</a>
-<span id="appVersionFooter"> • Version 2026.09.24.45-WEB</span>
+<span id="appVersionFooter"> • Version 2026.09.24.46-WEB</span>
   </footer>
 
 
@@ -2555,7 +2555,7 @@
   window.addEventListener("unhandledrejection", e => console.error("Unhandled promise rejection:", e.reason));
   window.addEventListener("error", e => console.error("Unhandled error:", e.error || e.message));
   const $ = (id) => document.getElementById(id);
-  const APP_VERSION = "2026.09.24.45-WEB";
+  const APP_VERSION = "2026.09.24.46-WEB";
   $("appVersionFooter").textContent = ` • Version ${APP_VERSION}`;
   function screenCacheKey(screen){ return `distribution_hub:${APP_VERSION}:${staffSession?.email || "unknown"}:${screen}`; }
   function readScreenCache(screen){
@@ -3039,7 +3039,7 @@
       result = await staffApiGet({ action:"customerWorkQueue", ...(forceRefresh ? { refresh:1 } : {}) });
     } catch (error) {
       if (requestId !== customerWorkQueueLoadRequest) return;
-      if (cached) { $("customerWorkflowStatus").textContent = `Couldn't finish refreshing in time; showing data from ${cachedTimeLabel(cached)}. The server keeps working — reload the page in a minute to see the update.`; return; }
+      if (cached) { $("customerWorkflowStatus").textContent = `Couldn't refresh (${error?.message || "connection problem"}); showing data from ${cachedTimeLabel(cached)}. Reload the page in a minute to try again.`; return; }
       throw error;
     }
     if (requestId !== customerWorkQueueLoadRequest) return;
@@ -4147,7 +4147,7 @@
       res = await staffApiGet({ action:"outreachDashboard", slim:1, ...(forceRefresh ? { refresh:1 } : {}) });
     } catch (error) {
       if (requestId !== outreachLoadRequest) return;
-      if (cached) { setOutreachStatus(`Couldn't finish refreshing in time; showing data from ${cachedTimeLabel(cached)}. The server keeps working — reload the page in a minute to see the update.`); return; }
+      if (cached) { setOutreachStatus(`Couldn't refresh (${error?.message || "connection problem"}); showing data from ${cachedTimeLabel(cached)}. Reload the page in a minute to try again.`); return; }
       throw error;
     }
     if (requestId !== outreachLoadRequest) return;
@@ -5934,7 +5934,7 @@
     else setStatus("Loading stores...");
     let res;
     try { res = await staffApiGet({ action:"initData", ...(forceRefresh ? { refresh:1 } : {}) }); }
-    catch (error) { if (cached) { inventoryLoaded = true; showInventoryAccessState(); setStatus(`Couldn't finish refreshing in time; showing data from ${cachedTimeLabel(cached)}. The server keeps working — reload the page in a minute to see the update.`); return; } throw error; }
+    catch (error) { if (cached) { inventoryLoaded = true; showInventoryAccessState(); setStatus(`Couldn't refresh (${error?.message || "connection problem"}); showing data from ${cachedTimeLabel(cached)}. Reload the page in a minute to try again.`); return; } throw error; }
     if (!res.ok) throw new Error("Store list could not be loaded.");
     cache.stores = res.stores || [];
     writeScreenCache("inventory-stores", res);

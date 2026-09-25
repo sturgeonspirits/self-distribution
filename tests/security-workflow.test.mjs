@@ -166,7 +166,27 @@ test("campaign snapshots use one controlled upstream attempt", async () => {
   assert.match(JSON.parse(result.body).error, /campaign creation connection failed/i);
 });
 
-test("campaign review reads use one extended upstream attempt", async () => {
+test("staff proxy unpacks compressed read responses", async () => {
+  const { handler } = await loadFunction("netlify/functions/inventory.js", "compressed-read");
+  const { gzipSync } = await import("node:zlib");
+  process.env.APPS_SCRIPT_URL = "https://script.google.test/exec";
+  process.env.API_KEY = "backend-key";
+  process.env.APP_SESSION_SECRET = "test-session-secret-that-is-long-enough";
+  process.env.STAFF_ROLES_JSON = '{"staff@sturgeonspirits.com":"staff"}';
+  const original = { ok:true, records:[{ business:"Acme Tap", city:"Neenah" }] };
+  let requestedUrl = "";
+  globalThis.fetch = async url => {
+    requestedUrl = String(url);
+    const packed = gzipSync(Buffer.from(JSON.stringify(original))).toString("base64");
+    return new Response(JSON.stringify({ ok:true, gzip_b64:packed }), { status:200, headers:{ "content-type":"application/json" } });
+  };
+  const result = await handler(event("outreachDashboard", { method:"GET", session:staffSession() }));
+  assert.match(requestedUrl, /[?&]gz=1(&|$)/);
+  assert.equal(result.statusCode, 200);
+  assert.deepEqual(JSON.parse(result.body), original);
+});
+
+test("campaign review reads retry once within the proxy limit", async () => {
   const { handler } = await loadFunction("netlify/functions/inventory.js", "campaign-review-no-retry");
   process.env.APPS_SCRIPT_URL = "https://script.google.test/exec";
   process.env.API_KEY = "backend-key";
@@ -178,7 +198,7 @@ test("campaign review reads use one extended upstream attempt", async () => {
     throw new Error("connection ended");
   };
   const result = await handler(event("outreachCampaigns", { method:"GET", session:staffSession() }));
-  assert.equal(calls, 1);
+  assert.equal(calls, 2);
   assert.equal(result.statusCode, 500);
   assert.match(JSON.parse(result.body).error, /campaign review connection failed/i);
 });
@@ -288,6 +308,22 @@ test("staff invoice links teach customer-name matching, but ignores do not", asy
   assert.match(ledger, /locationKeys\.size !== 1/);
 });
 
+test("large read responses are compressed and reads retry within the proxy limit", async () => {
+  const script = await readFile(new URL("apps-script/Code.gs", root), "utf8");
+  const proxy = await readFile(new URL("netlify/functions/inventory.js", root), "utf8");
+  assert.match(script, /if \(READ_ACTIONS\.has\(action\) && String\(e\?\.parameter\?\.gz \|\| ""\) === "1"\) return compressedJson_\(payload\)/);
+  assert.match(script, /Utilities\.gzip\(/);
+  assert.match(proxy, /import \{ gunzipSync \} from "node:zlib";/);
+  assert.match(proxy, /url\.searchParams\.set\("gz", "1"\)/);
+  assert.match(proxy, /const READ_UPSTREAM_ATTEMPTS = 2;/);
+  assert.match(proxy, /const READ_UPSTREAM_TIMEOUT_MS = 11500;/);
+  // Two read attempts must fit inside Netlify's ~26 s function limit.
+  assert.ok(2 * 11500 < 25000);
+  // Writes and sends stay single-attempt.
+  assert.match(proxy, /attempts:UPSTREAM_WRITE_ATTEMPTS/);
+  assert.match(proxy, /const SEND_UPSTREAM_ATTEMPTS = 1;/);
+});
+
 test("campaign freeze timeouts wait for the snapshot instead of re-creating it", async () => {
   const script = await readFile(new URL("apps-script/Code.gs", root), "utf8");
   const page = await readFile(new URL("index.html", root), "utf8");
@@ -326,7 +362,7 @@ test("forced refreshes save their rebuild to the read cache", async () => {
   assert.match(script, /cachedReadPayload_\("outreach_slim", [^\n]+, forceRefresh\)/);
   assert.match(script, /cachedReadPayload_\("inventory_stores", \(\) => apiGetInitData_\("", true\), !!forceRefresh\)/);
   const page = await readFile(new URL("index.html", root), "utf8");
-  assert.equal((page.match(/The server keeps working — reload the page in a minute to see the update\./g) || []).length, 3);
+  assert.equal((page.match(/Couldn't refresh \(\$\{error\?\.message/g) || []).length, 3);
 });
 
 test("browser sends CSV imports in small parts", async () => {
