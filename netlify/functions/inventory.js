@@ -1,8 +1,8 @@
-// App version: 2026.09.24.46-WEB
+// App version: 2026.09.24.47-WEB
 import { gunzipSync } from "node:zlib";
 import { requireStaffSession } from "./auth.js";
 
-const APP_VERSION = "2026.09.24.46-WEB";
+const APP_VERSION = "2026.09.24.47-WEB";
 const STAFF_ACTIONS = new Set([
   "outreachDashboard",
   "outreachRecord",

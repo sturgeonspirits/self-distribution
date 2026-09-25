@@ -166,6 +166,16 @@ test("campaign snapshots use one controlled upstream attempt", async () => {
   assert.match(JSON.parse(result.body).error, /campaign creation connection failed/i);
 });
 
+test("every staff request shows busy feedback", async () => {
+  const page = await readFile(new URL("index.html", root), "utf8");
+  assert.match(page, /<div id="apiBusyBar" aria-hidden="true"><\/div>/);
+  const get = page.slice(page.indexOf("async function staffApiGet"), page.indexOf("async function staffApiPost"));
+  const post = page.slice(page.indexOf("async function staffApiPost"), page.indexOf("function refreshIcons"));
+  assert.match(get, /return withApiBusy\(/);
+  assert.match(post, /return withApiBusy\(/);
+  assert.match(page, /button\.is-busy \{ opacity:\.6; cursor:progress; pointer-events:none; \}/);
+});
+
 test("staff proxy unpacks compressed read responses", async () => {
   const { handler } = await loadFunction("netlify/functions/inventory.js", "compressed-read");
   const { gzipSync } = await import("node:zlib");

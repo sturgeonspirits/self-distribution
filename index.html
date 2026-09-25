@@ -1,10 +1,10 @@
 <!doctype html>
-<!-- App version: 2026.09.24.46-WEB -->
+<!-- App version: 2026.09.24.47-WEB -->
 <html>
 <head>
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover"/>
-  <meta name="app-version" content="2026.09.24.46-WEB" />
+  <meta name="app-version" content="2026.09.24.47-WEB" />
   <meta name="theme-color" content="#536f77" />
   <link rel="icon" href="/assets/distribution-hub-icon.svg" type="image/svg+xml" />
   <link rel="manifest" href="/site.webmanifest" />
@@ -1772,9 +1772,17 @@
         grid-template-columns:1fr;
       }
     }
+    /* Immediate feedback while the server works: a thin bar at the top, and the pressed button dims. */
+    #apiBusyBar { position:fixed; top:0; left:0; right:0; height:3px; z-index:9999; overflow:hidden; opacity:0; transition:opacity .15s; pointer-events:none; }
+    #apiBusyBar::before { content:""; position:absolute; top:0; bottom:0; width:35%; background:#d97706; animation:apiBusySlide 1.1s ease-in-out infinite; }
+    body.api-busy #apiBusyBar { opacity:1; }
+    @keyframes apiBusySlide { from { left:-35%; } to { left:100%; } }
+    button.is-busy { opacity:.6; cursor:progress; pointer-events:none; }
+    button.is-busy::after { content:" …"; }
   </style>
 </head>
 <body>
+  <div id="apiBusyBar" aria-hidden="true"></div>
 <header>
   <div class="headerInner">
     <div class="headerMain">
@@ -2532,7 +2540,7 @@
 
   <footer style="max-width:1200px;margin:18px auto 120px;padding:0 12px;text-align:center;color:#6b7280;font-size:12px;">
     Designed by <a href="https://scriptspirit.dev" target="_blank" rel="noopener noreferrer" style="color:#1d4ed8;text-decoration:none;font-weight:700;">Script Spirit</a>
-<span id="appVersionFooter"> • Version 2026.09.24.46-WEB</span>
+<span id="appVersionFooter"> • Version 2026.09.24.47-WEB</span>
   </footer>
 
 
@@ -2555,7 +2563,7 @@
   window.addEventListener("unhandledrejection", e => console.error("Unhandled promise rejection:", e.reason));
   window.addEventListener("error", e => console.error("Unhandled error:", e.error || e.message));
   const $ = (id) => document.getElementById(id);
-  const APP_VERSION = "2026.09.24.46-WEB";
+  const APP_VERSION = "2026.09.24.47-WEB";
   $("appVersionFooter").textContent = ` • Version ${APP_VERSION}`;
   function screenCacheKey(screen){ return `distribution_hub:${APP_VERSION}:${staffSession?.email || "unknown"}:${screen}`; }
   function readScreenCache(screen){
@@ -2675,22 +2683,49 @@
     return json;
   }
 
+  // Busy feedback: any server request shows the top progress bar, and the button pressed just
+  // before it dims until that request finishes, so a slow response never looks like a missed click.
+  let apiInFlight = 0;
+  let lastPressedButton = null;
+  let lastPressedAt = 0;
+  document.addEventListener("click", event => {
+    const button = event.target.closest && event.target.closest("button");
+    if (button) { lastPressedButton = button; lastPressedAt = Date.now(); }
+  }, true);
+  async function withApiBusy(run){
+    const button = lastPressedButton && Date.now() - lastPressedAt < 1500 ? lastPressedButton : null;
+    apiInFlight += 1;
+    document.body.classList.add("api-busy");
+    if (button) { button.classList.add("is-busy"); button.setAttribute("aria-busy", "true"); }
+    try {
+      return await run();
+    } finally {
+      apiInFlight = Math.max(0, apiInFlight - 1);
+      if (!apiInFlight) document.body.classList.remove("api-busy");
+      if (button) { button.classList.remove("is-busy"); button.removeAttribute("aria-busy"); }
+    }
+  }
+
   async function staffApiGet(params){
-    const qs = new URLSearchParams(params).toString();
-    const res = await fetch(`/api/inventory?${qs}`, { credentials:"same-origin" });
-    try { return await readApiJson(res); }
-    catch (error) { if (error.staffAuth) handleCustomerError(error); throw error; }
+    return withApiBusy(async () => {
+      const qs = new URLSearchParams(params).toString();
+      const res = await fetch(`/api/inventory?${qs}`, { credentials:"same-origin" });
+      try { return await readApiJson(res); }
+      catch (error) { if (error.staffAuth) handleCustomerError(error); throw error; }
+    });
   }
 
   async function staffApiPost(body){
-    const res = await fetch(`/api/inventory`, {
-      method:"POST",
-      headers:{ "Content-Type":"application/json" },
-      credentials:"same-origin",
-      body:JSON.stringify(body),
+    return withApiBusy(async () => {
+      const res = await fetch(`/api/inventory`, {
+        method:"POST",
+        headers:{ "Content-Type":"application/json" },
+        credentials:"same-origin",
+        body:JSON.stringify(body),
+      });
+      try { return await readApiJson(res); }
+      catch (error) { if (error.staffAuth) handleCustomerError(error); throw error; }
     });
-    try { return await readApiJson(res); }
-    catch (error) { if (error.staffAuth) handleCustomerError(error); throw error; }
   }
 
   function refreshIcons(){
@@ -3432,6 +3467,7 @@
   async function loadOutreachCampaigns(){
     const cached = !(outreachData.campaigns || []).length && readScreenCache("campaigns");
     if (cached) { outreachData.campaigns = cached.payload.campaigns || []; renderOutreach(); setOutreachStatus(`Updating campaigns… showing data from ${cachedTimeLabel(cached)}.`); }
+    else if (!(outreachData.campaigns || []).length) setOutreachStatus("Loading campaigns…");
     let res;
     try { res = await staffApiGet({ action:"outreachCampaigns" }); }
     catch (error) { if (cached) { setOutreachStatus(`Couldn't refresh campaigns; showing data from ${cachedTimeLabel(cached)}. Click Refresh to retry.`); return; } throw error; }
