@@ -8,8 +8,8 @@ Read this file before inspecting the repository or changing the application. Upd
 
 | Component | Source version | Deployment state |
 | --- | --- | --- |
-| Netlify web app and staff proxy | `2026.09.24.44-WEB` on `codex/distribution-system-foundation` / `2026.09.24.44-WEB` live | Deployed 2026-09-25, including the reviewed CSV-message correction. |
-| Inventory API Apps Script | `2026.09.24.45` on `codex/distribution-system-foundation` / `2026.09.24.43` live | `.45` adds the SKUs "Out of Stock" checkbox for the order page; deployment is pending. `.43` was deployed 2026-09-25. (`.44` was an abandoned Toast-stock build; if it was pasted, replace it with `.45`.) |
+| Netlify web app and staff proxy | `2026.09.24.45-WEB` on `codex/distribution-system-foundation` / `2026.09.24.44-WEB` live | A campaign freeze that times out now waits for the new campaign and opens it; order page `2026.09.25.1` honors the SKUs Out of Stock checkbox. Deployment is pending. |
+| Inventory API Apps Script | `2026.09.24.46` on `codex/distribution-system-foundation` / `2026.09.24.43` live | `.45` adds the SKUs Out of Stock checkbox; `.46` reads a campaign's recipients in one block and makes the cache warmer rebuild one missing cache per run. Deployment is pending. `.43` was deployed 2026-09-25. (`.44` was an abandoned Toast-stock build; if it was pasted, replace it.) |
 | Distribution Outreach Apps Script | `2026.09.24.13-APP` on `codex/work` | Signed-link rendering is committed; owner has not yet confirmed this exact version is deployed. |
 | Public customer Netlify proxy | `2026.09.18.3-WEB` | Deployed with Netlify; unchanged by the latest staff-app UI work |
 
@@ -18,6 +18,8 @@ Current Git branch: `codex/distribution-system-foundation`
 Current remote: `https://github.com/sturgeonspirits/self-distribution.git`
 
 Latest completed changes:
+
+- Campaign timeouts on a ~700-row Directory. `campaignRecipientRows_` read each recipient row separately (100+ sheet reads per campaign open); it now reads the recipients' row block once. `warmHubReadCaches` rebuilt all three read caches in one run (30+ seconds), which competed with campaign preview and freeze; it now rebuilds at most one missing cache per run. In the browser, when Confirm and freeze hits the connection limit, the app checks the campaign list every 20 seconds for up to five minutes for the new campaign and opens it. It never re-sends the create. If the freeze succeeds but loading it back is slow, the message now says the campaign was created.
 
 - Out-of-stock switch for online ordering: add a column named `Out of Stock` to the `SKUs` tab and use Insert → Checkbox on it. `listSkus` returns `out_of_stock` and `availability_status: "Out of stock"` for ticked products, and `order.html` (`2026.09.25.1`) lists them but disables them. Unticked products stay orderable with staff-confirmed availability. The code never adds the column itself, so production sheets change only by hand (see the cutover runbook, step 2).
 

@@ -1,10 +1,10 @@
 <!doctype html>
-<!-- App version: 2026.09.24.44-WEB -->
+<!-- App version: 2026.09.24.45-WEB -->
 <html>
 <head>
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover"/>
-  <meta name="app-version" content="2026.09.24.44-WEB" />
+  <meta name="app-version" content="2026.09.24.45-WEB" />
   <meta name="theme-color" content="#536f77" />
   <link rel="icon" href="/assets/distribution-hub-icon.svg" type="image/svg+xml" />
   <link rel="manifest" href="/site.webmanifest" />
@@ -2532,7 +2532,7 @@
 
   <footer style="max-width:1200px;margin:18px auto 120px;padding:0 12px;text-align:center;color:#6b7280;font-size:12px;">
     Designed by <a href="https://scriptspirit.dev" target="_blank" rel="noopener noreferrer" style="color:#1d4ed8;text-decoration:none;font-weight:700;">Script Spirit</a>
-<span id="appVersionFooter"> • Version 2026.09.24.44-WEB</span>
+<span id="appVersionFooter"> • Version 2026.09.24.45-WEB</span>
   </footer>
 
 
@@ -2555,7 +2555,7 @@
   window.addEventListener("unhandledrejection", e => console.error("Unhandled promise rejection:", e.reason));
   window.addEventListener("error", e => console.error("Unhandled error:", e.error || e.message));
   const $ = (id) => document.getElementById(id);
-  const APP_VERSION = "2026.09.24.44-WEB";
+  const APP_VERSION = "2026.09.24.45-WEB";
   $("appVersionFooter").textContent = ` • Version ${APP_VERSION}`;
   function screenCacheKey(screen){ return `distribution_hub:${APP_VERSION}:${staffSession?.email || "unknown"}:${screen}`; }
   function readScreenCache(screen){
@@ -3562,6 +3562,8 @@
     if (!outreachCampaignPreview) return $("outreachCampaignCriteriaStatus").textContent = "Preview this audience before creating a campaign.";
     const button = $("createOutreachCampaignCriteriaBtn");
     button.disabled = true;
+    const startedAt = Date.now();
+    const knownCampaignIds = new Set((outreachData.campaigns || []).map(campaign => campaign.campaign_id));
     $("outreachCampaignCriteriaStatus").textContent = "Freezing the confirmed campaign snapshot...";
     setOutreachStatus("Creating confirmed campaign snapshot...");
     try {
@@ -3575,14 +3577,56 @@
         : `${frozen} confirmed recipients frozen for review. No email was sent.`;
       $("outreachCampaignCriteriaDialog").close();
       setOutreachStatus(freezeMessage);
-      await loadOutreachCampaigns();
-      await openOutreachCampaign(res.campaign_id);
-      setCampaignStatus(freezeMessage);
+      // The campaign is saved at this point. If loading it back is slow, say so plainly.
+      try {
+        await loadOutreachCampaigns();
+        await openOutreachCampaign(res.campaign_id);
+        setCampaignStatus(freezeMessage);
+      } catch (loadError) {
+        setOutreachStatus(`${freezeMessage} The campaign was created, but the list is still loading. Reload the page in a minute to review it.`);
+      }
     } catch (error) {
-      $("outreachCampaignCriteriaStatus").textContent = error.message || String(error);
+      const message = error.message || String(error);
+      if (/Campaign creation did not finish/.test(message)) {
+        await waitForFrozenCampaign(startedAt, knownCampaignIds);
+      } else {
+        $("outreachCampaignCriteriaStatus").textContent = message;
+      }
     } finally {
       button.disabled = false;
     }
+  }
+
+  // A freeze can outlast the ~24-second connection limit while Apps Script keeps working.
+  // Check the campaign list every 20 seconds for up to five minutes for a campaign created
+  // since the click, and open it when it appears. Never re-sends the create request.
+  async function waitForFrozenCampaign(startedAt, knownCampaignIds){
+    const status = $("outreachCampaignCriteriaStatus");
+    const deadline = Date.now() + 5 * 60 * 1000;
+    while (Date.now() < deadline) {
+      status.textContent = "Still freezing on the server — checking every 20 seconds. Do not create another campaign.";
+      await new Promise(resolve => setTimeout(resolve, 20000));
+      try {
+        const res = await staffApiGet({ action:"outreachCampaigns" });
+        if (!res.ok) continue;
+        const created = (res.campaigns || []).find(campaign => ["Review", "Approved"].includes(campaign.status)
+          && (knownCampaignIds.size ? !knownCampaignIds.has(campaign.campaign_id) : new Date(campaign.created_at).getTime() >= startedAt - 60000));
+        if (created) {
+          outreachData.campaigns = res.campaigns || [];
+          writeScreenCache("campaigns", res);
+          $("outreachCampaignCriteriaDialog").close();
+          renderOutreach();
+          const message = `Campaign "${created.name}" was created with ${Number(created.recipient_count || 0)} recipients. No email was sent.`;
+          setOutreachStatus(message);
+          try { await openOutreachCampaign(created.campaign_id); setCampaignStatus(message); }
+          catch (_) { setOutreachStatus(`${message} Reload the page in a minute to review it.`); }
+          return;
+        }
+      } catch (_) {
+        // Keep checking until the deadline; the server may still be busy.
+      }
+    }
+    status.textContent = "The campaign did not appear within five minutes. Check the Outreach Campaigns tab before trying again.";
   }
 
   async function recalculateOutreachMiles(){

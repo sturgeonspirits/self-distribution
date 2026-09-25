@@ -1,8 +1,12 @@
 /*********************************
  * Inventory API (JSON) for Netlify
- * App version: 2026.09.24.45
+ * App version: 2026.09.24.46
  *
  * CHANGES IN THIS VERSION
+ * - Opening a campaign reads its recipient rows in one block instead of one sheet read per recipient.
+ * - warmHubReadCaches rebuilds at most one missing cache per run, so it no longer competes with staff requests for 30+ seconds.
+ *
+ * CHANGES IN 2026.09.24.45
  * - listSkus reads an optional "Out of Stock" checkbox column in SKUs and marks those products Out of stock for the order page.
  *
  * CHANGES IN 2026.09.24.43
@@ -198,7 +202,7 @@
  * - Use only in the staging inventory backend until testing is complete.
  *********************************/
 
-const APP_VERSION = "2026.09.24.45";
+const APP_VERSION = "2026.09.24.46";
 
 const SHEET_NAMES = {
   STORES: "Stores",
@@ -266,6 +270,14 @@ function bumpReadCacheVersion_() {
   return String(next);
 }
 
+function readCachePresent_(scope) {
+  try {
+    return !!CacheService.getScriptCache().get(`hub_read:${scope}:${readCacheVersion_()}:meta`);
+  } catch (error) {
+    return false;
+  }
+}
+
 function cachedReadPayload_(scope, build, bypass) {
   const startedAt = Date.now();
   const version = readCacheVersion_();
@@ -305,10 +317,17 @@ function cachedReadPayload_(scope, build, bypass) {
 function warmHubReadCaches() {
   const hour = Number(Utilities.formatDate(new Date(), Session.getScriptTimeZone(), "H"));
   if (hour < 7 || hour >= 21) return { message:"Skipped outside 7am–9pm." };
-  cachedReadPayload_("outreach_slim", () => apiGetOutreachDashboard_({ slim:"1", _cache_bypass:true }));
-  cachedReadPayload_("customer_work_queue", () => apiGetCustomerWorkQueue_({ _cache_bypass:true }));
-  cachedReadPayload_("inventory_stores", () => apiGetInitData_("", true));
-  return { message:"Hub read caches warmed.", version:readCacheVersion_() };
+  // Rebuild at most ONE missing cache per run. Rebuilding all three at once took 30+ seconds
+  // and slowed staff requests (campaign preview/freeze) running at the same moment.
+  const scopes = [
+    ["outreach_slim", () => apiGetOutreachDashboard_({ slim:"1", _cache_bypass:true })],
+    ["customer_work_queue", () => apiGetCustomerWorkQueue_({ _cache_bypass:true })],
+    ["inventory_stores", () => apiGetInitData_("", true)],
+  ];
+  const missing = scopes.find(([scope]) => !readCachePresent_(scope));
+  if (!missing) return { message:"Hub read caches already warm.", version:readCacheVersion_() };
+  cachedReadPayload_(missing[0], missing[1]);
+  return { message:`Hub read cache warmed: ${missing[0]}.`, version:readCacheVersion_() };
 }
 
 function onHubReadCacheSpreadsheetChange(e) {
@@ -2888,7 +2907,16 @@ function campaignRecipientRows_(sheet, campaignId) {
   if (sheet.getLastRow() < 2) return [];
   const matches = sheet.getRange(2, h.campaign_id + 1, sheet.getLastRow() - 1, 1).createTextFinder(String(campaignId || ""))
     .matchEntireCell(true).findAll();
-  return matches.map(match => ({ row:match.getRow(), values:sheet.getRange(match.getRow(), 1, 1, sheet.getLastColumn()).getValues()[0], headers:h }));
+  if (!matches.length) return [];
+  // Read the block spanning all matches once instead of one getRange per recipient
+  // (a 100+ recipient campaign took 100+ separate sheet reads).
+  const rows = matches.map(match => match.getRow());
+  const first = Math.min.apply(null, rows);
+  const last = Math.max.apply(null, rows);
+  const wanted = new Set(rows);
+  return sheet.getRange(first, 1, last - first + 1, sheet.getLastColumn()).getValues()
+    .map((values, index) => ({ row:first + index, values:values, headers:h }))
+    .filter(item => wanted.has(item.row));
 }
 
 function campaignRecipientSummaryRows_(sheet) {

@@ -288,6 +288,19 @@ test("staff invoice links teach customer-name matching, but ignores do not", asy
   assert.match(ledger, /locationKeys\.size !== 1/);
 });
 
+test("campaign freeze timeouts wait for the snapshot instead of re-creating it", async () => {
+  const script = await readFile(new URL("apps-script/Code.gs", root), "utf8");
+  const page = await readFile(new URL("index.html", root), "utf8");
+  const rows = script.slice(script.indexOf("function campaignRecipientRows_"), script.indexOf("function campaignRecipientSummaryRows_"));
+  assert.doesNotMatch(rows, /matches\.map\(match => \(\{ row:match\.getRow\(\), values:sheet\.getRange/);
+  assert.match(rows, /getRange\(first, 1, last - first \+ 1/);
+  const warmer = script.slice(script.indexOf("function warmHubReadCaches"), script.indexOf("function onHubReadCacheSpreadsheetChange"));
+  assert.match(warmer, /readCachePresent_\(scope\)/);
+  const waiter = page.slice(page.indexOf("async function waitForFrozenCampaign"), page.indexOf("async function recalculateOutreachMiles"));
+  assert.match(waiter, /action:"outreachCampaigns"/);
+  assert.doesNotMatch(waiter, /createOutreachCampaign/);
+});
+
 test("SKUs Out of Stock checkbox blocks ordering without adding sheet columns", async () => {
   const script = await readFile(new URL("apps-script/Code.gs", root), "utf8");
   const order = await readFile(new URL("order.html", root), "utf8");
