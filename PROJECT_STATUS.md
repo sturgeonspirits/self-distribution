@@ -9,7 +9,7 @@ Read this file before inspecting the repository or changing the application. Upd
 | Component | Source version | Deployment state |
 | --- | --- | --- |
 | Netlify web app and staff proxy | `2026.09.24.37-WEB` on `codex/distribution-system-foundation` / `2026.09.24.24-WEB` live | Shows cached screen data immediately and refreshes it in the background; deployment is pending review. |
-| Inventory API Apps Script | `2026.09.24.32` on `codex/distribution-system-foundation` / `2026.09.24.17` live | Uses versioned, chunked CacheService reads for dashboard, work queue, and store list; deployment is pending review. |
+| Inventory API Apps Script | `2026.09.24.33` on `codex/distribution-system-foundation` / `2026.09.24.17` live | Uses versioned, chunked CacheService reads for dashboard, work queue, and store list; review fixes are pending deployment. |
 | Distribution Outreach Apps Script | `2026.09.24.13-APP` on `codex/work` | Signed-link rendering is committed; owner has not yet confirmed this exact version is deployed. |
 | Public customer Netlify proxy | `2026.09.18.3-WEB` | Deployed with Netlify; unchanged by the latest staff-app UI work |
 
@@ -18,6 +18,8 @@ Current Git branch: `codex/distribution-system-foundation`
 Current remote: `https://github.com/sturgeonspirits/self-distribution.git`
 
 Latest completed changes:
+
+- Review fixes: an external email logged without an outcome now marks the business Sent and schedules the configured first follow-up; the explicit structure repair normalizes any legacy Priority `Medium` value to `Normal` in one batched column write; and bulk campaign exclusion touches only selected recipients’ Status and Result Detail cells.
 
 - Core staff reads are cache-first: the Outreach slim dashboard, Orders work queue, and Inventory store list use a six-hour, chunked CacheService payload keyed by a write-bumped version counter. A manual `installHubReadCacheWarmer()` function installs the 10-minute daytime (7am–9pm) warmer. The browser stores the most recent per-staff, per-release payload for Outreach, Campaigns, Orders, stores, and selected inventory lines, renders it immediately, and refreshes it in the background without replacing good cached data with an error.
 

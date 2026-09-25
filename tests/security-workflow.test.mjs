@@ -217,6 +217,26 @@ test("campaign bulk exclusion and external contact logging remain staff-scoped",
   assert.match(script, /Sent recipients cannot be excluded/);
 });
 
+test("contact logging schedules external email follow-up and repair normalizes legacy priority", async () => {
+  const script = await readFile(new URL("apps-script/Code.gs", root), "utf8");
+  assert.match(script, /if \(!outcome\) \{\s+const settings = getOutreachCampaignSettings_\(\)/);
+  assert.match(script, /set\(\["status"\], "Sent"\)/);
+  assert.match(script, /set\(\["next_follow-up", "next_follow_up"\], automaticFollowUp\)/);
+  assert.match(script, /trim\(\)\.toLowerCase\(\) === "medium"/);
+  assert.match(script, /row\[0\] = "Normal"/);
+  assert.match(script, /priorityRange\.setValues\(priorityValues\)/);
+});
+
+test("bulk exclusions only write selected status and detail cells", async () => {
+  const script = await readFile(new URL("apps-script/Code.gs", root), "utf8");
+  const start = script.indexOf("function apiSetOutreachCampaignRecipientExclusions_");
+  const end = script.indexOf("function apiUpdateOutreachCampaignRecipient_", start);
+  const bulk = script.slice(start, end);
+  assert.match(bulk, /getRange\(item\.row, statusColumn, 1, 2\)\.setValues/);
+  assert.doesNotMatch(bulk, /getRange\(firstRow, 1,/);
+  assert.doesNotMatch(bulk, /getLastColumn\(\)\);\s*const values = range\.getValues/);
+});
+
 test("engagement clicks retain identity and scanner protection", async () => {
   const script = await readFile(new URL("apps-script/Code.gs", root), "utf8");
   assert.match(script, /ensureHeaderColumns_\(engagement, \["Account ID", "Target", "Stage"\]\)/);

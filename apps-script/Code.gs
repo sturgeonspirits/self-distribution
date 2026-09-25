@@ -1,6 +1,11 @@
 /*********************************
  * Inventory API (JSON) for Netlify
- * App version: 2026.09.24.32
+ * App version: 2026.09.24.33
+ *
+ * CHANGES IN THIS VERSION
+ * - Makes an external email contact mark a no-outcome prospect Sent and schedule its first follow-up.
+ * - Normalizes legacy Medium priorities to Normal during the explicit structure repair.
+ * - Updates bulk campaign exclusions only in their Status and Result Detail cells.
  *
  * CHANGES IN THIS VERSION
  * - Added versioned, chunked read caching and a daytime cache warmer for core Hub load paths.
@@ -153,7 +158,7 @@
  * - Use only in the staging inventory backend until testing is complete.
  *********************************/
 
-const APP_VERSION = "2026.09.24.32";
+const APP_VERSION = "2026.09.24.33";
 
 const SHEET_NAMES = {
   STORES: "Stores",
@@ -583,7 +588,22 @@ function repairHubStructure_() {
   ensureFoundationalSheets_();
   const engagement = getOutreachSs_().getSheetByName(OUTREACH_ENGAGEMENT_SHEET_NAME);
   if (engagement) ensureHeaderColumns_(engagement, ["Account ID", "Target", "Stage"]);
-  return ensureAccountIdentityModel_(true);
+  const identity = ensureAccountIdentityModel_(true);
+  const directory = getOutreachSheet_(OUTREACH_SHEET_NAME);
+  const headers = getHeaderMap_(directory);
+  if (headers.priority !== undefined && directory.getLastRow() > 1) {
+    const priorityRange = directory.getRange(2, headers.priority + 1, directory.getLastRow() - 1, 1);
+    const priorityValues = priorityRange.getValues();
+    let changed = false;
+    priorityValues.forEach(row => {
+      if (String(row[0] || "").trim().toLowerCase() === "medium") {
+        row[0] = "Normal";
+        changed = true;
+      }
+    });
+    if (changed) priorityRange.setValues(priorityValues);
+  }
+  return identity;
 }
 
 function apiRepairHubStructure_(p) {
@@ -3318,15 +3338,18 @@ function apiSetOutreachCampaignRecipientExclusions_(p) {
     selected.forEach(item => {
       item.values[item.headers.status] = "Excluded";
       item.values[item.headers.result_detail] = `Excluded from this campaign: ${reason}`;
-      item.values[item.headers.app_version] = APP_VERSION;
     });
-    const firstRow = Math.min.apply(null, selected.map(item => item.row));
-    const lastRow = Math.max.apply(null, selected.map(item => item.row));
-    const byRow = new Map(selected.map(item => [item.row, item.values]));
-    const range = sheets.recipients.getRange(firstRow, 1, lastRow - firstRow + 1, sheets.recipients.getLastColumn());
-    const values = range.getValues();
-    values.forEach((row, index) => { if (byRow.has(firstRow + index)) values[index] = byRow.get(firstRow + index); });
-    range.setValues(values);
+    selected.forEach(item => {
+      const rh = item.headers;
+      const statusColumn = rh.status + 1;
+      const detailColumn = rh.result_detail + 1;
+      if (detailColumn === statusColumn + 1) {
+        sheets.recipients.getRange(item.row, statusColumn, 1, 2).setValues([[item.values[rh.status], item.values[rh.result_detail]]]);
+      } else {
+        sheets.recipients.getRange(item.row, statusColumn).setValue(item.values[rh.status]);
+        sheets.recipients.getRange(item.row, detailColumn).setValue(item.values[rh.result_detail]);
+      }
+    });
     const actor = authenticatedActor_(p, "Sturgeon Distribution Hub");
     appendAudit_("BULK_EXCLUDE_OUTREACH_CAMPAIGN_RECIPIENTS", "Campaign", p.campaign_id, "", actor, OUTREACH_CAMPAIGN_RECIPIENTS_SHEET_NAME, OUTREACH_CAMPAIGNS_SHEET_NAME, "Excluded", `${selected.length} recipients: ${reason}`);
     return { message:`${selected.length} recipients excluded from this campaign. No email was sent.`, excluded:selected.length };
@@ -4152,6 +4175,7 @@ function apiLogOutreachContact_(p) {
     const notes = publicText_(p.notes || "", 4000, "Notes");
     const contactPerson = publicText_(p.contact_person || "", 120, "Contact person");
     const noteDetail = [channel, contactPerson && `with ${contactPerson}`, notes].filter(Boolean).join(" — ");
+    let automaticFollowUpText = "";
     if (outcome) {
       set(["status"], outreachStatusForOutcome_(outcome));
       set(["outcome"], outcome);
@@ -4162,6 +4186,15 @@ function apiLogOutreachContact_(p) {
       set(["last_emailed"], contactDate);
       const nextKey = ["next_email"].find(key => h[key] !== undefined);
       if (nextKey && String(values[h[nextKey]] || "").trim().toLowerCase() === "initial") values[h[nextKey]] = "Follow-up 1";
+      if (!outcome) {
+        const settings = getOutreachCampaignSettings_();
+        const followUpDays = Number(settings["Follow-up days"] || 7);
+        const automaticFollowUp = new Date(contactDate);
+        automaticFollowUp.setDate(automaticFollowUp.getDate() + (Number.isFinite(followUpDays) ? followUpDays : 7));
+        set(["status"], "Sent");
+        set(["next_follow-up", "next_follow_up"], automaticFollowUp);
+        automaticFollowUpText = Utilities.formatDate(automaticFollowUp, Session.getScriptTimeZone(), "yyyy-MM-dd");
+      }
     }
     const priorNotes = String(outreachValue_(current, ["notes"]) || "").trim();
     const datedNote = `${Utilities.formatDate(contactDate, Session.getScriptTimeZone(), "yyyy-MM-dd")} — ${noteDetail || "Contact logged"}`;
@@ -4178,7 +4211,7 @@ function apiLogOutreachContact_(p) {
     activitySet("staff", String(p.staff_name)); activitySet("mailer_version", APP_VERSION);
     activity.appendRow(activityRow);
     appendAudit_("LOG_OUTREACH_CONTACT", "Account", accountId, accountId, String(p.staff_name), OUTREACH_SHEET_NAME, OUTREACH_ACTIVITY_SHEET_NAME, "Completed", `${channel}${outcome ? `; ${outcome}` : ""}`);
-    return { message:"Contact logged.", account_id:accountId, source_row:rowNumber, status:outcome ? outreachStatusForOutcome_(outcome) : String(outreachValue_(current, ["status"]) || ""), next_follow_up:followUpText };
+    return { message:"Contact logged.", account_id:accountId, source_row:rowNumber, status:outcome ? outreachStatusForOutcome_(outcome) : (channel === "Email outside app" ? "Sent" : String(outreachValue_(current, ["status"]) || "")), next_follow_up:followUpText || automaticFollowUpText };
   } finally { lock.releaseLock(); }
 }
 
