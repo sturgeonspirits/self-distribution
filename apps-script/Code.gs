@@ -1,8 +1,11 @@
 /*********************************
  * Inventory API (JSON) for Netlify
- * App version: 2026.09.24.52
+ * App version: 2026.09.24.53
  *
  * CHANGES IN THIS VERSION
+ * - Makes Badger payment reminders eligible only for fresh, aged Customer-owes invoices and adds fingerprint, pending-send, cooldown, and retry-safe timeout guards.
+ *
+ * CHANGES IN 2026.09.24.52
  * - Adds staff- and schedule-triggered Badger status synchronization, with fail-closed source validation, a fresh-status ledger, sync audit rows, and account payment states derived from Badger plus the live tracker.
  *
  * CHANGES IN 2026.09.24.51
@@ -221,7 +224,7 @@
  * - Use only in the staging inventory backend until testing is complete.
  *********************************/
 
-const APP_VERSION = "2026.09.24.52";
+const APP_VERSION = "2026.09.24.53";
 
 const SHEET_NAMES = {
   STORES: "Stores",
@@ -263,6 +266,9 @@ const BADGER_CUSTOMER_ALIASES_SHEET_NAME = "Badger Customer Aliases";
 const BADGER_CUSTOMER_ALIAS_HEADERS = ["Badger Customer Name", "Normalized Key", "Account ID", "Source", "Linked At", "Linked By", "App Version"];
 const BADGER_PAYMENT_REMINDERS_SHEET_NAME = "Badger Payment Reminders";
 const BADGER_PAYMENT_REMINDER_MIN_DAYS = 7;
+const BADGER_PAYMENT_REMINDER_MIN_AGE_CONFIG_KEY = "payment_reminder_min_age_days";
+const BADGER_PAYMENT_REMINDER_DEFAULT_MIN_AGE_DAYS = 30;
+const BADGER_PAYMENT_REMINDER_PENDING_MS = 60 * 60 * 1000;
 const HUB_CONFIGURATION_SHEET_NAME = "Hub Configuration";
 const SUBMISSION_JOURNAL_SHEET_NAME = "Submission Journal";
 const HUB_AUDIT_SHEET_NAME = "Hub Audit Log";
@@ -6116,7 +6122,11 @@ function paymentReminderRecipients_(account) {
 }
 
 function paymentReminderCooldown_(accountId) {
-  const sent = badgerPaymentReminderHistory_(accountId).filter(item => /^(SENT|APP SENT)$/i.test(item.status) && item.sent_at);
+  const history = badgerPaymentReminderHistory_(accountId);
+  const pending = history.filter(item => String(item.status || "").toUpperCase() === "PENDING" && item.sent_at && Date.now() - recordTimestamp_(item.sent_at) < BADGER_PAYMENT_REMINDER_PENDING_MS)
+    .sort((a, b) => recordTimestamp_(b.sent_at) - recordTimestamp_(a.sent_at))[0];
+  if (pending) return { eligible:false, pending:true, last_sent_at:"", next_eligible_at:"", pending_token:pending.idempotency_token };
+  const sent = history.filter(item => /^(SENT|APP SENT)$/i.test(item.status) && item.sent_at);
   if (!sent.length) return { eligible:true, last_sent_at:"", next_eligible_at:"" };
   const latest = sent.sort((a, b) => recordTimestamp_(b.sent_at) - recordTimestamp_(a.sent_at))[0];
   const lastSentAt = outreachDate_(latest.sent_at);
@@ -6130,8 +6140,23 @@ function paymentReminderCooldown_(accountId) {
   };
 }
 
+function paymentReminderMinAgeDays_() {
+  const configured = Number(getHubConfigurationValue_(BADGER_PAYMENT_REMINDER_MIN_AGE_CONFIG_KEY));
+  return Number.isFinite(configured) && configured >= 0 && configured <= 365 ? configured : BADGER_PAYMENT_REMINDER_DEFAULT_MIN_AGE_DAYS;
+}
+
+function paymentReminderEligibleInvoices_(account) {
+  if (!account.badger_status_fresh) throw new Error("Badger status is stale or unavailable. Sync Badger status before preparing a reminder.");
+  const minAgeDays = paymentReminderMinAgeDays_();
+  const cutoff = Date.now() - minAgeDays * 24 * 60 * 60 * 1000;
+  return (account.unpaid_invoices || []).filter(item => {
+    const invoiceDate = outreachDate_(item.invoice_date);
+    return item.badger_match_status === "Matched" && item.invoice_status === "Customer owes" && invoiceDate && invoiceDate.getTime() < cutoff;
+  });
+}
+
 function paymentReminderContent_(account) {
-  const invoices = (account.unpaid_invoices || []).filter(item => item.badger_match_status === "Matched" && item.is_paid === false);
+  const invoices = paymentReminderEligibleInvoices_(account);
   const amountCents = invoices.reduce((sum, item) => sum + Number(item.amount_cents || 0), 0);
   if (!invoices.length || amountCents <= 0) throw new Error("This account has no matched unpaid Badger invoices to remind.");
   const invoiceNumbers = invoices.map(item => String(item.invoice_number || "").trim()).filter(Boolean);
@@ -6150,7 +6175,8 @@ function paymentReminderContent_(account) {
     "Sturgeon Spirits",
   ].join("\n");
   const html = `<p>Hello ${escapeOutreachHtml_(recipientName)},</p><p>Our records show <strong>${escapeOutreachHtml_(total)}</strong> outstanding for Badger invoice${invoiceNumbers.length === 1 ? "" : "s"} ${escapeOutreachHtml_(invoiceText)}.</p><p>Please let us know if payment has already been sent or if you need a copy of an invoice.</p><p>Thank you,<br>Sturgeon Spirits</p>`;
-  return { invoices:invoices, invoice_numbers:invoiceNumbers, outstanding_amount_cents:amountCents, outstanding_amount:total, subject:subject, body_text:bodyText, html:html };
+  const fingerprint = sha256_(invoices.map(item => `${String(item.invoice_number || "").trim()}:${Number(item.amount_cents || 0)}`).sort().join("|"));
+  return { invoices:invoices, invoice_numbers:invoiceNumbers, outstanding_amount_cents:amountCents, outstanding_amount:total, content_fingerprint:fingerprint, subject:subject, body_text:bodyText, html:html, min_age_days:paymentReminderMinAgeDays_() };
 }
 
 function currentBadgerPaymentAccount_(accountId, refresh) {
@@ -6174,6 +6200,7 @@ function apiPreviewBadgerPaymentReminder_(p) {
     recipient_options:recipients,
     cooldown:cooldown,
     payment_reminders_enabled:paymentRemindersEnabled_(),
+    payment_reminder_min_age_days:paymentReminderMinAgeDays_(),
     reminder_interval_days:BADGER_PAYMENT_REMINDER_MIN_DAYS,
   }, content);
 }
@@ -6182,39 +6209,47 @@ function apiSendBadgerPaymentReminder_(p) {
   const accountId = publicText_(p?.account_id || "", 120, "Account ID");
   const recipient = publicEmail_(p?.recipient || "", "Recipient", true);
   const token = publicText_(p?.idempotency_token || "", 160, "Idempotency token");
+  const fingerprint = publicText_(p?.content_fingerprint || "", 128, "Reminder fingerprint");
   const actor = authenticatedActor_(p, "Sturgeon Distribution Hub");
   if (!accountId) throw new Error("Account ID is required.");
   if (!/^[A-Za-z0-9_-]{20,160}$/.test(token)) throw new Error("A valid idempotency token is required.");
+  if (!/^[a-f0-9]{64}$/i.test(fingerprint)) throw new Error("A valid reminder fingerprint is required. Refresh and review the reminder again.");
   if (!paymentRemindersEnabled_()) throw new Error("Payment reminders are disabled in Hub Configuration.");
+  const account = currentBadgerPaymentAccount_(accountId, true);
+  const recipientOptions = paymentReminderRecipients_(account);
+  if (!recipientOptions.includes(recipient)) throw new Error("Recipient is no longer an approved accounts-payable or customer email for this account. Refresh and review the reminder again.");
   const lock = LockService.getScriptLock();
   if (!lock.tryLock(10000)) throw new Error("Another reminder send is in progress. Wait a moment and try again.");
   try {
     const prior = badgerPaymentReminderHistory_(accountId).filter(item => item.idempotency_token === token && /^(SENT|APP SENT)$/i.test(item.status))[0];
     if (prior) return { accepted:true, idempotent:true, reminder_id:prior.reminder_id, message_id:prior.zoho_message_id, sent_at:prior.sent_at };
-    const account = currentBadgerPaymentAccount_(accountId, true);
-    const recipientOptions = paymentReminderRecipients_(account);
-    if (!recipientOptions.includes(recipient)) throw new Error("Recipient is no longer an approved accounts-payable or customer email for this account. Refresh and review the reminder again.");
+    const pendingForToken = badgerPaymentReminderHistory_(accountId).filter(item => item.idempotency_token === token && String(item.status || "").toUpperCase() === "PENDING" && Date.now() - recordTimestamp_(item.sent_at) < BADGER_PAYMENT_REMINDER_PENDING_MS)[0];
+    if (pendingForToken) throw new Error("This reminder may have been sent — refresh before retrying.");
     const cooldown = paymentReminderCooldown_(accountId);
+    if (cooldown.pending) throw new Error("A reminder may have been sent recently — refresh before retrying.");
     if (!cooldown.eligible) throw new Error(`A payment reminder was already sent within the ${BADGER_PAYMENT_REMINDER_MIN_DAYS}-day interval. It can be sent again after ${Utilities.formatDate(new Date(cooldown.next_eligible_at), Session.getScriptTimeZone(), "MMM d, yyyy")}.`);
     const content = paymentReminderContent_(account);
-    const result = callOutreachMailer_({
-      action:"sendPaymentReminder",
-      idempotency_token:token,
-      account_id:account.account_id,
-      business:account.business_name,
-      recipient:recipient,
-      invoice_numbers:content.invoice_numbers,
-      outstanding_amount_cents:content.outstanding_amount_cents,
-      subject:content.subject,
-      html:content.html,
-      requested_by:actor,
-    });
-    if (!result.accepted || !String(result.message_id || "").trim()) throw new Error("Zoho did not return a confirmed message ID. No reminder was recorded as sent.");
+    if (content.content_fingerprint !== fingerprint) throw new Error("The invoice balance changed after preview. Refresh and review the reminder again.");
     const sheet = getBadgerPaymentRemindersSheet_();
-    sheet.appendRow([
-      permanentId_("PAY"), account.account_id, account.business_name, recipient, content.invoice_numbers.join(", "),
-      content.outstanding_amount_cents, "SENT", new Date(), actor, String(result.message_id), token, "Zoho accepted delivery.", APP_VERSION,
-    ]);
+    const reminderId = permanentId_("PAY");
+    const pendingRow = sheet.getLastRow() + 1;
+    sheet.appendRow([reminderId, account.account_id, account.business_name, recipient, content.invoice_numbers.join(", "), content.outstanding_amount_cents, "PENDING", new Date(), actor, "", token, "Awaiting Zoho confirmation.", APP_VERSION]);
+    let result;
+    try {
+      result = callOutreachMailer_({
+        action:"sendPaymentReminder", idempotency_token:token, account_id:account.account_id, business:account.business_name,
+        recipient:recipient, invoice_numbers:content.invoice_numbers, outstanding_amount_cents:content.outstanding_amount_cents,
+        subject:content.subject, html:content.html, requested_by:actor,
+      });
+    } catch (error) {
+      sheet.getRange(pendingRow, 12).setValue(String(error && error.message || error));
+      throw new Error("The reminder may have been sent — refresh before retrying.");
+    }
+    if (!result.accepted || !String(result.message_id || "").trim()) {
+      sheet.getRange(pendingRow, 12).setValue("Zoho did not return a confirmed message ID.");
+      throw new Error("The reminder may have been sent — refresh before retrying.");
+    }
+    sheet.getRange(pendingRow, 7, 1, 7).setValues([["SENT", new Date(), actor, String(result.message_id), token, "Zoho accepted delivery.", APP_VERSION]]);
     appendAudit_("SEND_BADGER_PAYMENT_REMINDER", "Account", account.account_id, account.account_id, actor, BADGER_TRACKER_SPREADSHEET_ID, BADGER_PAYMENT_REMINDERS_SHEET_NAME, "Completed", `${content.invoice_numbers.join(", ")}; ${content.outstanding_amount}; Zoho ${String(result.message_id)}`);
     bumpReadCacheVersion_();
     return { accepted:true, idempotent:!!result.idempotent, message_id:String(result.message_id), sent_at:new Date().toISOString(), outstanding_amount:content.outstanding_amount };

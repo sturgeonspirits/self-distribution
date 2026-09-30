@@ -3083,7 +3083,7 @@
         <div class="businessDetailGrid">
           <section class="detailSection"><h4>Current balance</h4>${detailRowsHtml([
             { label:"Account", value:reminder.account_id }, { label:"Invoices", value:(reminder.invoice_numbers || []).join(", ") },
-            { label:"Outstanding", value:reminder.outstanding_amount },
+            { label:"Outstanding", value:reminder.outstanding_amount }, { label:"Minimum invoice age", value:`${Number(reminder.payment_reminder_min_age_days || 30)} days` },
           ])}</section>
           <section class="detailSection"><h4>Delivery</h4>
             <label for="paymentReminderRecipient">Recipient</label>
@@ -3097,7 +3097,10 @@
           </section>
         </div>`;
       const sendReminderButton = $("sendPaymentReminderBtn");
-      if (sendReminderButton) sendReminderButton.dataset.token = paymentReminderToken();
+      if (sendReminderButton) {
+        sendReminderButton.dataset.token = paymentReminderToken();
+        sendReminderButton.dataset.fingerprint = reminder.content_fingerprint || "";
+      }
       refreshIcons();
     } catch (error) {
       $("customerRecordBody").innerHTML = `<div class="status">${escapeHtml(error?.message || String(error))}</div><div class="dlgActions"><button id="backToCustomerRecordBtn" type="button">Back</button></div>`;
@@ -3115,7 +3118,7 @@
     try {
       const result = await staffApiPost({
         action:"sendBadgerPaymentReminder", account_id:record.account_id,
-        recipient:$("paymentReminderRecipient").value, idempotency_token:button.dataset.token,
+        recipient:$("paymentReminderRecipient").value, idempotency_token:button.dataset.token, content_fingerprint:button.dataset.fingerprint,
         staff_name:staffName,
       });
       if (!result.ok) throw new Error(result.error || "The payment reminder was not sent.");
@@ -3123,9 +3126,10 @@
       await loadCustomerWorkQueue();
       toast("Payment reminder sent");
     } catch (error) {
-      $("paymentReminderStatus").textContent = error?.message || String(error);
+      const message = error?.message || String(error);
+      $("paymentReminderStatus").textContent = message;
       if (error?.staffAuth) handleCustomerError(error);
-      button.disabled = false;
+      if (!/may have been sent/i.test(message)) button.disabled = false;
     }
   }
 
