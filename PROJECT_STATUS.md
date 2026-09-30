@@ -8,8 +8,8 @@ Read this file before inspecting the repository or changing the application. Upd
 
 | Component | Source version | Deployment state |
 | --- | --- | --- |
-| Netlify web app and staff proxy | `2026.09.24.30-WEB` on `codex/work` / `2026.09.24.24-WEB` live | Phase 4 adds global Badger controls, owed-to-Badger check recording, pending-reminder resolution, and stale-status warnings. All changes remain pre-deployment. |
-| Inventory API Apps Script | `2026.09.24.58` on `codex/work` / `2026.09.24.49` live | Phase 4 batches reconciliation/check writes, exposes reversible marks and reminder state, and reports eligible payment totals. Before deployment, run Sync from Badger immediately, re-run `installHubReadCacheWarmer()`, and install the daily status trigger. Do not deploy. |
+| Netlify web app and staff proxy | `2026.09.24.30-WEB` on `codex/work` / `2026.09.24.24-WEB` live | Phase 4 web controls remain un-deployed; Netlify release is manual. |
+| Inventory API Apps Script | `2026.09.24.58` on `codex/work` and live | Phase 4 batches reconciliation/check writes, exposes reversible marks and reminder state, and reports eligible payment totals. Deployed by Karl on 2026-09-30. Before using payment operations, run Sync from Badger immediately, re-run `installHubReadCacheWarmer()`, and install the daily status trigger. |
 | Distribution Outreach Apps Script | `2026.09.24.14-APP` on `codex/work` | Reminder delivery prerequisite; owner has not yet confirmed this exact version is deployed. |
 | Public customer Netlify proxy | `2026.09.18.3-WEB` | Deployed with Netlify; unchanged by the latest staff-app UI work |
 
