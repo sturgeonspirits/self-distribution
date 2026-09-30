@@ -968,6 +968,7 @@ function handle_(e, body) {
       case "syncBadgerStatus": res = apiSyncBadgerStatus_(body); invalidateReadCache = false; break;
       case "markBadgerInvoicePayment": res = apiMarkBadgerInvoicePayment_(body); break;
       case "recordBadgerCheck": res = apiRecordBadgerCheck_(body); break;
+      case "resolvePaymentReminder": res = apiResolvePaymentReminder_(body); break;
       case "previewBadgerPaymentReminder": res = apiPreviewBadgerPaymentReminder_(body); break;
       case "sendBadgerPaymentReminder": res = apiSendBadgerPaymentReminder_(body); break;
       case "updateCustomerApplication": res = apiUpdateCustomerApplication_(body); break;
@@ -6187,7 +6188,7 @@ function apiGetCustomerWorkQueue_(p) {
 function getBadgerPaymentRemindersSheet_() {
   return ensureSheet_(getOutreachSs_(), BADGER_PAYMENT_REMINDERS_SHEET_NAME, [
     "Reminder ID", "Account ID", "Business Name", "Recipient", "Invoice Numbers", "Outstanding Amount", "Status",
-    "Sent At", "Sent By", "Zoho Message ID", "Idempotency Token", "Error", "App Version"
+    "Sent At", "Sent By", "Zoho Message ID", "Idempotency Token", "Error", "App Version", "Subject", "HTML"
   ]);
 }
 
@@ -6208,6 +6209,8 @@ function badgerPaymentReminderHistory_(accountId) {
     zoho_message_id:String(row[h.zoho_message_id] || ""),
     idempotency_token:String(row[h.idempotency_token] || ""),
     error:String(row[h.error] || ""),
+    subject:String(row[h.subject] || ""),
+    html:String(row[h.html] || ""),
   })).filter(row => !accountId || row.account_id === String(accountId));
 }
 
@@ -6319,7 +6322,7 @@ function apiSendBadgerPaymentReminder_(p) {
   try {
     const prior = badgerPaymentReminderHistory_(accountId).filter(item => item.idempotency_token === token && /^(SENT|APP SENT)$/i.test(item.status))[0];
     if (prior) return { accepted:true, idempotent:true, reminder_id:prior.reminder_id, message_id:prior.zoho_message_id, sent_at:prior.sent_at };
-    const pendingForToken = badgerPaymentReminderHistory_(accountId).filter(item => item.idempotency_token === token && String(item.status || "").toUpperCase() === "PENDING" && Date.now() - recordTimestamp_(item.sent_at) < BADGER_PAYMENT_REMINDER_PENDING_MS)[0];
+    const pendingForToken = badgerPaymentReminderHistory_(accountId).filter(item => item.idempotency_token === token && String(item.status || "").toUpperCase() === "PENDING")[0];
     if (pendingForToken) throw new Error("This reminder may have been sent — refresh before retrying.");
     const cooldown = paymentReminderCooldown_(accountId);
     if (cooldown.pending) throw new Error("A reminder may have been sent recently — refresh before retrying.");
@@ -6327,9 +6330,13 @@ function apiSendBadgerPaymentReminder_(p) {
     const content = paymentReminderContent_(account);
     if (content.content_fingerprint !== fingerprint) throw new Error("The invoice balance changed after preview. Refresh and review the reminder again.");
     const sheet = getBadgerPaymentRemindersSheet_();
+    const h = getHeaderMap_(sheet);
     const reminderId = permanentId_("PAY");
     const pendingRow = sheet.getLastRow() + 1;
-    sheet.appendRow([reminderId, account.account_id, account.business_name, recipient, content.invoice_numbers.join(", "), content.outstanding_amount_cents, "PENDING", new Date(), actor, "", token, "Awaiting Zoho confirmation.", APP_VERSION]);
+    const row = Array(sheet.getLastColumn()).fill("");
+    const set = (key, value) => { if (h[key] !== undefined) row[h[key]] = value; };
+    set("reminder_id", reminderId); set("account_id", account.account_id); set("business_name", account.business_name); set("recipient", recipient); set("invoice_numbers", content.invoice_numbers.join(", ")); set("outstanding_amount", content.outstanding_amount_cents); set("status", "PENDING"); set("sent_at", new Date()); set("sent_by", actor); set("idempotency_token", token); set("error", "Awaiting Zoho confirmation."); set("app_version", APP_VERSION); set("subject", content.subject); set("html", content.html);
+    sheet.appendRow(row);
     let result;
     try {
       result = callOutreachMailer_({
@@ -6338,20 +6345,40 @@ function apiSendBadgerPaymentReminder_(p) {
         subject:content.subject, html:content.html, requested_by:actor,
       });
     } catch (error) {
-      sheet.getRange(pendingRow, 12).setValue(String(error && error.message || error));
+      sheet.getRange(pendingRow, h.error + 1).setValue(String(error && error.message || error));
       throw new Error("The reminder may have been sent — refresh before retrying.");
     }
     if (!result.accepted || !String(result.message_id || "").trim()) {
-      sheet.getRange(pendingRow, 12).setValue("Zoho did not return a confirmed message ID.");
+      sheet.getRange(pendingRow, h.error + 1).setValue("Zoho did not return a confirmed message ID.");
       throw new Error("The reminder may have been sent — refresh before retrying.");
     }
-    sheet.getRange(pendingRow, 7, 1, 7).setValues([["SENT", new Date(), actor, String(result.message_id), token, "Zoho accepted delivery.", APP_VERSION]]);
+    sheet.getRange(pendingRow, h.status + 1).setValue("SENT"); sheet.getRange(pendingRow, h.sent_at + 1).setValue(new Date()); sheet.getRange(pendingRow, h.sent_by + 1).setValue(actor); sheet.getRange(pendingRow, h.zoho_message_id + 1).setValue(String(result.message_id)); sheet.getRange(pendingRow, h.error + 1).setValue("Zoho accepted delivery."); sheet.getRange(pendingRow, h.app_version + 1).setValue(APP_VERSION);
     appendAudit_("SEND_BADGER_PAYMENT_REMINDER", "Account", account.account_id, account.account_id, actor, BADGER_TRACKER_SPREADSHEET_ID, BADGER_PAYMENT_REMINDERS_SHEET_NAME, "Completed", `${content.invoice_numbers.join(", ")}; ${content.outstanding_amount}; Zoho ${String(result.message_id)}`);
     bumpReadCacheVersion_();
     return { accepted:true, idempotent:!!result.idempotent, message_id:String(result.message_id), sent_at:new Date().toISOString(), outstanding_amount:content.outstanding_amount };
   } finally {
     lock.releaseLock();
   }
+}
+
+function apiResolvePaymentReminder_(p) {
+  const reminderId = publicText_(p?.reminder_id || "", 120, "Reminder ID");
+  const resolution = publicText_(p?.resolution || "", 20, "Resolution").toLowerCase();
+  const reason = publicText_(p?.reason || "", 1000, "Resolution reason");
+  const actor = authenticatedActor_(p, "Sturgeon Distribution Hub");
+  const sheet = getBadgerPaymentRemindersSheet_(); const h = getHeaderMap_(sheet);
+  const rows = sheet.getLastRow() < 2 ? [] : sheet.getRange(2, 1, sheet.getLastRow() - 1, sheet.getLastColumn()).getValues();
+  const index = rows.findIndex(row => String(row[h.reminder_id] || "") === reminderId);
+  if (index < 0 || String(rows[index][h.status] || "").toUpperCase() !== "PENDING") throw new Error("Only a pending reminder can be resolved.");
+  const rowNumber = index + 2;
+  if (resolution === "failed") {
+    if (!reason) throw new Error("A failure reason is required.");
+    sheet.getRange(rowNumber, h.status + 1).setValue("FAILED"); sheet.getRange(rowNumber, h.error + 1).setValue(reason); sheet.getRange(rowNumber, h.sent_by + 1).setValue(actor); return { message:"Pending reminder marked failed." };
+  }
+  if (resolution !== "retry") throw new Error("Choose retry or failed.");
+  const result = callOutreachMailer_({ action:"sendPaymentReminder", idempotency_token:String(rows[index][h.idempotency_token] || ""), account_id:String(rows[index][h.account_id] || ""), business:String(rows[index][h.business_name] || ""), recipient:String(rows[index][h.recipient] || ""), invoice_numbers:String(rows[index][h.invoice_numbers] || "").split(/,\s*/).filter(Boolean), outstanding_amount_cents:Number(rows[index][h.outstanding_amount] || 0), subject:String(rows[index][h.subject] || ""), html:String(rows[index][h.html] || ""), requested_by:actor });
+  if (!result.accepted || !String(result.message_id || "")) throw new Error("Mailer did not confirm this reminder; it remains pending.");
+  sheet.getRange(rowNumber, h.status + 1).setValue("SENT"); sheet.getRange(rowNumber, h.sent_at + 1).setValue(new Date()); sheet.getRange(rowNumber, h.sent_by + 1).setValue(actor); sheet.getRange(rowNumber, h.zoho_message_id + 1).setValue(String(result.message_id)); sheet.getRange(rowNumber, h.error + 1).setValue("Zoho accepted delivery."); return { accepted:true, message:"Pending reminder resolved as sent." };
 }
 
 function makeStoreId_(business, accountId) {
