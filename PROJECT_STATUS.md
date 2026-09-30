@@ -9,7 +9,7 @@ Read this file before inspecting the repository or changing the application. Upd
 | Component | Source version | Deployment state |
 | --- | --- | --- |
 | Netlify web app and staff proxy | `2026.09.24.29-WEB` on `codex/work` / `2026.09.24.24-WEB` live | Payment-reminder Send is hidden unless the Hub configuration explicitly enables it. All pending web changes remain pre-deployment. |
-| Inventory API Apps Script | `2026.09.24.53` on `codex/work` / `2026.09.24.49` live | Badger status sync and reminder guards are ready for Claude review. Karl must install the daily sync trigger after the batched deployment. Do not deploy. |
+| Inventory API Apps Script | `2026.09.24.54` on `codex/work` / `2026.09.24.49` live | Review hardening is in progress. Before deployment, run Sync from Badger immediately, re-run `installHubReadCacheWarmer()`, and install the daily status trigger. Do not deploy. |
 | Distribution Outreach Apps Script | `2026.09.24.13-APP` on `codex/work` | Signed-link rendering is committed; owner has not yet confirmed this exact version is deployed. |
 | Public customer Netlify proxy | `2026.09.18.3-WEB` | Deployed with Netlify; unchanged by the latest staff-app UI work |
 
@@ -17,7 +17,7 @@ Current Git branch: `codex/work`
 
 Current remote: `https://github.com/sturgeonspirits/self-distribution.git`
 
-Current Badger checkpoint: Phase 3 reminder-guard source is committed for review. The `payment_reminders_enabled` Hub Configuration flag defaults off when absent; do not enable it before review completes. After deployment, Karl must run `installBadgerStatusSyncTrigger()` once and set `payment_reminder_min_age_days` only if the 30-day default is unsuitable.
+Current Badger checkpoint: Karl ran `testBadgerLogin()` successfully on 2026-09-30 (163 invoices). The `payment_reminders_enabled` Hub Configuration flag defaults off when absent; do not enable it before review completes. The Distribution Outreach mailer must be `2026.09.24.14-APP` before reminders are enabled.
 
 Latest completed changes:
 

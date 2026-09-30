@@ -1,8 +1,11 @@
 /*********************************
  * Inventory API (JSON) for Netlify
- * App version: 2026.09.24.53
+ * App version: 2026.09.24.54
  *
  * CHANGES IN THIS VERSION
+ * - Hardens the pre-deployment Badger sync and payment-reminder safety paths following review.
+ *
+ * CHANGES IN 2026.09.24.53
  * - Makes Badger payment reminders eligible only for fresh, aged Customer-owes invoices and adds fingerprint, pending-send, cooldown, and retry-safe timeout guards.
  *
  * CHANGES IN 2026.09.24.52
@@ -224,7 +227,7 @@
  * - Use only in the staging inventory backend until testing is complete.
  *********************************/
 
-const APP_VERSION = "2026.09.24.53";
+const APP_VERSION = "2026.09.24.54";
 
 const SHEET_NAMES = {
   STORES: "Stores",
@@ -5316,6 +5319,12 @@ function badgerSession_(forceRefresh) {
   });
   const status = response.getResponseCode();
   if (status < 200 || status >= 400) throw new Error(`Badger login was rejected (HTTP ${status}).`);
+  try {
+    const payload = JSON.parse(response.getContentText());
+    if (payload && payload.isSuccess === false) throw new Error("Badger login was rejected.");
+  } catch (error) {
+    if (String(error && error.message || error) === "Badger login was rejected.") throw error;
+  }
   const cookieHeader = badgerCookieHeader_(response.getAllHeaders());
   if (!cookieHeader) throw new Error("Badger login did not return a session cookie.");
   cache.put(BADGER_SESSION_CACHE_KEY, cookieHeader, BADGER_SESSION_TTL_SECONDS);
@@ -5346,7 +5355,7 @@ function testBadgerLogin() {
 
 function readBadgerInvoices_() {
   const sheet = getOutreachSs_().getSheetByName(BADGER_STATUS_SHEET_NAME);
-  if (!sheet || sheet.getLastRow() < 2) return [];
+  if (!sheet || sheet.getLastRow() < 2) return readBadgerTrackerFallbackInvoices_();
   return getAllRowsAsObjects_(sheet).map(row => {
     const amount = firstPresent_(row, ["amount", "dollar_amount", "total_due"]) || "";
     const paidDate = firstPresent_(row, ["paid_date"]) || "";
@@ -5367,6 +5376,17 @@ function readBadgerInvoices_() {
       synced_at:firstPresent_(row, ["synced_at"]) || "",
     };
   });
+}
+
+function readBadgerTrackerFallbackInvoices_() {
+  const sheet = SpreadsheetApp.openById(BADGER_TRACKER_SPREADSHEET_ID).getSheetByName("Invoices");
+  if (!sheet || sheet.getLastRow() < 2) return [];
+  return getAllRowsAsObjects_(sheet).map(row => ({
+    invoice_number:String(firstPresent_(row, ["invoice_#", "invoice_number", "invoice_no"]) || ""),
+    invoice_date:firstPresent_(row, ["invoice_date", "date"]) || "", customer_name:String(firstPresent_(row, ["customer_name", "customer"]) || ""),
+    amount:firstPresent_(row, ["amount_due", "amount", "total"]) || "", amount_cents:badgerMoneyToCents_(firstPresent_(row, ["amount_due", "amount", "total"]) || ""),
+    is_paid:false, is_void:false, is_closed:false, payment_status:"Unknown", invoice_status:"Unknown",
+  }));
 }
 
 function getBadgerInvoiceStatusSheet_() {
@@ -5409,7 +5429,12 @@ function badgerRequest_(path, options) {
   const send = forceRefresh => UrlFetchApp.fetch(`${BADGER_BASE_URL}${path}`, Object.assign({}, options, { headers:Object.assign({}, options.headers || {}, { Cookie:badgerSession_(forceRefresh) }), muteHttpExceptions:true, followRedirects:false }));
   let response = send(false);
   const status = response.getResponseCode();
-  if (status === 401 || (status >= 300 && status < 400)) response = send(true);
+  let requiresRefresh = status === 401 || (status >= 300 && status < 400);
+  if (!requiresRefresh) {
+    try { const payload = JSON.parse(response.getContentText()); requiresRefresh = payload && payload.isAuthorized === false; }
+    catch (_) { requiresRefresh = true; }
+  }
+  if (requiresRefresh) response = send(true);
   return response;
 }
 
@@ -6123,7 +6148,7 @@ function paymentReminderRecipients_(account) {
 
 function paymentReminderCooldown_(accountId) {
   const history = badgerPaymentReminderHistory_(accountId);
-  const pending = history.filter(item => String(item.status || "").toUpperCase() === "PENDING" && item.sent_at && Date.now() - recordTimestamp_(item.sent_at) < BADGER_PAYMENT_REMINDER_PENDING_MS)
+  const pending = history.filter(item => String(item.status || "").toUpperCase() === "PENDING" && item.sent_at)
     .sort((a, b) => recordTimestamp_(b.sent_at) - recordTimestamp_(a.sent_at))[0];
   if (pending) return { eligible:false, pending:true, last_sent_at:"", next_eligible_at:"", pending_token:pending.idempotency_token };
   const sent = history.filter(item => /^(SENT|APP SENT)$/i.test(item.status) && item.sent_at);
