@@ -9,7 +9,7 @@ Read this file before inspecting the repository or changing the application. Upd
 | Component | Source version | Deployment state |
 | --- | --- | --- |
 | Netlify web app and staff proxy | `2026.09.24.29-WEB` on `codex/work` / `2026.09.24.24-WEB` live | Payment-reminder Send is hidden unless the Hub configuration explicitly enables it. All pending web changes remain pre-deployment. |
-| Inventory API Apps Script | `2026.09.24.56` on `codex/work` / `2026.09.24.49` live | Phase 4 correction source is ready for review; reconciliation UI remains pre-deployment. Before deployment, run Sync from Badger immediately, re-run `installHubReadCacheWarmer()`, and install the daily status trigger. Do not deploy. |
+| Inventory API Apps Script | `2026.09.24.57` on `codex/work` / `2026.09.24.49` live | Phase 4 adds staff Sync/Reconcile controls and reconciliation actions; it remains pre-deployment pending final review. Before deployment, run Sync from Badger immediately, re-run `installHubReadCacheWarmer()`, and install the daily status trigger. Do not deploy. |
 | Distribution Outreach Apps Script | `2026.09.24.13-APP` on `codex/work` | Signed-link rendering is committed; owner has not yet confirmed this exact version is deployed. |
 | Public customer Netlify proxy | `2026.09.18.3-WEB` | Deployed with Netlify; unchanged by the latest staff-app UI work |
 

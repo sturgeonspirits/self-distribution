@@ -1,8 +1,11 @@
 /*********************************
  * Inventory API (JSON) for Netlify
- * App version: 2026.09.24.56
+ * App version: 2026.09.24.57
  *
  * CHANGES IN THIS VERSION
+ * - Adds staff reconciliation preview/apply actions and account-level Badger Sync/Reconcile controls.
+ *
+ * CHANGES IN 2026.09.24.56
  * - Corrects live payment-state classification, reversible payment marks, sync freshness validation, and pending-reminder resolution safeguards.
  *
  * CHANGES IN 2026.09.24.55
@@ -233,7 +236,7 @@
  * - Use only in the staging inventory backend until testing is complete.
  *********************************/
 
-const APP_VERSION = "2026.09.24.56";
+const APP_VERSION = "2026.09.24.57";
 
 const SHEET_NAMES = {
   STORES: "Stores",
@@ -972,6 +975,8 @@ function handle_(e, body) {
       case "markBadgerInvoicePayment": res = apiMarkBadgerInvoicePayment_(body); break;
       case "recordBadgerCheck": res = apiRecordBadgerCheck_(body); break;
       case "resolvePaymentReminder": res = apiResolvePaymentReminder_(body); break;
+      case "badgerReconcilePreview": res = apiBadgerReconcilePreview_(); break;
+      case "applyBadgerReconcile": res = apiApplyBadgerReconcile_(body); break;
       case "previewBadgerPaymentReminder": res = apiPreviewBadgerPaymentReminder_(body); break;
       case "sendBadgerPaymentReminder": res = apiSendBadgerPaymentReminder_(body); break;
       case "updateCustomerApplication": res = apiUpdateCustomerApplication_(body); break;
@@ -5509,6 +5514,31 @@ function apiRecordBadgerCheck_(p) {
   finally { lock.releaseLock(); }
   bumpReadCacheVersion_(); clearBadgerInvoiceCache_();
   return { message:`Recorded Badger check for ${invoices.length} invoice(s).` };
+}
+
+function badgerReconcileGroups_() {
+  const marks = badgerPaymentMarks_(); const groups = { paid_not_marked:[], paid_check_no:[], unpaid_review:[], missing_tracker:[] };
+  readBadgerInvoices_().forEach(invoice => {
+    const key = normalizeBadgerInvoiceNumber_(invoice.invoice_number); const mark = marks.get(key);
+    if (!mark) { groups.missing_tracker.push(invoice); return; }
+    const submitted = String(mark.submitted || "").trim().toLowerCase();
+    if (invoice.is_paid && !mark.paid_to_me) groups.paid_not_marked.push(invoice);
+    else if (invoice.is_paid && submitted === "no") groups.paid_check_no.push(invoice);
+    else if (!invoice.is_closed && mark.paid_to_me && submitted && submitted !== "no" && submitted !== "n/a") groups.unpaid_review.push(invoice);
+  });
+  return groups;
+}
+
+function apiBadgerReconcilePreview_() { return { groups:badgerReconcileGroups_() }; }
+
+function apiApplyBadgerReconcile_(p) {
+  const group = publicText_(p?.group || "", 40, "Reconcile group"); const actor = authenticatedActor_(p, "Sturgeon Distribution Hub");
+  if (!new Set(["paid_not_marked", "paid_check_no"]).has(group)) throw new Error("This group requires manual review; it cannot be applied automatically.");
+  const invoices = badgerReconcileGroups_()[group] || []; const lock = LockService.getScriptLock();
+  if (!lock.tryLock(10000)) throw new Error("Another payment update is in progress. Try again shortly.");
+  try { invoices.forEach(invoice => writeBadgerPaymentMark_(invoice.invoice_number, true, group === "paid_not_marked" ? "N/A" : "Yes", "RECONCILE_BADGER_PAYMENT", actor)); }
+  finally { lock.releaseLock(); }
+  bumpReadCacheVersion_(); clearBadgerInvoiceCache_(); return { message:`Applied ${invoices.length} reconciliation update(s).`, count:invoices.length };
 }
 
 function badgerRequest_(path, options) {

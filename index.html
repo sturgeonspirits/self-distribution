@@ -2974,7 +2974,7 @@
           <h4>Matched unpaid Badger invoices</h4>
           <div class="workflowLineList">${unpaidInvoices.map(invoice => `<div class="workflowLine"><span>Invoice ${escapeHtml(invoice.invoice_number || "recorded")} • ${escapeHtml(formatOutreachDate(invoice.invoice_date) || "Date not recorded")}</span><strong>${escapeHtml(invoice.amount || "$0.00")}</strong><button type="button" class="actionBtn" data-badger-payment="paid_badger" data-invoice-number="${escapeHtml(invoice.invoice_number || "")}">Paid Badger</button><button type="button" class="actionBtn" data-badger-payment="paid_me" data-invoice-number="${escapeHtml(invoice.invoice_number || "")}">Paid us</button><button type="button" class="actionBtn" data-badger-payment="undo" data-invoice-number="${escapeHtml(invoice.invoice_number || "")}">Undo</button></div>`).join("")}</div>
           <p class="smallMuted">Outstanding balance: ${escapeHtml(record.outstanding_balance || "$0.00")}. A reminder is reviewed before delivery and is limited to one per account every seven days.</p>
-          <div class="dlgActions"><button class="primary" id="previewPaymentReminderBtn" type="button">Review payment reminder</button></div>
+          <div class="dlgActions"><button class="primary" id="previewPaymentReminderBtn" type="button">Review payment reminder</button><button id="syncBadgerNowBtn" type="button">Sync from Badger now</button><button id="previewBadgerReconcileBtn" type="button">Review reconciliation</button></div>
         </section>` : "";
       $("customerRecordBody").innerHTML = `
         <div class="businessDetailGrid">
@@ -3145,6 +3145,24 @@
       if (refreshed) openCustomerRecord(refreshed);
       toast("Payment mark updated");
     } catch (error) { toast(error?.message || String(error)); button.disabled = false; }
+  }
+
+  async function syncBadgerNow(){
+    const result = await staffApiPost({ action:"syncBadgerStatus", staff_name:$("customerStaffName").value.trim() });
+    if (!result.ok) throw new Error(result.error || "Badger sync failed.");
+    await loadCustomerWorkQueue(); toast(result.message || "Badger status synchronized");
+  }
+
+  async function previewBadgerReconcile(){
+    const result = await staffApiPost({ action:"badgerReconcilePreview" });
+    if (!result.ok) throw new Error(result.error || "Could not load reconciliation.");
+    const groups = result.groups || {}; const automatic = ["paid_not_marked", "paid_check_no"];
+    const text = Object.entries(groups).map(([name, rows]) => `${name}: ${rows.length}`).join("\n");
+    const selection = window.prompt(`Badger reconciliation\n${text}\n\nEnter an automatic group to apply, or Cancel to review only:`, "");
+    if (!selection || !automatic.includes(selection)) return;
+    const applied = await staffApiPost({ action:"applyBadgerReconcile", group:selection, staff_name:$("customerStaffName").value.trim() });
+    if (!applied.ok) throw new Error(applied.error || "Reconciliation was not applied.");
+    await loadCustomerWorkQueue(); toast(applied.message || "Reconciliation applied");
   }
 
   async function saveCustomerRecord(){
@@ -5895,6 +5913,8 @@
   $("customerRecordBody").addEventListener("click", event => {
     if (event.target.closest("#saveCustomerRecordBtn")) saveCustomerRecord();
     if (event.target.closest("#previewPaymentReminderBtn")) previewPaymentReminder();
+    if (event.target.closest("#syncBadgerNowBtn")) syncBadgerNow().catch(error => toast(error?.message || String(error)));
+    if (event.target.closest("#previewBadgerReconcileBtn")) previewBadgerReconcile().catch(error => toast(error?.message || String(error)));
     if (event.target.closest("[data-badger-payment]")) markBadgerPayment(event.target.closest("[data-badger-payment]"));
     if (event.target.closest("#backToCustomerRecordBtn") && selectedCustomerRecord) openCustomerRecord(selectedCustomerRecord);
     if (event.target.closest("#sendPaymentReminderBtn")) sendPaymentReminder();
