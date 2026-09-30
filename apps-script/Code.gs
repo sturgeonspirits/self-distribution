@@ -1,8 +1,12 @@
 /*********************************
  * Inventory API (JSON) for Netlify
- * App version: 2026.09.24.50
+ * App version: 2026.09.24.51
  *
  * CHANGES IN THIS VERSION
+ * - Adds a manual Badger server-login spike that caches an authenticated session for no more than 20 minutes and logs only the invoice count plus five invoice numbers.
+ * - Keeps customer payment reminders disabled by default; the preview hides Send and the send endpoint refuses until Hub Configuration explicitly enables them.
+ *
+ * CHANGES IN 2026.09.24.50
  * - Adds an account-level unpaid Badger invoice queue with balances, payment-due filtering, reviewed one-at-a-time reminder delivery, idempotency, and an audit trail. No reminder is sent automatically.
  *
  * CHANGES IN 2026.09.24.49
@@ -214,7 +218,7 @@
  * - Use only in the staging inventory backend until testing is complete.
  *********************************/
 
-const APP_VERSION = "2026.09.24.50";
+const APP_VERSION = "2026.09.24.51";
 
 const SHEET_NAMES = {
   STORES: "Stores",
@@ -228,6 +232,10 @@ const LEGACY_INVENTORY_SPREADSHEET_ID = "1asGSIuz65hhbXbanDSuLdgsasDKqAyVWgu7DGi
 const REQUIRE_API_KEY = true;
 const OUTREACH_SPREADSHEET_ID = "1tWJ2ZnFT15cjuk7qvCWbJUJX1pAQYYsbSy5owWa8Uzo"; // staging only
 const BADGER_TRACKER_SPREADSHEET_ID = "10KM-L-iAXJ4WQ1HfLWWoGkINsi9tEvVs6J5XiHBsMIQ"; // staging parser output only
+const BADGER_BASE_URL = "https://badgerstatecoop.com/BSWCSite";
+const BADGER_SESSION_CACHE_KEY = "hub_badger_session_v1";
+const BADGER_SESSION_TTL_SECONDS = 20 * 60;
+const PAYMENT_REMINDERS_ENABLED_CONFIG_KEY = "payment_reminders_enabled";
 const OUTREACH_SHEET_NAME = "Distribution Directory and Leads";
 const OUTREACH_ACTIVITY_SHEET_NAME = "Activity Log";
 const OUTREACH_DRAFTS_SHEET_NAME = "Outreach Drafts";
@@ -373,6 +381,10 @@ function getHubConfigurationValue_(key) {
   const values = sheet.getRange(2, 1, sheet.getLastRow() - 1, 2).getValues();
   const row = values.find(item => String(item[0] || "").trim() === String(key));
   return row ? String(row[1] || "").trim() : "";
+}
+
+function paymentRemindersEnabled_() {
+  return /^(1|true|yes|on)$/i.test(getHubConfigurationValue_(PAYMENT_REMINDERS_ENABLED_CONFIG_KEY));
 }
 
 function isHubInventoryActive_() {
@@ -5251,6 +5263,60 @@ const BADGER_INVOICE_CACHE_PREFIX = "hub_badger_invoices_v1";
 const BADGER_INVOICE_CACHE_TTL_SECONDS = 900;
 const BADGER_INVOICE_CACHE_CHUNK_SIZE = 80000;
 
+function badgerCookieHeader_(headers) {
+  const rawCookies = headers["Set-Cookie"] || headers["set-cookie"] || [];
+  const values = Array.isArray(rawCookies) ? rawCookies : [rawCookies];
+  const cookies = values.flatMap(value => String(value || "").match(/(?:^|,\s*)([^;,\s]+=[^;,\s]+)/g) || [])
+    .map(value => value.replace(/^,\s*/, "").trim())
+    .filter(Boolean);
+  return [...new Set(cookies)].join("; ");
+}
+
+function badgerSession_() {
+  const cache = CacheService.getScriptCache();
+  const cached = cache.get(BADGER_SESSION_CACHE_KEY);
+  if (cached) return cached;
+  const properties = PropertiesService.getScriptProperties();
+  const username = String(properties.getProperty("BADGER_USERNAME") || "").trim();
+  const password = String(properties.getProperty("BADGER_PASSWORD") || "");
+  if (!username || !password) throw new Error("Badger login requires BADGER_USERNAME and BADGER_PASSWORD Script Properties.");
+  const response = UrlFetchApp.fetch(`${BADGER_BASE_URL}/Login/Authenticate`, {
+    method:"post",
+    contentType:"application/json",
+    payload:JSON.stringify({ username:username, password:password }),
+    muteHttpExceptions:true,
+    followRedirects:false,
+  });
+  const status = response.getResponseCode();
+  if (status < 200 || status >= 400) throw new Error(`Badger login was rejected (HTTP ${status}).`);
+  const cookieHeader = badgerCookieHeader_(response.getAllHeaders());
+  if (!cookieHeader) throw new Error("Badger login did not return a session cookie.");
+  cache.put(BADGER_SESSION_CACHE_KEY, cookieHeader, BADGER_SESSION_TTL_SECONDS);
+  return cookieHeader;
+}
+
+function testBadgerLogin() {
+  const today = Utilities.formatDate(new Date(), Session.getScriptTimeZone(), "yyyy-MM-dd");
+  const response = UrlFetchApp.fetch(`${BADGER_BASE_URL}/Api/invoice/Paged`, {
+    method:"post",
+    contentType:"application/json",
+    payload:JSON.stringify({
+      pageSize:500, page:0, sorts:[], filters:[],
+      parameters:{ rangeStart:"2024-01-01T00:00:00-06:00", rangeEnd:`${today}T23:59:59-06:00`, status:"All" },
+    }),
+    headers:{ Cookie:badgerSession_() },
+    muteHttpExceptions:true,
+    followRedirects:false,
+  });
+  const status = response.getResponseCode();
+  if (status < 200 || status >= 300) throw new Error(`Badger invoice probe failed (HTTP ${status}).`);
+  let payload;
+  try { payload = JSON.parse(response.getContentText()); } catch (_) { throw new Error("Badger invoice probe returned invalid JSON."); }
+  const page = payload && payload.data;
+  if (!page || !Number.isFinite(Number(page.totalCount)) || !Array.isArray(page.data)) throw new Error("Badger invoice probe returned an unexpected response shape.");
+  console.log(JSON.stringify({ totalCount:Number(page.totalCount), invoiceNumbers:page.data.slice(0, 5).map(item => String(item.number || "")).filter(Boolean) }));
+}
+
 function readBadgerInvoices_() {
   const sheet = SpreadsheetApp.openById(BADGER_TRACKER_SPREADSHEET_ID).getSheetByName("Invoices");
   if (!sheet || sheet.getLastRow() < 2) return [];
@@ -5968,6 +6034,7 @@ function apiPreviewBadgerPaymentReminder_(p) {
     business_name:account.business_name,
     recipient_options:recipients,
     cooldown:cooldown,
+    payment_reminders_enabled:paymentRemindersEnabled_(),
     reminder_interval_days:BADGER_PAYMENT_REMINDER_MIN_DAYS,
   }, content);
 }
@@ -5979,6 +6046,7 @@ function apiSendBadgerPaymentReminder_(p) {
   const actor = authenticatedActor_(p, "Sturgeon Distribution Hub");
   if (!accountId) throw new Error("Account ID is required.");
   if (!/^[A-Za-z0-9_-]{20,160}$/.test(token)) throw new Error("A valid idempotency token is required.");
+  if (!paymentRemindersEnabled_()) throw new Error("Payment reminders are disabled in Hub Configuration.");
   const lock = LockService.getScriptLock();
   if (!lock.tryLock(10000)) throw new Error("Another reminder send is in progress. Wait a moment and try again.");
   try {

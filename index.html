@@ -1,10 +1,10 @@
 <!doctype html>
-<!-- App version: 2026.09.24.28-WEB -->
+<!-- App version: 2026.09.24.29-WEB -->
 <html>
 <head>
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover"/>
-  <meta name="app-version" content="2026.09.24.28-WEB" />
+  <meta name="app-version" content="2026.09.24.29-WEB" />
   <meta name="theme-color" content="#536f77" />
   <link rel="icon" href="/assets/distribution-hub-icon.svg" type="image/svg+xml" />
   <link rel="manifest" href="/site.webmanifest" />
@@ -2474,7 +2474,7 @@
 
   <footer style="max-width:1200px;margin:18px auto 120px;padding:0 12px;text-align:center;color:#6b7280;font-size:12px;">
     Designed by <a href="https://scriptspirit.dev" target="_blank" rel="noopener noreferrer" style="color:#1d4ed8;text-decoration:none;font-weight:700;">Script Spirit</a>
-<span id="appVersionFooter"> • Version 2026.09.24.28-WEB</span>
+<span id="appVersionFooter"> • Version 2026.09.24.29-WEB</span>
   </footer>
 
 
@@ -2497,7 +2497,7 @@
   window.addEventListener("unhandledrejection", e => console.error("Unhandled promise rejection:", e.reason));
   window.addEventListener("error", e => console.error("Unhandled error:", e.error || e.message));
   const $ = (id) => document.getElementById(id);
-  const APP_VERSION = "2026.09.24.28-WEB";
+  const APP_VERSION = "2026.09.24.29-WEB";
   $("appVersionFooter").textContent = ` • Version ${APP_VERSION}`;
 
   let cache = { stores: [], lines: [] };
@@ -3076,7 +3076,8 @@
       const reminder = await staffApiPost({ action:"previewBadgerPaymentReminder", account_id:record.account_id });
       if (!reminder.ok) throw new Error(reminder.error || "The payment reminder could not be prepared.");
       const cooldown = reminder.cooldown || {};
-      const canSend = cooldown.eligible !== false;
+      const paymentRemindersEnabled = reminder.payment_reminders_enabled === true;
+      const canSend = paymentRemindersEnabled && cooldown.eligible !== false;
       const nextEligible = cooldown.next_eligible_at ? formatOutreachDate(cooldown.next_eligible_at) : "";
       $("customerRecordBody").innerHTML = `
         <div class="businessDetailGrid">
@@ -3090,8 +3091,8 @@
             <p class="smallMuted">Only the account's current AP or customer email can be selected.</p>
           </section>
           <section class="detailSection full"><h4>${escapeHtml(reminder.subject || "Payment reminder")}</h4><div class="status">${escapeHtml(reminder.body_text || "").replace(/\n/g, "<br>")}</div></section>
-          <section class="detailSection full"><p class="smallMuted">${canSend ? `This will send one reminder and start a ${Number(reminder.reminder_interval_days || 7)}-day cooldown.` : `A reminder was already sent recently. It can be sent again after ${escapeHtml(nextEligible || "the cooldown ends")}.`}</p>
-            <div class="dlgActions"><button id="backToCustomerRecordBtn" type="button">Back</button><button class="primary" id="sendPaymentReminderBtn" type="button" ${canSend ? "" : "disabled"}>Send payment reminder</button></div>
+          <section class="detailSection full"><p class="smallMuted">${!paymentRemindersEnabled ? "Payment reminders are disabled in Hub Configuration." : canSend ? `This will send one reminder and start a ${Number(reminder.reminder_interval_days || 7)}-day cooldown.` : `A reminder was already sent recently. It can be sent again after ${escapeHtml(nextEligible || "the cooldown ends")}.`}</p>
+            <div class="dlgActions"><button id="backToCustomerRecordBtn" type="button">Back</button>${canSend ? '<button class="primary" id="sendPaymentReminderBtn" type="button">Send payment reminder</button>' : ""}</div>
             <div class="status" id="paymentReminderStatus"></div>
           </section>
         </div>`;
