@@ -1,10 +1,10 @@
 <!doctype html>
-<!-- App version: 2026.09.24.27-WEB -->
+<!-- App version: 2026.09.24.28-WEB -->
 <html>
 <head>
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover"/>
-  <meta name="app-version" content="2026.09.24.27-WEB" />
+  <meta name="app-version" content="2026.09.24.28-WEB" />
   <meta name="theme-color" content="#536f77" />
   <link rel="icon" href="/assets/distribution-hub-icon.svg" type="image/svg+xml" />
   <link rel="manifest" href="/site.webmanifest" />
@@ -2105,6 +2105,7 @@
         <div class="outreachMetric"><strong id="newApplicationsCount">0</strong><span>New applications</span></div>
         <div class="outreachMetric"><strong id="newOrdersCount">0</strong><span>New orders</span></div>
         <div class="outreachMetric"><strong id="invoiceNeededCount">0</strong><span>Need invoice work</span></div>
+        <div class="outreachMetric"><strong id="paymentDueCount">0</strong><span>Payment due</span></div>
       </div>
 
       <div class="workflowControls">
@@ -2473,7 +2474,7 @@
 
   <footer style="max-width:1200px;margin:18px auto 120px;padding:0 12px;text-align:center;color:#6b7280;font-size:12px;">
     Designed by <a href="https://scriptspirit.dev" target="_blank" rel="noopener noreferrer" style="color:#1d4ed8;text-decoration:none;font-weight:700;">Script Spirit</a>
-<span id="appVersionFooter"> • Version 2026.09.24.27-WEB</span>
+<span id="appVersionFooter"> • Version 2026.09.24.28-WEB</span>
   </footer>
 
 
@@ -2496,7 +2497,7 @@
   window.addEventListener("unhandledrejection", e => console.error("Unhandled promise rejection:", e.reason));
   window.addEventListener("error", e => console.error("Unhandled error:", e.error || e.message));
   const $ = (id) => document.getElementById(id);
-  const APP_VERSION = "2026.09.24.27-WEB";
+  const APP_VERSION = "2026.09.24.28-WEB";
   $("appVersionFooter").textContent = ` • Version ${APP_VERSION}`;
 
   let cache = { stores: [], lines: [] };
@@ -2807,7 +2808,7 @@
 
   function customerStatusOptions(){
     const statuses = customerView === "orders" ? ORDER_STATUSES : customerView === "applications" ? APPLICATION_STATUSES : [];
-    const operational = (customerView === "accounts" ? ["New"] : []).concat(["Awaiting invoice", "Ready", "Delivered", "Reorder due", "Inventory-counted"]);
+    const operational = (customerView === "accounts" ? ["Payment due", "New"] : []).concat(["Awaiting invoice", "Ready", "Delivered", "Reorder due", "Inventory-counted"]);
     return [{ value:"active", label:"Active work" }, { value:"all", label:"All statuses" }]
       .concat(operational.map(status => ({ value:`operational:${status}`, label:status })))
       .concat(statuses.map(status => ({ value:status, label:status })));
@@ -2854,6 +2855,7 @@
     $("newApplicationsCount").textContent = Number(summary.new_applications || 0);
     $("newOrdersCount").textContent = Number(summary.new_orders || 0);
     $("invoiceNeededCount").textContent = Number(summary.invoice_needed || 0);
+    $("paymentDueCount").textContent = Number(summary.unpaid_accounts || 0);
     if (activeAppSection === "customers") {
       $("hdrStore").textContent = `${Number(summary.new_applications || 0)} applications`;
       $("hdrChanged").textContent = `${Number(summary.new_orders || 0)} orders`;
@@ -2878,7 +2880,7 @@
       const contact = isAccount ? record.contact_name : isOrder ? record.contact_name : record.primary_contact_name;
       const email = isAccount ? record.email : isOrder ? record.email : record.primary_email;
       const orderSummary = isAccount
-        ? `${Number(record.orders?.length || 0)} orders • ${Number(record.invoices?.length || 0)} invoices • ${Number(record.deliveries?.length || 0)} deliveries • ${Number(record.history?.length || 0)} history events`
+        ? `${Number(record.orders?.length || 0)} orders • ${Number(record.invoices?.length || 0)} invoices${Number(record.unpaid_invoices?.length || 0) ? ` • ${Number(record.unpaid_invoices.length)} unpaid (${record.outstanding_balance || "$0.00"})` : ""} • ${Number(record.deliveries?.length || 0)} deliveries • ${Number(record.history?.length || 0)} history events`
         : isOrder
         ? `${Number(record.line_count || record.lines?.length || 0)} product${Number(record.line_count || record.lines?.length || 0) === 1 ? "" : "s"} • ${Number(record.bottle_equivalent || 0)} bottle equivalent`
         : [record.business_type, record.delivery_city, record.delivery_state].filter(Boolean).join(" • ");
@@ -2966,11 +2968,19 @@
           <span>${escapeHtml(formatOutreachDate(item.timestamp) || "Date not recorded")}${item.id ? ` • ${escapeHtml(item.id)}` : ""}</span>
           ${item.detail ? `<span>${escapeHtml(item.detail)}</span>` : ""}
         </div>`).join("")}</div>` : `<div class="smallMuted">No account history has been recorded.</div>`;
+      const unpaidInvoices = record.unpaid_invoices || [];
+      const paymentReminder = unpaidInvoices.length ? `
+        <section class="detailSection full">
+          <h4>Matched unpaid Badger invoices</h4>
+          <div class="workflowLineList">${unpaidInvoices.map(invoice => `<div class="workflowLine"><span>Invoice ${escapeHtml(invoice.invoice_number || "recorded")} • ${escapeHtml(formatOutreachDate(invoice.invoice_date) || "Date not recorded")}</span><strong>${escapeHtml(invoice.amount || "$0.00")}</strong></div>`).join("")}</div>
+          <p class="smallMuted">Outstanding balance: ${escapeHtml(record.outstanding_balance || "$0.00")}. A reminder is reviewed before delivery and is limited to one per account every seven days.</p>
+          <div class="dlgActions"><button class="primary" id="previewPaymentReminderBtn" type="button">Review payment reminder</button></div>
+        </section>` : "";
       $("customerRecordBody").innerHTML = `
         <div class="businessDetailGrid">
           <section class="detailSection"><h4>Account</h4>${detailRowsHtml([
             { label:"Account ID", value:record.account_id }, { label:"Contact", value:record.contact_name },
-            { label:"Email", value:record.email }, { label:"Phone", value:record.phone },
+            { label:"Email", value:record.email }, { label:"Accounts payable", value:record.ap_email }, { label:"Phone", value:record.phone },
             { label:"City", value:record.city }, { label:"Relationship", value:record.relationship },
             { label:"Directory status", value:record.directory_status }, { label:"Next reorder follow-up", value:record.next_follow_up },
             { label:"Inventory tracking", value:record.inventory_tracking ? `Enabled${record.inventory_store_id ? ` • ${record.inventory_store_id}` : ""}` : "Not enabled" },
@@ -2980,6 +2990,7 @@
             { label:"Invoices", value:record.invoices?.length || 0 }, { label:"Deliveries", value:record.deliveries?.length || 0 },
             { label:"Inventory reorders", value:record.reorders?.length || 0 }, { label:"History events", value:history.length },
           ])}</section>
+          ${paymentReminder}
           <section class="detailSection full"><h4>Order, invoice, delivery, outreach, and reorder history</h4>${historyHtml}</section>
         </div>`;
       $("customerRecordDialog").showModal();
@@ -3048,6 +3059,73 @@
       </div>${editor}`;
     $("customerRecordDialog").showModal();
     refreshIcons();
+  }
+
+  function paymentReminderToken(){
+    const suffix = window.crypto?.randomUUID?.() || `${Date.now()}-${Math.random()}`;
+    return `PAY-${String(suffix).replace(/[^A-Za-z0-9_-]/g, "")}`;
+  }
+
+  async function previewPaymentReminder(){
+    const record = selectedCustomerRecord;
+    if (!record?.account_id || !(record.unpaid_invoices || []).length) return;
+    $("customerRecordTitle").textContent = "Payment reminder";
+    $("customerRecordSubtitle").textContent = `Review before delivery • ${record.business_name || record.account_id}`;
+    $("customerRecordBody").innerHTML = `<div class="status">Preparing the current unpaid-invoice reminder…</div>`;
+    try {
+      const reminder = await staffApiPost({ action:"previewBadgerPaymentReminder", account_id:record.account_id });
+      if (!reminder.ok) throw new Error(reminder.error || "The payment reminder could not be prepared.");
+      const cooldown = reminder.cooldown || {};
+      const canSend = cooldown.eligible !== false;
+      const nextEligible = cooldown.next_eligible_at ? formatOutreachDate(cooldown.next_eligible_at) : "";
+      $("customerRecordBody").innerHTML = `
+        <div class="businessDetailGrid">
+          <section class="detailSection"><h4>Current balance</h4>${detailRowsHtml([
+            { label:"Account", value:reminder.account_id }, { label:"Invoices", value:(reminder.invoice_numbers || []).join(", ") },
+            { label:"Outstanding", value:reminder.outstanding_amount },
+          ])}</section>
+          <section class="detailSection"><h4>Delivery</h4>
+            <label for="paymentReminderRecipient">Recipient</label>
+            <select id="paymentReminderRecipient">${(reminder.recipient_options || []).map(email => `<option value="${escapeHtml(email)}">${escapeHtml(email)}</option>`).join("")}</select>
+            <p class="smallMuted">Only the account's current AP or customer email can be selected.</p>
+          </section>
+          <section class="detailSection full"><h4>${escapeHtml(reminder.subject || "Payment reminder")}</h4><div class="status">${escapeHtml(reminder.body_text || "").replace(/\n/g, "<br>")}</div></section>
+          <section class="detailSection full"><p class="smallMuted">${canSend ? `This will send one reminder and start a ${Number(reminder.reminder_interval_days || 7)}-day cooldown.` : `A reminder was already sent recently. It can be sent again after ${escapeHtml(nextEligible || "the cooldown ends")}.`}</p>
+            <div class="dlgActions"><button id="backToCustomerRecordBtn" type="button">Back</button><button class="primary" id="sendPaymentReminderBtn" type="button" ${canSend ? "" : "disabled"}>Send payment reminder</button></div>
+            <div class="status" id="paymentReminderStatus"></div>
+          </section>
+        </div>`;
+      const sendReminderButton = $("sendPaymentReminderBtn");
+      if (sendReminderButton) sendReminderButton.dataset.token = paymentReminderToken();
+      refreshIcons();
+    } catch (error) {
+      $("customerRecordBody").innerHTML = `<div class="status">${escapeHtml(error?.message || String(error))}</div><div class="dlgActions"><button id="backToCustomerRecordBtn" type="button">Back</button></div>`;
+    }
+  }
+
+  async function sendPaymentReminder(){
+    const record = selectedCustomerRecord;
+    const button = $("sendPaymentReminderBtn");
+    if (!record?.account_id || !button) return;
+    const staffName = $("customerStaffName").value.trim();
+    if (!staffName) return $("paymentReminderStatus").textContent = "Enter your staff name before sending.";
+    button.disabled = true;
+    $("paymentReminderStatus").textContent = "Sending to Zoho…";
+    try {
+      const result = await staffApiPost({
+        action:"sendBadgerPaymentReminder", account_id:record.account_id,
+        recipient:$("paymentReminderRecipient").value, idempotency_token:button.dataset.token,
+        staff_name:staffName,
+      });
+      if (!result.ok) throw new Error(result.error || "The payment reminder was not sent.");
+      $("paymentReminderStatus").textContent = `Sent. Zoho message ID: ${result.message_id || "recorded"}.`;
+      await loadCustomerWorkQueue();
+      toast("Payment reminder sent");
+    } catch (error) {
+      $("paymentReminderStatus").textContent = error?.message || String(error);
+      if (error?.staffAuth) handleCustomerError(error);
+      button.disabled = false;
+    }
   }
 
   async function saveCustomerRecord(){
@@ -5797,6 +5875,9 @@
   $("closeCustomerRecordBtn").addEventListener("click", () => $("customerRecordDialog").close());
   $("customerRecordBody").addEventListener("click", event => {
     if (event.target.closest("#saveCustomerRecordBtn")) saveCustomerRecord();
+    if (event.target.closest("#previewPaymentReminderBtn")) previewPaymentReminder();
+    if (event.target.closest("#backToCustomerRecordBtn") && selectedCustomerRecord) openCustomerRecord(selectedCustomerRecord);
+    if (event.target.closest("#sendPaymentReminderBtn")) sendPaymentReminder();
   });
   $("loadHubStatusBtn").addEventListener("click", () => loadHubSystemStatus().catch(handleCustomerError));
   $("initializeHubBtn").addEventListener("click", () => initializeHardenedHub().catch(handleCustomerError));

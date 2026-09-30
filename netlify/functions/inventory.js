@@ -1,7 +1,7 @@
-// App version: 2026.09.24.27-WEB
+// App version: 2026.09.24.29-WEB
 import { requireStaffSession } from "./auth.js";
 
-const APP_VERSION = "2026.09.24.27-WEB";
+const APP_VERSION = "2026.09.24.29-WEB";
 const STAFF_ACTIONS = new Set([
   "outreachDashboard",
   "outreachRecord",
@@ -23,6 +23,8 @@ const STAFF_ACTIONS = new Set([
   "updateOutreachPrograms",
   "upsertNewsletterContact",
   "customerWorkQueue",
+  "previewBadgerPaymentReminder",
+  "sendBadgerPaymentReminder",
   "updateCustomerApplication",
   "updateOnlineOrderRequest",
   "createOutreachBusiness",
@@ -53,7 +55,7 @@ const SEND_UPSTREAM_ATTEMPTS = 1;
 // Sends, campaign creation, and campaign reads need the longer verified window.
 // Do not reduce this below 20 seconds without checking the active function limit.
 const SEND_UPSTREAM_TIMEOUT_MS = 24000;
-const SEND_ACTIONS = new Set(["sendOutreachEmail", "sendOutreachTestEmail", "sendOutreachCampaignBatch"]);
+const SEND_ACTIONS = new Set(["sendOutreachEmail", "sendOutreachTestEmail", "sendOutreachCampaignBatch", "sendBadgerPaymentReminder"]);
 const SNAPSHOT_ACTIONS = new Set(["createOutreachCampaign"]);
 const CAMPAIGN_READ_ACTIONS = new Set(["outreachCampaigns", "outreachCampaign"]);
 const ADMIN_ACTIONS = new Set(["initializeHardenedHub", "repairHubStructure", "reconcileIntegrations", "upsertProduct", "addSkuToStore"]);
@@ -64,7 +66,7 @@ const ACTION_AREAS = new Map([
   ["saveOutreachDraft", "outreach"], ["updateOutreachOutcome", "outreach"], ["updateOutreachBusiness", "outreach"],
   ["updateOutreachPrograms", "outreach"], ["upsertNewsletterContact", "outreach"], ["createOutreachBusiness", "outreach"],
   ["importOutreachBusinesses", "outreach"], ["sendOutreachEmail", "outreach"], ["sendOutreachTestEmail", "outreach"],
-  ["customerWorkQueue", "orders"], ["updateCustomerApplication", "orders"], ["updateOnlineOrderRequest", "orders"],
+  ["customerWorkQueue", "orders"], ["previewBadgerPaymentReminder", "orders"], ["sendBadgerPaymentReminder", "orders"], ["updateCustomerApplication", "orders"], ["updateOnlineOrderRequest", "orders"],
   ["hubSystemStatus", "orders"], ["initializeHardenedHub", "orders"], ["repairHubStructure", "orders"], ["reconcileIntegrations", "orders"],
   ["initData", "inventory"], ["listSkus", "inventory"], ["addSkuToStore", "inventory"], ["upsertProduct", "inventory"],
   ["submitCounts", "inventory"], ["createReorder", "inventory"], ["managerGrid", "inventory"], ["salesSinceCount", "inventory"], ["updateStoreContacts", "inventory"],

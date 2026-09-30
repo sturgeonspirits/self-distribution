@@ -1,6 +1,6 @@
 # Sturgeon Distribution Hub — Project Status
 
-Last updated: 2026-09-24
+Last updated: 2026-09-27
 
 Read this file before inspecting the repository or changing the application. Update it whenever a deployment, version, service URL, known issue, or required setup step changes. Never put secret values in this file.
 
@@ -8,8 +8,8 @@ Read this file before inspecting the repository or changing the application. Upd
 
 | Component | Source version | Deployment state |
 | --- | --- | --- |
-| Netlify web app and staff proxy | `2026.09.24.27-WEB` on `codex/work` / `2026.09.24.24-WEB` live | Rebuild controls, staff-proxy actions, the brand-aligned browser/web-app icon, and restored verified proxy timeouts are pending deployment. The `.24` production Git build remains verified. |
-| Inventory API Apps Script | `2026.09.24.24` on `codex/work` / `2026.09.24.17` live | Campaign reconciliation and review-ready snapshot rebuilding are committed and awaiting Apps Script deployment. |
+| Netlify web app and staff proxy | `2026.09.24.28-WEB` on `codex/work` / `2026.09.24.24-WEB` live | Rebuild controls, staff-proxy actions, the revised brand-aligned browser/web-app icon, and restored verified proxy timeouts are pending deployment. The `.24` production Git build remains verified. |
+| Inventory API Apps Script | `2026.09.24.50` on `codex/work` / `2026.09.24.49` live | Unpaid-Badger invoice reminders and earlier queued backend updates are committed for pre-deployment review. Do not deploy until the review completes. |
 | Distribution Outreach Apps Script | `2026.09.24.13-APP` on `codex/work` | Signed-link rendering is committed; owner has not yet confirmed this exact version is deployed. |
 | Public customer Netlify proxy | `2026.09.18.3-WEB` | Deployed with Netlify; unchanged by the latest staff-app UI work |
 

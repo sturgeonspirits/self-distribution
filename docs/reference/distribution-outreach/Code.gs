@@ -1,9 +1,14 @@
 /**
  * Sturgeon Spirits Distribution Outreach
  *
- * VERSION: 2026.09.24.13-APP
+ * VERSION: 2026.09.24.14-APP
  *
  * CHANGES IN THIS VERSION
+ * - Adds a dedicated, authenticated payment-reminder endpoint for reviewed, one-at-a-time Hub sends.
+ * - Requires a confirmed Zoho message ID, idempotency token, and both Payment Reminder Log and Activity Log records before reporting a reminder as sent.
+ * - Keeps marketing-lead validation and automated or bulk delivery out of the payment-reminder path.
+ *
+ * CHANGES IN 2026.09.24.13-APP
  * - Uses Reactivation-specific online-ordering wording for the wholesale application link in every renderer.
  * - Marks tracking links in Karl-only test messages so test clicks redirect without being recorded as prospect engagement.
  * - Includes the wholesale application link in every outreach stage while retaining tracked-link fallback behavior.
@@ -57,7 +62,7 @@
  * Sends through the authenticated Zoho Mail API account.
  */
 
-const OUTREACH_VERSION = '2026.09.24.13-APP';
+const OUTREACH_VERSION = '2026.09.24.14-APP';
 
 const OUTREACH = Object.freeze({
   ENVIRONMENT: 'STAGING_PILOT',
@@ -71,6 +76,7 @@ const OUTREACH = Object.freeze({
   PILOT_SHEET: 'Pilot Review',
   SETTINGS_SHEET: 'Campaign Settings',
   LOG_SHEET: 'Activity Log',
+  PAYMENT_REMINDER_LOG_SHEET: 'Payment Reminder Log',
   DRAFTS_SHEET: 'Outreach Drafts',
   FIRST_DATA_ROW: 2,
   COL: Object.freeze({
@@ -193,6 +199,7 @@ function doPost(e) {
     if (action === 'appMailerStatus') return appJson_(Object.assign({ ok:true, version:OUTREACH_VERSION }, appMailerStatus_()));
     if (action === 'sendAppEmail') return appJson_(Object.assign({ ok:true, version:OUTREACH_VERSION }, sendAppEmailRequest_(body, false)));
     if (action === 'sendAppTestEmail') return appJson_(Object.assign({ ok:true, version:OUTREACH_VERSION }, sendAppEmailRequest_(body, true)));
+    if (action === 'sendPaymentReminder') return appJson_(Object.assign({ ok:true, version:OUTREACH_VERSION }, sendPaymentReminderRequest_(body)));
     throw new Error('Unsupported app mailer action.');
   } catch (error) {
     return appJson_({ ok:false, version:OUTREACH_VERSION, error:String(error.message || error) });
@@ -400,6 +407,132 @@ function sendAppEmailRequest_(body, testMode) {
       } catch (ignored) {}
     }
     throw error;
+  } finally {
+    lock.releaseLock();
+  }
+}
+
+function paymentReminderHeaders_() {
+  return ['Reminder ID', 'Account ID', 'Business Name', 'Recipient', 'Invoice Numbers', 'Outstanding Amount Cents', 'Subject', 'Status', 'Sent At', 'Requested By', 'Zoho Message ID', 'Idempotency Token', 'Error', 'Mailer Version'];
+}
+
+function getPaymentReminderLogSheet_() {
+  const ss = assertStagingEnvironment_();
+  let sheet = ss.getSheetByName(OUTREACH.PAYMENT_REMINDER_LOG_SHEET);
+  if (!sheet) {
+    sheet = ss.insertSheet(OUTREACH.PAYMENT_REMINDER_LOG_SHEET);
+    sheet.getRange(1, 1, 1, paymentReminderHeaders_().length).setValues([paymentReminderHeaders_()]).setFontWeight('bold');
+    sheet.setFrozenRows(1);
+  }
+  return sheet;
+}
+
+function paymentReminderHeaderKey_(value) {
+  return String(value || '').trim().toLowerCase().replace(/[^a-z0-9]+/g, '_').replace(/^_+|_+$/g, '');
+}
+
+function paymentReminderRows_() {
+  const sheet = getPaymentReminderLogSheet_();
+  if (sheet.getLastRow() < 2) return [];
+  const keys = sheet.getRange(1, 1, 1, sheet.getLastColumn()).getValues()[0].map(paymentReminderHeaderKey_);
+  return sheet.getRange(2, 1, sheet.getLastRow() - 1, sheet.getLastColumn()).getValues().map(function (row, index) {
+    const item = { rowNumber:index + 2 };
+    keys.forEach(function (key, column) { item[key] = row[column]; });
+    return item;
+  });
+}
+
+function priorAcceptedPaymentReminder_(token) {
+  const receipt = getAppReceipt_(token);
+  if (receipt && receipt.accepted && receipt.payment_reminder && receipt.logs_recorded) return receipt;
+  const row = paymentReminderRows_().slice().reverse().find(function (item) {
+    return String(item.idempotency_token || '') === String(token || '') && String(item.status || '').toUpperCase() === 'SENT' && String(item.zoho_message_id || '').trim();
+  });
+  return row ? { accepted:true, message_id:String(row.zoho_message_id), sent_at:row.sent_at || new Date(), idempotent:true, payment_reminder:true } : null;
+}
+
+function assertPaymentReminderRequest_(body) {
+  const token = String(body.idempotency_token || '').trim();
+  if (!/^[A-Za-z0-9_-]{20,160}$/.test(token)) throw new Error('A valid idempotency token is required.');
+  const accountId = String(body.account_id || '').trim();
+  const business = String(body.business || '').trim();
+  const recipient = String(body.recipient || '').trim().toLowerCase();
+  const subject = String(body.subject || '').trim();
+  const html = String(body.html || '').trim();
+  const invoices = Array.isArray(body.invoice_numbers) ? body.invoice_numbers.map(function (value) { return String(value || '').trim(); }).filter(Boolean) : [];
+  const amount = Number(body.outstanding_amount_cents || 0);
+  if (!accountId || accountId.length > 120) throw new Error('A valid account ID is required.');
+  if (!business || business.length > 240) throw new Error('A valid business name is required.');
+  if (!isValidEmail_(recipient)) throw new Error('A valid payment-reminder recipient is required.');
+  if (!subject || subject.length > 200 || !html || html.length > 100000) throw new Error('A valid payment-reminder subject and message are required.');
+  if (!invoices.length || invoices.length > 100 || invoices.some(function (value) { return value.length > 120; })) throw new Error('At least one valid invoice number is required.');
+  if (!Number.isInteger(amount) || amount <= 0) throw new Error('A positive outstanding amount is required.');
+  return { token:token, account_id:accountId, business:business, recipient:recipient, subject:subject, html:html, invoice_numbers:invoices, outstanding_amount_cents:amount, requested_by:String(body.requested_by || '').trim().slice(0, 120) };
+}
+
+function writePaymentReminderLog_(body, accepted) {
+  const sheet = getPaymentReminderLogSheet_();
+  const headers = sheet.getRange(1, 1, 1, sheet.getLastColumn()).getValues()[0].map(paymentReminderHeaderKey_);
+  const existing = paymentReminderRows_().find(function (item) { return String(item.idempotency_token || '') === body.token; });
+  const values = existing ? sheet.getRange(existing.rowNumber, 1, 1, sheet.getLastColumn()).getValues()[0] : Array(sheet.getLastColumn()).fill('');
+  const set = function (key, value) { const index = headers.indexOf(paymentReminderHeaderKey_(key)); if (index >= 0) values[index] = value; };
+  set('Reminder ID', existing ? existing.reminder_id : 'PAY-' + Utilities.getUuid().replace(/-/g, '').toUpperCase());
+  set('Account ID', body.account_id); set('Business Name', body.business); set('Recipient', body.recipient);
+  set('Invoice Numbers', body.invoice_numbers.join(', ')); set('Outstanding Amount Cents', body.outstanding_amount_cents);
+  set('Subject', body.subject); set('Status', 'SENT'); set('Sent At', accepted.sent_at ? new Date(accepted.sent_at) : new Date());
+  set('Requested By', body.requested_by); set('Zoho Message ID', accepted.message_id); set('Idempotency Token', body.token);
+  set('Error', 'Zoho accepted delivery.'); set('Mailer Version', OUTREACH_VERSION);
+  sheet.getRange(existing ? existing.rowNumber : sheet.getLastRow() + 1, 1, 1, values.length).setValues([values]);
+}
+
+function appendPaymentReminderActivity_(body, accepted) {
+  const prior = appSentHistory_().some(function (item) {
+    return String(item.idempotency_token || '') === body.token && String(item.result || '').toUpperCase() === 'PAYMENT REMINDER SENT';
+  });
+  if (prior) return;
+  const sheet = assertStagingEnvironment_().getSheetByName(OUTREACH.LOG_SHEET);
+  if (!sheet) throw new Error('Activity Log sheet is missing.');
+  const keys = ensureAppLogHeaders_(sheet);
+  const values = Array(keys.length).fill('');
+  const set = function (names, value) {
+    const index = names.map(appHeaderKey_).map(function (name) { return keys.indexOf(name); }).find(function (item) { return item >= 0; });
+    if (index >= 0) values[index] = value;
+  };
+  set(['timestamp'], accepted.sent_at ? new Date(accepted.sent_at) : new Date());
+  set(['account_id'], body.account_id); set(['business'], body.business); set(['intended_recipient', 'email'], body.recipient);
+  set(['message_stage', 'stage'], 'Payment reminder'); set(['subject'], body.subject); set(['result'], 'PAYMENT REMINDER SENT');
+  set(['message_id'], accepted.message_id); set(['error/detail', 'error_detail', 'error'], 'Zoho accepted delivery.');
+  set(['delivered_to'], body.recipient); set(['mailer_version', 'app_version', 'version'], OUTREACH_VERSION); set(['idempotency_token'], body.token);
+  sheet.appendRow(values);
+}
+
+function sendPaymentReminderRequest_(body) {
+  const request = assertPaymentReminderRequest_(body || {});
+  const prior = priorAcceptedPaymentReminder_(request.token);
+  if (prior) return Object.assign({}, prior, { idempotent:true });
+  const status = appMailerStatus_();
+  if (!status.can_send) throw new Error(status.detail);
+  const lock = LockService.getScriptLock();
+  if (!lock.tryLock(10000)) throw new Error('Another app send is in progress. Wait a moment and try again.');
+  try {
+    const replay = priorAcceptedPaymentReminder_(request.token);
+    if (replay) return Object.assign({}, replay, { idempotent:true });
+    const pending = getAppReceipt_(request.token);
+    if (pending && pending.accepted && pending.payment_reminder) {
+      appendPaymentReminderActivity_(request, pending);
+      writePaymentReminderLog_(request, pending);
+      clearAppReceipt_(request.token);
+      return Object.assign({}, pending, { idempotent:true });
+    }
+    const settings = getSettings_();
+    const zoho = sendZohoEmail_(request.recipient, request.subject, request.html, settings, 'APP');
+    const accepted = { accepted:true, message_id:String(zoho.messageId || ''), sent_at:new Date().toISOString(), idempotent:false, payment_reminder:true, logs_recorded:false };
+    if (!accepted.message_id) throw new Error('Zoho did not return a message ID.');
+    setAppReceipt_(request.token, accepted);
+    appendPaymentReminderActivity_(request, accepted);
+    writePaymentReminderLog_(request, accepted);
+    clearAppReceipt_(request.token);
+    return accepted;
   } finally {
     lock.releaseLock();
   }
