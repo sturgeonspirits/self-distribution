@@ -1,8 +1,11 @@
 /*********************************
  * Inventory API (JSON) for Netlify
- * App version: 2026.09.24.55
+ * App version: 2026.09.24.56
  *
  * CHANGES IN THIS VERSION
+ * - Corrects live payment-state classification, reversible payment marks, sync freshness validation, and pending-reminder resolution safeguards.
+ *
+ * CHANGES IN 2026.09.24.55
  * - Adds staff-locked live-tracker payment marks, check recording, and an audit ledger for Badger payment operations.
  *
  * CHANGES IN 2026.09.24.54
@@ -230,7 +233,7 @@
  * - Use only in the staging inventory backend until testing is complete.
  *********************************/
 
-const APP_VERSION = "2026.09.24.55";
+const APP_VERSION = "2026.09.24.56";
 
 const SHEET_NAMES = {
   STORES: "Stores",
@@ -5413,11 +5416,13 @@ function badgerSyncState_() {
   if (!sheet || sheet.getLastRow() < 2) return { last_good_sync_at:"", is_fresh:false };
   const h = getHeaderMap_(sheet);
   const rows = sheet.getRange(2, 1, sheet.getLastRow() - 1, sheet.getLastColumn()).getValues();
-  const good = rows.map(row => ({ synced_at:row[h.synced_at], result:String(row[h.result] || "") }))
+  const good = rows.map(row => ({ synced_at:row[h.synced_at], result:String(row[h.result] || ""), invoice_count:Number(row[h.invoice_count] || 0) }))
     .filter(item => item.result === "Succeeded" && outreachDate_(item.synced_at))
     .sort((a, b) => recordTimestamp_(b.synced_at) - recordTimestamp_(a.synced_at))[0];
   const timestamp = good ? outreachDate_(good.synced_at) : null;
-  return { last_good_sync_at:timestamp ? timestamp.toISOString() : "", is_fresh:!!timestamp && Date.now() - timestamp.getTime() <= BADGER_SYNC_MAX_AGE_MS };
+  const statusSheet = getOutreachSs_().getSheetByName(BADGER_STATUS_SHEET_NAME);
+  const rowCountMatches = !!good && !!statusSheet && Math.max(0, statusSheet.getLastRow() - 1) === good.invoice_count;
+  return { last_good_sync_at:timestamp ? timestamp.toISOString() : "", is_fresh:!!timestamp && Date.now() - timestamp.getTime() <= BADGER_SYNC_MAX_AGE_MS && rowCountMatches };
 }
 
 function badgerPaymentMarks_() {
@@ -5427,13 +5432,13 @@ function badgerPaymentMarks_() {
   getAllRowsAsObjects_(sheet).forEach(row => {
     const invoiceKey = normalizeBadgerInvoiceNumber_(firstPresent_(row, ["invoice_#", "invoice_number", "invoice_no"]));
     if (!invoiceKey) return;
-    byInvoice.set(invoiceKey, /^(true|yes|y|1)$/i.test(String(firstPresent_(row, ["paid_to_me", "paid"]) || "").trim()));
+    byInvoice.set(invoiceKey, { paid_to_me:/^(true|yes|y|1)$/i.test(String(firstPresent_(row, ["paid_to_me", "paid"]) || "").trim()), submitted:String(firstPresent_(row, ["submitted"]) || "").trim() });
   });
   return byInvoice;
 }
 
 function getBadgerInvoicePaymentLogSheet_() {
-  return ensureSheet_(getOutreachSs_(), BADGER_PAYMENT_LOG_SHEET_NAME, ["Log ID", "Action", "Invoice #", "Old Paid to Me", "New Paid to Me", "Old Submitted", "New Submitted", "Staff", "At", "Check #", "Check Date", "App Version"]);
+  return ensureSheet_(getOutreachSs_(), BADGER_PAYMENT_LOG_SHEET_NAME, ["Log ID", "Action", "Invoice #", "Old Paid to Me", "New Paid to Me", "Old Submitted", "New Submitted", "Staff", "At", "Check #", "Check Date", "Undone Log ID", "App Version"]);
 }
 
 function badgerTrackerInvoice_(invoiceNumber) {
@@ -5448,7 +5453,7 @@ function badgerTrackerInvoice_(invoiceNumber) {
   return { sheet:sheet, headers:h, row:rows[index], row_number:index + 2, invoice_number:String(rows[index][h["invoice_#"]] || invoiceNumber) };
 }
 
-function writeBadgerPaymentMark_(invoiceNumber, paidToMe, submitted, action, actor, checkNumber, checkDate) {
+function writeBadgerPaymentMark_(invoiceNumber, paidToMe, submitted, action, actor, checkNumber, checkDate, undoneLogId) {
   const tracker = badgerTrackerInvoice_(invoiceNumber);
   const oldPaid = tracker.row[tracker.headers.paid_to_me];
   const oldSubmitted = tracker.row[tracker.headers.submitted];
@@ -5456,7 +5461,9 @@ function writeBadgerPaymentMark_(invoiceNumber, paidToMe, submitted, action, act
   else { tracker.sheet.getRange(tracker.row_number, tracker.headers.paid_to_me + 1).setValue(!!paidToMe); tracker.sheet.getRange(tracker.row_number, tracker.headers.submitted + 1).setValue(submitted); }
   const verified = tracker.sheet.getRange(tracker.row_number, tracker.headers.paid_to_me + 1, 1, 1).getValue();
   if (/^(true|yes|1)$/i.test(String(verified)) !== !!paidToMe) throw new Error("Badger tracker did not retain the payment mark.");
-  getBadgerInvoicePaymentLogSheet_().appendRow([permanentId_("BPL"), action, tracker.invoice_number, oldPaid, !!paidToMe, oldSubmitted, submitted, actor, new Date(), checkNumber || "", checkDate || "", APP_VERSION]);
+  const log = getBadgerInvoicePaymentLogSheet_(); const h = getHeaderMap_(log); const row = Array(log.getLastColumn()).fill("");
+  const set = (key, value) => { if (h[key] !== undefined) row[h[key]] = value; };
+  set("log_id", permanentId_("BPL")); set("action", action); set("invoice_#", tracker.invoice_number); set("old_paid_to_me", oldPaid); set("new_paid_to_me", !!paidToMe); set("old_submitted", oldSubmitted); set("new_submitted", submitted); set("staff", actor); set("at", new Date()); set("check_#", checkNumber || ""); set("check_date", checkDate || ""); set("undone_log_id", undoneLogId || ""); set("app_version", APP_VERSION); log.appendRow(row);
   appendAudit_(action, "Invoice", tracker.invoice_number, "", actor, BADGER_TRACKER_SPREADSHEET_ID, BADGER_PAYMENT_LOG_SHEET_NAME, "Completed", `${oldPaid}/${oldSubmitted} → ${!!paidToMe}/${submitted}`);
 }
 
@@ -5474,10 +5481,11 @@ function apiMarkBadgerInvoicePayment_(p) {
       const log = getBadgerInvoicePaymentLogSheet_();
       const h = getHeaderMap_(log);
       const rows = log.getLastRow() < 2 ? [] : log.getRange(2, 1, log.getLastRow() - 1, log.getLastColumn()).getValues();
-      const prior = rows.map(row => ({ row:row, action:String(row[h.action] || ""), invoice:String(row[h["invoice_#"]] || "") }))
-        .reverse().find(item => item.action !== "UNDO_BADGER_PAYMENT" && normalizeBadgerInvoiceNumber_(item.invoice) === normalizeBadgerInvoiceNumber_(invoiceNumber));
+      const undone = new Set(rows.map(row => String(row[h.undone_log_id] || "")).filter(Boolean));
+      const prior = rows.map(row => ({ row:row, id:String(row[h.log_id] || ""), action:String(row[h.action] || ""), invoice:String(row[h["invoice_#"]] || "") }))
+        .reverse().find(item => item.action !== "UNDO_BADGER_PAYMENT" && !undone.has(item.id) && normalizeBadgerInvoiceNumber_(item.invoice) === normalizeBadgerInvoiceNumber_(invoiceNumber));
       if (!prior) throw new Error("No prior payment mark is available to undo for this invoice.");
-      writeBadgerPaymentMark_(invoiceNumber, prior.row[h.old_paid_to_me], prior.row[h.old_submitted], "UNDO_BADGER_PAYMENT", actor);
+      writeBadgerPaymentMark_(invoiceNumber, /^(true|yes|1)$/i.test(String(prior.row[h.old_paid_to_me] || "")), prior.row[h.old_submitted], "UNDO_BADGER_PAYMENT", actor, "", "", prior.id);
     }
     else throw new Error("Choose a supported payment action.");
   } finally { lock.releaseLock(); }
@@ -5986,7 +5994,9 @@ function buildCustomerAccounts_(applications, orders, bypassBadgerCache) {
     }
     if (!invoicesByAccount.has(accountId)) invoicesByAccount.set(accountId, []);
     assignedInvoiceAccounts.set(invoiceKey, accountId);
-    const status = !badgerStatusIsFresh ? "Unknown" : invoice.is_closed ? "Closed" : paymentMarks.get(invoiceKey) === true ? "Owed to Badger" : "Customer owes";
+    const paymentMark = paymentMarks.get(invoiceKey) || { paid_to_me:false, submitted:"" };
+    const submitted = String(paymentMark.submitted || "").trim().toLowerCase();
+    const status = !badgerStatusIsFresh ? "Unknown" : invoice.is_closed ? "Closed" : !paymentMark.paid_to_me ? "Customer owes" : submitted === "no" ? "Owed to Badger" : submitted === "yes" ? "Check sent" : "Awaiting Badger";
     invoicesByAccount.get(accountId).push(Object.assign({}, invoice, {
       account_id:accountId,
       match_method:matchMethod,
@@ -6373,6 +6383,8 @@ function apiResolvePaymentReminder_(p) {
   const resolution = publicText_(p?.resolution || "", 20, "Resolution").toLowerCase();
   const reason = publicText_(p?.reason || "", 1000, "Resolution reason");
   const actor = authenticatedActor_(p, "Sturgeon Distribution Hub");
+  const lock = LockService.getScriptLock(); if (!lock.tryLock(10000)) throw new Error("Another reminder update is in progress. Try again shortly.");
+  try {
   const sheet = getBadgerPaymentRemindersSheet_(); const h = getHeaderMap_(sheet);
   const rows = sheet.getLastRow() < 2 ? [] : sheet.getRange(2, 1, sheet.getLastRow() - 1, sheet.getLastColumn()).getValues();
   const index = rows.findIndex(row => String(row[h.reminder_id] || "") === reminderId);
@@ -6383,9 +6395,14 @@ function apiResolvePaymentReminder_(p) {
     sheet.getRange(rowNumber, h.status + 1).setValue("FAILED"); sheet.getRange(rowNumber, h.error + 1).setValue(reason); sheet.getRange(rowNumber, h.sent_by + 1).setValue(actor); return { message:"Pending reminder marked failed." };
   }
   if (resolution !== "retry") throw new Error("Choose retry or failed.");
+  if (Date.now() - recordTimestamp_(rows[index][h.sent_at]) > 24 * 60 * 60 * 1000) throw new Error("A pending reminder may be retried only within 24 hours; mark it failed with a reason instead.");
+  const account = currentBadgerPaymentAccount_(String(rows[index][h.account_id] || ""), true);
+  const stillOwed = new Set((account.unpaid_invoices || []).map(item => String(item.invoice_number || "").trim()));
+  if (String(rows[index][h.invoice_numbers] || "").split(/,\s*/).some(invoice => !stillOwed.has(invoice))) throw new Error("This reminder is no longer current; mark it failed with a reason instead.");
   const result = callOutreachMailer_({ action:"sendPaymentReminder", idempotency_token:String(rows[index][h.idempotency_token] || ""), account_id:String(rows[index][h.account_id] || ""), business:String(rows[index][h.business_name] || ""), recipient:String(rows[index][h.recipient] || ""), invoice_numbers:String(rows[index][h.invoice_numbers] || "").split(/,\s*/).filter(Boolean), outstanding_amount_cents:Number(rows[index][h.outstanding_amount] || 0), subject:String(rows[index][h.subject] || ""), html:String(rows[index][h.html] || ""), requested_by:actor });
   if (!result.accepted || !String(result.message_id || "")) throw new Error("Mailer did not confirm this reminder; it remains pending.");
   sheet.getRange(rowNumber, h.status + 1).setValue("SENT"); sheet.getRange(rowNumber, h.sent_at + 1).setValue(new Date()); sheet.getRange(rowNumber, h.sent_by + 1).setValue(actor); sheet.getRange(rowNumber, h.zoho_message_id + 1).setValue(String(result.message_id)); sheet.getRange(rowNumber, h.error + 1).setValue("Zoho accepted delivery."); return { accepted:true, message:"Pending reminder resolved as sent." };
+  } finally { lock.releaseLock(); }
 }
 
 function makeStoreId_(business, accountId) {
