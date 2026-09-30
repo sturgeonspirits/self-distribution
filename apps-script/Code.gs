@@ -5452,8 +5452,10 @@ function writeBadgerPaymentMark_(invoiceNumber, paidToMe, submitted, action, act
   const tracker = badgerTrackerInvoice_(invoiceNumber);
   const oldPaid = tracker.row[tracker.headers.paid_to_me];
   const oldSubmitted = tracker.row[tracker.headers.submitted];
-  tracker.sheet.getRange(tracker.row_number, tracker.headers.paid_to_me + 1).setValue(!!paidToMe);
-  tracker.sheet.getRange(tracker.row_number, tracker.headers.submitted + 1).setValue(submitted);
+  if (tracker.headers.submitted === tracker.headers.paid_to_me + 1) tracker.sheet.getRange(tracker.row_number, tracker.headers.paid_to_me + 1, 1, 2).setValues([[!!paidToMe, submitted]]);
+  else { tracker.sheet.getRange(tracker.row_number, tracker.headers.paid_to_me + 1).setValue(!!paidToMe); tracker.sheet.getRange(tracker.row_number, tracker.headers.submitted + 1).setValue(submitted); }
+  const verified = tracker.sheet.getRange(tracker.row_number, tracker.headers.paid_to_me + 1, 1, 1).getValue();
+  if (/^(true|yes|1)$/i.test(String(verified)) !== !!paidToMe) throw new Error("Badger tracker did not retain the payment mark.");
   getBadgerInvoicePaymentLogSheet_().appendRow([permanentId_("BPL"), action, tracker.invoice_number, oldPaid, !!paidToMe, oldSubmitted, submitted, actor, new Date(), checkNumber || "", checkDate || "", APP_VERSION]);
   appendAudit_(action, "Invoice", tracker.invoice_number, "", actor, BADGER_TRACKER_SPREADSHEET_ID, BADGER_PAYMENT_LOG_SHEET_NAME, "Completed", `${oldPaid}/${oldSubmitted} → ${!!paidToMe}/${submitted}`);
 }
@@ -5491,7 +5493,11 @@ function apiRecordBadgerCheck_(p) {
   if (!invoices.length || !checkNumber || !checkDate) throw new Error("Select invoices and enter the check number and date.");
   const lock = LockService.getScriptLock();
   if (!lock.tryLock(10000)) throw new Error("Another payment update is in progress. Try again shortly.");
-  try { invoices.forEach(invoice => { const tracker = badgerTrackerInvoice_(invoice); writeBadgerPaymentMark_(invoice, tracker.row[tracker.headers.paid_to_me], "Yes", "RECORD_BADGER_CHECK", actor, checkNumber, checkDate); }); }
+  try {
+    const trackers = invoices.map(badgerTrackerInvoice_);
+    trackers.forEach(tracker => { if (!/^(true|yes|1)$/i.test(String(tracker.row[tracker.headers.paid_to_me])) || String(tracker.row[tracker.headers.submitted] || "").trim().toLowerCase() !== "no") throw new Error(`Invoice ${tracker.invoice_number} is not currently owed to Badger.`); });
+    trackers.forEach(tracker => writeBadgerPaymentMark_(tracker.invoice_number, true, "Yes", "RECORD_BADGER_CHECK", actor, checkNumber, checkDate));
+  }
   finally { lock.releaseLock(); }
   bumpReadCacheVersion_(); clearBadgerInvoiceCache_();
   return { message:`Recorded Badger check for ${invoices.length} invoice(s).` };
@@ -5551,9 +5557,10 @@ function syncBadgerStatus_(actor) {
   try {
     const sheet = getBadgerInvoiceStatusSheet_();
     const headers = ["Invoice #", "Badger ID", "Customer ID", "Bill-To", "Date", "Amount", "Paid Date", "Void", "Modified", "Synced At", "App Version"];
-    sheet.clearContents();
     sheet.getRange(1, 1, 1, headers.length).setValues([headers]);
     if (invoices.length) sheet.getRange(2, 1, invoices.length, headers.length).setValues(invoices.map(invoice => [String(invoice.number || ""), String(invoice.id || ""), String(invoice.customerId || ""), String(invoice.billToName || ""), invoice.date || "", invoice.dollarAmount || "", invoice.paidDate || "", !!invoice.isVoid, invoice.modifiedDate || "", syncedAt, APP_VERSION]));
+    const extraRows = sheet.getLastRow() - invoices.length - 1;
+    if (extraRows > 0) sheet.getRange(invoices.length + 2, 1, extraRows, headers.length).clearContent();
     appendBadgerSyncLog_("Succeeded", invoices.length, `Synced by ${String(actor || "staff")}.`);
   } finally { lock.releaseLock(); }
   bumpReadCacheVersion_();

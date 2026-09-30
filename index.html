@@ -2972,7 +2972,7 @@
       const paymentReminder = unpaidInvoices.length ? `
         <section class="detailSection full">
           <h4>Matched unpaid Badger invoices</h4>
-          <div class="workflowLineList">${unpaidInvoices.map(invoice => `<div class="workflowLine"><span>Invoice ${escapeHtml(invoice.invoice_number || "recorded")} • ${escapeHtml(formatOutreachDate(invoice.invoice_date) || "Date not recorded")}</span><strong>${escapeHtml(invoice.amount || "$0.00")}</strong></div>`).join("")}</div>
+          <div class="workflowLineList">${unpaidInvoices.map(invoice => `<div class="workflowLine"><span>Invoice ${escapeHtml(invoice.invoice_number || "recorded")} • ${escapeHtml(formatOutreachDate(invoice.invoice_date) || "Date not recorded")}</span><strong>${escapeHtml(invoice.amount || "$0.00")}</strong><button type="button" class="actionBtn" data-badger-payment="paid_badger" data-invoice-number="${escapeHtml(invoice.invoice_number || "")}">Paid Badger</button><button type="button" class="actionBtn" data-badger-payment="paid_me" data-invoice-number="${escapeHtml(invoice.invoice_number || "")}">Paid us</button><button type="button" class="actionBtn" data-badger-payment="undo" data-invoice-number="${escapeHtml(invoice.invoice_number || "")}">Undo</button></div>`).join("")}</div>
           <p class="smallMuted">Outstanding balance: ${escapeHtml(record.outstanding_balance || "$0.00")}. A reminder is reviewed before delivery and is limited to one per account every seven days.</p>
           <div class="dlgActions"><button class="primary" id="previewPaymentReminderBtn" type="button">Review payment reminder</button></div>
         </section>` : "";
@@ -3131,6 +3131,20 @@
       if (error?.staffAuth) handleCustomerError(error);
       if (!/may have been sent/i.test(message)) button.disabled = false;
     }
+  }
+
+  async function markBadgerPayment(button){
+    const staffName = $("customerStaffName").value.trim();
+    if (!staffName) return toast("Enter your staff name before changing a payment mark.");
+    button.disabled = true;
+    try {
+      const result = await staffApiPost({ action:"markBadgerInvoicePayment", invoice_number:button.dataset.invoiceNumber, mode:button.dataset.badgerPayment, staff_name:staffName });
+      if (!result.ok) throw new Error(result.error || "Payment mark was not updated.");
+      await loadCustomerWorkQueue();
+      const refreshed = customerData.accounts.find(item => item.account_id === selectedCustomerRecord?.account_id);
+      if (refreshed) openCustomerRecord(refreshed);
+      toast("Payment mark updated");
+    } catch (error) { toast(error?.message || String(error)); button.disabled = false; }
   }
 
   async function saveCustomerRecord(){
@@ -5881,6 +5895,7 @@
   $("customerRecordBody").addEventListener("click", event => {
     if (event.target.closest("#saveCustomerRecordBtn")) saveCustomerRecord();
     if (event.target.closest("#previewPaymentReminderBtn")) previewPaymentReminder();
+    if (event.target.closest("[data-badger-payment]")) markBadgerPayment(event.target.closest("[data-badger-payment]"));
     if (event.target.closest("#backToCustomerRecordBtn") && selectedCustomerRecord) openCustomerRecord(selectedCustomerRecord);
     if (event.target.closest("#sendPaymentReminderBtn")) sendPaymentReminder();
   });
