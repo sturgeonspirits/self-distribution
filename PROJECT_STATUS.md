@@ -9,7 +9,7 @@ Read this file before inspecting the repository or changing the application. Upd
 | Component | Source version | Deployment state |
 | --- | --- | --- |
 | Netlify web app and staff proxy | `2026.09.24.29-WEB` on `codex/work` / `2026.09.24.24-WEB` live | Payment-reminder Send is hidden unless the Hub configuration explicitly enables it. All pending web changes remain pre-deployment. |
-| Inventory API Apps Script | `2026.09.24.51` on `codex/work` / `2026.09.24.49` live | A Badger server-login spike is committed but untested. Karl must set the two named Script Properties and run `testBadgerLogin()` before further Badger work. Do not deploy. |
+| Inventory API Apps Script | `2026.09.24.52` on `codex/work` / `2026.09.24.49` live | Badger status sync now targets the live tracker and is ready for Claude review. Karl must install the daily sync trigger after the batched deployment. Do not deploy. |
 | Distribution Outreach Apps Script | `2026.09.24.13-APP` on `codex/work` | Signed-link rendering is committed; owner has not yet confirmed this exact version is deployed. |
 | Public customer Netlify proxy | `2026.09.18.3-WEB` | Deployed with Netlify; unchanged by the latest staff-app UI work |
 
@@ -17,7 +17,7 @@ Current Git branch: `codex/work`
 
 Current remote: `https://github.com/sturgeonspirits/self-distribution.git`
 
-Current Badger checkpoint: Phase 1 is committed for a manual login spike. The `payment_reminders_enabled` Hub Configuration flag defaults off when absent; do not enable it before the spike succeeds and review completes.
+Current Badger checkpoint: Phase 2 status-sync source is committed for review. The `payment_reminders_enabled` Hub Configuration flag defaults off when absent; do not enable it before review completes. After deployment, Karl must run `installBadgerStatusSyncTrigger()` once.
 
 Latest completed changes:
 
