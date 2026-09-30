@@ -1,8 +1,11 @@
 /*********************************
  * Inventory API (JSON) for Netlify
- * App version: 2026.09.24.54
+ * App version: 2026.09.24.55
  *
  * CHANGES IN THIS VERSION
+ * - Adds staff-locked live-tracker payment marks, check recording, and an audit ledger for Badger payment operations.
+ *
+ * CHANGES IN 2026.09.24.54
  * - Hardens the pre-deployment Badger sync and payment-reminder safety paths following review.
  *
  * CHANGES IN 2026.09.24.53
@@ -227,7 +230,7 @@
  * - Use only in the staging inventory backend until testing is complete.
  *********************************/
 
-const APP_VERSION = "2026.09.24.54";
+const APP_VERSION = "2026.09.24.55";
 
 const SHEET_NAMES = {
   STORES: "Stores",
@@ -248,6 +251,7 @@ const PAYMENT_REMINDERS_ENABLED_CONFIG_KEY = "payment_reminders_enabled";
 const BADGER_STATUS_SHEET_NAME = "Badger Invoice Status";
 const BADGER_SYNC_LOG_SHEET_NAME = "Badger Sync Log";
 const BADGER_SYNC_MAX_AGE_MS = 48 * 60 * 60 * 1000;
+const BADGER_PAYMENT_LOG_SHEET_NAME = "Badger Invoice Payment Log";
 const OUTREACH_SHEET_NAME = "Distribution Directory and Leads";
 const OUTREACH_ACTIVITY_SHEET_NAME = "Activity Log";
 const OUTREACH_DRAFTS_SHEET_NAME = "Outreach Drafts";
@@ -912,7 +916,7 @@ function handle_(e, body) {
   try {
     assertAuthorized_(e, body);
     if (!action) {
-      return json_({ ok:true, service:"sturgeon-distribution-hub", version:APP_VERSION, actions:["initData","listSkus","addSkuToStore","upsertProduct","submitCounts","createReorder","managerGrid","salesSinceCount","updateStoreContacts","outreachDashboard","outreachRecord","outreachSendStatus","outreachNewsletterContacts","outreachCampaigns","outreachCampaign","previewOutreachCampaign","createOutreachCampaign","updateOutreachCampaignRecipient","setOutreachCampaignRecipientExclusion","setOutreachCampaignRecipientExclusions","approveOutreachCampaign","reopenOutreachCampaign","reconcileCampaignSends","rebuildCampaignRecipients","sendOutreachCampaignBatch","saveOutreachDraft","sendOutreachEmail","sendOutreachTestEmail","updateOutreachOutcome","logOutreachContact","updateOutreachBusiness","updateOutreachPrograms","createOutreachBusiness","importOutreachBusinesses","recalculateOutreachMiles","backfillEngagementDetails","upsertNewsletterContact","submitCustomerApplication","submitOnlineOrderRequest","customerWorkQueue","customerAccountIndex","linkBadgerInvoice","syncBadgerStatus","previewBadgerPaymentReminder","sendBadgerPaymentReminder","updateCustomerApplication","updateOnlineOrderRequest","hubSystemStatus","initializeHardenedHub","repairHubStructure","reconcileIntegrations"] });
+      return json_({ ok:true, service:"sturgeon-distribution-hub", version:APP_VERSION, actions:["initData","listSkus","addSkuToStore","upsertProduct","submitCounts","createReorder","managerGrid","salesSinceCount","updateStoreContacts","outreachDashboard","outreachRecord","outreachSendStatus","outreachNewsletterContacts","outreachCampaigns","outreachCampaign","previewOutreachCampaign","createOutreachCampaign","updateOutreachCampaignRecipient","setOutreachCampaignRecipientExclusion","setOutreachCampaignRecipientExclusions","approveOutreachCampaign","reopenOutreachCampaign","reconcileCampaignSends","rebuildCampaignRecipients","sendOutreachCampaignBatch","saveOutreachDraft","sendOutreachEmail","sendOutreachTestEmail","updateOutreachOutcome","logOutreachContact","updateOutreachBusiness","updateOutreachPrograms","createOutreachBusiness","importOutreachBusinesses","recalculateOutreachMiles","backfillEngagementDetails","upsertNewsletterContact","submitCustomerApplication","submitOnlineOrderRequest","customerWorkQueue","customerAccountIndex","linkBadgerInvoice","syncBadgerStatus","markBadgerInvoicePayment","recordBadgerCheck","previewBadgerPaymentReminder","sendBadgerPaymentReminder","updateCustomerApplication","updateOnlineOrderRequest","hubSystemStatus","initializeHardenedHub","repairHubStructure","reconcileIntegrations"] });
     }
 
     invalidateReadCache = !READ_ACTIONS.has(action);
@@ -962,6 +966,8 @@ function handle_(e, body) {
       case "customerAccountIndex": res = apiGetCustomerAccountIndex_(Object.assign({}, e?.parameter || {}, body || {})); break;
       case "linkBadgerInvoice": res = apiLinkBadgerInvoice_(body); break;
       case "syncBadgerStatus": res = apiSyncBadgerStatus_(body); invalidateReadCache = false; break;
+      case "markBadgerInvoicePayment": res = apiMarkBadgerInvoicePayment_(body); break;
+      case "recordBadgerCheck": res = apiRecordBadgerCheck_(body); break;
       case "previewBadgerPaymentReminder": res = apiPreviewBadgerPaymentReminder_(body); break;
       case "sendBadgerPaymentReminder": res = apiSendBadgerPaymentReminder_(body); break;
       case "updateCustomerApplication": res = apiUpdateCustomerApplication_(body); break;
@@ -5423,6 +5429,71 @@ function badgerPaymentMarks_() {
     byInvoice.set(invoiceKey, /^(true|yes|y|1)$/i.test(String(firstPresent_(row, ["paid_to_me", "paid"]) || "").trim()));
   });
   return byInvoice;
+}
+
+function getBadgerInvoicePaymentLogSheet_() {
+  return ensureSheet_(getOutreachSs_(), BADGER_PAYMENT_LOG_SHEET_NAME, ["Log ID", "Action", "Invoice #", "Old Paid to Me", "New Paid to Me", "Old Submitted", "New Submitted", "Staff", "At", "Check #", "Check Date", "App Version"]);
+}
+
+function badgerTrackerInvoice_(invoiceNumber) {
+  const sheet = SpreadsheetApp.openById(BADGER_TRACKER_SPREADSHEET_ID).getSheetByName("Invoices");
+  if (!sheet || sheet.getLastRow() < 2) throw new Error("The live Badger tracker Invoices tab is unavailable.");
+  const h = getHeaderMap_(sheet);
+  if (h.paid_to_me === undefined || h.submitted === undefined) throw new Error("The live tracker is missing Paid to Me or Submitted columns.");
+  const key = normalizeBadgerInvoiceNumber_(invoiceNumber);
+  const rows = sheet.getRange(2, 1, sheet.getLastRow() - 1, sheet.getLastColumn()).getValues();
+  const index = rows.findIndex(row => normalizeBadgerInvoiceNumber_(row[h["invoice_#"]]) === key);
+  if (index < 0) throw new Error(`Invoice ${invoiceNumber} is not in the live Badger tracker.`);
+  return { sheet:sheet, headers:h, row:rows[index], row_number:index + 2, invoice_number:String(rows[index][h["invoice_#"]] || invoiceNumber) };
+}
+
+function writeBadgerPaymentMark_(invoiceNumber, paidToMe, submitted, action, actor, checkNumber, checkDate) {
+  const tracker = badgerTrackerInvoice_(invoiceNumber);
+  const oldPaid = tracker.row[tracker.headers.paid_to_me];
+  const oldSubmitted = tracker.row[tracker.headers.submitted];
+  tracker.sheet.getRange(tracker.row_number, tracker.headers.paid_to_me + 1).setValue(!!paidToMe);
+  tracker.sheet.getRange(tracker.row_number, tracker.headers.submitted + 1).setValue(submitted);
+  getBadgerInvoicePaymentLogSheet_().appendRow([permanentId_("BPL"), action, tracker.invoice_number, oldPaid, !!paidToMe, oldSubmitted, submitted, actor, new Date(), checkNumber || "", checkDate || "", APP_VERSION]);
+  appendAudit_(action, "Invoice", tracker.invoice_number, "", actor, BADGER_TRACKER_SPREADSHEET_ID, BADGER_PAYMENT_LOG_SHEET_NAME, "Completed", `${oldPaid}/${oldSubmitted} → ${!!paidToMe}/${submitted}`);
+}
+
+function apiMarkBadgerInvoicePayment_(p) {
+  const invoiceNumber = publicText_(p?.invoice_number || "", 80, "Invoice number");
+  const mode = publicText_(p?.mode || "", 40, "Payment mode");
+  const actor = authenticatedActor_(p, "Sturgeon Distribution Hub");
+  const lock = LockService.getScriptLock();
+  if (!lock.tryLock(10000)) throw new Error("Another payment update is in progress. Try again shortly.");
+  try {
+    const tracker = badgerTrackerInvoice_(invoiceNumber);
+    if (mode === "paid_badger") writeBadgerPaymentMark_(invoiceNumber, true, "N/A", "MARK_BADGER_PAID", actor);
+    else if (mode === "paid_me") writeBadgerPaymentMark_(invoiceNumber, true, "No", "MARK_PAID_TO_STURGEON", actor);
+    else if (mode === "undo") {
+      const log = getBadgerInvoicePaymentLogSheet_();
+      const h = getHeaderMap_(log);
+      const rows = log.getLastRow() < 2 ? [] : log.getRange(2, 1, log.getLastRow() - 1, log.getLastColumn()).getValues();
+      const prior = rows.map(row => ({ row:row, action:String(row[h.action] || ""), invoice:String(row[h["invoice_#"]] || "") }))
+        .reverse().find(item => item.action !== "UNDO_BADGER_PAYMENT" && normalizeBadgerInvoiceNumber_(item.invoice) === normalizeBadgerInvoiceNumber_(invoiceNumber));
+      if (!prior) throw new Error("No prior payment mark is available to undo for this invoice.");
+      writeBadgerPaymentMark_(invoiceNumber, prior.row[h.old_paid_to_me], prior.row[h.old_submitted], "UNDO_BADGER_PAYMENT", actor);
+    }
+    else throw new Error("Choose a supported payment action.");
+  } finally { lock.releaseLock(); }
+  bumpReadCacheVersion_(); clearBadgerInvoiceCache_();
+  return { message:"Badger payment mark updated." };
+}
+
+function apiRecordBadgerCheck_(p) {
+  const invoices = Array.isArray(p?.invoice_numbers) ? p.invoice_numbers.map(value => publicText_(value, 80, "Invoice number")).filter(Boolean) : [];
+  const checkNumber = publicText_(p?.check_number || "", 120, "Check number");
+  const checkDate = publicText_(p?.check_date || "", 40, "Check date");
+  const actor = authenticatedActor_(p, "Sturgeon Distribution Hub");
+  if (!invoices.length || !checkNumber || !checkDate) throw new Error("Select invoices and enter the check number and date.");
+  const lock = LockService.getScriptLock();
+  if (!lock.tryLock(10000)) throw new Error("Another payment update is in progress. Try again shortly.");
+  try { invoices.forEach(invoice => { const tracker = badgerTrackerInvoice_(invoice); writeBadgerPaymentMark_(invoice, tracker.row[tracker.headers.paid_to_me], "Yes", "RECORD_BADGER_CHECK", actor, checkNumber, checkDate); }); }
+  finally { lock.releaseLock(); }
+  bumpReadCacheVersion_(); clearBadgerInvoiceCache_();
+  return { message:`Recorded Badger check for ${invoices.length} invoice(s).` };
 }
 
 function badgerRequest_(path, options) {
