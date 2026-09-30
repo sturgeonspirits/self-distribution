@@ -1,9 +1,9 @@
 /*********************************
  * Inventory API (JSON) for Netlify
- * App version: 2026.09.24.57
+ * App version: 2026.09.24.58
  *
  * CHANGES IN THIS VERSION
- * - Adds staff reconciliation preview/apply actions and account-level Badger Sync/Reconcile controls.
+ * - Batches Badger reconciliation and check updates, exposes reversible payment marks and pending reminders in account data, and reports eligible payment and Badger-owed totals.
  *
  * CHANGES IN 2026.09.24.56
  * - Corrects live payment-state classification, reversible payment marks, sync freshness validation, and pending-reminder resolution safeguards.
@@ -236,7 +236,7 @@
  * - Use only in the staging inventory backend until testing is complete.
  *********************************/
 
-const APP_VERSION = "2026.09.24.57";
+const APP_VERSION = "2026.09.24.58";
 
 const SHEET_NAMES = {
   STORES: "Stores",
@@ -922,7 +922,7 @@ function handle_(e, body) {
   try {
     assertAuthorized_(e, body);
     if (!action) {
-      return json_({ ok:true, service:"sturgeon-distribution-hub", version:APP_VERSION, actions:["initData","listSkus","addSkuToStore","upsertProduct","submitCounts","createReorder","managerGrid","salesSinceCount","updateStoreContacts","outreachDashboard","outreachRecord","outreachSendStatus","outreachNewsletterContacts","outreachCampaigns","outreachCampaign","previewOutreachCampaign","createOutreachCampaign","updateOutreachCampaignRecipient","setOutreachCampaignRecipientExclusion","setOutreachCampaignRecipientExclusions","approveOutreachCampaign","reopenOutreachCampaign","reconcileCampaignSends","rebuildCampaignRecipients","sendOutreachCampaignBatch","saveOutreachDraft","sendOutreachEmail","sendOutreachTestEmail","updateOutreachOutcome","logOutreachContact","updateOutreachBusiness","updateOutreachPrograms","createOutreachBusiness","importOutreachBusinesses","recalculateOutreachMiles","backfillEngagementDetails","upsertNewsletterContact","submitCustomerApplication","submitOnlineOrderRequest","customerWorkQueue","customerAccountIndex","linkBadgerInvoice","syncBadgerStatus","markBadgerInvoicePayment","recordBadgerCheck","previewBadgerPaymentReminder","sendBadgerPaymentReminder","updateCustomerApplication","updateOnlineOrderRequest","hubSystemStatus","initializeHardenedHub","repairHubStructure","reconcileIntegrations"] });
+      return json_({ ok:true, service:"sturgeon-distribution-hub", version:APP_VERSION, actions:["initData","listSkus","addSkuToStore","upsertProduct","submitCounts","createReorder","managerGrid","salesSinceCount","updateStoreContacts","outreachDashboard","outreachRecord","outreachSendStatus","outreachNewsletterContacts","outreachCampaigns","outreachCampaign","previewOutreachCampaign","createOutreachCampaign","updateOutreachCampaignRecipient","setOutreachCampaignRecipientExclusion","setOutreachCampaignRecipientExclusions","approveOutreachCampaign","reopenOutreachCampaign","reconcileCampaignSends","rebuildCampaignRecipients","sendOutreachCampaignBatch","saveOutreachDraft","sendOutreachEmail","sendOutreachTestEmail","updateOutreachOutcome","logOutreachContact","updateOutreachBusiness","updateOutreachPrograms","createOutreachBusiness","importOutreachBusinesses","recalculateOutreachMiles","backfillEngagementDetails","upsertNewsletterContact","submitCustomerApplication","submitOnlineOrderRequest","customerWorkQueue","customerAccountIndex","linkBadgerInvoice","syncBadgerStatus","markBadgerInvoicePayment","recordBadgerCheck","resolvePaymentReminder","badgerReconcilePreview","applyBadgerReconcile","previewBadgerPaymentReminder","sendBadgerPaymentReminder","updateCustomerApplication","updateOnlineOrderRequest","hubSystemStatus","initializeHardenedHub","repairHubStructure","reconcileIntegrations"] });
     }
 
     invalidateReadCache = !READ_ACTIONS.has(action);
@@ -5307,6 +5307,12 @@ const BADGER_INVOICE_CACHE_PREFIX = "hub_badger_invoices_v1";
 const BADGER_INVOICE_CACHE_TTL_SECONDS = 900;
 const BADGER_INVOICE_CACHE_CHUNK_SIZE = 80000;
 
+function badgerUrl_(path) {
+  const allowed = new Set(["/Login/Authenticate", "/Api/invoice/Paged"]);
+  if (!allowed.has(String(path || ""))) throw new Error("Badger request path is not allow-listed.");
+  return `${BADGER_BASE_URL}${path}`;
+}
+
 function badgerCookieHeader_(headers) {
   const rawCookies = headers["Set-Cookie"] || headers["set-cookie"] || [];
   const values = Array.isArray(rawCookies) ? rawCookies : [rawCookies];
@@ -5325,7 +5331,7 @@ function badgerSession_(forceRefresh) {
   const username = String(properties.getProperty("BADGER_USERNAME") || "").trim();
   const password = String(properties.getProperty("BADGER_PASSWORD") || "");
   if (!username || !password) throw new Error("Badger login requires BADGER_USERNAME and BADGER_PASSWORD Script Properties.");
-  const response = UrlFetchApp.fetch(`${BADGER_BASE_URL}/Login/Authenticate`, {
+  const response = UrlFetchApp.fetch(badgerUrl_("/Login/Authenticate"), {
     method:"post",
     contentType:"application/json",
     payload:JSON.stringify({ username:username, password:password }),
@@ -5348,7 +5354,7 @@ function badgerSession_(forceRefresh) {
 
 function testBadgerLogin() {
   const today = Utilities.formatDate(new Date(), Session.getScriptTimeZone(), "yyyy-MM-dd");
-  const response = UrlFetchApp.fetch(`${BADGER_BASE_URL}/Api/invoice/Paged`, {
+  const response = UrlFetchApp.fetch(badgerUrl_("/Api/invoice/Paged"), {
     method:"post",
     contentType:"application/json",
     payload:JSON.stringify({
@@ -5446,6 +5452,16 @@ function getBadgerInvoicePaymentLogSheet_() {
   return ensureSheet_(getOutreachSs_(), BADGER_PAYMENT_LOG_SHEET_NAME, ["Log ID", "Action", "Invoice #", "Old Paid to Me", "New Paid to Me", "Old Submitted", "New Submitted", "Staff", "At", "Check #", "Check Date", "Undone Log ID", "App Version"]);
 }
 
+function activeBadgerPaymentMarkInvoiceKeys_() {
+  const sheet = getBadgerInvoicePaymentLogSheet_();
+  if (sheet.getLastRow() < 2) return new Set();
+  const h = getHeaderMap_(sheet);
+  const rows = sheet.getRange(2, 1, sheet.getLastRow() - 1, sheet.getLastColumn()).getValues();
+  const undone = new Set(rows.map(row => String(row[h.undone_log_id] || "")).filter(Boolean));
+  return new Set(rows.filter(row => String(row[h.action] || "") !== "UNDO_BADGER_PAYMENT" && !undone.has(String(row[h.log_id] || "")))
+    .map(row => normalizeBadgerInvoiceNumber_(row[h["invoice_#"]])).filter(Boolean));
+}
+
 function badgerTrackerInvoice_(invoiceNumber) {
   const sheet = SpreadsheetApp.openById(BADGER_TRACKER_SPREADSHEET_ID).getSheetByName("Invoices");
   if (!sheet || sheet.getLastRow() < 2) throw new Error("The live Badger tracker Invoices tab is unavailable.");
@@ -5470,6 +5486,72 @@ function writeBadgerPaymentMark_(invoiceNumber, paidToMe, submitted, action, act
   const set = (key, value) => { if (h[key] !== undefined) row[h[key]] = value; };
   set("log_id", permanentId_("BPL")); set("action", action); set("invoice_#", tracker.invoice_number); set("old_paid_to_me", oldPaid); set("new_paid_to_me", !!paidToMe); set("old_submitted", oldSubmitted); set("new_submitted", submitted); set("staff", actor); set("at", new Date()); set("check_#", checkNumber || ""); set("check_date", checkDate || ""); set("undone_log_id", undoneLogId || ""); set("app_version", APP_VERSION); log.appendRow(row);
   appendAudit_(action, "Invoice", tracker.invoice_number, "", actor, BADGER_TRACKER_SPREADSHEET_ID, BADGER_PAYMENT_LOG_SHEET_NAME, "Completed", `${oldPaid}/${oldSubmitted} → ${!!paidToMe}/${submitted}`);
+}
+
+// All invoices are validated from one tracker snapshot before any mutation.  This
+// keeps multi-invoice checks/reconciliation atomic from the application's view and
+// avoids one network round-trip, log append, and audit row per invoice.
+function writeBadgerPaymentMarksBatch_(updates, action, actor, checkNumber, checkDate) {
+  if (!Array.isArray(updates) || !updates.length) return { count:0, invoice_numbers:[] };
+  const sheet = SpreadsheetApp.openById(BADGER_TRACKER_SPREADSHEET_ID).getSheetByName("Invoices");
+  if (!sheet || sheet.getLastRow() < 2) throw new Error("The live Badger tracker Invoices tab is unavailable.");
+  const h = getHeaderMap_(sheet);
+  if (h.paid_to_me === undefined || h.submitted === undefined || h["invoice_#"] === undefined) throw new Error("The live tracker is missing Invoice #, Paid to Me, or Submitted columns.");
+  const rowCount = sheet.getLastRow() - 1;
+  const rows = sheet.getRange(2, 1, rowCount, sheet.getLastColumn()).getValues();
+  const byInvoice = new Map();
+  rows.forEach((row, index) => {
+    const key = normalizeBadgerInvoiceNumber_(row[h["invoice_#"]]);
+    if (key) byInvoice.set(key, { row:row, row_number:index + 2, invoice_number:String(row[h["invoice_#"]] || "") });
+  });
+  const seen = new Set();
+  const prepared = updates.map(update => {
+    const key = normalizeBadgerInvoiceNumber_(update.invoice_number);
+    if (!key || seen.has(key)) throw new Error("Choose each Badger invoice only once.");
+    seen.add(key);
+    const tracker = byInvoice.get(key);
+    if (!tracker) throw new Error(`Invoice ${update.invoice_number} is not in the live Badger tracker.`);
+    if (update.require_owed && (!/^(true|yes|1)$/i.test(String(tracker.row[h.paid_to_me])) || String(tracker.row[h.submitted] || "").trim().toLowerCase() !== "no")) {
+      throw new Error(`Invoice ${tracker.invoice_number} is not currently owed to Badger.`);
+    }
+    return Object.assign(tracker, {
+      old_paid_to_me:tracker.row[h.paid_to_me], old_submitted:tracker.row[h.submitted],
+      paid_to_me:!!update.paid_to_me, submitted:String(update.submitted || ""), undone_log_id:String(update.undone_log_id || ""),
+    });
+  }).sort((a, b) => a.row_number - b.row_number);
+  const blocks = [];
+  prepared.forEach(item => {
+    const prior = blocks[blocks.length - 1];
+    if (prior && prior[prior.length - 1].row_number + 1 === item.row_number) prior.push(item);
+    else blocks.push([item]);
+  });
+  blocks.forEach(block => {
+    const firstRow = block[0].row_number;
+    if (h.submitted === h.paid_to_me + 1) {
+      sheet.getRange(firstRow, h.paid_to_me + 1, block.length, 2).setValues(block.map(item => [item.paid_to_me, item.submitted]));
+    } else {
+      sheet.getRange(firstRow, h.paid_to_me + 1, block.length, 1).setValues(block.map(item => [item.paid_to_me]));
+      sheet.getRange(firstRow, h.submitted + 1, block.length, 1).setValues(block.map(item => [item.submitted]));
+    }
+  });
+  const firstPaymentColumn = Math.min(h.paid_to_me, h.submitted);
+  const verified = sheet.getRange(2, firstPaymentColumn + 1, rowCount, Math.abs(h.paid_to_me - h.submitted) + 1).getValues();
+  if (prepared.some(item => {
+    const verifiedRow = verified[item.row_number - 2];
+    return /^(true|yes|1)$/i.test(String(verifiedRow[h.paid_to_me - firstPaymentColumn])) !== item.paid_to_me
+      || String(verifiedRow[h.submitted - firstPaymentColumn] || "").trim() !== item.submitted;
+  })) throw new Error("Badger tracker did not retain every payment mark.");
+  const log = getBadgerInvoicePaymentLogSheet_();
+  const logHeaders = getHeaderMap_(log); const at = new Date();
+  const logRows = prepared.map(item => {
+    const row = Array(log.getLastColumn()).fill("");
+    const set = (key, value) => { if (logHeaders[key] !== undefined) row[logHeaders[key]] = value; };
+    set("log_id", permanentId_("BPL")); set("action", action); set("invoice_#", item.invoice_number); set("old_paid_to_me", item.old_paid_to_me); set("new_paid_to_me", item.paid_to_me); set("old_submitted", item.old_submitted); set("new_submitted", item.submitted); set("staff", actor); set("at", at); set("check_#", checkNumber || ""); set("check_date", checkDate || ""); set("undone_log_id", item.undone_log_id); set("app_version", APP_VERSION);
+    return row;
+  });
+  log.getRange(log.getLastRow() + 1, 1, logRows.length, log.getLastColumn()).setValues(logRows);
+  appendAudit_(action, "Badger payment batch", prepared.map(item => item.invoice_number).join(", "), "", actor, BADGER_TRACKER_SPREADSHEET_ID, BADGER_PAYMENT_LOG_SHEET_NAME, "Completed", `${prepared.length} invoice(s) updated in one batch.`);
+  return { count:prepared.length, invoice_numbers:prepared.map(item => item.invoice_number) };
 }
 
 function apiMarkBadgerInvoicePayment_(p) {
@@ -5507,9 +5589,7 @@ function apiRecordBadgerCheck_(p) {
   const lock = LockService.getScriptLock();
   if (!lock.tryLock(10000)) throw new Error("Another payment update is in progress. Try again shortly.");
   try {
-    const trackers = invoices.map(badgerTrackerInvoice_);
-    trackers.forEach(tracker => { if (!/^(true|yes|1)$/i.test(String(tracker.row[tracker.headers.paid_to_me])) || String(tracker.row[tracker.headers.submitted] || "").trim().toLowerCase() !== "no") throw new Error(`Invoice ${tracker.invoice_number} is not currently owed to Badger.`); });
-    trackers.forEach(tracker => writeBadgerPaymentMark_(tracker.invoice_number, true, "Yes", "RECORD_BADGER_CHECK", actor, checkNumber, checkDate));
+    writeBadgerPaymentMarksBatch_(invoices.map(invoiceNumber => ({ invoice_number:invoiceNumber, paid_to_me:true, submitted:"Yes", require_owed:true })), "RECORD_BADGER_CHECK", actor, checkNumber, checkDate);
   }
   finally { lock.releaseLock(); }
   bumpReadCacheVersion_(); clearBadgerInvoiceCache_();
@@ -5534,15 +5614,19 @@ function apiBadgerReconcilePreview_() { return { groups:badgerReconcileGroups_()
 function apiApplyBadgerReconcile_(p) {
   const group = publicText_(p?.group || "", 40, "Reconcile group"); const actor = authenticatedActor_(p, "Sturgeon Distribution Hub");
   if (!new Set(["paid_not_marked", "paid_check_no"]).has(group)) throw new Error("This group requires manual review; it cannot be applied automatically.");
-  const invoices = badgerReconcileGroups_()[group] || []; const lock = LockService.getScriptLock();
+  let invoices = []; const lock = LockService.getScriptLock();
   if (!lock.tryLock(10000)) throw new Error("Another payment update is in progress. Try again shortly.");
-  try { invoices.forEach(invoice => writeBadgerPaymentMark_(invoice.invoice_number, true, group === "paid_not_marked" ? "N/A" : "Yes", "RECONCILE_BADGER_PAYMENT", actor)); }
+  try {
+    invoices = badgerReconcileGroups_()[group] || [];
+    writeBadgerPaymentMarksBatch_(invoices.map(invoice => ({ invoice_number:invoice.invoice_number, paid_to_me:true, submitted:group === "paid_not_marked" ? "N/A" : "Yes" })), "RECONCILE_BADGER_PAYMENT", actor);
+  }
   finally { lock.releaseLock(); }
   bumpReadCacheVersion_(); clearBadgerInvoiceCache_(); return { message:`Applied ${invoices.length} reconciliation update(s).`, count:invoices.length };
 }
 
 function badgerRequest_(path, options) {
-  const send = forceRefresh => UrlFetchApp.fetch(`${BADGER_BASE_URL}${path}`, Object.assign({}, options, { headers:Object.assign({}, options.headers || {}, { Cookie:badgerSession_(forceRefresh) }), muteHttpExceptions:true, followRedirects:false }));
+  const url = badgerUrl_(path);
+  const send = forceRefresh => UrlFetchApp.fetch(url, Object.assign({}, options, { headers:Object.assign({}, options.headers || {}, { Cookie:badgerSession_(forceRefresh) }), muteHttpExceptions:true, followRedirects:false }));
   let response = send(false);
   const status = response.getResponseCode();
   let requiresRefresh = status === 401 || (status >= 300 && status < 400);
@@ -5912,7 +5996,18 @@ function buildCustomerAccounts_(applications, orders, bypassBadgerCache) {
   let paymentMarksAvailable = false;
   try { paymentMarks = badgerPaymentMarks_(); paymentMarksAvailable = true; }
   catch (err) { console.warn("Badger payment marks were unavailable: " + String(err && err.message || err)); }
+  let activePaymentMarkKeys = new Set();
+  try { activePaymentMarkKeys = activeBadgerPaymentMarkInvoiceKeys_(); }
+  catch (err) { console.warn("Badger payment-mark history was unavailable: " + String(err && err.message || err)); }
+  const pendingRemindersByAccount = new Map();
+  try {
+    badgerPaymentReminderHistory_().filter(item => String(item.status || "").toUpperCase() === "PENDING").forEach(item => {
+      if (!pendingRemindersByAccount.has(item.account_id)) pendingRemindersByAccount.set(item.account_id, []);
+      pendingRemindersByAccount.get(item.account_id).push(item);
+    });
+  } catch (err) { console.warn("Badger reminder history was unavailable: " + String(err && err.message || err)); }
   const badgerStatusIsFresh = badgerSync.is_fresh && paymentMarksAvailable;
+  const paymentReminderMinAgeDays = paymentReminderMinAgeDays_();
   const explicitInvoiceLinks = readBadgerInvoiceLinks_();
   const customerAliases = readBadgerCustomerAliases_();
   let locationNames = [];
@@ -6033,6 +6128,7 @@ function buildCustomerAccounts_(applications, orders, bypassBadgerCache) {
       invoice_status:status,
       payment_status:status,
       badger_match_status:"Matched",
+      has_payment_mark:activePaymentMarkKeys.has(invoiceKey),
     }));
   });
   const now = new Date();
@@ -6086,12 +6182,17 @@ function buildCustomerAccounts_(applications, orders, bypassBadgerCache) {
     // Order-side workflow fields can be stale and must not trigger customer email.
     const unpaidInvoices = invoices.filter(item => item.badger_match_status === "Matched" && item.invoice_status === "Customer owes");
     const owedToBadgerInvoices = invoices.filter(item => item.badger_match_status === "Matched" && item.invoice_status === "Owed to Badger");
+    const paymentReminderCutoff = Date.now() - paymentReminderMinAgeDays * 24 * 60 * 60 * 1000;
+    const paymentReminderEligibleInvoices = badgerStatusIsFresh ? unpaidInvoices.filter(item => {
+      const invoiceDate = outreachDate_(item.invoice_date);
+      return invoiceDate && invoiceDate.getTime() < paymentReminderCutoff;
+    }) : [];
     const outstandingBalanceCents = unpaidInvoices.reduce((total, item) => total + Number(item.amount_cents || 0), 0);
     const owedToBadgerCents = owedToBadgerInvoices.reduce((total, item) => total + Number(item.amount_cents || 0), 0);
     const operational = new Set();
     accountApplications.forEach(item => { if (item.workflow_status === "New") operational.add("New"); });
     accountOrders.forEach(order => orderOperationalStatuses_(order).forEach(status => operational.add(status)));
-    if (unpaidInvoices.length) operational.add("Payment due");
+    if (paymentReminderEligibleInvoices.length) operational.add("Payment due");
     const followUp = outreachDate_(outreachValue_(row, ["next_follow-up", "next_follow_up"]));
     if ((followUp && followUp.getTime() <= now.getTime()) || directoryStatus.toLowerCase() === "follow-up due" || accountReorders.some(item => String(item.status || "OPEN").toUpperCase() === "OPEN")) operational.add("Reorder due");
     if (store) operational.add("Inventory-counted");
@@ -6125,6 +6226,7 @@ function buildCustomerAccounts_(applications, orders, bypassBadgerCache) {
       orders:accountOrders,
       invoices:invoices,
       unpaid_invoices:unpaidInvoices,
+      payment_reminder_eligible_invoices:paymentReminderEligibleInvoices,
       outstanding_balance_cents:outstandingBalanceCents,
       outstanding_balance:badgerMoneyLabel_(outstandingBalanceCents),
       owed_to_badger_invoices:owedToBadgerInvoices,
@@ -6132,6 +6234,7 @@ function buildCustomerAccounts_(applications, orders, bypassBadgerCache) {
       owed_to_badger:badgerMoneyLabel_(owedToBadgerCents),
       badger_last_good_sync_at:badgerSync.last_good_sync_at,
       badger_status_fresh:badgerStatusIsFresh,
+      pending_payment_reminders:pendingRemindersByAccount.get(accountId) || [],
       deliveries:accountDeliveries,
       reorders:accountReorders,
       history:history,
@@ -6141,6 +6244,7 @@ function buildCustomerAccounts_(applications, orders, bypassBadgerCache) {
     accounts:accounts.sort((a, b) => String(a.business_name || "").localeCompare(String(b.business_name || ""))),
     unmatched_badger_invoices:unmatchedBadgerInvoices.sort((a, b) => recordTimestamp_(b.invoice_date) - recordTimestamp_(a.invoice_date)),
     ignored_badger_invoices:ignoredBadgerInvoices.sort((a, b) => recordTimestamp_(b.invoice_date) - recordTimestamp_(a.invoice_date)),
+    badger_sync:{ last_good_sync_at:badgerSync.last_good_sync_at, is_fresh:badgerStatusIsFresh },
   };
 }
 
@@ -6223,9 +6327,22 @@ function apiGetCustomerWorkQueue_(p) {
       customer_accounts:accounts.length,
       unmatched_badger_invoices:ledger.unmatched_badger_invoices.length,
       ignored_badger_invoices:ledger.ignored_badger_invoices.length,
-      unpaid_accounts:accounts.filter(record => (record.unpaid_invoices || []).length > 0).length,
-      unpaid_invoices:accounts.reduce((total, record) => total + (record.unpaid_invoices || []).length, 0),
-      unpaid_balance_cents:accounts.reduce((total, record) => total + Number(record.outstanding_balance_cents || 0), 0),
+      // Legacy unpaid_* summary names now intentionally mean reminder-eligible,
+      // not merely open, so callers cannot accidentally treat a new invoice as due.
+      unpaid_accounts:accounts.filter(record => (record.payment_reminder_eligible_invoices || []).length > 0).length,
+      unpaid_invoices:accounts.reduce((total, record) => total + (record.payment_reminder_eligible_invoices || []).length, 0),
+      unpaid_balance_cents:accounts.reduce((total, record) => total + (record.payment_reminder_eligible_invoices || []).reduce((sum, invoice) => sum + Number(invoice.amount_cents || 0), 0), 0),
+      open_unpaid_accounts:accounts.filter(record => (record.unpaid_invoices || []).length > 0).length,
+      open_unpaid_invoices:accounts.reduce((total, record) => total + (record.unpaid_invoices || []).length, 0),
+      open_unpaid_balance_cents:accounts.reduce((total, record) => total + Number(record.outstanding_balance_cents || 0), 0),
+      payment_due_accounts:accounts.filter(record => (record.payment_reminder_eligible_invoices || []).length > 0).length,
+      payment_due_invoices:accounts.reduce((total, record) => total + (record.payment_reminder_eligible_invoices || []).length, 0),
+      payment_due_balance_cents:accounts.reduce((total, record) => total + (record.payment_reminder_eligible_invoices || []).reduce((sum, invoice) => sum + Number(invoice.amount_cents || 0), 0), 0),
+      owed_to_badger_accounts:accounts.filter(record => (record.owed_to_badger_invoices || []).length > 0).length,
+      owed_to_badger_invoices:accounts.reduce((total, record) => total + (record.owed_to_badger_invoices || []).length, 0),
+      owed_to_badger_cents:accounts.reduce((total, record) => total + Number(record.owed_to_badger_cents || 0), 0),
+      badger_last_good_sync_at:ledger.badger_sync.last_good_sync_at,
+      badger_status_fresh:ledger.badger_sync.is_fresh,
       reorder_due:accounts.filter(record => record.operational_statuses.includes("Reorder due")).length,
     },
     performance:{ total_ms:totalMs, stages:timings },
@@ -6422,7 +6539,7 @@ function apiResolvePaymentReminder_(p) {
   const rowNumber = index + 2;
   if (resolution === "failed") {
     if (!reason) throw new Error("A failure reason is required.");
-    sheet.getRange(rowNumber, h.status + 1).setValue("FAILED"); sheet.getRange(rowNumber, h.error + 1).setValue(reason); sheet.getRange(rowNumber, h.sent_by + 1).setValue(actor); return { message:"Pending reminder marked failed." };
+    sheet.getRange(rowNumber, h.status + 1).setValue("FAILED"); sheet.getRange(rowNumber, h.error + 1).setValue(reason); sheet.getRange(rowNumber, h.sent_by + 1).setValue(actor); bumpReadCacheVersion_(); return { message:"Pending reminder marked failed." };
   }
   if (resolution !== "retry") throw new Error("Choose retry or failed.");
   if (Date.now() - recordTimestamp_(rows[index][h.sent_at]) > 24 * 60 * 60 * 1000) throw new Error("A pending reminder may be retried only within 24 hours; mark it failed with a reason instead.");
@@ -6431,7 +6548,7 @@ function apiResolvePaymentReminder_(p) {
   if (String(rows[index][h.invoice_numbers] || "").split(/,\s*/).some(invoice => !stillOwed.has(invoice))) throw new Error("This reminder is no longer current; mark it failed with a reason instead.");
   const result = callOutreachMailer_({ action:"sendPaymentReminder", idempotency_token:String(rows[index][h.idempotency_token] || ""), account_id:String(rows[index][h.account_id] || ""), business:String(rows[index][h.business_name] || ""), recipient:String(rows[index][h.recipient] || ""), invoice_numbers:String(rows[index][h.invoice_numbers] || "").split(/,\s*/).filter(Boolean), outstanding_amount_cents:Number(rows[index][h.outstanding_amount] || 0), subject:String(rows[index][h.subject] || ""), html:String(rows[index][h.html] || ""), requested_by:actor });
   if (!result.accepted || !String(result.message_id || "")) throw new Error("Mailer did not confirm this reminder; it remains pending.");
-  sheet.getRange(rowNumber, h.status + 1).setValue("SENT"); sheet.getRange(rowNumber, h.sent_at + 1).setValue(new Date()); sheet.getRange(rowNumber, h.sent_by + 1).setValue(actor); sheet.getRange(rowNumber, h.zoho_message_id + 1).setValue(String(result.message_id)); sheet.getRange(rowNumber, h.error + 1).setValue("Zoho accepted delivery."); return { accepted:true, message:"Pending reminder resolved as sent." };
+  sheet.getRange(rowNumber, h.status + 1).setValue("SENT"); sheet.getRange(rowNumber, h.sent_at + 1).setValue(new Date()); sheet.getRange(rowNumber, h.sent_by + 1).setValue(actor); sheet.getRange(rowNumber, h.zoho_message_id + 1).setValue(String(result.message_id)); sheet.getRange(rowNumber, h.error + 1).setValue("Zoho accepted delivery."); bumpReadCacheVersion_(); return { accepted:true, message:"Pending reminder resolved as sent." };
   } finally { lock.releaseLock(); }
 }
 

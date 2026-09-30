@@ -8,9 +8,9 @@ Read this file before inspecting the repository or changing the application. Upd
 
 | Component | Source version | Deployment state |
 | --- | --- | --- |
-| Netlify web app and staff proxy | `2026.09.24.29-WEB` on `codex/work` / `2026.09.24.24-WEB` live | Payment-reminder Send is hidden unless the Hub configuration explicitly enables it. All pending web changes remain pre-deployment. |
-| Inventory API Apps Script | `2026.09.24.57` on `codex/work` / `2026.09.24.49` live | Phase 4 adds staff Sync/Reconcile controls and reconciliation actions; it remains pre-deployment pending final review. Before deployment, run Sync from Badger immediately, re-run `installHubReadCacheWarmer()`, and install the daily status trigger. Do not deploy. |
-| Distribution Outreach Apps Script | `2026.09.24.13-APP` on `codex/work` | Signed-link rendering is committed; owner has not yet confirmed this exact version is deployed. |
+| Netlify web app and staff proxy | `2026.09.24.30-WEB` on `codex/work` / `2026.09.24.24-WEB` live | Phase 4 adds global Badger controls, owed-to-Badger check recording, pending-reminder resolution, and stale-status warnings. All changes remain pre-deployment. |
+| Inventory API Apps Script | `2026.09.24.58` on `codex/work` / `2026.09.24.49` live | Phase 4 batches reconciliation/check writes, exposes reversible marks and reminder state, and reports eligible payment totals. Before deployment, run Sync from Badger immediately, re-run `installHubReadCacheWarmer()`, and install the daily status trigger. Do not deploy. |
+| Distribution Outreach Apps Script | `2026.09.24.14-APP` on `codex/work` | Reminder delivery prerequisite; owner has not yet confirmed this exact version is deployed. |
 | Public customer Netlify proxy | `2026.09.18.3-WEB` | Deployed with Netlify; unchanged by the latest staff-app UI work |
 
 Current Git branch: `codex/work`
@@ -18,6 +18,8 @@ Current Git branch: `codex/work`
 Current remote: `https://github.com/sturgeonspirits/self-distribution.git`
 
 Current Badger checkpoint: Karl ran `testBadgerLogin()` successfully on 2026-09-30 (163 invoices). The `payment_reminders_enabled` Hub Configuration flag defaults off when absent; do not enable it before review completes. The Distribution Outreach mailer must be `2026.09.24.14-APP` before reminders are enabled.
+
+Badger tracker safety answer (Karl, 2026-09-30): the PDF importer never writes the `Paid to Me` or `Submitted` columns. Direct, audited P/Q writes to the live tracker are therefore safe; no Hub override ledger is needed.
 
 Latest completed changes:
 

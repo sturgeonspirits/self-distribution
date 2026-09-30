@@ -540,3 +540,46 @@ test("campaign rebuild UI and first-draft save gate preserve review-before-send"
   assert.match(index, /if \(!selectedOutreachRecord \|\| \(selectedOutreachRecord\.has_saved_draft && !outreachDraftIsDirty\(\)\)\) return;/);
   assert.match(index, /const saved = !!selectedOutreachRecord\?\.has_saved_draft && !outreachDraftIsDirty\(\)/);
 });
+
+test("Badger Phase 4 keeps payment states, reminder guards, batching, and review controls", async () => {
+  const [backend, index, proxy] = await Promise.all([
+    readFile(new URL("apps-script/Code.gs", root), "utf8"),
+    readFile(new URL("index.html", root), "utf8"),
+    readFile(new URL("netlify/functions/inventory.js", root), "utf8"),
+  ]);
+  const accountBuilder = backend.slice(backend.indexOf("function buildCustomerAccounts_"), backend.indexOf("function apiGetCustomerWorkQueue_"));
+  const syncState = backend.slice(backend.indexOf("function badgerSyncState_"), backend.indexOf("function badgerPaymentMarks_"));
+  const reminderResolver = backend.slice(backend.indexOf("function apiResolvePaymentReminder_"), backend.indexOf("function makeStoreId_"));
+  const reminderSend = backend.slice(backend.indexOf("function apiSendBadgerPaymentReminder_"), backend.indexOf("function apiResolvePaymentReminder_"));
+  const batchWriter = backend.slice(backend.indexOf("function writeBadgerPaymentMarksBatch_"), backend.indexOf("function apiMarkBadgerInvoicePayment_"));
+  const reconcile = backend.slice(backend.indexOf("function badgerReconcileGroups_"), backend.indexOf("function badgerRequest_"));
+  assert.match(accountBuilder, /invoice\.is_closed \? "Closed" : !paymentMark\.paid_to_me \? "Customer owes" : submitted === "no" \? "Owed to Badger" : submitted === "yes" \? "Check sent" : "Awaiting Badger"/);
+  assert.match(accountBuilder, /!badgerStatusIsFresh \? "Unknown"/);
+  assert.match(accountBuilder, /invoiceDate && invoiceDate\.getTime\(\) < paymentReminderCutoff/);
+  assert.match(accountBuilder, /has_payment_mark:activePaymentMarkKeys\.has\(invoiceKey\)/);
+  assert.match(accountBuilder, /payment_reminder_eligible_invoices:paymentReminderEligibleInvoices/);
+  assert.match(syncState, /rowCountMatches/);
+  assert.match(syncState, /BADGER_SYNC_MAX_AGE_MS && rowCountMatches/);
+  assert.match(reminderSend, /content\.content_fingerprint !== fingerprint/);
+  assert.match(reminderSend, /invoice balance changed after preview/);
+  assert.match(reminderResolver, /status\] \|\| ""\)\.toUpperCase\(\) !== "PENDING"/);
+  assert.match(reminderResolver, /24 \* 60 \* 60 \* 1000/);
+  assert.match(reminderResolver, /This reminder is no longer current/);
+  assert.match(batchWriter, /const rows = sheet\.getRange\(2, 1, rowCount, sheet\.getLastColumn\(\)\)\.getValues\(\)/);
+  assert.match(batchWriter, /log\.getRange\(log\.getLastRow\(\) \+ 1, 1, logRows\.length, log\.getLastColumn\(\)\)\.setValues\(logRows\)/);
+  assert.match(batchWriter, /Badger payment batch/);
+  assert.match(backend, /writeBadgerPaymentMarksBatch_\(invoices\.map\(invoiceNumber => \(\{ invoice_number:invoiceNumber, paid_to_me:true, submitted:"Yes", require_owed:true \}\)\)/);
+  assert.match(reconcile, /paid_not_marked:\[\], paid_check_no:\[\], unpaid_review:\[\], missing_tracker:\[\]/);
+  assert.match(reconcile, /new Set\(\["paid_not_marked", "paid_check_no"\]\)/);
+  assert.match(backend, /BADGER_BASE_URL = "https:\/\/badgerstatecoop\.com\/BSWCSite"/);
+  assert.match(backend, /function badgerUrl_\(path\)/);
+  assert.match(backend, /new Set\(\["\/Login\/Authenticate", "\/Api\/invoice\/Paged"\]\)/);
+  assert.match(backend, /Badger request path is not allow-listed/);
+  assert.match(proxy, /"recordBadgerCheck"/);
+  assert.match(proxy, /"resolvePaymentReminder"/);
+  assert.match(index, /id="recordBadgerCheckBtn"/);
+  assert.match(index, /data-payment-reminder-resolution="retry"/);
+  assert.match(index, /data-badger-reconcile-apply="paid_not_marked"/);
+  assert.match(index, /Badger status is stale or unavailable/);
+  assert.match(index, /id="owedToBadgerCount"/);
+});

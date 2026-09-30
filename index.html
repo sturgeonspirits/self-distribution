@@ -1,10 +1,10 @@
 <!doctype html>
-<!-- App version: 2026.09.24.29-WEB -->
+<!-- App version: 2026.09.24.30-WEB -->
 <html>
 <head>
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover"/>
-  <meta name="app-version" content="2026.09.24.29-WEB" />
+  <meta name="app-version" content="2026.09.24.30-WEB" />
   <meta name="theme-color" content="#536f77" />
   <link rel="icon" href="/assets/distribution-hub-icon.svg" type="image/svg+xml" />
   <link rel="manifest" href="/site.webmanifest" />
@@ -2106,6 +2106,7 @@
         <div class="outreachMetric"><strong id="newOrdersCount">0</strong><span>New orders</span></div>
         <div class="outreachMetric"><strong id="invoiceNeededCount">0</strong><span>Need invoice work</span></div>
         <div class="outreachMetric"><strong id="paymentDueCount">0</strong><span>Payment due</span></div>
+        <div class="outreachMetric"><strong id="owedToBadgerCount">$0.00</strong><span>Owed to Badger</span></div>
       </div>
 
       <div class="workflowControls">
@@ -2131,6 +2132,7 @@
           <input id="customerStaffName" placeholder="Your name" autocomplete="name" />
         </div>
       </div>
+      <div class="managerCard" id="badgerOperationsPanel" style="margin-bottom:12px"></div>
       <details class="managerCard" id="hubSystemPanel" style="margin-bottom:12px">
         <summary>System status and reconciliation</summary>
         <div class="managerBody">
@@ -2474,7 +2476,7 @@
 
   <footer style="max-width:1200px;margin:18px auto 120px;padding:0 12px;text-align:center;color:#6b7280;font-size:12px;">
     Designed by <a href="https://scriptspirit.dev" target="_blank" rel="noopener noreferrer" style="color:#1d4ed8;text-decoration:none;font-weight:700;">Script Spirit</a>
-<span id="appVersionFooter"> • Version 2026.09.24.29-WEB</span>
+<span id="appVersionFooter"> • Version 2026.09.24.30-WEB</span>
   </footer>
 
 
@@ -2497,7 +2499,7 @@
   window.addEventListener("unhandledrejection", e => console.error("Unhandled promise rejection:", e.reason));
   window.addEventListener("error", e => console.error("Unhandled error:", e.error || e.message));
   const $ = (id) => document.getElementById(id);
-  const APP_VERSION = "2026.09.24.29-WEB";
+  const APP_VERSION = "2026.09.24.30-WEB";
   $("appVersionFooter").textContent = ` • Version ${APP_VERSION}`;
 
   let cache = { stores: [], lines: [] };
@@ -2850,12 +2852,39 @@
     return "amber";
   }
 
+  function badgerMoney(cents){
+    return new Intl.NumberFormat("en-US", { style:"currency", currency:"USD" }).format(Number(cents || 0) / 100);
+  }
+
+  function renderBadgerOperations(summary){
+    const panel = $("badgerOperationsPanel");
+    if (!panel) return;
+    const fresh = summary.badger_status_fresh === true;
+    const lastSync = summary.badger_last_good_sync_at ? formatOutreachDate(summary.badger_last_good_sync_at) : "never";
+    const owed = customerData.accounts.flatMap(account => (account.owed_to_badger_invoices || []).map(invoice => Object.assign({ business_name:account.business_name }, invoice)))
+      .sort((a, b) => new Date(a.invoice_date || 0) - new Date(b.invoice_date || 0));
+    const oldest = owed[0]?.invoice_date ? formatOutreachDate(owed[0].invoice_date) : "—";
+    panel.innerHTML = `
+      <div class="managerBody">
+        <div class="sectionTitleRow"><div><strong>Badger payment operations</strong><div class="smallMuted">Badger status last synced ${escapeHtml(lastSync)}.${fresh ? "" : " Sync is stale or incomplete; payment reminders are blocked until it is current."}</div></div><div class="btnRow"><button id="syncBadgerNowBtn" type="button">Sync from Badger now</button><button id="previewBadgerReconcileBtn" type="button">Review reconciliation</button></div></div>
+        ${fresh ? "" : '<div class="status" role="alert">Badger status is stale or unavailable. Sync from Badger before acting on invoice payment status.</div>'}
+        <section class="detailSection full" style="margin-top:10px"><h4>Owed to Badger</h4>
+          <p class="smallMuted">${escapeHtml(badgerMoney(summary.owed_to_badger_cents))} across ${Number(summary.owed_to_badger_invoices || 0)} invoice(s). Oldest: ${escapeHtml(oldest)}.</p>
+          ${owed.length ? `<div class="workflowLineList">${owed.map(invoice => `<label class="workflowLine"><span><input type="checkbox" data-badger-owed-invoice value="${escapeHtml(invoice.invoice_number || "")}" /> Invoice ${escapeHtml(invoice.invoice_number || "recorded")} • ${escapeHtml(invoice.business_name || "Customer")} • ${escapeHtml(formatOutreachDate(invoice.invoice_date) || "Date not recorded")}</span><strong>${escapeHtml(invoice.amount || "$0.00")}</strong></label>`).join("")}</div>
+          <div class="workflowEditGrid" style="margin-top:10px"><div><label for="badgerCheckNumber">Check #</label><input id="badgerCheckNumber" maxlength="120" /></div><div><label for="badgerCheckDate">Check date</label><input id="badgerCheckDate" type="date" value="${customerInputDate(new Date())}" /></div><div class="full"><button class="primary" id="recordBadgerCheckBtn" type="button">Record check to Badger</button></div></div>` : '<div class="smallMuted">No matched invoices are currently owed to Badger.</div>'}
+        </section>
+      </div>`;
+    refreshIcons();
+  }
+
   function renderCustomerWorkflow(){
     const summary = customerData.summary || {};
     $("newApplicationsCount").textContent = Number(summary.new_applications || 0);
     $("newOrdersCount").textContent = Number(summary.new_orders || 0);
     $("invoiceNeededCount").textContent = Number(summary.invoice_needed || 0);
-    $("paymentDueCount").textContent = Number(summary.unpaid_accounts || 0);
+    $("paymentDueCount").textContent = Number(summary.payment_due_accounts || 0);
+    $("owedToBadgerCount").textContent = badgerMoney(summary.owed_to_badger_cents);
+    renderBadgerOperations(summary);
     if (activeAppSection === "customers") {
       $("hdrStore").textContent = `${Number(summary.new_applications || 0)} applications`;
       $("hdrChanged").textContent = `${Number(summary.new_orders || 0)} orders`;
@@ -2969,13 +2998,17 @@
           ${item.detail ? `<span>${escapeHtml(item.detail)}</span>` : ""}
         </div>`).join("")}</div>` : `<div class="smallMuted">No account history has been recorded.</div>`;
       const unpaidInvoices = record.unpaid_invoices || [];
+      const reversiblePaymentMarks = (record.invoices || []).filter(invoice => invoice.has_payment_mark);
+      const pendingReminders = record.pending_payment_reminders || [];
       const paymentReminder = unpaidInvoices.length ? `
         <section class="detailSection full">
           <h4>Matched unpaid Badger invoices</h4>
-          <div class="workflowLineList">${unpaidInvoices.map(invoice => `<div class="workflowLine"><span>Invoice ${escapeHtml(invoice.invoice_number || "recorded")} • ${escapeHtml(formatOutreachDate(invoice.invoice_date) || "Date not recorded")}</span><strong>${escapeHtml(invoice.amount || "$0.00")}</strong><button type="button" class="actionBtn" data-badger-payment="paid_badger" data-invoice-number="${escapeHtml(invoice.invoice_number || "")}">Paid Badger</button><button type="button" class="actionBtn" data-badger-payment="paid_me" data-invoice-number="${escapeHtml(invoice.invoice_number || "")}">Paid us</button><button type="button" class="actionBtn" data-badger-payment="undo" data-invoice-number="${escapeHtml(invoice.invoice_number || "")}">Undo</button></div>`).join("")}</div>
-          <p class="smallMuted">Outstanding balance: ${escapeHtml(record.outstanding_balance || "$0.00")}. A reminder is reviewed before delivery and is limited to one per account every seven days.</p>
-          <div class="dlgActions"><button class="primary" id="previewPaymentReminderBtn" type="button">Review payment reminder</button><button id="syncBadgerNowBtn" type="button">Sync from Badger now</button><button id="previewBadgerReconcileBtn" type="button">Review reconciliation</button></div>
+          <div class="workflowLineList">${unpaidInvoices.map(invoice => `<div class="workflowLine"><span>Invoice ${escapeHtml(invoice.invoice_number || "recorded")} • ${escapeHtml(formatOutreachDate(invoice.invoice_date) || "Date not recorded")}</span><strong>${escapeHtml(invoice.amount || "$0.00")}</strong><button type="button" class="actionBtn" data-badger-payment="paid_badger" data-invoice-number="${escapeHtml(invoice.invoice_number || "")}">Paid Badger</button><button type="button" class="actionBtn" data-badger-payment="paid_me" data-invoice-number="${escapeHtml(invoice.invoice_number || "")}">Paid us</button></div>`).join("")}</div>
+          <p class="smallMuted">Outstanding balance: ${escapeHtml(record.outstanding_balance || "$0.00")}. ${Number(record.payment_reminder_eligible_invoices?.length || 0)} invoice(s) meet the reminder age gate.</p>
+          <div class="dlgActions"><button class="primary" id="previewPaymentReminderBtn" type="button">Review payment reminder</button></div>
         </section>` : "";
+      const undoPaymentMarks = reversiblePaymentMarks.length ? `<section class="detailSection full"><h4>Recorded Badger payment marks</h4><div class="workflowLineList">${reversiblePaymentMarks.map(invoice => `<div class="workflowLine"><span>Invoice ${escapeHtml(invoice.invoice_number || "recorded")} • ${escapeHtml(invoice.payment_status || "Recorded")}</span><strong>${escapeHtml(invoice.amount || "$0.00")}</strong><button type="button" class="actionBtn" data-badger-payment="undo" data-invoice-number="${escapeHtml(invoice.invoice_number || "")}">Undo</button></div>`).join("")}</div></section>` : "";
+      const pendingReminderNotice = pendingReminders.length ? `<section class="detailSection full"><h4>Reminder needs resolution</h4><div class="workflowLineList">${pendingReminders.map(reminder => `<div class="workflowLine"><span>${escapeHtml(reminder.invoice_numbers || "Invoices")} • pending since ${escapeHtml(formatOutreachDate(reminder.sent_at) || "date not recorded")}${reminder.error ? ` • ${escapeHtml(reminder.error)}` : ""}</span><button class="actionBtn" type="button" data-payment-reminder-resolution="retry" data-reminder-id="${escapeHtml(reminder.reminder_id || "")}">Retry</button><button class="actionBtn" type="button" data-payment-reminder-resolution="failed" data-reminder-id="${escapeHtml(reminder.reminder_id || "")}">Mark failed</button></div>`).join("")}</div></section>` : "";
       $("customerRecordBody").innerHTML = `
         <div class="businessDetailGrid">
           <section class="detailSection"><h4>Account</h4>${detailRowsHtml([
@@ -2991,6 +3024,8 @@
             { label:"Inventory reorders", value:record.reorders?.length || 0 }, { label:"History events", value:history.length },
           ])}</section>
           ${paymentReminder}
+          ${undoPaymentMarks}
+          ${pendingReminderNotice}
           <section class="detailSection full"><h4>Order, invoice, delivery, outreach, and reorder history</h4>${historyHtml}</section>
         </div>`;
       $("customerRecordDialog").showModal();
@@ -3148,21 +3183,75 @@
   }
 
   async function syncBadgerNow(){
-    const result = await staffApiPost({ action:"syncBadgerStatus", staff_name:$("customerStaffName").value.trim() });
+    const staffName = $("customerStaffName").value.trim();
+    if (!staffName) throw new Error("Enter your staff name before syncing Badger status.");
+    const result = await staffApiPost({ action:"syncBadgerStatus", staff_name:staffName });
     if (!result.ok) throw new Error(result.error || "Badger sync failed.");
     await loadCustomerWorkQueue(); toast(result.message || "Badger status synchronized");
+  }
+
+  function badgerReconcileRows(rows){
+    return rows.length ? `<div class="workflowLineList">${rows.map(invoice => `<div class="workflowLine"><span>Invoice ${escapeHtml(invoice.invoice_number || "recorded")} • ${escapeHtml(invoice.customer_name || "Customer")} • ${escapeHtml(formatOutreachDate(invoice.invoice_date) || "Date not recorded")}</span><strong>${escapeHtml(invoice.amount || "$0.00")}</strong></div>`).join("")}</div>` : '<div class="smallMuted">None.</div>';
   }
 
   async function previewBadgerReconcile(){
     const result = await staffApiPost({ action:"badgerReconcilePreview" });
     if (!result.ok) throw new Error(result.error || "Could not load reconciliation.");
-    const groups = result.groups || {}; const automatic = ["paid_not_marked", "paid_check_no"];
-    const text = Object.entries(groups).map(([name, rows]) => `${name}: ${rows.length}`).join("\n");
-    const selection = window.prompt(`Badger reconciliation\n${text}\n\nEnter an automatic group to apply, or Cancel to review only:`, "");
-    if (!selection || !automatic.includes(selection)) return;
-    const applied = await staffApiPost({ action:"applyBadgerReconcile", group:selection, staff_name:$("customerStaffName").value.trim() });
+    const groups = result.groups || {};
+    $("customerRecordTitle").textContent = "Badger reconciliation";
+    $("customerRecordSubtitle").textContent = "Review automatic corrections before applying them";
+    $("customerRecordBody").innerHTML = `<div class="businessDetailGrid">
+      <section class="detailSection full"><h4>Paid in Badger, not marked in tracker</h4>${badgerReconcileRows(groups.paid_not_marked || [])}<div class="dlgActions">${(groups.paid_not_marked || []).length ? '<button class="primary" data-badger-reconcile-apply="paid_not_marked" type="button">Apply paid-to-Badger marks</button>' : ""}</div></section>
+      <section class="detailSection full"><h4>Check recorded as No after Badger payment</h4>${badgerReconcileRows(groups.paid_check_no || [])}<div class="dlgActions">${(groups.paid_check_no || []).length ? '<button class="primary" data-badger-reconcile-apply="paid_check_no" type="button">Apply check-sent marks</button>' : ""}</div></section>
+      <section class="detailSection full"><h4>Manual review: tracker says paid but Badger is unpaid</h4>${badgerReconcileRows(groups.unpaid_review || [])}<p class="smallMuted">No automatic change is available for these invoices.</p></section>
+      <section class="detailSection full"><h4>Manual review: missing from live tracker</h4>${badgerReconcileRows(groups.missing_tracker || [])}<p class="smallMuted">Add or correct these tracker entries before changing payment marks.</p></section>
+      <section class="detailSection full"><div class="dlgActions"><button id="backToCustomerRecordBtn" type="button">Back</button></div></section>
+    </div>`;
+    $("customerRecordDialog").showModal();
+    refreshIcons();
+  }
+
+  async function applyBadgerReconcile(button){
+    const staffName = $("customerStaffName").value.trim();
+    if (!staffName) return toast("Enter your staff name before applying reconciliation.");
+    button.disabled = true;
+    const applied = await staffApiPost({ action:"applyBadgerReconcile", group:button.dataset.badgerReconcileApply, staff_name:staffName });
     if (!applied.ok) throw new Error(applied.error || "Reconciliation was not applied.");
-    await loadCustomerWorkQueue(); toast(applied.message || "Reconciliation applied");
+    await loadCustomerWorkQueue();
+    toast(applied.message || "Reconciliation applied");
+    previewBadgerReconcile().catch(error => toast(error?.message || String(error)));
+  }
+
+  async function recordBadgerCheck(button){
+    const staffName = $("customerStaffName").value.trim();
+    const invoices = Array.from(document.querySelectorAll("[data-badger-owed-invoice]:checked")).map(input => input.value).filter(Boolean);
+    const checkNumber = $("badgerCheckNumber")?.value.trim();
+    const checkDate = $("badgerCheckDate")?.value;
+    if (!staffName) return toast("Enter your staff name before recording a Badger check.");
+    if (!invoices.length || !checkNumber || !checkDate) return toast("Select invoices and enter the check number and date.");
+    button.disabled = true;
+    try {
+      const result = await staffApiPost({ action:"recordBadgerCheck", invoice_numbers:invoices, check_number:checkNumber, check_date:checkDate, staff_name:staffName });
+      if (!result.ok) throw new Error(result.error || "Badger check was not recorded.");
+      await loadCustomerWorkQueue(); toast(result.message || "Badger check recorded");
+    } catch (error) { toast(error?.message || String(error)); button.disabled = false; }
+  }
+
+  async function resolvePaymentReminder(button){
+    const staffName = $("customerStaffName").value.trim();
+    if (!staffName) return toast("Enter your staff name before resolving a reminder.");
+    const resolution = button.dataset.paymentReminderResolution;
+    const reason = resolution === "failed" ? window.prompt("Why should this reminder be marked failed?", "") : "";
+    if (resolution === "failed" && !reason?.trim()) return;
+    button.disabled = true;
+    try {
+      const result = await staffApiPost({ action:"resolvePaymentReminder", reminder_id:button.dataset.reminderId, resolution:resolution, reason:reason || "", staff_name:staffName });
+      if (!result.ok) throw new Error(result.error || "Reminder resolution failed.");
+      await loadCustomerWorkQueue();
+      const refreshed = customerData.accounts.find(item => item.account_id === selectedCustomerRecord?.account_id);
+      if (refreshed) openCustomerRecord(refreshed);
+      toast(result.message || "Reminder resolved");
+    } catch (error) { toast(error?.message || String(error)); button.disabled = false; }
   }
 
   async function saveCustomerRecord(){
@@ -5909,13 +5998,18 @@
     const record = findCustomerRecord(button);
     if (record) openCustomerRecord(record);
   });
+  $("badgerOperationsPanel").addEventListener("click", event => {
+    if (event.target.closest("#syncBadgerNowBtn")) syncBadgerNow().catch(error => toast(error?.message || String(error)));
+    if (event.target.closest("#previewBadgerReconcileBtn")) previewBadgerReconcile().catch(error => toast(error?.message || String(error)));
+    if (event.target.closest("#recordBadgerCheckBtn")) recordBadgerCheck(event.target.closest("#recordBadgerCheckBtn"));
+  });
   $("closeCustomerRecordBtn").addEventListener("click", () => $("customerRecordDialog").close());
   $("customerRecordBody").addEventListener("click", event => {
     if (event.target.closest("#saveCustomerRecordBtn")) saveCustomerRecord();
     if (event.target.closest("#previewPaymentReminderBtn")) previewPaymentReminder();
-    if (event.target.closest("#syncBadgerNowBtn")) syncBadgerNow().catch(error => toast(error?.message || String(error)));
-    if (event.target.closest("#previewBadgerReconcileBtn")) previewBadgerReconcile().catch(error => toast(error?.message || String(error)));
     if (event.target.closest("[data-badger-payment]")) markBadgerPayment(event.target.closest("[data-badger-payment]"));
+    if (event.target.closest("[data-badger-reconcile-apply]")) applyBadgerReconcile(event.target.closest("[data-badger-reconcile-apply]")).catch(error => toast(error?.message || String(error)));
+    if (event.target.closest("[data-payment-reminder-resolution]")) resolvePaymentReminder(event.target.closest("[data-payment-reminder-resolution]"));
     if (event.target.closest("#backToCustomerRecordBtn") && selectedCustomerRecord) openCustomerRecord(selectedCustomerRecord);
     if (event.target.closest("#sendPaymentReminderBtn")) sendPaymentReminder();
   });
