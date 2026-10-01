@@ -1,10 +1,10 @@
 <!doctype html>
-<!-- App version: 2026.10.01.2-WEB -->
+<!-- App version: 2026.10.01.3-WEB -->
 <html>
 <head>
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover"/>
-  <meta name="app-version" content="2026.10.01.2-WEB" />
+  <meta name="app-version" content="2026.10.01.3-WEB" />
   <meta name="theme-color" content="#536f77" />
   <link rel="icon" href="/assets/distribution-hub-icon.svg" type="image/svg+xml" />
   <link rel="manifest" href="/site.webmanifest" />
@@ -2477,7 +2477,7 @@
 
   <footer style="max-width:1200px;margin:18px auto 120px;padding:0 12px;text-align:center;color:#6b7280;font-size:12px;">
     Designed by <a href="https://scriptspirit.dev" target="_blank" rel="noopener noreferrer" style="color:#1d4ed8;text-decoration:none;font-weight:700;">Script Spirit</a>
-<span id="appVersionFooter"> • Version 2026.10.01.2-WEB</span>
+<span id="appVersionFooter"> • Version 2026.10.01.3-WEB</span>
   </footer>
 
 
@@ -2500,7 +2500,7 @@
   window.addEventListener("unhandledrejection", e => console.error("Unhandled promise rejection:", e.reason));
   window.addEventListener("error", e => console.error("Unhandled error:", e.error || e.message));
   const $ = (id) => document.getElementById(id);
-  const APP_VERSION = "2026.10.01.2-WEB";
+  const APP_VERSION = "2026.10.01.3-WEB";
   $("appVersionFooter").textContent = ` • Version ${APP_VERSION}`;
 
   let cache = { stores: [], lines: [] };
@@ -2958,6 +2958,9 @@
         ? `${Number(record.line_count || record.lines?.length || 0)} product${Number(record.line_count || record.lines?.length || 0) === 1 ? "" : "s"} • ${Number(record.bottle_equivalent || 0)} bottle equivalent`
         : [record.business_type, record.delivery_city, record.delivery_state].filter(Boolean).join(" • ");
       const displayStatus = isAccount ? record.primary_status : isInvoice ? (["Needs account match", "Ignored"].includes(record.badger_match_status) ? record.badger_match_status : (record.payment_status || record.invoice_status || "Unknown")) : record.workflow_status;
+      const invoicePaymentActions = isInvoice && record.account_id
+        ? `${displayStatus === "Customer owes" ? `<button class="actionBtn" type="button" data-badger-payment="paid_badger" data-invoice-number="${escapeHtml(record.invoice_number || "")}"><span>Paid Badger</span></button><button class="actionBtn" type="button" data-badger-payment="paid_me" data-invoice-number="${escapeHtml(record.invoice_number || "")}"><span>Paid us</span></button>` : ""}${displayStatus === "Owed to Badger" ? `<label class="actionBtn"><input type="checkbox" data-badger-owed-invoice value="${escapeHtml(record.invoice_number || "")}" /><span>Include in check</span></label>` : ""}${record.has_payment_mark ? `<button class="actionBtn" type="button" data-badger-payment="undo" data-invoice-number="${escapeHtml(record.invoice_number || "")}"><span>Undo payment mark</span></button>` : ""}`
+        : "";
       return `
         <article class="workflowCard ${displayStatus === "New" ? "newRecord" : ""}" data-customer-kind="${isAccount || (isInvoice && record.account_id) ? "account" : isOrder ? "order" : isInvoice ? "unmatched-invoice" : "application"}" data-customer-id="${escapeHtml(id)}">
           <div class="workflowCardTop">
@@ -2983,6 +2986,7 @@
               : isInvoice && !record.account_id
               ? `<button class="actionBtn primary" type="button" data-badger-invoice-action="link" data-invoice-number="${escapeHtml(record.invoice_number || "")}"><i data-lucide="link"></i><span>Link to account</span></button>`
               : `<button class="actionBtn primary" type="button" data-customer-action="open"><i data-lucide="clipboard-check"></i><span>${isAccount || isInvoice ? "Account history" : "Review"}</span></button>`}
+            ${invoicePaymentActions}
             ${email ? `<a class="actionBtn" href="mailto:${escapeHtml(email)}"><i data-lucide="mail"></i><span>Email</span></a>` : ""}
           </div>
         </article>`;
@@ -6185,6 +6189,11 @@
       const invoice = customerInvoiceRecords().find(item => String(item.invoice_number || "") === String(invoiceAction.dataset.invoiceNumber || ""));
       if (invoiceAction.dataset.badgerInvoiceAction === "link" && invoice) openBadgerInvoiceLink(invoice);
       if (invoiceAction.dataset.badgerInvoiceAction === "restore" && invoice) restoreIgnoredBadgerInvoice(invoice).catch(error => toast(error?.message || String(error)));
+      return;
+    }
+    const paymentButton = event.target.closest("[data-badger-payment]");
+    if (paymentButton) {
+      markBadgerPayment(paymentButton);
       return;
     }
     const button = event.target.closest("[data-customer-action='open']");

@@ -682,6 +682,11 @@ test("customer billing workflow keeps real Badger invoices distinct from Online 
   assert.match(index, /data-badger-invoice-action="link"/);
   assert.match(index, /action:"linkBadgerInvoice"/);
   assert.match(index, /mode:"restore"/);
+  assert.match(index, /data-badger-payment="paid_badger"/);
+  assert.match(index, /data-badger-payment="paid_me"/);
+  assert.match(index, /data-badger-owed-invoice/);
+  assert.match(index, /data-badger-payment="undo"/);
+  assert.match(index, /markBadgerPayment\(paymentButton\)/);
   assert.match(proxy, /"customerAccountIndex"/);
   assert.match(proxy, /"linkBadgerInvoice"/);
   const customerInvoiceRecords = vm.runInNewContext(`${invoiceRecordsSource}; customerInvoiceRecords`, {
