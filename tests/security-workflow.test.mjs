@@ -2,7 +2,7 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 import { readFile } from "node:fs/promises";
-import { createHmac } from "node:crypto";
+import { randomUUID, createHmac } from "node:crypto";
 import vm from "node:vm";
 
 const root = new URL("../", import.meta.url);
@@ -13,6 +13,9 @@ async function loadFunction(path, suffix = Math.random()) {
     const auth = await readFile(new URL("netlify/functions/auth.js", root), "utf8");
     const authUrl = `data:text/javascript;base64,${Buffer.from(auth).toString("base64")}`;
     source = source.replace('from "./auth.js";', `from "${authUrl}";`);
+    const relay = await readFile(new URL("netlify/lib/drive-relay.js", root), "utf8");
+    const relayUrl = `data:text/javascript;base64,${Buffer.from(relay).toString("base64")}`;
+    source = source.replace('from "../lib/drive-relay.js";', `from "${relayUrl}";`);
   }
   return import(`data:text/javascript;base64,${Buffer.from(source).toString("base64")}#${suffix}`);
 }
@@ -167,7 +170,125 @@ test("campaign snapshots use one controlled upstream attempt", async () => {
   assert.match(JSON.parse(result.body).error, /campaign creation connection failed/i);
 });
 
-test("campaign review reads use one extended upstream attempt", async () => {
+test("Drive relay slot hashing matches between Apps Script and Netlify", async () => {
+  const script = await readFile(new URL("apps-script/Code.gs", root), "utf8");
+  const gsSource = script.slice(script.indexOf("function relaySlotIndex_"), script.indexOf("function relaySlotIds_"));
+  const gsIndex = new Function("RELAY_SLOT_COUNT", `${gsSource}; return relaySlotIndex_;`)(32);
+  const relay = await readFile(new URL("netlify/lib/drive-relay.js", root), "utf8");
+  const { relaySlotIndex } = await import(`data:text/javascript;base64,${Buffer.from(relay).toString("base64")}`);
+  for (let index = 0; index < 200; index += 1) {
+    const id = randomUUID();
+    assert.equal(gsIndex(id), relaySlotIndex(id));
+  }
+});
+
+async function relayHandler(suffix, directBehavior) {
+  const { generateKeyPairSync } = await import("node:crypto");
+  const { privateKey } = generateKeyPairSync("rsa", { modulusLength:2048 });
+  process.env.APPS_SCRIPT_URL = "https://script.google.test/exec";
+  process.env.API_KEY = "backend-key";
+  process.env.APP_SESSION_SECRET = "test-session-secret-that-is-long-enough";
+  process.env.STAFF_ROLES_JSON = '{"staff@sturgeonspirits.com":"staff"}';
+  process.env.GOOGLE_SA_CLIENT_EMAIL = "relay@example.iam.gserviceaccount.com";
+  process.env.GOOGLE_SA_PRIVATE_KEY = privateKey.export({ type:"pkcs8", format:"pem" }).replace(/\n/g, "\\n");
+  process.env.RELAY_MANIFEST_FILE_ID = "manifest-id";
+  const slots = Array.from({ length:32 }, (_, index) => `slot-${index}`);
+  const calls = { apps:0, relayId:"" };
+  const relayed = { ok:true, source:"relay", records:[1, 2, 3] };
+  globalThis.fetch = async (url, options = {}) => {
+    const text = String(url);
+    if (text.startsWith("https://oauth2.googleapis.com/token")) return new Response(JSON.stringify({ access_token:"token", expires_in:3600 }), { status:200 });
+    if (text.includes("/drive/v3/files/manifest-id")) return new Response(JSON.stringify({ slots }), { status:200 });
+    if (text.includes("/drive/v3/files/slot-")) {
+      return new Response(JSON.stringify(calls.relayId ? { relay_id:calls.relayId, body:JSON.stringify(relayed) } : {}), { status:200 });
+    }
+    calls.apps += 1;
+    calls.relayId = new URL(text).searchParams.get("relay_id") || "";
+    return directBehavior(options);
+  };
+  const { handler } = await loadFunction("netlify/functions/inventory.js", suffix);
+  return { handler, calls, relayed };
+}
+
+function clearRelayEnv() {
+  delete process.env.GOOGLE_SA_CLIENT_EMAIL;
+  delete process.env.GOOGLE_SA_PRIVATE_KEY;
+  delete process.env.RELAY_MANIFEST_FILE_ID;
+}
+
+test("Drive relay answers when Google's direct response stalls or returns an HTML 404", async () => {
+  try {
+    const stalled = await relayHandler("relay-stall", options => new Promise((_, reject) => options.signal.addEventListener("abort", () => reject(Object.assign(new Error("aborted"), { name:"AbortError" })))));
+    const result = await stalled.handler(event("outreachDashboard", { method:"GET", session:staffSession() }));
+    assert.equal(stalled.calls.apps, 1);
+    assert.equal(result.statusCode, 200);
+    assert.deepEqual(JSON.parse(result.body), stalled.relayed);
+
+    const htmlError = await relayHandler("relay-404", async () => new Response("<html><title>Page Not Found</title></html>", { status:404, headers:{ "content-type":"text/html" } }));
+    const post = await htmlError.handler(event("approveOutreachCampaign", { method:"POST", session:staffSession(), body:{ campaign_id:"CMP-1", audience_checksum:"x", recipient_count:1 } }));
+    assert.equal(htmlError.calls.apps, 1, "a write is sent to Apps Script exactly once");
+    assert.equal(post.statusCode, 200);
+    assert.deepEqual(JSON.parse(post.body), htmlError.relayed);
+  } finally {
+    clearRelayEnv();
+  }
+});
+
+test("Drive relay still uses a fast direct response", async () => {
+  try {
+    const fast = await relayHandler("relay-fast", async () => new Response(JSON.stringify({ ok:true, source:"direct" }), { status:200, headers:{ "content-type":"application/json" } }));
+    const result = await fast.handler(event("outreachCampaigns", { method:"GET", session:staffSession() }));
+    assert.equal(result.statusCode, 200);
+    assert.equal(JSON.parse(result.body).source, "direct");
+  } finally {
+    clearRelayEnv();
+  }
+});
+
+test("every staff request shows busy feedback", async () => {
+  const page = await readFile(new URL("index.html", root), "utf8");
+  assert.match(page, /<div id="apiBusyBar" aria-hidden="true"><\/div>/);
+  const get = page.slice(page.indexOf("async function staffApiGet"), page.indexOf("async function staffApiPost"));
+  const post = page.slice(page.indexOf("async function staffApiPost"), page.indexOf("function refreshIcons"));
+  assert.match(get, /return withApiBusy\(/);
+  assert.match(post, /return withApiBusy\(/);
+  assert.match(page, /button\.is-busy \{ opacity:\.6; cursor:progress; pointer-events:none; \}/);
+});
+
+test("first inventory load reports on the Inventory screen and retries once", async () => {
+  const page = await readFile(new URL("index.html", root), "utf8");
+  assert.doesNotMatch(page, /loadStartup\(\)\.catch\(handleCustomerError\)/);
+  assert.match(page, /if \(staffAccessCode && !inventoryLoaded\) startInventory\(\);/);
+  const start = page.slice(page.indexOf("function startInventory"), page.indexOf("async function loadStartup"));
+  assert.match(start, /if \(inventoryStartupPromise\) return inventoryStartupPromise;/);
+  assert.match(start, /setTimeout\(resolve, 1500\)\)\.then\(attempt\)/);
+  assert.match(start, /\$\("inventoryAccessStatus"\)\.textContent = `Couldn't load inventory/);
+  assert.match(page, /id="retryInventoryBtn"/);
+  const startup = page.slice(page.indexOf("async function loadStartup"), page.indexOf("function resetCounts"));
+  assert.ok(startup.indexOf("const storeRequest") < startup.indexOf('staffApiGet({ action:"initData", ...('), "remembered store loads alongside the store list");
+});
+
+test("staff proxy unpacks compressed read responses", async () => {
+  const { handler } = await loadFunction("netlify/functions/inventory.js", "compressed-read");
+  const { gzipSync } = await import("node:zlib");
+  process.env.APPS_SCRIPT_URL = "https://script.google.test/exec";
+  process.env.API_KEY = "backend-key";
+  process.env.APP_SESSION_SECRET = "test-session-secret-that-is-long-enough";
+  process.env.STAFF_ROLES_JSON = '{"staff@sturgeonspirits.com":"staff"}';
+  const original = { ok:true, records:[{ business:"Acme Tap", city:"Neenah" }] };
+  let requestedUrl = "";
+  globalThis.fetch = async url => {
+    requestedUrl = String(url);
+    const packed = gzipSync(Buffer.from(JSON.stringify(original))).toString("base64");
+    return new Response(JSON.stringify({ ok:true, gzip_b64:packed }), { status:200, headers:{ "content-type":"application/json" } });
+  };
+  const result = await handler(event("outreachDashboard", { method:"GET", session:staffSession() }));
+  assert.match(requestedUrl, /[?&]gz=1(&|$)/);
+  assert.equal(result.statusCode, 200);
+  assert.deepEqual(JSON.parse(result.body), original);
+});
+
+test("campaign review reads retry once within the proxy limit", async () => {
   const { handler } = await loadFunction("netlify/functions/inventory.js", "campaign-review-no-retry");
   process.env.APPS_SCRIPT_URL = "https://script.google.test/exec";
   process.env.API_KEY = "backend-key";
@@ -179,7 +300,7 @@ test("campaign review reads use one extended upstream attempt", async () => {
     throw new Error("connection ended");
   };
   const result = await handler(event("outreachCampaigns", { method:"GET", session:staffSession() }));
-  assert.equal(calls, 1);
+  assert.equal(calls, 2);
   assert.equal(result.statusCode, 500);
   assert.match(JSON.parse(result.body).error, /campaign review connection failed/i);
 });
@@ -188,13 +309,16 @@ test("roles and workspace areas are enforced server-side and revoked users lose 
   const { handler } = await loadFunction("netlify/functions/inventory.js", "roles");
   process.env.APPS_SCRIPT_URL = "https://example.test/exec";
   process.env.APP_SESSION_SECRET = "test-session-secret-that-is-long-enough";
-  process.env.STAFF_ROLES_JSON = '{"staff@sturgeonspirits.com":{"role":"staff","areas":["inventory"]}}';
+  process.env.STAFF_ROLES_JSON = '{"staff@sturgeonspirits.com":{"role":"staff","areas":["inventory","outreach"]}}';
   let fetches = 0;
   globalThis.fetch = async () => { fetches += 1; return new Response(JSON.stringify({ ok:true }), { status:200 }); };
   const session = staffSession();
   const blocked = await handler(event("upsertProduct", { session }));
   assert.equal(blocked.statusCode, 403);
   assert.equal(JSON.parse(blocked.body).code, "STAFF_ROLE_FORBIDDEN");
+  const mileageAdminOnly = await handler(event("recalculateOutreachMiles", { session }));
+  assert.equal(mileageAdminOnly.statusCode, 403);
+  assert.equal(JSON.parse(mileageAdminOnly.body).code, "STAFF_ROLE_FORBIDDEN");
   const areaBlocked = await handler(event("customerWorkQueue", { method:"POST", session }));
   assert.equal(areaBlocked.statusCode, 403);
   assert.equal(JSON.parse(areaBlocked.body).code, "STAFF_AREA_FORBIDDEN");
@@ -203,6 +327,227 @@ test("roles and workspace areas are enforced server-side and revoked users lose 
   const revoked = await handler(event("initData", { session }));
   assert.equal(revoked.statusCode, 401);
   assert.equal(fetches, 0);
+});
+
+test("campaign bulk exclusion and external contact logging remain staff-scoped", async () => {
+  const source = await readFile(new URL("netlify/functions/inventory.js", root), "utf8");
+  const script = await readFile(new URL("apps-script/Code.gs", root), "utf8");
+  assert.match(source, /"setOutreachCampaignRecipientExclusions"/);
+  assert.match(source, /"logOutreachContact"/);
+  assert.match(script, /function apiSetOutreachCampaignRecipientExclusions_/);
+  assert.match(script, /function apiLogOutreachContact_/);
+  assert.match(script, /Sent recipients cannot be excluded/);
+});
+
+test("Badger invoice links are staff-scoped and ledger matching stays account-based", async () => {
+  const source = await readFile(new URL("netlify/functions/inventory.js", root), "utf8");
+  const script = await readFile(new URL("apps-script/Code.gs", root), "utf8");
+  const page = await readFile(new URL("index.html", root), "utf8");
+  assert.match(source, /"linkBadgerInvoice"/);
+  assert.match(source, /\["linkBadgerInvoice", "orders"\]/);
+  assert.doesNotMatch(source, /searchCustomerAccounts/);
+  assert.match(source, /"customerAccountIndex"/);
+  assert.match(source, /\["customerAccountIndex", "orders"\]/);
+  assert.match(script, /const BADGER_INVOICE_LINKS_SHEET_NAME = "Badger Invoice Links"/);
+  assert.match(script, /function apiLinkBadgerInvoice_\(p\)/);
+  assert.doesNotMatch(script, /apiSearchCustomerAccounts_/);
+  assert.match(script, /function apiGetCustomerAccountIndex_\(p\)/);
+  assert.match(script, /cachedReadPayload_\("customer_account_index"/);
+  assert.match(script, /event:"customer_account_index_cache_rebuild"/);
+  const ledger = script.slice(script.indexOf("function buildCustomerAccounts_"), script.indexOf("function apiGetCustomerWorkQueue_"));
+  assert.match(ledger, /const explicitInvoiceLinks = readBadgerInvoiceLinks_\(\)/);
+  assert.match(ledger, /String\(explicit\?\.match_method \|\| ""\).*=== "ignored"/);
+  assert.match(ledger, /Orders on more than one account reference this invoice\./);
+  assert.match(ledger, /matchMethod = "Linked order"/);
+  assert.match(ledger, /matchMethod = "Business name"/);
+  assert.match(ledger, /learnedMethod = "Learned customer name"/);
+  assert.match(ledger, /matchMethod = "Badger location name"/);
+  assert.match(ledger, /const customerAliases = readBadgerCustomerAliases_\(\)/);
+  assert.match(ledger, /cachedBadgerLocationNames_\(/);
+  assert.match(ledger, /assignedInvoiceAccounts/);
+  assert.match(ledger, /conflictingOrderInvoiceKeys\.has\(invoiceKey\)/);
+  assert.match(ledger, /const ignoredInvoiceKeys = new Set\(\)/);
+  assert.match(ledger, /ignoredInvoiceKeys\.has\(invoiceKey\)/);
+  assert.match(ledger, /linkedInvoices\.length > 0/);
+  assert.match(ledger, /unmatched_badger_invoices/);
+  assert.match(ledger, /ignored_badger_invoices/);
+  assert.doesNotMatch(ledger, /account_options/);
+  assert.match(script, /cachedBadgerInvoices_\(false\)\.find/);
+  assert.match(page, /Badger invoices needing an account/);
+  const customerRender = page.slice(page.indexOf("function renderCustomerWorkflow"), page.indexOf("async function loadCustomerWorkQueue"));
+  assert.doesNotMatch(customerRender, /if \(!records\.length\) \{[\s\S]{0,250}return;/);
+  assert.ok(customerRender.indexOf("invoiceReview") < customerRender.indexOf("emptyState"));
+  assert.match(page, /<datalist id="badgerAccountPicker"><\/datalist>/);
+  assert.match(page, /function ensureCustomerAccountIndex\(\)/);
+  assert.match(page, /action:"customerAccountIndex"/);
+  assert.match(page, /function filterBadgerAccountPicker\(query\)/);
+  const accountInputHandler = page.slice(page.indexOf('$("customerWorkflowList").addEventListener("input"'), page.indexOf('$("customerWorkflowList").addEventListener("focusin"'));
+  assert.match(accountInputHandler, /filterBadgerAccountPicker\(picker\.value\)/);
+  assert.doesNotMatch(accountInputHandler, /staffApi/);
+  assert.match(page, /Ignore \/ not a Directory account/);
+  assert.match(page, /Restore to matching/);
+  assert.match(page, /<details class="workflowCard" data-badger-ignored="true">/);
+  assert.doesNotMatch(page, /customerData\.accountOptions/);
+});
+
+test("staff invoice links teach customer-name matching, but ignores do not", async () => {
+  const script = await readFile(new URL("apps-script/Code.gs", root), "utf8");
+  const link = script.slice(script.indexOf("function apiLinkBadgerInvoice_"), script.indexOf("function buildCustomerAccounts_"));
+  assert.match(link, /const learned = !ignored && upsertBadgerCustomerAlias_\(/);
+  assert.match(script, /const BADGER_CUSTOMER_ALIASES_SHEET_NAME = "Badger Customer Aliases"/);
+  assert.match(script, /ensureSheet_\(hub, BADGER_CUSTOMER_ALIASES_SHEET_NAME/);
+  const normalizer = script.slice(script.indexOf("function normalizeCustomerMatchKey_"), script.indexOf("const BADGER_LOCATION_NAMES_CACHE_KEY"));
+  const normalize = new Function("BADGER_CUSTOMER_NAME_SUFFIXES", `${normalizer}; return normalizeCustomerMatchKey_;`)(new Set(["llc", "inc", "incorporated", "co", "corp", "corporation", "company", "ltd"]));
+  assert.equal(normalize("Cujak's Wine andSpirits"), normalize("Cujaks Wine and Spirits"));
+  assert.equal(normalize("Sunken PaddleCiderworks LLC"), normalize("Sunken Paddle Ciderworks"));
+  assert.equal(normalize("The Crimson Still LLC"), normalize("Crimson Still"));
+  assert.notEqual(normalize("Festival Foods -- Oshkosh #2708"), normalize("Festival Foods -- FDL"));
+  const aliases = script.slice(script.indexOf("function readBadgerCustomerAliases_"), script.indexOf("function readBadgerInvoiceLinks_"));
+  assert.match(aliases, /aliases\.by_name\.set\(canonicalName, \{ ambiguous:true \}\)/);
+  assert.match(aliases, /aliases\.by_key\.get\(key\)\.add\(accountId\)/);
+  const ledger = script.slice(script.indexOf("function buildCustomerAccounts_"), script.indexOf("function apiGetCustomerWorkQueue_"));
+  assert.match(ledger, /locationPublicKeysByInvoiceKey/);
+  assert.match(ledger, /locationKeys\.size !== 1/);
+});
+
+test("large read responses are compressed and reads retry within the proxy limit", async () => {
+  const script = await readFile(new URL("apps-script/Code.gs", root), "utf8");
+  const proxy = await readFile(new URL("netlify/functions/inventory.js", root), "utf8");
+  assert.match(script, /READ_ACTIONS\.has\(action\) && String\(e\?\.parameter\?\.gz \|\| ""\) === "1" \? compressedText_\(payload\)/);
+  assert.match(script, /Utilities\.gzip\(/);
+  assert.match(proxy, /import \{ gunzipSync \} from "node:zlib";/);
+  assert.match(proxy, /url\.searchParams\.set\("gz", "1"\)/);
+  assert.match(proxy, /const READ_UPSTREAM_ATTEMPTS = 2;/);
+  assert.match(proxy, /const READ_UPSTREAM_TIMEOUT_MS = 11500;/);
+  // Two read attempts must fit inside Netlify's ~26 s function limit.
+  assert.ok(2 * 11500 < 25000);
+  // Writes and sends stay single-attempt.
+  assert.match(proxy, /attempts:UPSTREAM_WRITE_ATTEMPTS/);
+  assert.match(proxy, /const SEND_UPSTREAM_ATTEMPTS = 1;/);
+});
+
+test("campaign freeze timeouts wait for the snapshot instead of re-creating it", async () => {
+  const script = await readFile(new URL("apps-script/Code.gs", root), "utf8");
+  const page = await readFile(new URL("index.html", root), "utf8");
+  const rows = script.slice(script.indexOf("function campaignRecipientRows_"), script.indexOf("function campaignRecipientSummaryRows_"));
+  assert.doesNotMatch(rows, /matches\.map\(match => \(\{ row:match\.getRow\(\), values:sheet\.getRange/);
+  assert.match(rows, /getRange\(first, 1, last - first \+ 1/);
+  const warmer = script.slice(script.indexOf("function warmHubReadCaches"), script.indexOf("function onHubReadCacheSpreadsheetChange"));
+  assert.match(warmer, /readCachePresent_\(scope\)/);
+  const waiter = page.slice(page.indexOf("async function waitForFrozenCampaign"), page.indexOf("async function recalculateOutreachMiles"));
+  assert.match(waiter, /action:"outreachCampaigns"/);
+  assert.doesNotMatch(waiter, /createOutreachCampaign/);
+});
+
+test("SKUs Out of Stock checkbox blocks ordering without adding sheet columns", async () => {
+  const script = await readFile(new URL("apps-script/Code.gs", root), "utf8");
+  const order = await readFile(new URL("order.html", root), "utf8");
+  const catalog = script.slice(script.indexOf("function apiListSkus_"), script.indexOf("function apiAddSkuToStoreUnlocked_"));
+  assert.match(catalog, /toBool_\(firstPresent_\(s, \["out_of_stock", "out_of_stock\?"\]\)\)/);
+  assert.doesNotMatch(catalog, /ensureHeaderColumns_/);
+  assert.match(order, /outOfStock \? " disabled" : ""/);
+});
+
+test("learned aliases prefer the exact customer name and always learn staff links", async () => {
+  const script = await readFile(new URL("apps-script/Code.gs", root), "utf8");
+  assert.match(script, /const aliases = \{ by_name:new Map\(\), by_key:new Map\(\) \}/);
+  assert.match(script, /customerAliases\.by_name\.get\(canonicalBadgerAliasName_\(invoice\.customer_name\)\)/);
+  assert.match(script, /looseAliasAccounts\.length === 1/);
+  assert.doesNotMatch(script, /conflictingLooseAlias/);
+  const runbook = await readFile(new URL("docs/production-cutover-runbook-2026-09-25.md", root), "utf8");
+  assert.match(runbook, /Precondition: the Hub inventory migration must stay inactive/);
+});
+
+test("forced refreshes save their rebuild to the read cache", async () => {
+  const script = await readFile(new URL("apps-script/Code.gs", root), "utf8");
+  assert.match(script, /cachedReadPayload_\("customer_work_queue", \(\) => apiGetCustomerWorkQueue_\(\{ _cache_bypass:true, _refresh_sources:forceRefresh \}\), forceRefresh\)/);
+  assert.match(script, /cachedReadPayload_\("outreach_slim", [^\n]+, forceRefresh\)/);
+  assert.match(script, /cachedReadPayload_\("inventory_stores", \(\) => apiGetInitData_\("", true\), !!forceRefresh\)/);
+  const page = await readFile(new URL("index.html", root), "utf8");
+  assert.equal((page.match(/Couldn't refresh \(\$\{error\?\.message/g) || []).length, 3);
+});
+
+test("browser sends CSV imports in small parts", async () => {
+  const page = await readFile(new URL("index.html", root), "utf8");
+  assert.match(page, /const BUSINESS_IMPORT_CHUNK_SIZE = 20;/);
+  const importer = page.slice(page.indexOf("async function runBusinessImport"), page.indexOf("async function loadHubSystemStatus"));
+  assert.match(importer, /rows:parts\[index\]/);
+  assert.doesNotMatch(importer, /rows:pendingBusinessImport/);
+  assert.match(importer, /importPartServerResponded = true/);
+  assert.match(importer, /The connection ended before the server confirmed this part\./);
+});
+
+test("business import writes directory and log rows in batches", async () => {
+  const script = await readFile(new URL("apps-script/Code.gs", root), "utf8");
+  const importer = script.slice(script.indexOf("function apiImportOutreachBusinesses_"), script.indexOf("function apiRecalculateOutreachMiles_"));
+  assert.match(importer, /directory\.getRange\(directoryStartRow, 1, pendingDirectoryRows\.length, directoryWidth\)\.setValues/);
+  assert.match(importer, /importRows\.getRange\(importRows\.getLastRow\(\) \+ 1, 1, importLogRows\.length/);
+  assert.doesNotMatch(importer, /importRows\.appendRow/);
+  assert.match(importer, /retrying row by row/);
+});
+
+test("account ID repair writes only identity columns and isolates tab failures", async () => {
+  const script = await readFile(new URL("apps-script/Code.gs", root), "utf8");
+  const backfill = script.slice(script.indexOf("function backfillAccountIdsInSheet_"), script.indexOf("function ensureAccountIdentityModel_"));
+  assert.match(backfill, /sheet\.getRange\(2, h\.account_id \+ 1, rowCount, 1\)\.setValues\(accountIdValues\)/);
+  assert.doesNotMatch(backfill, /setValues\(rows\)/);
+  const model = script.slice(script.indexOf("function ensureAccountIdentityModel_"), script.indexOf("function setDirectoryField_"));
+  assert.doesNotMatch(model, /setValues\(rows\)/);
+  assert.match(model, /h\.record_created_at \+ 1, rowCount, 1\)\.setValues\(createdAtValues\)/);
+  assert.match(model, /account_id_backfill_failed/);
+  assert.match(script, /Account ID backfill failed on:/);
+});
+
+test("contact logging schedules external email follow-up and repair normalizes legacy priority", async () => {
+  const script = await readFile(new URL("apps-script/Code.gs", root), "utf8");
+  assert.match(script, /if \(!outcome\) \{\s+const settings = getOutreachCampaignSettings_\(\)/);
+  assert.match(script, /set\(\["status"\], "Sent"\)/);
+  assert.match(script, /set\(\["next_follow-up", "next_follow_up"\], automaticFollowUp\)/);
+  assert.match(script, /trim\(\)\.toLowerCase\(\) === "medium"/);
+  assert.match(script, /row\[0\] = "Normal"/);
+  assert.match(script, /priorityRange\.setValues\(priorityValues\)/);
+});
+
+test("bulk exclusions only write selected status and detail cells", async () => {
+  const script = await readFile(new URL("apps-script/Code.gs", root), "utf8");
+  const start = script.indexOf("function apiSetOutreachCampaignRecipientExclusions_");
+  const end = script.indexOf("function apiUpdateOutreachCampaignRecipient_", start);
+  const bulk = script.slice(start, end);
+  assert.match(bulk, /getRange\(item\.row, statusColumn, 1, 2\)\.setValues/);
+  assert.doesNotMatch(bulk, /getRange\(firstRow, 1,/);
+  assert.doesNotMatch(bulk, /getLastColumn\(\)\);\s*const values = range\.getValues/);
+});
+
+test("engagement clicks retain identity and scanner protection", async () => {
+  const script = await readFile(new URL("apps-script/Code.gs", root), "utf8");
+  assert.match(script, /ensureHeaderColumns_\(engagement, \["Account ID", "Target", "Stage"\]\)/);
+  assert.match(script, /permanentId_\("ENG"\)/);
+  assert.match(script, /Possible link scanner/);
+  assert.match(script, /< 5000/);
+  assert.match(script, /function apiBackfillEngagementDetails_/);
+});
+
+test("core Hub read paths use versioned cache fallbacks and timing metadata", async () => {
+  const script = await readFile(new URL("apps-script/Code.gs", root), "utf8");
+  const page = await readFile(new URL("index.html", root), "utf8");
+  assert.match(script, /function cachedReadPayload_/);
+  assert.match(script, /hub_read:.*scope.*version/);
+  assert.match(script, /function warmHubReadCaches/);
+  assert.match(script, /everyMinutes\(10\)/);
+  assert.match(script, /const READ_CACHE_TTL_SECONDS = 900/);
+  assert.match(script, /const READ_CACHE_CHUNK_SIZE = 45000/);
+  assert.match(script, /function onHubReadCacheSpreadsheetChange/);
+  assert.match(script, /\[getOutreachSs_\(\), SpreadsheetApp\.openById\(BADGER_TRACKER_SPREADSHEET_ID\)\]/);
+  assert.match(script, /forSpreadsheet\(spreadsheet\)\.onChange\(\)\.create\(\)/);
+  assert.match(script, /finally \{\s+if \(invalidateReadCache\)/);
+  assert.match(script, /String\(p\?\.refresh \|\| ""\) === "1"/);
+  assert.match(script, /function campaignRecipientSummaryRows_/);
+  assert.match(page, /function readScreenCache/);
+  assert.match(page, /Couldn't refresh; showing data from/);
+  assert.match(page, /writeScreenCache\("outreach"/);
+  assert.match(page, /loadOutreach\(true\)/);
+  assert.match(page, /loadCustomerWorkQueue\(true\)/);
+  assert.match(page, /loadStartup\(true, \$\("storeSelect"\)\.value\)/);
 });
 
 test("public customer proxy remains narrowly allowlisted", async () => {
@@ -531,6 +876,128 @@ test("campaign rebuilding reconciles first and changes only review-ready snapsho
   assert.match(proxy, /\["rebuildCampaignRecipients", "outreach"\]/);
 });
 
+test("campaign criteria preview uses centroid distances, JSON rules, and distinct send-time exclusions", async () => {
+  const [backend, index, proxy] = await Promise.all([
+    readFile(new URL("apps-script/Code.gs", root), "utf8"),
+    readFile(new URL("index.html", root), "utf8"),
+    readFile(new URL("netlify/functions/inventory.js", root), "utf8"),
+  ]);
+  const previewSource = backend.slice(backend.indexOf("function apiPreviewOutreachCampaign_"), backend.indexOf("function apiApproveOutreachCampaign_"));
+  const sendSource = backend.slice(backend.indexOf("function apiSendOutreachCampaignBatch_"), backend.indexOf("function outreachStatusForOutcome_"));
+  const normalizeZipSource = backend.match(/function normalizeZip_\([\s\S]*?\n\}/)?.[0];
+  const normalizeZip = new Function(`${normalizeZipSource}\nreturn normalizeZip_;`)();
+  assert.equal(normalizeZip("53511.0"), "53511");
+  assert.equal(normalizeZip(5000), "05000");
+  assert.match(backend, /function normalizeZip_\(/);
+  assert.match(backend, /function zipCentroidMap_\(/);
+  assert.match(backend, /latitude:latitude/);
+  assert.match(backend, /longitude:longitude/);
+  assert.match(backend, /function milesBetweenCoordinates_\(/);
+  assert.match(backend, /function campaignCenterForCriteria_\(/);
+  assert.match(backend, /cache\.put\(cacheKey, JSON\.stringify\(Object\.fromEntries\(map\)\), 21600\)/);
+  assert.match(backend, /ensureHeaderColumns_\(sheet, \["Miles Source"\]\)/);
+  assert.match(backend, /function apiRecalculateOutreachMiles_\(/);
+  assert.match(backend, /authenticated_staff_role.*!== "admin"/);
+  assert.match(backend, /function recalculateOutreachMiles\(\)/);
+  assert.match(backend, /"Criteria"/);
+  assert.match(backend, /function campaignStoredCriteria_\(/);
+  assert.doesNotMatch(backend, /function campaignAudienceRules_\(/);
+  assert.match(previewSource, /function apiPreviewOutreachCampaign_\(/);
+  assert.match(previewSource, /preview_confirmed !== true/);
+  assert.match(previewSource, /campaignDirectoryInitialRecords_\(criteria\)/);
+  assert.match(previewSource, /JSON\.stringify\(criteria\)/);
+  assert.match(sendSource, /campaignStoredCriteria_\(campaign\.values\[ch\.criteria\]\)/);
+  assert.match(sendSource, /Excluded — out of area/);
+  assert.match(sendSource, /Excluded — below fit/);
+  assert.match(proxy, /ADMIN_ACTIONS = new Set\([\s\S]*?"recalculateOutreachMiles"/);
+  assert.match(proxy, /\["recalculateOutreachMiles", "outreach"\]/);
+  assert.match(proxy, /"previewOutreachCampaign"/);
+  assert.match(proxy, /const UPSTREAM_TIMEOUT_MS = 25000/);
+  assert.match(proxy, /const SEND_UPSTREAM_TIMEOUT_MS = 24000/);
+  assert.match(proxy, /const UPSTREAM_WRITE_ATTEMPTS = 1/);
+  assert.match(index, /id="recalculateOutreachMilesBtn"/);
+  assert.match(index, /action:"recalculateOutreachMiles"/);
+  assert.match(index, /id="outreachCampaignCriteriaCenterType"/);
+  assert.match(index, /id="previewOutreachCampaignCriteriaBtn"/);
+  assert.match(index, /action:"previewOutreachCampaign"/);
+  assert.match(index, /preview_confirmed:true/);
+  assert.match(index, /recipient\.city/);
+  assert.match(index, /Area review needed/);
+});
+
+test("campaign review exclusions are inline and previews use directory fields without rendered email", async () => {
+  const [backend, index] = await Promise.all([
+    readFile(new URL("apps-script/Code.gs", root), "utf8"),
+    readFile(new URL("index.html", root), "utf8"),
+  ]);
+  const previewSource = backend.slice(backend.indexOf("function apiPreviewOutreachCampaign_"), backend.indexOf("function apiCreateOutreachCampaign_"));
+  const exclusionSource = backend.slice(backend.indexOf("function apiSetOutreachCampaignRecipientExclusion_"), backend.indexOf("function apiUpdateOutreachCampaignRecipient_"));
+  const campaignUiSource = index.slice(index.indexOf("async function openOutreachCampaign"), index.indexOf("function renderOutreach", index.indexOf("async function openOutreachCampaign")));
+  assert.match(backend, /function campaignDirectoryInitialRecords_\(criteria\)/);
+  assert.match(previewSource, /campaignDirectoryInitialRecords_\(criteria\)/);
+  assert.doesNotMatch(previewSource, /outreachMessage_\(/);
+  for (const field of ["postal_code", "craft_spirit_fit", "status", "email", "last_emailed"]) assert.match(previewSource, new RegExp(`${field}:record\\.${field}`));
+  assert.match(exclusionSource, /\["Sent", "Sent - needs recording"\]\.includes/);
+  assert.match(exclusionSource, /Sent recipients cannot be excluded or restored/);
+  assert.doesNotMatch(campaignUiSource, /prompt\(/);
+  assert.match(campaignUiSource, /data-campaign-exclusion-form/);
+  assert.match(campaignUiSource, /data-campaign-exclusion-reason="Out of area"/);
+  assert.match(campaignUiSource, /data-campaign-recipient-action="confirm-exclude"/);
+  assert.match(campaignUiSource, /data-campaign-recipient-action="show-exclude"/);
+  assert.match(index, /<select id="outreachCampaignCriteriaCounty">/);
+  assert.match(index, /<select id="outreachCampaignCriteriaSegment">/);
+  assert.match(index, /function populateCampaignCriteriaOptions\(\)/);
+  assert.match(index, /fill\("outreachCampaignCriteriaCounty", "county", "Any county"\)/);
+  assert.match(index, /fill\("outreachCampaignCriteriaSegment", "segment", "Any segment"\)/);
+  assert.doesNotMatch(index, /escapeHtml\(res\.audience/);
+});
+
+test("campaign freeze fully rechecks duplicate sends while preview and send stay targeted", async () => {
+  const [backend, index] = await Promise.all([
+    readFile(new URL("apps-script/Code.gs", root), "utf8"),
+    readFile(new URL("index.html", root), "utf8"),
+  ]);
+  const freezeSource = backend.slice(backend.indexOf("function campaignEligibleInitialRecords_"), backend.indexOf("function campaignRecipientSnapshotValues_"));
+  const sendSource = backend.slice(backend.indexOf("function apiSendOutreachCampaignBatch_"), backend.indexOf("function campaignSendLightweightRecord_"));
+  const pilotSource = backend.slice(backend.indexOf("function legacyPilotSent_"), backend.indexOf("function initialSentActivityForRecipient_"));
+  assert.match(freezeSource, /outreachRecord_\(/);
+  assert.match(freezeSource, /outreachSendEligibility_\(record, \{ initial_sent_emails:selection\.initial_sent_emails \}\)/);
+  assert.match(freezeSource, /removed_by_duplicate_checks:directoryRecords\.length - records\.length/);
+  assert.match(backend, /function campaignInitialSentEmailSet_\(/);
+  assert.match(backend, /intended_recipient/, "preview checks Activity Log recipient fields");
+  assert.match(backend, /delivered_to/, "preview checks delivered-to fallback fields");
+  assert.match(pilotSource, /__LEGACY_PILOT_SENT_BY_EMAIL/);
+  assert.match(pilotSource, /getAllRowsAsObjects_\(sheet\)\.forEach/, "Pilot Review is read once into a memoized lookup");
+  assert.match(backend, /function initialSentActivityForRecipient_\(/);
+  assert.match(backend, /createTextFinder/, "send-time duplicate check remains targeted");
+  assert.match(sendSource, /initialSentActivityForRecipient_\(record\.email\) \|\| initialSentDirectoryEmailElsewhere_\(record\.email, sourceRow\)/);
+  assert.match(index, /previewed, \$\{frozen\} frozen — \$\{removed\} removed by duplicate checks/);
+  assert.match(index, /preview_recipient_count/);
+  assert.match(index, /removed_by_duplicate_checks/);
+});
+
+test("campaign send timeouts reconcile one recipient before continuing and never resend an unknown result", async () => {
+  const [backend, index] = await Promise.all([
+    readFile(new URL("apps-script/Code.gs", root), "utf8"),
+    readFile(new URL("index.html", root), "utf8"),
+  ]);
+  const sendSource = backend.slice(backend.indexOf("function apiSendOutreachCampaignBatch_"), backend.indexOf("function outreachStatusForOutcome_"));
+  const clientSource = index.slice(index.indexOf("async function sendCampaignRecipients"), index.indexOf("async function sendOutreachCampaignBatch"));
+  assert.doesNotMatch(sendSource, /outreachActivityMap_\(\)/);
+  assert.doesNotMatch(sendSource, /outreachDraftMap_\(\)/);
+  assert.doesNotMatch(sendSource, /outreachProgramMap_\(\)/);
+  assert.doesNotMatch(sendSource, /outreachEngagementMap_\(\)/);
+  assert.match(sendSource, /campaignSendLightweightRecord_\(current, sourceRow\)/);
+  assert.match(sendSource, /outreachSendEligibility_\(record, \{ skip_legacy_pilot:true \}\)/);
+  assert.match(sendSource, /outreach_campaign_send_timing/);
+  assert.match(backend, /function acceptedOutreachSendForToken_[\s\S]*?outreachRowsMatchingCell_/);
+  assert.match(clientSource, /campaignSendOutcomeIsUnknown\(error\)/);
+  assert.match(clientSource, /action:"reconcileCampaignSends", campaign_id:campaign\.campaign_id, idempotency_token:expected\.idempotency_token/);
+  assert.match(clientSource, /\["Sent", "Sent - needs recording"\]\.includes\(recipient\?\.status\)/);
+  assert.match(clientSource, /no resend was attempted/);
+  assert.match(clientSource, /continue;/);
+});
+
 test("campaign rebuild UI and first-draft save gate preserve review-before-send", async () => {
   const index = await readFile(new URL("index.html", root), "utf8");
   assert.match(index, /id="rebuildCampaignRecipientsBtn"/);
@@ -715,4 +1182,44 @@ test("customer billing workflow keeps real Badger invoices distinct from Online 
     customerStatusFilter:"all", customerFilterText:"", ORDER_STATUSES:[], APPLICATION_STATUSES:[], customerInvoiceRecords:() => [], Array, String,
   });
   assert.equal(onlineRequests().length, 1, "Online requests must read the orders payload, not a nonexistent view key");
+});
+
+test("campaign loading backfills legacy cities once and does not label absent legacy miles", async () => {
+  const [backend, index] = await Promise.all([
+    readFile(new URL("apps-script/Code.gs", root), "utf8"),
+    readFile(new URL("index.html", root), "utf8"),
+  ]);
+  const campaignObjectSource = backend.slice(backend.indexOf("function campaignRecipientCityFallbacks_"), backend.indexOf("function apiGetOutreachCampaigns_"));
+  const campaignWindowSource = index.slice(index.indexOf("async function openOutreachCampaign"), index.indexOf("async function saveOutreachCampaignRecipient"));
+  assert.match(campaignObjectSource, /function campaignRecipientCityFallbacks_\(/);
+  assert.match(campaignObjectSource, /One directory data read per campaign load/);
+  assert.match(campaignObjectSource, /by_account\.get\(accountId\) \|\| cityFallbacks\.by_source_row\.get\(sourceRow\)/);
+  assert.match(campaignWindowSource, /else if \(criteria\) parts\.push\("Miles missing"\)/);
+  assert.match(campaignWindowSource, /campaignRecipientLocation\(recipient\)/);
+  assert.match(index, /expected\.city \?/);
+});
+
+test("campaign approval confirmation is inline, counted, and required before approval", async () => {
+  const index = await readFile(new URL("index.html", root), "utf8");
+  const dialog = index.slice(index.indexOf('<dialog id="outreachCampaignDialog">'), index.indexOf('<dialog id="outreachCampaignCriteriaDialog">'));
+  const recipientsAt = dialog.indexOf('id="outreachCampaignRecipients"');
+  const statusAt = dialog.indexOf('id="outreachCampaignStatus"');
+  const confirmationAt = dialog.indexOf('id="campaignSegmentConfirmRow"');
+  const approveAt = dialog.indexOf('id="approveOutreachCampaignBtn"');
+  assert.ok(statusAt > recipientsAt, "campaign status is below the recipient list");
+  assert.ok(confirmationAt > statusAt && confirmationAt < approveAt, "confirmation sits directly before approval in the bottom actions");
+  assert.match(index, /I reviewed the fallback message for \$\{unsegmentedCount\} unsegmented recipient/);
+  assert.match(index, /function refreshCampaignApprovalControl\(\)/);
+  assert.match(index, /approveButton\.disabled = campaign\?\.status !== "Review" \|\| \(requiresConfirmation && !confirmed\)/);
+  assert.match(index, /campaignSegmentConfirm"\)\.addEventListener\("change", refreshCampaignApprovalControl\)/);
+  const campaignStart = index.indexOf("async function openOutreachCampaign");
+  const campaignActions = index.slice(campaignStart, index.indexOf("function renderOutreach", campaignStart));
+  assert.doesNotMatch(campaignActions, /toast\(/, "campaign-dialog validation never renders behind its modal");
+  assert.match(campaignActions, /const isSameReviewSession = campaignSegmentConfirmation\.campaignId === campaign\.campaign_id/);
+  assert.match(campaignActions, /\$\("campaignSegmentConfirm"\)\.checked = requiresSegmentConfirmation && campaignSegmentConfirmation\.confirmed/);
+  assert.doesNotMatch(campaignActions, /\$\("campaignSegmentConfirm"\)\.checked = false/);
+  assert.match(campaignActions, /if \(campaign\?\.status !== "Review"\) campaignSegmentConfirmation = \{ campaignId:campaign\?\.campaign_id \|\| "", confirmed:false \}/);
+  assert.match(campaignActions, /setCampaignStatus\("Enter your staff name before approving\.", true\)/);
+  assert.match(campaignActions, /setCampaignStatus\("An exclusion reason is required\.", true\)/);
+  assert.match(campaignActions, /setCampaignStatus\("Refresh and re-open this campaign before sending/, "send validation stays in the dialog");
 });

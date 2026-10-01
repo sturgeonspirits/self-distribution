@@ -1,7 +1,9 @@
-// App version: 2026.10.01.4-WEB
+// App version: 2026.10.01.5-WEB
+import { gunzipSync } from "node:zlib";
 import { requireStaffSession } from "./auth.js";
+import { fetchWithDriveRelay, relayConfig } from "../lib/drive-relay.js";
 
-const APP_VERSION = "2026.10.01.4-WEB";
+const APP_VERSION = "2026.10.01.5-WEB";
 const STAFF_ACTIONS = new Set([
   "outreachDashboard",
   "outreachRecord",
@@ -9,9 +11,11 @@ const STAFF_ACTIONS = new Set([
   "outreachNewsletterContacts",
   "outreachCampaigns",
   "outreachCampaign",
+  "previewOutreachCampaign",
   "createOutreachCampaign",
   "updateOutreachCampaignRecipient",
   "setOutreachCampaignRecipientExclusion",
+  "setOutreachCampaignRecipientExclusions",
   "approveOutreachCampaign",
   "reopenOutreachCampaign",
   "reconcileCampaignSends",
@@ -19,6 +23,7 @@ const STAFF_ACTIONS = new Set([
   "sendOutreachCampaignBatch",
   "saveOutreachDraft",
   "updateOutreachOutcome",
+  "logOutreachContact",
   "updateOutreachBusiness",
   "updateOutreachPrograms",
   "upsertNewsletterContact",
@@ -57,27 +62,29 @@ const STAFF_ACTIONS = new Set([
   "updateStoreContacts",
 ]);
 
-// This site's function limit is verified above 17 seconds from successful
-// campaign sends. Do not reduce upstream timeouts below 20 seconds without
-// first checking the active Netlify function limit and a live campaign run.
+// The site allows roughly 26 seconds for this synchronous function. Keep these
+// requests about one second below that ceiling; writes and sends must remain
+// single-attempt because Apps Script may finish after the browser times out.
 const UPSTREAM_ATTEMPTS = 1;
 const UPSTREAM_WRITE_ATTEMPTS = 1;
-const UPSTREAM_TIMEOUT_MS = 20000;
+const UPSTREAM_TIMEOUT_MS = 25000;
 const SEND_UPSTREAM_ATTEMPTS = 1;
-// Sends, campaign creation, and campaign reads need the longer verified window.
-// Do not reduce this below 20 seconds without checking the active function limit.
+const READ_UPSTREAM_ATTEMPTS = 2;
+const READ_UPSTREAM_TIMEOUT_MS = 11500;
+// Sends use the established 24-second single-attempt window; never retry an
+// uncertain send because the original request may still be holding the lock.
 const SEND_UPSTREAM_TIMEOUT_MS = 24000;
 const SEND_ACTIONS = new Set(["sendOutreachEmail", "sendOutreachTestEmail", "sendOutreachCampaignBatch", "sendBadgerPaymentReminder", "createBadgerInvoice"]);
 const SNAPSHOT_ACTIONS = new Set(["createOutreachCampaign"]);
-const CAMPAIGN_READ_ACTIONS = new Set(["outreachCampaigns", "outreachCampaign"]);
-const ADMIN_ACTIONS = new Set(["initializeHardenedHub", "repairHubStructure", "reconcileIntegrations", "upsertProduct", "addSkuToStore"]);
+const CAMPAIGN_READ_ACTIONS = new Set(["outreachCampaigns", "outreachCampaign", "previewOutreachCampaign"]);
+const ADMIN_ACTIONS = new Set(["initializeHardenedHub", "repairHubStructure", "reconcileIntegrations", "recalculateOutreachMiles", "backfillEngagementDetails", "upsertProduct", "addSkuToStore"]);
 const ACTION_AREAS = new Map([
   ["outreachDashboard", "outreach"], ["outreachRecord", "outreach"], ["outreachSendStatus", "outreach"], ["outreachNewsletterContacts", "outreach"],
-  ["outreachCampaigns", "outreach"], ["outreachCampaign", "outreach"], ["createOutreachCampaign", "outreach"], ["updateOutreachCampaignRecipient", "outreach"], ["setOutreachCampaignRecipientExclusion", "outreach"],
+  ["outreachCampaigns", "outreach"], ["outreachCampaign", "outreach"], ["previewOutreachCampaign", "outreach"], ["createOutreachCampaign", "outreach"], ["updateOutreachCampaignRecipient", "outreach"], ["setOutreachCampaignRecipientExclusion", "outreach"], ["setOutreachCampaignRecipientExclusions", "outreach"],
   ["approveOutreachCampaign", "outreach"], ["reopenOutreachCampaign", "outreach"], ["reconcileCampaignSends", "outreach"], ["rebuildCampaignRecipients", "outreach"], ["sendOutreachCampaignBatch", "outreach"],
-  ["saveOutreachDraft", "outreach"], ["updateOutreachOutcome", "outreach"], ["updateOutreachBusiness", "outreach"],
+  ["saveOutreachDraft", "outreach"], ["updateOutreachOutcome", "outreach"], ["logOutreachContact", "outreach"], ["updateOutreachBusiness", "outreach"],
   ["updateOutreachPrograms", "outreach"], ["upsertNewsletterContact", "outreach"], ["createOutreachBusiness", "outreach"],
-  ["importOutreachBusinesses", "outreach"], ["sendOutreachEmail", "outreach"], ["sendOutreachTestEmail", "outreach"],
+  ["importOutreachBusinesses", "outreach"], ["recalculateOutreachMiles", "outreach"], ["backfillEngagementDetails", "outreach"], ["sendOutreachEmail", "outreach"], ["sendOutreachTestEmail", "outreach"],
   ["customerWorkQueue", "orders"], ["customerAccountIndex", "orders"], ["linkBadgerInvoice", "orders"], ["syncBadgerStatus", "orders"], ["markBadgerInvoicePayment", "orders"], ["recordBadgerCheck", "orders"], ["resolvePaymentReminder", "orders"], ["badgerReconcilePreview", "orders"], ["applyBadgerReconcile", "orders"], ["previewBadgerPaymentReminder", "orders"], ["sendBadgerPaymentReminder", "orders"], ["previewBadgerInvoice", "orders"], ["createBadgerInvoice", "orders"], ["adoptBadgerInvoice", "orders"], ["failBadgerInvoiceCreation", "orders"], ["updateCustomerApplication", "orders"], ["updateOnlineOrderRequest", "orders"],
   ["hubSystemStatus", "orders"], ["initializeHardenedHub", "orders"], ["repairHubStructure", "orders"], ["reconcileIntegrations", "orders"],
   ["initData", "inventory"], ["listSkus", "inventory"], ["addSkuToStore", "inventory"], ["upsertProduct", "inventory"],
@@ -108,24 +115,42 @@ async function fetchAppsScript(url, options = {}, policy = {}) {
       console.warn("Inventory API upstream attempt failed", { attempt, error:String(error) });
     }
   }
+  throw upstreamFailure(policy, lastError, attempts);
+}
+
+function upstreamFailure(policy, lastError, attempts) {
   if (policy.send) {
-    throw new Error(lastError?.name === "AbortError"
+    return new Error(lastError?.name === "AbortError"
       ? "Zoho did not confirm the send before the connection timed out. The outcome is unknown; check Activity Log and Zoho before retrying."
       : `The send connection failed before Zoho confirmation: ${String(lastError)}`);
   }
   if (policy.snapshot) {
-    throw new Error(lastError?.name === "AbortError"
+    return new Error(lastError?.name === "AbortError"
       ? "Campaign creation did not finish before the connection timed out. Do not create another campaign yet; refresh Campaigns after one minute to check whether the snapshot completed."
       : `Campaign creation connection failed: ${String(lastError)}`);
   }
   if (policy.campaignRead) {
-    throw new Error(lastError?.name === "AbortError"
+    return new Error(lastError?.name === "AbortError"
       ? "Campaign review took too long to load. The campaign remains unchanged; wait a minute and refresh Campaigns."
       : `Campaign review connection failed: ${String(lastError)}`);
   }
-  throw new Error(lastError?.name === "AbortError"
+  return new Error(lastError?.name === "AbortError"
     ? `Google Sheets took too long to answer after ${attempts} ${attempts === 1 ? "attempt" : "attempts"}.`
     : `Inventory API connection failed after ${attempts} ${attempts === 1 ? "attempt" : "attempts"}: ${String(lastError)}`);
+}
+
+// When the Drive relay is configured, send the request once and take whichever arrives
+// first: Google's normal response or the relay copy in Drive. Otherwise use the old path.
+const RELAY_DEADLINE_MS = 23500;
+async function fetchUpstream(url, options, policy = {}) {
+  const config = relayConfig();
+  if (!config.enabled) return fetchAppsScript(url, options, policy);
+  try {
+    return await fetchWithDriveRelay(url, options, { deadlineMs:RELAY_DEADLINE_MS, config });
+  } catch (error) {
+    console.warn("Inventory API relay request failed", { error:String(error) });
+    throw upstreamFailure(policy, error, 1);
+  }
 }
 
 function nonJsonUpstreamDetail(upstream, text) {
@@ -143,7 +168,8 @@ function nonJsonUpstreamDetail(upstream, text) {
 
 async function proxyResult(upstream, cors) {
   const text = await upstream.text();
-  try { JSON.parse(text); }
+  let parsed;
+  try { parsed = JSON.parse(text); }
   catch (error) {
     const detail = nonJsonUpstreamDetail(upstream, text);
     console.error("Inventory API returned non-JSON", {
@@ -152,6 +178,16 @@ async function proxyResult(upstream, cors) {
       detail,
     });
     return response(502, cors, { ok:false, code:"UPSTREAM_NON_JSON", error:detail });
+  }
+  if (parsed && typeof parsed.gzip_b64 === "string") {
+    try {
+      const unpacked = gunzipSync(Buffer.from(parsed.gzip_b64, "base64")).toString("utf8");
+      JSON.parse(unpacked);
+      return { statusCode:upstream.ok ? 200 : 502, headers:cors, body:unpacked };
+    } catch (error) {
+      console.error("Inventory API compressed payload could not be unpacked", { error:String(error) });
+      return response(502, cors, { ok:false, code:"UPSTREAM_BAD_COMPRESSION", error:"The server response could not be unpacked. Reload the page to try again." });
+    }
   }
   return { statusCode:upstream.ok ? 200 : 502, headers:cors, body:text };
 }
@@ -226,12 +262,15 @@ export async function handler(event) {
       const url = new URL(APPS_SCRIPT_URL);
       request.params.forEach((value, key) => url.searchParams.append(key, value));
       if (API_KEY) url.searchParams.set("api_key", API_KEY);
+      url.searchParams.set("gz", "1");
 
-      const resp = await fetchAppsScript(url.toString(), { method:"GET", headers:{ "Accept":"application/json" } }, CAMPAIGN_READ_ACTIONS.has(action) ? {
-        attempts:1,
-        timeoutMs:SEND_UPSTREAM_TIMEOUT_MS,
-        campaignRead:true,
-      } : {});
+      // Reads are safe to repeat. The server usually answers in 2-8 s, but Google's response
+      // handoff sometimes stalls; give each attempt 11.5 s and try twice inside the ~26 s limit.
+      const resp = await fetchUpstream(url.toString(), { method:"GET", headers:{ "Accept":"application/json" } }, {
+        attempts:READ_UPSTREAM_ATTEMPTS,
+        timeoutMs:READ_UPSTREAM_TIMEOUT_MS,
+        campaignRead:CAMPAIGN_READ_ACTIONS.has(action),
+      });
       return proxyResult(resp, cors);
     }
 
@@ -246,7 +285,7 @@ export async function handler(event) {
 
     const sendRequest = SEND_ACTIONS.has(action);
     const snapshotRequest = SNAPSHOT_ACTIONS.has(action);
-    const resp = await fetchAppsScript(postUrl, {
+    const resp = await fetchUpstream(postUrl, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify(body),
