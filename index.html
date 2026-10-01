@@ -1,10 +1,10 @@
 <!doctype html>
-<!-- App version: 2026.10.01.7-WEB -->
+<!-- App version: 2026.10.01.8-WEB -->
 <html>
 <head>
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover"/>
-  <meta name="app-version" content="2026.10.01.7-WEB" />
+  <meta name="app-version" content="2026.10.01.8-WEB" />
   <meta name="theme-color" content="#536f77" />
   <link rel="icon" href="/assets/distribution-hub-icon.svg" type="image/svg+xml" />
   <link rel="manifest" href="/site.webmanifest" />
@@ -710,6 +710,7 @@
     .checkLabel{display:flex;align-items:center;gap:8px;font-weight:700;cursor:pointer}
     label.workflowLine{margin:0;font-size:13px;font-weight:400;color:inherit;align-items:center;cursor:pointer}
     label.workflowLine > span{display:flex;align-items:center;gap:8px}
+    .passThroughDetails > summary{cursor:pointer;display:flex;align-items:center;gap:10px;flex-wrap:wrap;list-style-position:inside}
     .passThroughBar{display:flex;align-items:center;justify-content:space-between;gap:12px;padding:8px 0;border-bottom:1px solid var(--line)}
     .passThroughLine{align-items:center;flex-wrap:wrap}
     .passThroughLine .checkLabel{margin:0;font-weight:400;font-size:13px;color:inherit;flex:1 1 320px}
@@ -2565,7 +2566,7 @@
 
   <footer style="max-width:1200px;margin:18px auto 120px;padding:0 12px;text-align:center;color:#6b7280;font-size:12px;">
     Designed by <a href="https://scriptspirit.dev" target="_blank" rel="noopener noreferrer" style="color:#1d4ed8;text-decoration:none;font-weight:700;">Script Spirit</a>
-<span id="appVersionFooter"> • Version 2026.10.01.7-WEB</span>
+<span id="appVersionFooter"> • Version 2026.10.01.8-WEB</span>
   </footer>
 
 
@@ -2588,7 +2589,7 @@
   window.addEventListener("unhandledrejection", e => console.error("Unhandled promise rejection:", e.reason));
   window.addEventListener("error", e => console.error("Unhandled error:", e.error || e.message));
   const $ = (id) => document.getElementById(id);
-  const APP_VERSION = "2026.10.01.7-WEB";
+  const APP_VERSION = "2026.10.01.8-WEB";
   $("appVersionFooter").textContent = ` • Version ${APP_VERSION}`;
   function screenCacheKey(screen){ return `distribution_hub:${APP_VERSION}:${staffSession?.email || "unknown"}:${screen}`; }
   function readScreenCache(screen){
@@ -2662,6 +2663,8 @@
   let badgerAccountFilterTimer = null;
   const badgerAccountDrafts = new Map();
   let customerFilterText = "";
+  // The pass-through panel is long; keep it collapsed unless staff open it, so search results stay in view.
+  let badgerPassThroughOpen = false;
   let customerStatusFilter = ["accounts", "invoices"].includes(customerView) ? "all" : "active";
   let customerLoaded = false;
   let customerWorkQueueLoadRequest = 0;
@@ -3093,8 +3096,8 @@
       <div class="managerBody">
         <div class="sectionTitleRow"><div><strong>Badger payment operations</strong><div class="smallMuted">Badger status last synced ${escapeHtml(lastSync)}.${fresh ? "" : " Sync is stale or incomplete; payment reminders are blocked until it is current."}</div></div><div class="btnRow"><button id="syncBadgerNowBtn" type="button">Sync from Badger now</button><button id="previewBadgerReconcileBtn" type="button">Review reconciliation</button></div></div>
         ${fresh ? "" : '<div class="status" role="alert">Badger status is stale or unavailable. Sync from Badger before acting on invoice payment status.</div>'}
-        <section class="detailSection full" style="margin-top:10px">
-          <h4>Direct payments to run through Badger</h4>
+        <details class="detailSection full passThroughDetails" style="margin-top:10px" ${badgerPassThroughOpen ? "open" : ""}>
+          <summary><strong>Direct payments to run through Badger</strong> <span class="badge ${owed.length ? "amber" : "green"}">${Number(summary.owed_to_badger_invoices || 0)} invoice(s) • ${escapeHtml(badgerMoney(summary.owed_to_badger_cents))}</span> <span class="smallMuted">${badgerPassThroughOpen ? "" : "Open to record a check"}</span></summary>
           <p class="smallMuted">These customers paid you directly, so Badger still shows the invoice open. Send Badger one check covering any of them; Badger records the sale for DOR and passes the money back. This is accounting cleanup, not money you owe.</p>
           <p class="smallMuted"><strong>${escapeHtml(badgerMoney(summary.owed_to_badger_cents))}</strong> across ${Number(summary.owed_to_badger_invoices || 0)} invoice(s). Oldest: ${escapeHtml(oldest)}. If a customer has not actually paid you, use <em>Customer hasn't paid</em>; if an invoice was created in error, use <em>Void</em>.</p>
           ${owed.length ? `<div class="passThroughBar">
@@ -3106,7 +3109,7 @@
             <span class="passThroughActions"><strong>${escapeHtml(badgerAmountLabel(invoice.amount))}</strong><button class="actionBtn" type="button" data-badger-payment="not_paid" data-invoice-number="${escapeHtml(invoice.invoice_number || "")}"><span>Customer hasn't paid</span></button><button class="actionBtn" type="button" data-badger-invoice-action="void" data-invoice-number="${escapeHtml(invoice.invoice_number || "")}"><span>Void…</span></button></span>
           </div>`).join("")}</div>
           <div class="workflowEditGrid" style="margin-top:10px"><div class="full"><strong>Record the check you sent Badger for the selected invoices</strong></div><div><label for="badgerCheckNumber">Check #</label><input id="badgerCheckNumber" maxlength="120" /></div><div><label for="badgerCheckDate">Check date</label><input id="badgerCheckDate" type="date" value="${customerInputDate(new Date())}" /></div><div class="full"><button class="primary" id="recordBadgerCheckBtn" type="button" disabled>Select invoices to record a check</button></div></div>` : '<div class="smallMuted">Nothing to run through Badger right now.</div>'}
-        </section>
+        </details>
       </div>`;
     refreshIcons();
   }
@@ -7006,6 +7009,9 @@
       if (invoice) voidBadgerInvoice(invoice).catch(error => toast(error?.message || String(error)));
     }
   });
+  $("badgerOperationsPanel").addEventListener("toggle", event => {
+    if (event.target.classList?.contains("passThroughDetails")) badgerPassThroughOpen = event.target.open;
+  }, true);
   $("badgerOperationsPanel").addEventListener("change", event => {
     if (event.target.id === "badgerOwedSelectAll") document.querySelectorAll("#badgerOperationsPanel [data-badger-owed-invoice]").forEach(box => { box.checked = event.target.checked; });
     if (event.target.id === "badgerOwedSelectAll" || event.target.matches("[data-badger-owed-invoice]")) updateBadgerOwedSelection();
