@@ -1,8 +1,12 @@
 /*********************************
  * Inventory API (JSON) for Netlify
- * App version: 2026.10.01.3
+ * App version: 2026.10.01.4
  *
  * CHANGES IN THIS VERSION
+ * - Adds a Hub-side Void mark for Badger invoices created in error (Badger cannot delete them); voided invoices leave every ledger, balance, reminder, reconcile group and pass-through check, and can be restored.
+ * - Adds the "Customer hasn't paid" payment mark (clears Paid to Me and Submitted) for invoices the tracker wrongly shows as paid directly.
+ *
+ * CHANGES IN 2026.10.01.3
  * - Exposes the permanent Online-request-to-Badger-invoice link and current Badger payment state in both staff invoice and Online-request views.
  *
  * CHANGES IN 2026.09.24.56
@@ -236,7 +240,7 @@
  * - Use only in the staging inventory backend until testing is complete.
  *********************************/
 
-const APP_VERSION = "2026.10.01.3";
+const APP_VERSION = "2026.10.01.4";
 
 const SHEET_NAMES = {
   STORES: "Stores",
@@ -5582,6 +5586,9 @@ function apiMarkBadgerInvoicePayment_(p) {
     const tracker = badgerTrackerInvoice_(invoiceNumber);
     if (mode === "paid_badger") writeBadgerPaymentMark_(invoiceNumber, true, "N/A", "MARK_BADGER_PAID", actor);
     else if (mode === "paid_me") writeBadgerPaymentMark_(invoiceNumber, true, "No", "MARK_PAID_TO_STURGEON", actor);
+    // The tracker said the customer paid Sturgeon directly, but they have not. Clear Paid to Me
+    // (and the pass-through flag) so the invoice returns to Customer owes. Undo restores both.
+    else if (mode === "not_paid") writeBadgerPaymentMark_(invoiceNumber, false, "", "MARK_CUSTOMER_NOT_PAID", actor);
     else if (mode === "undo") {
       const log = getBadgerInvoicePaymentLogSheet_();
       const h = getHeaderMap_(log);
@@ -5616,8 +5623,10 @@ function apiRecordBadgerCheck_(p) {
 
 function badgerReconcileGroups_() {
   const marks = badgerPaymentMarks_(); const groups = { paid_not_marked:[], paid_check_no:[], unpaid_review:[], missing_tracker:[] };
+  const links = readBadgerInvoiceLinks_();
   readBadgerInvoices_().forEach(invoice => {
     const key = normalizeBadgerInvoiceNumber_(invoice.invoice_number); const mark = marks.get(key);
+    if (String(links.get(key)?.match_method || "").trim().toLowerCase() === "void") return;
     if (!mark) { groups.missing_tracker.push(invoice); return; }
     const submitted = String(mark.submitted || "").trim().toLowerCase();
     if (invoice.is_paid && !mark.paid_to_me) groups.paid_not_marked.push(invoice);
@@ -6211,6 +6220,9 @@ function readBadgerInvoiceLinks_() {
       account_id:accountId,
       customer_name:headers.badger_customer_name === undefined ? "" : String(values[headers.badger_customer_name] || ""),
       match_method:headers.match_method === undefined ? "Manual link" : String(values[headers.match_method] || "Manual link"),
+      notes:headers.notes === undefined ? "" : String(values[headers.notes] || ""),
+      linked_at:headers.linked_at === undefined ? "" : values[headers.linked_at],
+      linked_by:headers.linked_by === undefined ? "" : String(values[headers.linked_by] || ""),
     });
   });
   return byInvoice;
@@ -6244,8 +6256,10 @@ function apiLinkBadgerInvoice_(p) {
   const mode = String(p.mode || "link").trim().toLowerCase();
   const accountId = publicText_(p.account_id || "", 120, "Account ID");
   if (!invoiceKey) throw new Error("Enter a valid Badger invoice number.");
-  if (!["link", "ignore", "restore"].includes(mode)) throw new Error("Choose link, ignore, or restore for this invoice.");
+  if (!["link", "ignore", "void", "restore"].includes(mode)) throw new Error("Choose link, ignore, void, or restore for this invoice.");
   if (mode === "link" && !accountId) throw new Error("Choose an existing account before linking this invoice.");
+  const voidReason = mode === "void" ? publicText_(p.notes || "", 1000, "Void reason") : "";
+  if (mode === "void" && !voidReason) throw new Error("Enter why this invoice is void.");
   let invoice = cachedBadgerInvoices_(false).find(item => normalizeBadgerInvoiceNumber_(item.invoice_number) === invoiceKey);
   if (!invoice) {
     const refreshed = readBadgerInvoices_();
@@ -6261,7 +6275,8 @@ function apiLinkBadgerInvoice_(p) {
     const rows = sheet.getLastRow() < 2 ? [] : sheet.getRange(2, 1, sheet.getLastRow() - 1, sheet.getLastColumn()).getValues();
     const existingIndex = rows.findIndex(row => normalizeBadgerInvoiceNumber_(row[h.badger_invoice_number]) === invoiceKey);
     if (mode === "restore") {
-      if (existingIndex < 0 || String(rows[existingIndex][h.match_method] || "").trim().toLowerCase() !== "ignored") throw new Error("Only an ignored invoice can be restored.");
+      const restoredMethod = existingIndex < 0 ? "" : String(rows[existingIndex][h.match_method] || "").trim().toLowerCase();
+      if (!["ignored", "void"].includes(restoredMethod)) throw new Error("Only an ignored or voided invoice can be restored.");
       sheet.deleteRow(existingIndex + 2);
       appendAudit_("RESTORE_BADGER_INVOICE", "Invoice", String(invoice.invoice_number || invoiceNumber), "", authenticatedActor_(p, "Sturgeon Distribution Hub"), BADGER_TRACKER_SPREADSHEET_ID, BADGER_INVOICE_LINKS_SHEET_NAME, "Restored", invoice.customer_name || "Badger customer");
       bumpReadCacheVersion_();
@@ -6277,13 +6292,17 @@ function apiLinkBadgerInvoice_(p) {
     set("badger_invoice_number", invoice.invoice_number || invoiceNumber);
     set("account_id", mode === "link" ? accountId : "");
     set("badger_customer_name", invoice.customer_name || "");
-    set("match_method", mode === "link" ? "Manual link" : "Ignored");
+    set("match_method", mode === "link" ? "Manual link" : mode === "void" ? "Void" : "Ignored");
     set("linked_at", new Date());
     set("linked_by", authenticatedActor_(p, "Sturgeon Distribution Hub"));
-    set("notes", publicText_(p.notes || "", 1000, "Invoice-link notes"));
+    set("notes", mode === "void" ? voidReason : publicText_(p.notes || "", 1000, "Invoice-link notes"));
     set("app_version", APP_VERSION);
     sheet.getRange(existingIndex >= 0 ? existingIndex + 2 : sheet.getLastRow() + 1, 1, 1, values.length).setValues([values]);
     bumpReadCacheVersion_();
+    if (mode === "void") {
+      appendAudit_("VOID_BADGER_INVOICE", "Invoice", String(invoice.invoice_number || invoiceNumber), "", authenticatedActor_(p, "Sturgeon Distribution Hub"), BADGER_TRACKER_SPREADSHEET_ID, BADGER_INVOICE_LINKS_SHEET_NAME, "Voided", voidReason);
+      return { message:`Invoice ${invoice.invoice_number || invoiceNumber} marked void in the Hub. It no longer counts toward balances, reminders, or pass-through checks.`, invoice_number:String(invoice.invoice_number || invoiceNumber) };
+    }
     const ignored = mode === "ignore";
     const learned = !ignored && upsertBadgerCustomerAlias_(invoice.customer_name || "", accountId, "Staff invoice link", authenticatedActor_(p, "Sturgeon Distribution Hub"));
     appendAudit_(ignored ? "IGNORE_BADGER_INVOICE" : "LINK_BADGER_INVOICE", "Invoice", String(invoice.invoice_number || invoiceNumber), ignored ? "" : accountId, authenticatedActor_(p, "Sturgeon Distribution Hub"), BADGER_TRACKER_SPREADSHEET_ID, BADGER_INVOICE_LINKS_SHEET_NAME, ignored ? "Ignored" : "Linked", ignored ? (invoice.customer_name || "Badger customer") : `${invoice.customer_name || "Badger customer"} → ${account.business}`);
@@ -6371,11 +6390,19 @@ function buildCustomerAccounts_(applications, orders, bypassBadgerCache) {
     .map(([invoiceKey]) => invoiceKey));
   const unmatchedBadgerInvoices = [];
   const ignoredBadgerInvoices = [];
+  const voidedBadgerInvoices = [];
   const ignoredInvoiceKeys = new Set();
   badgerInvoices.forEach(invoice => {
     const invoiceKey = normalizeBadgerInvoiceNumber_(invoice.invoice_number);
     const explicit = explicitInvoiceLinks.get(invoiceKey);
     const orderedAccounts = orderAccountsByInvoice.get(invoiceKey) || new Set();
+    // Badger cannot delete an invoice created in error, so staff void it in the Hub. A voided
+    // invoice is kept out of every ledger, balance, reminder, and pass-through check.
+    if (String(explicit?.match_method || "").trim().toLowerCase() === "void") {
+      ignoredInvoiceKeys.add(invoiceKey);
+      voidedBadgerInvoices.push(Object.assign({}, invoice, { match_method:"Void", void_reason:explicit.notes || "", voided_by:explicit.linked_by || "", voided_at:explicit.linked_at || "" }));
+      return;
+    }
     if (String(explicit?.match_method || "").trim().toLowerCase() === "ignored") {
       ignoredInvoiceKeys.add(invoiceKey);
       ignoredBadgerInvoices.push(Object.assign({}, invoice, { match_method:"Ignored" }));
@@ -6575,6 +6602,7 @@ function buildCustomerAccounts_(applications, orders, bypassBadgerCache) {
     accounts:accounts.sort((a, b) => String(a.business_name || "").localeCompare(String(b.business_name || ""))),
     unmatched_badger_invoices:unmatchedBadgerInvoices.sort((a, b) => recordTimestamp_(b.invoice_date) - recordTimestamp_(a.invoice_date)),
     ignored_badger_invoices:ignoredBadgerInvoices.sort((a, b) => recordTimestamp_(b.invoice_date) - recordTimestamp_(a.invoice_date)),
+    voided_badger_invoices:voidedBadgerInvoices.sort((a, b) => recordTimestamp_(b.invoice_date) - recordTimestamp_(a.invoice_date)),
     badger_sync:{ last_good_sync_at:badgerSync.last_good_sync_at, is_fresh:badgerStatusIsFresh },
   };
 }
@@ -6659,6 +6687,7 @@ function apiGetCustomerWorkQueue_(p) {
     accounts:accounts,
     unmatched_badger_invoices:ledger.unmatched_badger_invoices,
     ignored_badger_invoices:ledger.ignored_badger_invoices,
+    voided_badger_invoices:ledger.voided_badger_invoices,
     summary:{
       new_applications:applications.filter(record => record.workflow_status === "New").length,
       active_applications:applications.filter(record => activeApplicationStatuses.includes(record.workflow_status)).length,
@@ -6669,6 +6698,7 @@ function apiGetCustomerWorkQueue_(p) {
       customer_accounts:accounts.length,
       unmatched_badger_invoices:ledger.unmatched_badger_invoices.length,
       ignored_badger_invoices:ledger.ignored_badger_invoices.length,
+      voided_badger_invoices:ledger.voided_badger_invoices.length,
       // Legacy unpaid_* summary names now intentionally mean reminder-eligible,
       // not merely open, so callers cannot accidentally treat a new invoice as due.
       unpaid_accounts:accounts.filter(record => (record.payment_reminder_eligible_invoices || []).length > 0).length,

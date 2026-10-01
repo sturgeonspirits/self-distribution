@@ -1184,6 +1184,21 @@ test("customer billing workflow keeps real Badger invoices distinct from Online 
   assert.equal(onlineRequests().length, 1, "Online requests must read the orders payload, not a nonexistent view key");
   assert.match(index, /input\[type="checkbox"\],input\[type="radio"\]\{[\s\S]*?width:18px;[\s\S]*?min-height:0;/, "checkboxes are not stretched by the global input sizing");
   assert.match(index, /\.checkLabel\{display:flex/);
+  assert.match(backend, /else if \(mode === "not_paid"\) writeBadgerPaymentMark_\(invoiceNumber, false, "", "MARK_CUSTOMER_NOT_PAID", actor\)/);
+  assert.match(backend, /\["link", "ignore", "void", "restore"\]\.includes\(mode\)/);
+  assert.match(backend, /if \(mode === "void" && !voidReason\) throw new Error\("Enter why this invoice is void\."\)/);
+  assert.match(backend, /voided_badger_invoices:ledger\.voided_badger_invoices/);
+  assert.match(backend, /if \(String\(links\.get\(key\)\?\.match_method \|\| ""\)\.trim\(\)\.toLowerCase\(\) === "void"\) return;/, "voided invoices never enter reconcile groups");
+  assert.match(index, /Direct payments to run through Badger/);
+  assert.match(index, /id="badgerOwedSelectAll"/);
+  assert.match(index, /function updateBadgerOwedSelection\(\)/);
+  assert.match(index, /mode:"void", notes:reason/);
+  assert.match(index, /data-badger-payment="not_paid"/);
+  const voidedRecords = vm.runInNewContext(`${invoiceRecordsSource}; customerInvoiceRecords`, {
+    customerData:{ accounts:[], unmatchedBadgerInvoices:[], ignoredBadgerInvoices:[], voidedBadgerInvoices:[{ invoice_number:"SS0099", invoice_date:"2026-09-01", customer_name:"Error", amount:"10", void_reason:"Created in error" }] },
+    Set, Date,
+  })();
+  assert.equal(voidedRecords[0].badger_match_status, "Void");
 });
 
 test("campaign loading backfills legacy cities once and does not label absent legacy miles", async () => {

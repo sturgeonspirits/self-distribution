@@ -1,10 +1,10 @@
 <!doctype html>
-<!-- App version: 2026.10.01.6-WEB -->
+<!-- App version: 2026.10.01.7-WEB -->
 <html>
 <head>
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover"/>
-  <meta name="app-version" content="2026.10.01.6-WEB" />
+  <meta name="app-version" content="2026.10.01.7-WEB" />
   <meta name="theme-color" content="#536f77" />
   <link rel="icon" href="/assets/distribution-hub-icon.svg" type="image/svg+xml" />
   <link rel="manifest" href="/site.webmanifest" />
@@ -710,6 +710,12 @@
     .checkLabel{display:flex;align-items:center;gap:8px;font-weight:700;cursor:pointer}
     label.workflowLine{margin:0;font-size:13px;font-weight:400;color:inherit;align-items:center;cursor:pointer}
     label.workflowLine > span{display:flex;align-items:center;gap:8px}
+    .passThroughBar{display:flex;align-items:center;justify-content:space-between;gap:12px;padding:8px 0;border-bottom:1px solid var(--line)}
+    .passThroughLine{align-items:center;flex-wrap:wrap}
+    .passThroughLine .checkLabel{margin:0;font-weight:400;font-size:13px;color:inherit;flex:1 1 320px}
+    .passThroughActions{display:flex;align-items:center;gap:8px;flex-wrap:wrap;justify-content:flex-end}
+    .passThroughActions strong{min-width:80px;text-align:right}
+    .passThroughActions .actionBtn{min-height:34px;padding:4px 10px;font-size:12px}
     label.actionBtn{margin:0;display:inline-flex;align-items:center;justify-content:center;gap:8px;font-size:inherit;cursor:pointer}
 
     button{
@@ -2155,7 +2161,7 @@
         <div class="outreachMetric"><strong id="newOrdersCount">0</strong><span>New orders</span></div>
         <div class="outreachMetric"><strong id="invoiceNeededCount">0</strong><span>Need invoice work</span></div>
         <div class="outreachMetric"><strong id="paymentDueCount">0</strong><span>Payment due</span></div>
-        <div class="outreachMetric"><strong id="owedToBadgerCount">$0.00</strong><span>Owed to Badger</span></div>
+        <div class="outreachMetric"><strong id="owedToBadgerCount">$0.00</strong><span>To run through Badger</span></div>
         <div class="outreachMetric"><strong id="unmatchedBadgerInvoicesCount">0</strong><span>Badger invoices to match</span></div>
       </div>
 
@@ -2559,7 +2565,7 @@
 
   <footer style="max-width:1200px;margin:18px auto 120px;padding:0 12px;text-align:center;color:#6b7280;font-size:12px;">
     Designed by <a href="https://scriptspirit.dev" target="_blank" rel="noopener noreferrer" style="color:#1d4ed8;text-decoration:none;font-weight:700;">Script Spirit</a>
-<span id="appVersionFooter"> • Version 2026.10.01.6-WEB</span>
+<span id="appVersionFooter"> • Version 2026.10.01.7-WEB</span>
   </footer>
 
 
@@ -2582,7 +2588,7 @@
   window.addEventListener("unhandledrejection", e => console.error("Unhandled promise rejection:", e.reason));
   window.addEventListener("error", e => console.error("Unhandled error:", e.error || e.message));
   const $ = (id) => document.getElementById(id);
-  const APP_VERSION = "2026.10.01.6-WEB";
+  const APP_VERSION = "2026.10.01.7-WEB";
   $("appVersionFooter").textContent = ` • Version ${APP_VERSION}`;
   function screenCacheKey(screen){ return `distribution_hub:${APP_VERSION}:${staffSession?.email || "unknown"}:${screen}`; }
   function readScreenCache(screen){
@@ -2983,7 +2989,11 @@
       account_id:"", business_name:invoice.customer_name || "Ignored Badger customer", contact_name:"", email:"",
       invoice_status:"Ignored", payment_status:"Ignored", badger_match_status:"Ignored",
     }));
-    return matchedInvoices.concat(unmatchedInvoices, ignoredInvoices).filter(invoice => {
+    const voidedInvoices = (customerData.voidedBadgerInvoices || []).map(invoice => Object.assign({}, invoice, {
+      account_id:"", business_name:invoice.customer_name || "Voided Badger invoice", contact_name:"", email:"",
+      invoice_status:"Void", payment_status:"Void", badger_match_status:"Void",
+    }));
+    return matchedInvoices.concat(unmatchedInvoices, ignoredInvoices, voidedInvoices).filter(invoice => {
       const key = String(invoice.invoice_number || invoice.badger_id || "");
       if (!key || seen.has(key)) return false;
       seen.add(key); return true;
@@ -2993,14 +3003,14 @@
   function customerStatusOptions(){
     if (customerView === "invoices") {
       const invoices = customerInvoiceRecords();
-      const statusFor = invoice => ["Needs account match", "Ignored"].includes(invoice.badger_match_status) ? invoice.badger_match_status : String(invoice.payment_status || invoice.invoice_status || "Unknown");
+      const statusFor = invoice => ["Needs account match", "Ignored", "Void"].includes(invoice.badger_match_status) ? invoice.badger_match_status : String(invoice.payment_status || invoice.invoice_status || "Unknown");
       const countFor = value => invoices.filter(invoice => value === "all"
-        ? statusFor(invoice) !== "Ignored"
+        ? !["Ignored", "Void"].includes(statusFor(invoice))
         : value === "reminder_eligible" ? invoice.reminder_eligible === true : statusFor(invoice) === value).length;
       return [
-      { value:"all", label:"All invoices" }, { value:"Customer owes", label:"Customer owes" }, { value:"Owed to Badger", label:"Owed to Badger" },
-      { value:"Check sent", label:"Check sent" }, { value:"Awaiting Badger", label:"Awaiting Badger" }, { value:"Closed", label:"Closed" }, { value:"Unknown", label:"Unknown" },
-      { value:"reminder_eligible", label:"Reminder eligible" }, { value:"Needs account match", label:"Needs account match" }, { value:"Ignored", label:"Ignored" },
+      { value:"all", label:"All invoices" }, { value:"Customer owes", label:"Customer owes" }, { value:"Owed to Badger", label:badgerStatusLabel("Owed to Badger") },
+      { value:"Check sent", label:badgerStatusLabel("Check sent") }, { value:"Awaiting Badger", label:"Awaiting Badger" }, { value:"Closed", label:"Closed" }, { value:"Unknown", label:"Unknown" },
+      { value:"reminder_eligible", label:"Reminder eligible" }, { value:"Needs account match", label:"Needs account match" }, { value:"Ignored", label:"Ignored" }, { value:"Void", label:"Voided" },
       ].map(option => Object.assign(option, { label:`${option.label} (${countFor(option.value)})` }));
     }
     const statuses = customerView === "online_requests" ? ORDER_STATUSES : customerView === "applications" ? APPLICATION_STATUSES : [];
@@ -3026,9 +3036,9 @@
     const query = customerFilterText.trim().toLowerCase();
     const filtered = records.filter(record => {
       const operational = Array.isArray(record.operational_statuses) ? record.operational_statuses : [];
-      const invoiceStatus = ["Needs account match", "Ignored"].includes(record.badger_match_status) ? record.badger_match_status : String(record.payment_status || record.invoice_status || "Unknown");
+      const invoiceStatus = ["Needs account match", "Ignored", "Void"].includes(record.badger_match_status) ? record.badger_match_status : String(record.payment_status || record.invoice_status || "Unknown");
       const statusMatch = customerView === "invoices"
-        ? (customerStatusFilter === "all" ? invoiceStatus !== "Ignored" : customerStatusFilter === "reminder_eligible" ? record.reminder_eligible === true : customerStatusFilter === invoiceStatus)
+        ? (customerStatusFilter === "all" ? !["Ignored", "Void"].includes(invoiceStatus) : customerStatusFilter === "reminder_eligible" ? record.reminder_eligible === true : customerStatusFilter === invoiceStatus)
         : customerStatusFilter === "all"
         || (customerStatusFilter === "active"
           ? (customerView === "accounts" ? (operational.some(status => !["Delivered", "Inventory-counted"].includes(status)) || Number(record.invoices?.length || 0) > 0) : activeStatuses.includes(record.workflow_status))
@@ -3051,6 +3061,13 @@
     if (["declined", "cancelled", "issue"].includes(value)) return "red";
     if (["new"].includes(value)) return "blue";
     return "amber";
+  }
+
+  // Internal status values stay stable for the server and tests; these are the words staff see.
+  // "Owed to Badger" is a pass-through, not a debt: the customer paid Sturgeon directly, so the
+  // payment has to be run through Badger (for DOR reporting) and Badger passes the money back.
+  function badgerStatusLabel(status){
+    return ({ "Owed to Badger":"Paid directly – run through Badger", "Check sent":"Run through Badger", "Void":"Void" })[status] || status;
   }
 
   function badgerAmountLabel(value){
@@ -3076,10 +3093,19 @@
       <div class="managerBody">
         <div class="sectionTitleRow"><div><strong>Badger payment operations</strong><div class="smallMuted">Badger status last synced ${escapeHtml(lastSync)}.${fresh ? "" : " Sync is stale or incomplete; payment reminders are blocked until it is current."}</div></div><div class="btnRow"><button id="syncBadgerNowBtn" type="button">Sync from Badger now</button><button id="previewBadgerReconcileBtn" type="button">Review reconciliation</button></div></div>
         ${fresh ? "" : '<div class="status" role="alert">Badger status is stale or unavailable. Sync from Badger before acting on invoice payment status.</div>'}
-        <section class="detailSection full" style="margin-top:10px"><h4>Owed to Badger</h4>
-          <p class="smallMuted">${escapeHtml(badgerMoney(summary.owed_to_badger_cents))} across ${Number(summary.owed_to_badger_invoices || 0)} invoice(s). Oldest: ${escapeHtml(oldest)}.</p>
-          ${owed.length ? `<div class="workflowLineList">${owed.map(invoice => `<label class="workflowLine"><span><input type="checkbox" data-badger-owed-invoice value="${escapeHtml(invoice.invoice_number || "")}" /> Invoice ${escapeHtml(invoice.invoice_number || "recorded")} • ${escapeHtml(invoice.business_name || "Customer")} • ${escapeHtml(formatOutreachDate(invoice.invoice_date) || "Date not recorded")}</span><strong>${escapeHtml(badgerAmountLabel(invoice.amount))}</strong></label>`).join("")}</div>
-          <div class="workflowEditGrid" style="margin-top:10px"><div><label for="badgerCheckNumber">Check #</label><input id="badgerCheckNumber" maxlength="120" /></div><div><label for="badgerCheckDate">Check date</label><input id="badgerCheckDate" type="date" value="${customerInputDate(new Date())}" /></div><div class="full"><button class="primary" id="recordBadgerCheckBtn" type="button">Record check to Badger</button></div></div>` : '<div class="smallMuted">No matched invoices are currently owed to Badger.</div>'}
+        <section class="detailSection full" style="margin-top:10px">
+          <h4>Direct payments to run through Badger</h4>
+          <p class="smallMuted">These customers paid you directly, so Badger still shows the invoice open. Send Badger one check covering any of them; Badger records the sale for DOR and passes the money back. This is accounting cleanup, not money you owe.</p>
+          <p class="smallMuted"><strong>${escapeHtml(badgerMoney(summary.owed_to_badger_cents))}</strong> across ${Number(summary.owed_to_badger_invoices || 0)} invoice(s). Oldest: ${escapeHtml(oldest)}. If a customer has not actually paid you, use <em>Customer hasn't paid</em>; if an invoice was created in error, use <em>Void</em>.</p>
+          ${owed.length ? `<div class="passThroughBar">
+            <label class="checkLabel"><input type="checkbox" id="badgerOwedSelectAll" /><span>Select all</span></label>
+            <span id="badgerOwedSelection" class="smallMuted">None selected</span>
+          </div>
+          <div class="workflowLineList">${owed.map(invoice => `<div class="workflowLine passThroughLine">
+            <label class="checkLabel"><input type="checkbox" data-badger-owed-invoice value="${escapeHtml(invoice.invoice_number || "")}" data-amount-cents="${Number(invoice.amount_cents || 0)}" /><span>${escapeHtml(invoice.invoice_number || "Invoice")} • ${escapeHtml(invoice.business_name || "Customer")} • ${escapeHtml(formatOutreachDate(invoice.invoice_date) || "Date not recorded")}</span></label>
+            <span class="passThroughActions"><strong>${escapeHtml(badgerAmountLabel(invoice.amount))}</strong><button class="actionBtn" type="button" data-badger-payment="not_paid" data-invoice-number="${escapeHtml(invoice.invoice_number || "")}"><span>Customer hasn't paid</span></button><button class="actionBtn" type="button" data-badger-invoice-action="void" data-invoice-number="${escapeHtml(invoice.invoice_number || "")}"><span>Void…</span></button></span>
+          </div>`).join("")}</div>
+          <div class="workflowEditGrid" style="margin-top:10px"><div class="full"><strong>Record the check you sent Badger for the selected invoices</strong></div><div><label for="badgerCheckNumber">Check #</label><input id="badgerCheckNumber" maxlength="120" /></div><div><label for="badgerCheckDate">Check date</label><input id="badgerCheckDate" type="date" value="${customerInputDate(new Date())}" /></div><div class="full"><button class="primary" id="recordBadgerCheckBtn" type="button" disabled>Select invoices to record a check</button></div></div>` : '<div class="smallMuted">Nothing to run through Badger right now.</div>'}
         </section>
       </div>`;
     refreshIcons();
@@ -3137,9 +3163,9 @@
         : isOrder
         ? `${Number(record.line_count || record.lines?.length || 0)} product${Number(record.line_count || record.lines?.length || 0) === 1 ? "" : "s"} • ${Number(record.bottle_equivalent || 0)} bottle equivalent`
         : [record.business_type, record.delivery_city, record.delivery_state].filter(Boolean).join(" • ");
-      const displayStatus = isAccount ? record.primary_status : isInvoice ? (["Needs account match", "Ignored"].includes(record.badger_match_status) ? record.badger_match_status : (record.payment_status || record.invoice_status || "Unknown")) : record.workflow_status;
+      const displayStatus = isAccount ? record.primary_status : isInvoice ? (["Needs account match", "Ignored", "Void"].includes(record.badger_match_status) ? record.badger_match_status : (record.payment_status || record.invoice_status || "Unknown")) : record.workflow_status;
       const invoicePaymentActions = isInvoice && record.account_id
-        ? `${displayStatus === "Customer owes" ? `<button class="actionBtn" type="button" data-badger-payment="paid_badger" data-invoice-number="${escapeHtml(record.invoice_number || "")}"><span>Paid Badger</span></button><button class="actionBtn" type="button" data-badger-payment="paid_me" data-invoice-number="${escapeHtml(record.invoice_number || "")}"><span>Paid us</span></button>` : ""}${displayStatus === "Owed to Badger" ? `<label class="actionBtn"><input type="checkbox" data-badger-owed-invoice value="${escapeHtml(record.invoice_number || "")}" /><span>Include in check</span></label>` : ""}${record.has_payment_mark ? `<button class="actionBtn" type="button" data-badger-payment="undo" data-invoice-number="${escapeHtml(record.invoice_number || "")}"><span>Undo payment mark</span></button>` : ""}`
+        ? `${displayStatus === "Customer owes" ? `<button class="actionBtn" type="button" data-badger-payment="paid_badger" data-invoice-number="${escapeHtml(record.invoice_number || "")}"><span>Paid Badger</span></button><button class="actionBtn" type="button" data-badger-payment="paid_me" data-invoice-number="${escapeHtml(record.invoice_number || "")}"><span>Paid us</span></button>` : ""}${displayStatus === "Owed to Badger" ? `<button class="actionBtn" type="button" data-badger-payment="not_paid" data-invoice-number="${escapeHtml(record.invoice_number || "")}"><span>Customer hasn't paid</span></button>` : ""}${record.has_payment_mark ? `<button class="actionBtn" type="button" data-badger-payment="undo" data-invoice-number="${escapeHtml(record.invoice_number || "")}"><span>Undo payment mark</span></button>` : ""}`
         : "";
       return `
         <article class="workflowCard ${displayStatus === "New" ? "newRecord" : ""}" data-customer-kind="${isAccount || (isInvoice && record.account_id) ? "account" : isOrder ? "order" : isInvoice ? "unmatched-invoice" : "application"}" data-customer-id="${escapeHtml(id)}">
@@ -3148,7 +3174,7 @@
               <h3>${escapeHtml(record.business_name || record.legal_business_name || "Unnamed business")}</h3>
               <p>${escapeHtml([contact, email].filter(Boolean).join(" • ") || "Contact not recorded")}</p>
             </div>
-            <span class="badge ${customerStatusBadge(displayStatus)}">${escapeHtml(displayStatus || "Account active")}</span>
+            <span class="badge ${customerStatusBadge(displayStatus)}">${escapeHtml(badgerStatusLabel(displayStatus) || "Account active")}</span>
           </div>
           <div class="workflowMeta">
             ${!isAccount && !isInvoice ? `<span class="badge">${escapeHtml(formatOutreachDate(record.submitted_at) || "No date")}</span>` : ""}
@@ -3161,12 +3187,14 @@
           </div>
           <p>${escapeHtml(orderSummary || "Details available")}</p>
           <div class="workflowActions">
-            ${isInvoice && record.badger_match_status === "Ignored"
-              ? `<button class="actionBtn" type="button" data-badger-invoice-action="restore" data-invoice-number="${escapeHtml(record.invoice_number || "")}"><i data-lucide="rotate-ccw"></i><span>Restore to matching</span></button>`
+            ${isInvoice && ["Ignored", "Void"].includes(record.badger_match_status)
+              ? `<button class="actionBtn" type="button" data-badger-invoice-action="restore" data-invoice-number="${escapeHtml(record.invoice_number || "")}"><i data-lucide="rotate-ccw"></i><span>${record.badger_match_status === "Void" ? "Restore (not void)" : "Restore to matching"}</span></button>`
               : isInvoice && !record.account_id
               ? `<button class="actionBtn primary" type="button" data-badger-invoice-action="link" data-invoice-number="${escapeHtml(record.invoice_number || "")}"><i data-lucide="link"></i><span>Link to account</span></button>`
               : `<button class="actionBtn primary" type="button" data-customer-action="open"><i data-lucide="clipboard-check"></i><span>${isAccount || isInvoice ? "Account history" : "Review"}</span></button>`}
             ${invoicePaymentActions}
+            ${isInvoice && !["Ignored", "Void", "Closed"].includes(displayStatus) ? `<button class="actionBtn" type="button" data-badger-invoice-action="void" data-invoice-number="${escapeHtml(record.invoice_number || "")}"><span>Void…</span></button>` : ""}
+            ${isInvoice && record.badger_match_status === "Void" && record.void_reason ? `<span class="smallMuted">Void: ${escapeHtml(record.void_reason)}</span>` : ""}
             ${email ? `<a class="actionBtn" href="mailto:${escapeHtml(email)}"><i data-lucide="mail"></i><span>Email</span></a>` : ""}
           </div>
         </article>`;
@@ -3195,7 +3223,7 @@
     const requestId = ++customerWorkQueueLoadRequest;
     const cached = !customerLoaded && readScreenCache("customer-work");
     if (cached) {
-      customerData = { accounts:cached.payload.accounts || [], applications:cached.payload.applications || [], orders:cached.payload.orders || [], unmatchedBadgerInvoices:cached.payload.unmatched_badger_invoices || [], ignoredBadgerInvoices:cached.payload.ignored_badger_invoices || [], summary:cached.payload.summary || {} };
+      customerData = { accounts:cached.payload.accounts || [], applications:cached.payload.applications || [], orders:cached.payload.orders || [], unmatchedBadgerInvoices:cached.payload.unmatched_badger_invoices || [], ignoredBadgerInvoices:cached.payload.ignored_badger_invoices || [], voidedBadgerInvoices:cached.payload.voided_badger_invoices || [], summary:cached.payload.summary || {} };
       customerLoaded = true; showCustomerAccessState(); renderCustomerWorkflow();
       $("customerWorkflowStatus").textContent = `Updating… showing data from ${cachedTimeLabel(cached)}.`;
     } else $("customerWorkflowStatus").textContent = "Loading customer work...";
@@ -3215,6 +3243,7 @@
       orders:result.orders || [],
       unmatchedBadgerInvoices:result.unmatched_badger_invoices || [],
       ignoredBadgerInvoices:result.ignored_badger_invoices || [],
+      voidedBadgerInvoices:result.voided_badger_invoices || [],
       summary:result.summary || {},
     };
     customerLoaded = true;
@@ -3355,11 +3384,23 @@
   async function restoreIgnoredBadgerInvoice(invoice){
     const staffName = $("customerStaffName").value.trim();
     if (!invoice?.invoice_number || !staffName) return toast("Enter your staff name before restoring this invoice.");
-    if (!window.confirm(`Restore Badger invoice ${invoice.invoice_number} to account matching?`)) return;
+    if (!window.confirm(invoice.badger_match_status === "Void" ? `Remove the Void mark from Badger invoice ${invoice.invoice_number}? It will count toward balances again.` : `Restore Badger invoice ${invoice.invoice_number} to account matching?`)) return;
     const result = await staffApiPost({ action:"linkBadgerInvoice", invoice_number:invoice.invoice_number, mode:"restore", staff_name:staffName });
     if (!result.ok) throw new Error(result.error || "Badger invoice could not be restored.");
     await loadCustomerWorkQueue();
     toast(result.message || "Badger invoice restored to matching");
+  }
+
+  // Badger will not delete an invoice created in error, so the Hub keeps its own Void mark.
+  async function voidBadgerInvoice(invoice){
+    const staffName = $("customerStaffName").value.trim();
+    if (!invoice?.invoice_number || !staffName) return toast("Enter your staff name before voiding an invoice.");
+    const reason = (window.prompt(`Void Badger invoice ${invoice.invoice_number} (${invoice.business_name || invoice.customer_name || "customer"}, ${badgerAmountLabel(invoice.amount)})?\n\nIt stays on Badger's site but the Hub will stop counting it. Why is it void?`, "Created in error") || "").trim();
+    if (!reason) return;
+    const result = await staffApiPost({ action:"linkBadgerInvoice", invoice_number:invoice.invoice_number, mode:"void", notes:reason, staff_name:staffName });
+    if (!result.ok) throw new Error(result.error || "Invoice could not be voided.");
+    await loadCustomerWorkQueue();
+    toast(result.message || "Invoice voided");
   }
 
   function selectOptionsHtml(options, selected){
@@ -3563,6 +3604,7 @@
     const staffName = $("customerStaffName").value.trim();
     if (!staffName) return toast("Enter your staff name before changing a payment mark.");
     const dialogAccountId = button.closest("#customerRecordDialog") ? selectedCustomerRecord?.account_id : "";
+    if (button.dataset.badgerPayment === "not_paid" && !window.confirm(`Invoice ${button.dataset.invoiceNumber}: the customer has not paid yet? This clears "Paid to Me" in the tracker and moves it to Customer owes. You can undo it.`)) return;
     button.disabled = true;
     try {
       const result = await staffApiPost({ action:"markBadgerInvoicePayment", invoice_number:button.dataset.invoiceNumber, mode:button.dataset.badgerPayment, staff_name:staffName });
@@ -3686,6 +3728,21 @@
     const refreshed = customerData.orders.find(item => item.request_id === record.request_id); if (refreshed) openCustomerRecord(refreshed);
   }
 
+  function updateBadgerOwedSelection(){
+    const boxes = Array.from(document.querySelectorAll("#badgerOperationsPanel [data-badger-owed-invoice]"));
+    const chosen = boxes.filter(box => box.checked);
+    const cents = chosen.reduce((total, box) => total + Number(box.dataset.amountCents || 0), 0);
+    const label = $("badgerOwedSelection");
+    if (label) label.textContent = chosen.length ? `${chosen.length} selected • ${badgerMoney(cents)}` : "None selected";
+    const all = $("badgerOwedSelectAll");
+    if (all) { all.checked = boxes.length > 0 && chosen.length === boxes.length; all.indeterminate = chosen.length > 0 && chosen.length < boxes.length; }
+    const button = $("recordBadgerCheckBtn");
+    if (button) {
+      button.disabled = !chosen.length;
+      button.textContent = chosen.length ? `Record check for ${chosen.length} invoice${chosen.length === 1 ? "" : "s"} (${badgerMoney(cents)})` : "Select invoices to record a check";
+    }
+  }
+
   async function recordBadgerCheck(button){
     const staffName = $("customerStaffName").value.trim();
     const invoices = [...new Set(Array.from(document.querySelectorAll("[data-badger-owed-invoice]:checked")).map(input => input.value).filter(Boolean))];
@@ -3693,6 +3750,7 @@
     const checkDate = $("badgerCheckDate")?.value;
     if (!staffName) return toast("Enter your staff name before recording a Badger check.");
     if (!invoices.length || !checkNumber || !checkDate) return toast("Select invoices and enter the check number and date.");
+    if (!window.confirm(`Record check #${checkNumber} (${checkDate}) to Badger for ${invoices.length} invoice(s)? This sets Submitted = Yes for each in the tracker.`)) return;
     button.disabled = true;
     try {
       const result = await staffApiPost({ action:"recordBadgerCheck", invoice_numbers:invoices, check_number:checkNumber, check_date:checkDate, staff_name:staffName });
@@ -6908,6 +6966,7 @@
       const invoice = customerInvoiceRecords().find(item => String(item.invoice_number || "") === String(invoiceAction.dataset.invoiceNumber || ""));
       if (invoiceAction.dataset.badgerInvoiceAction === "link" && invoice) openBadgerInvoiceLink(invoice);
       if (invoiceAction.dataset.badgerInvoiceAction === "restore" && invoice) restoreIgnoredBadgerInvoice(invoice).catch(error => toast(error?.message || String(error)));
+      if (invoiceAction.dataset.badgerInvoiceAction === "void" && invoice) voidBadgerInvoice(invoice).catch(error => toast(error?.message || String(error)));
       return;
     }
     const paymentButton = event.target.closest("[data-badger-payment]");
@@ -6939,6 +6998,17 @@
     if (event.target.closest("#syncBadgerNowBtn")) syncBadgerNow().catch(error => toast(error?.message || String(error)));
     if (event.target.closest("#previewBadgerReconcileBtn")) previewBadgerReconcile().catch(error => toast(error?.message || String(error)));
     if (event.target.closest("#recordBadgerCheckBtn")) recordBadgerCheck(event.target.closest("#recordBadgerCheckBtn"));
+    const paymentButton = event.target.closest("[data-badger-payment]");
+    if (paymentButton) markBadgerPayment(paymentButton);
+    const invoiceAction = event.target.closest("[data-badger-invoice-action='void']");
+    if (invoiceAction) {
+      const invoice = customerInvoiceRecords().find(item => String(item.invoice_number || "") === String(invoiceAction.dataset.invoiceNumber || ""));
+      if (invoice) voidBadgerInvoice(invoice).catch(error => toast(error?.message || String(error)));
+    }
+  });
+  $("badgerOperationsPanel").addEventListener("change", event => {
+    if (event.target.id === "badgerOwedSelectAll") document.querySelectorAll("#badgerOperationsPanel [data-badger-owed-invoice]").forEach(box => { box.checked = event.target.checked; });
+    if (event.target.id === "badgerOwedSelectAll" || event.target.matches("[data-badger-owed-invoice]")) updateBadgerOwedSelection();
   });
   $("customerWorkflowList").addEventListener("input", event => {
     const picker = event.target.closest(".badgerAccountPickerInput");
