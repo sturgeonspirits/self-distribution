@@ -1,10 +1,10 @@
 <!doctype html>
-<!-- App version: 2026.10.01.3-WEB -->
+<!-- App version: 2026.10.01.4-WEB -->
 <html>
 <head>
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover"/>
-  <meta name="app-version" content="2026.10.01.3-WEB" />
+  <meta name="app-version" content="2026.10.01.4-WEB" />
   <meta name="theme-color" content="#536f77" />
   <link rel="icon" href="/assets/distribution-hub-icon.svg" type="image/svg+xml" />
   <link rel="manifest" href="/site.webmanifest" />
@@ -2477,7 +2477,7 @@
 
   <footer style="max-width:1200px;margin:18px auto 120px;padding:0 12px;text-align:center;color:#6b7280;font-size:12px;">
     Designed by <a href="https://scriptspirit.dev" target="_blank" rel="noopener noreferrer" style="color:#1d4ed8;text-decoration:none;font-weight:700;">Script Spirit</a>
-<span id="appVersionFooter"> • Version 2026.10.01.3-WEB</span>
+<span id="appVersionFooter"> • Version 2026.10.01.4-WEB</span>
   </footer>
 
 
@@ -2500,7 +2500,7 @@
   window.addEventListener("unhandledrejection", e => console.error("Unhandled promise rejection:", e.reason));
   window.addEventListener("error", e => console.error("Unhandled error:", e.error || e.message));
   const $ = (id) => document.getElementById(id);
-  const APP_VERSION = "2026.10.01.3-WEB";
+  const APP_VERSION = "2026.10.01.4-WEB";
   $("appVersionFooter").textContent = ` • Version ${APP_VERSION}`;
 
   let cache = { stores: [], lines: [] };
@@ -2814,9 +2814,13 @@
 
   function customerInvoiceRecords(){
     const seen = new Set();
-    const matchedInvoices = customerData.accounts.flatMap(account => (account.invoices || []).map(invoice => Object.assign({}, invoice, {
-      account_id:account.account_id, business_name:account.business_name, contact_name:account.contact_name, email:account.email,
-    })));
+    const matchedInvoices = customerData.accounts.flatMap(account => {
+      const reminderEligible = new Set((account.payment_reminder_eligible_invoices || []).map(invoice => String(invoice.invoice_number || "").trim().toUpperCase()));
+      return (account.invoices || []).map(invoice => Object.assign({}, invoice, {
+        account_id:account.account_id, business_name:account.business_name, contact_name:account.contact_name, email:account.email,
+        reminder_eligible:reminderEligible.has(String(invoice.invoice_number || "").trim().toUpperCase()),
+      }));
+    });
     // Do not hide a Badger invoice simply because it is not yet linked to a
     // Directory account. It remains a real billing record, but cannot open an
     // account history until staff resolve the match.
@@ -2837,11 +2841,18 @@
   }
 
   function customerStatusOptions(){
-    if (customerView === "invoices") return [
+    if (customerView === "invoices") {
+      const invoices = customerInvoiceRecords();
+      const statusFor = invoice => ["Needs account match", "Ignored"].includes(invoice.badger_match_status) ? invoice.badger_match_status : String(invoice.payment_status || invoice.invoice_status || "Unknown");
+      const countFor = value => invoices.filter(invoice => value === "all"
+        ? statusFor(invoice) !== "Ignored"
+        : value === "reminder_eligible" ? invoice.reminder_eligible === true : statusFor(invoice) === value).length;
+      return [
       { value:"all", label:"All invoices" }, { value:"Customer owes", label:"Customer owes" }, { value:"Owed to Badger", label:"Owed to Badger" },
       { value:"Check sent", label:"Check sent" }, { value:"Awaiting Badger", label:"Awaiting Badger" }, { value:"Closed", label:"Closed" }, { value:"Unknown", label:"Unknown" },
-      { value:"Needs account match", label:"Needs account match" }, { value:"Ignored", label:"Ignored" },
-    ];
+      { value:"reminder_eligible", label:"Reminder eligible" }, { value:"Needs account match", label:"Needs account match" }, { value:"Ignored", label:"Ignored" },
+      ].map(option => Object.assign(option, { label:`${option.label} (${countFor(option.value)})` }));
+    }
     const statuses = customerView === "online_requests" ? ORDER_STATUSES : customerView === "applications" ? APPLICATION_STATUSES : [];
     const operational = (customerView === "accounts" ? ["Payment due", "New"] : []).concat(["Awaiting invoice", "Ready", "Delivered", "Reorder due", "Inventory-counted"]);
     return [{ value:"active", label:"Active work" }, { value:"all", label:"All statuses" }]
@@ -2867,7 +2878,7 @@
       const operational = Array.isArray(record.operational_statuses) ? record.operational_statuses : [];
       const invoiceStatus = ["Needs account match", "Ignored"].includes(record.badger_match_status) ? record.badger_match_status : String(record.payment_status || record.invoice_status || "Unknown");
       const statusMatch = customerView === "invoices"
-        ? (customerStatusFilter === "all" ? invoiceStatus !== "Ignored" : customerStatusFilter === invoiceStatus)
+        ? (customerStatusFilter === "all" ? invoiceStatus !== "Ignored" : customerStatusFilter === "reminder_eligible" ? record.reminder_eligible === true : customerStatusFilter === invoiceStatus)
         : customerStatusFilter === "all"
         || (customerStatusFilter === "active"
           ? (customerView === "accounts" ? operational.some(status => !["Delivered", "Inventory-counted"].includes(status)) : activeStatuses.includes(record.workflow_status))
@@ -3284,12 +3295,13 @@
   async function markBadgerPayment(button){
     const staffName = $("customerStaffName").value.trim();
     if (!staffName) return toast("Enter your staff name before changing a payment mark.");
+    const dialogAccountId = button.closest("#customerRecordDialog") ? selectedCustomerRecord?.account_id : "";
     button.disabled = true;
     try {
       const result = await staffApiPost({ action:"markBadgerInvoicePayment", invoice_number:button.dataset.invoiceNumber, mode:button.dataset.badgerPayment, staff_name:staffName });
       if (!result.ok) throw new Error(result.error || "Payment mark was not updated.");
       await loadCustomerWorkQueue();
-      const refreshed = customerData.accounts.find(item => item.account_id === selectedCustomerRecord?.account_id);
+      const refreshed = dialogAccountId ? customerData.accounts.find(item => item.account_id === dialogAccountId) : null;
       if (refreshed) openCustomerRecord(refreshed);
       toast("Payment mark updated");
     } catch (error) { toast(error?.message || String(error)); button.disabled = false; }
@@ -3409,7 +3421,7 @@
 
   async function recordBadgerCheck(button){
     const staffName = $("customerStaffName").value.trim();
-    const invoices = Array.from(document.querySelectorAll("[data-badger-owed-invoice]:checked")).map(input => input.value).filter(Boolean);
+    const invoices = [...new Set(Array.from(document.querySelectorAll("[data-badger-owed-invoice]:checked")).map(input => input.value).filter(Boolean))];
     const checkNumber = $("badgerCheckNumber")?.value.trim();
     const checkDate = $("badgerCheckDate")?.value;
     if (!staffName) return toast("Enter your staff name before recording a Badger check.");

@@ -687,11 +687,16 @@ test("customer billing workflow keeps real Badger invoices distinct from Online 
   assert.match(index, /data-badger-owed-invoice/);
   assert.match(index, /data-badger-payment="undo"/);
   assert.match(index, /markBadgerPayment\(paymentButton\)/);
+  assert.match(index, /Reminder eligible/);
+  assert.match(index, /label:`\$\{option\.label\} \(\$\{countFor\(option\.value\)\}\)`/);
+  assert.match(index, /reminder_eligible:reminderEligible\.has/);
+  assert.match(index, /const dialogAccountId = button\.closest\("#customerRecordDialog"\) \? selectedCustomerRecord\?\.account_id : ""/);
+  assert.match(index, /\[\.\.\.new Set\(Array\.from\(document\.querySelectorAll\("\[data-badger-owed-invoice\]:checked"\)\)/);
   assert.match(proxy, /"customerAccountIndex"/);
   assert.match(proxy, /"linkBadgerInvoice"/);
   const customerInvoiceRecords = vm.runInNewContext(`${invoiceRecordsSource}; customerInvoiceRecords`, {
     customerData:{
-      accounts:[{ account_id:"A-1", business_name:"North Bar", contact_name:"Nora", email:"nora@example.test", invoices:[{ invoice_number:"SS0163", invoice_date:"2026-10-01", amount:"$50.00", payment_status:"Customer owes" }] }],
+      accounts:[{ account_id:"A-1", business_name:"North Bar", contact_name:"Nora", email:"nora@example.test", invoices:[{ invoice_number:"SS0163", invoice_date:"2026-10-01", amount:"$50.00", payment_status:"Customer owes" }], payment_reminder_eligible_invoices:[{ invoice_number:"SS0163" }] }],
       unmatchedBadgerInvoices:[{ invoice_number:"SS0164", invoice_date:"2026-09-30", customer_name:"No Match", amount:"$25.00", match_reason:"No account match" }],
       ignoredBadgerInvoices:[{ invoice_number:"SS0165", invoice_date:"2026-09-29", customer_name:"Ignore Me", amount:"$10.00" }],
     },
@@ -700,6 +705,7 @@ test("customer billing workflow keeps real Badger invoices distinct from Online 
   const invoices = customerInvoiceRecords();
   assert.equal(invoices.length, 3);
   assert.equal(invoices.find(invoice => invoice.invoice_number === "SS0163").account_id, "A-1");
+  assert.equal(invoices.find(invoice => invoice.invoice_number === "SS0163").reminder_eligible, true);
   assert.equal(invoices.find(invoice => invoice.invoice_number === "SS0164").badger_match_status, "Needs account match");
   assert.equal(invoices.find(invoice => invoice.invoice_number === "SS0165").badger_match_status, "Ignored");
 
