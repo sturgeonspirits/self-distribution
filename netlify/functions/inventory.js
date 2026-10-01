@@ -1,7 +1,7 @@
-// App version: 2026.10.01.1-WEB
+// App version: 2026.10.01.2-WEB
 import { requireStaffSession } from "./auth.js";
 
-const APP_VERSION = "2026.10.01.1-WEB";
+const APP_VERSION = "2026.10.01.2-WEB";
 const STAFF_ACTIONS = new Set([
   "outreachDashboard",
   "outreachRecord",
@@ -23,6 +23,8 @@ const STAFF_ACTIONS = new Set([
   "updateOutreachPrograms",
   "upsertNewsletterContact",
   "customerWorkQueue",
+  "customerAccountIndex",
+  "linkBadgerInvoice",
   "syncBadgerStatus",
   "markBadgerInvoicePayment",
   "recordBadgerCheck",
@@ -76,7 +78,7 @@ const ACTION_AREAS = new Map([
   ["saveOutreachDraft", "outreach"], ["updateOutreachOutcome", "outreach"], ["updateOutreachBusiness", "outreach"],
   ["updateOutreachPrograms", "outreach"], ["upsertNewsletterContact", "outreach"], ["createOutreachBusiness", "outreach"],
   ["importOutreachBusinesses", "outreach"], ["sendOutreachEmail", "outreach"], ["sendOutreachTestEmail", "outreach"],
-  ["customerWorkQueue", "orders"], ["syncBadgerStatus", "orders"], ["markBadgerInvoicePayment", "orders"], ["recordBadgerCheck", "orders"], ["resolvePaymentReminder", "orders"], ["badgerReconcilePreview", "orders"], ["applyBadgerReconcile", "orders"], ["previewBadgerPaymentReminder", "orders"], ["sendBadgerPaymentReminder", "orders"], ["previewBadgerInvoice", "orders"], ["createBadgerInvoice", "orders"], ["adoptBadgerInvoice", "orders"], ["failBadgerInvoiceCreation", "orders"], ["updateCustomerApplication", "orders"], ["updateOnlineOrderRequest", "orders"],
+  ["customerWorkQueue", "orders"], ["customerAccountIndex", "orders"], ["linkBadgerInvoice", "orders"], ["syncBadgerStatus", "orders"], ["markBadgerInvoicePayment", "orders"], ["recordBadgerCheck", "orders"], ["resolvePaymentReminder", "orders"], ["badgerReconcilePreview", "orders"], ["applyBadgerReconcile", "orders"], ["previewBadgerPaymentReminder", "orders"], ["sendBadgerPaymentReminder", "orders"], ["previewBadgerInvoice", "orders"], ["createBadgerInvoice", "orders"], ["adoptBadgerInvoice", "orders"], ["failBadgerInvoiceCreation", "orders"], ["updateCustomerApplication", "orders"], ["updateOnlineOrderRequest", "orders"],
   ["hubSystemStatus", "orders"], ["initializeHardenedHub", "orders"], ["repairHubStructure", "orders"], ["reconcileIntegrations", "orders"],
   ["initData", "inventory"], ["listSkus", "inventory"], ["addSkuToStore", "inventory"], ["upsertProduct", "inventory"],
   ["submitCounts", "inventory"], ["createReorder", "inventory"], ["managerGrid", "inventory"], ["salesSinceCount", "inventory"], ["updateStoreContacts", "inventory"],

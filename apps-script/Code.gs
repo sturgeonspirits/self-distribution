@@ -1,9 +1,9 @@
 /*********************************
  * Inventory API (JSON) for Netlify
- * App version: 2026.10.01.2
+ * App version: 2026.10.01.3
  *
  * CHANGES IN THIS VERSION
- * - Exposes the permanent Online-request-to-Badger-invoice link in every matched account invoice record for the staff invoice and payment views.
+ * - Exposes the permanent Online-request-to-Badger-invoice link and current Badger payment state in both staff invoice and Online-request views.
  *
  * CHANGES IN 2026.09.24.56
  * - Corrects live payment-state classification, reversible payment marks, sync freshness validation, and pending-reminder resolution safeguards.
@@ -236,7 +236,7 @@
  * - Use only in the staging inventory backend until testing is complete.
  *********************************/
 
-const APP_VERSION = "2026.10.01.2";
+const APP_VERSION = "2026.10.01.3";
 
 const SHEET_NAMES = {
   STORES: "Stores",
@@ -6264,6 +6264,7 @@ function apiLinkBadgerInvoice_(p) {
       if (existingIndex < 0 || String(rows[existingIndex][h.match_method] || "").trim().toLowerCase() !== "ignored") throw new Error("Only an ignored invoice can be restored.");
       sheet.deleteRow(existingIndex + 2);
       appendAudit_("RESTORE_BADGER_INVOICE", "Invoice", String(invoice.invoice_number || invoiceNumber), "", authenticatedActor_(p, "Sturgeon Distribution Hub"), BADGER_TRACKER_SPREADSHEET_ID, BADGER_INVOICE_LINKS_SHEET_NAME, "Restored", invoice.customer_name || "Badger customer");
+      bumpReadCacheVersion_();
       return { message:`Invoice ${invoice.invoice_number || invoiceNumber} restored to matching review.`, invoice_number:String(invoice.invoice_number || invoiceNumber) };
     }
     let account = null;
@@ -6282,6 +6283,7 @@ function apiLinkBadgerInvoice_(p) {
     set("notes", publicText_(p.notes || "", 1000, "Invoice-link notes"));
     set("app_version", APP_VERSION);
     sheet.getRange(existingIndex >= 0 ? existingIndex + 2 : sheet.getLastRow() + 1, 1, 1, values.length).setValues([values]);
+    bumpReadCacheVersion_();
     const ignored = mode === "ignore";
     const learned = !ignored && upsertBadgerCustomerAlias_(invoice.customer_name || "", accountId, "Staff invoice link", authenticatedActor_(p, "Sturgeon Distribution Hub"));
     appendAudit_(ignored ? "IGNORE_BADGER_INVOICE" : "LINK_BADGER_INVOICE", "Invoice", String(invoice.invoice_number || invoiceNumber), ignored ? "" : accountId, authenticatedActor_(p, "Sturgeon Distribution Hub"), BADGER_TRACKER_SPREADSHEET_ID, BADGER_INVOICE_LINKS_SHEET_NAME, ignored ? "Ignored" : "Linked", ignored ? (invoice.customer_name || "Badger customer") : `${invoice.customer_name || "Badger customer"} → ${account.business}`);
@@ -6625,6 +6627,17 @@ function apiGetCustomerWorkQueue_(p) {
   applications.forEach(application => application.operational_statuses = application.workflow_status === "New" ? ["New"] : (application.inventory_tracking ? ["Inventory-counted"] : []));
   const ledger = buildCustomerAccounts_(applications, orders, !!p?._refresh_sources || String(p?.refresh || "") === "1");
   const accounts = ledger.accounts;
+  const invoicesByNumber = new Map();
+  accounts.forEach(account => (account.invoices || []).forEach(invoice => {
+    const invoiceKey = normalizeBadgerInvoiceNumber_(invoice.invoice_number);
+    if (invoiceKey) invoicesByNumber.set(invoiceKey, invoice);
+  }));
+  // Retain the billing state on the originating web request as well as the
+  // invoice ledger. Existing invoices without a web request are not altered.
+  orders.forEach(order => {
+    const invoice = invoicesByNumber.get(normalizeBadgerInvoiceNumber_(order.badger_invoice_number));
+    if (invoice) order.badger_payment_status = invoice.payment_status || invoice.invoice_status || "Unknown";
+  });
   mark("account_build_ms");
   const activeApplicationStatuses = ["New", "Reviewing", "Needs information"];
   const activeOrderStatuses = ["New", "Reviewing", "Confirmed", "Invoicing", "Ready for delivery"];

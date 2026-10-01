@@ -661,27 +661,47 @@ test("Badger Phase 5 invoice creation is review-gated and uses a narrow API boun
 });
 
 test("customer billing workflow keeps real Badger invoices distinct from Online requests", async () => {
-  const [backend, index] = await Promise.all([
+  const [backend, index, proxy] = await Promise.all([
     readFile(new URL("apps-script/Code.gs", root), "utf8"),
     readFile(new URL("index.html", root), "utf8"),
+    readFile(new URL("netlify/functions/inventory.js", root), "utf8"),
   ]);
   const accountBuilder = backend.slice(backend.indexOf("function buildCustomerAccounts_"), backend.indexOf("function apiGetCustomerWorkQueue_"));
+  const customerQueue = backend.slice(backend.indexOf("function apiGetCustomerWorkQueue_"), backend.indexOf("function getBadgerPaymentRemindersSheet_"));
   const invoiceRecordsSource = index.slice(index.indexOf("function customerInvoiceRecords"), index.indexOf("function customerStatusOptions"));
+  const recordsForViewSource = index.slice(index.indexOf("function customerRecordsForView"), index.indexOf("function customerStatusBadge"));
   assert.match(accountBuilder, /sourceOrder \? Object\.assign\(\{\}, invoice, \{ request_id:sourceOrder\.request_id, online_request:true \}\) : invoice/);
   assert.match(backend, /function linkCreatedBadgerInvoiceToOrder_\([\s\S]*?set\("badger_invoice_number", draft\.invoice_number\)/);
+  assert.match(customerQueue, /order\.badger_payment_status = invoice\.payment_status \|\| invoice\.invoice_status \|\| "Unknown"/);
   assert.match(index, /Invoices & payments/);
   assert.match(index, />Online requests</);
   assert.match(index, /Online request \$\{escapeHtml\(record\.request_id\)\}/);
   assert.match(index, /Needs account match/);
+  assert.match(index, /const CUSTOMER_VIEW_DATA = \{ accounts:"accounts", online_requests:"orders", applications:"applications" \}/);
+  assert.match(index, /customerData\[CUSTOMER_VIEW_DATA\[customerView\]\]/);
+  assert.match(index, /data-badger-invoice-action="link"/);
+  assert.match(index, /action:"linkBadgerInvoice"/);
+  assert.match(index, /mode:"restore"/);
+  assert.match(proxy, /"customerAccountIndex"/);
+  assert.match(proxy, /"linkBadgerInvoice"/);
   const customerInvoiceRecords = vm.runInNewContext(`${invoiceRecordsSource}; customerInvoiceRecords`, {
     customerData:{
       accounts:[{ account_id:"A-1", business_name:"North Bar", contact_name:"Nora", email:"nora@example.test", invoices:[{ invoice_number:"SS0163", invoice_date:"2026-10-01", amount:"$50.00", payment_status:"Customer owes" }] }],
       unmatchedBadgerInvoices:[{ invoice_number:"SS0164", invoice_date:"2026-09-30", customer_name:"No Match", amount:"$25.00", match_reason:"No account match" }],
+      ignoredBadgerInvoices:[{ invoice_number:"SS0165", invoice_date:"2026-09-29", customer_name:"Ignore Me", amount:"$10.00" }],
     },
     Set, Date,
   });
   const invoices = customerInvoiceRecords();
-  assert.equal(invoices.length, 2);
+  assert.equal(invoices.length, 3);
   assert.equal(invoices.find(invoice => invoice.invoice_number === "SS0163").account_id, "A-1");
   assert.equal(invoices.find(invoice => invoice.invoice_number === "SS0164").badger_match_status, "Needs account match");
+  assert.equal(invoices.find(invoice => invoice.invoice_number === "SS0165").badger_match_status, "Ignored");
+
+  const onlineRequests = vm.runInNewContext(`${recordsForViewSource}; customerRecordsForView`, {
+    customerView:"online_requests", customerData:{ orders:[{ request_id:"OR-1", workflow_status:"New" }] },
+    CUSTOMER_VIEW_DATA:{ accounts:"accounts", online_requests:"orders", applications:"applications" },
+    customerStatusFilter:"all", customerFilterText:"", ORDER_STATUSES:[], APPLICATION_STATUSES:[], customerInvoiceRecords:() => [], Array, String,
+  });
+  assert.equal(onlineRequests().length, 1, "Online requests must read the orders payload, not a nonexistent view key");
 });

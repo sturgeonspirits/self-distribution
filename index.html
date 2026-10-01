@@ -1,10 +1,10 @@
 <!doctype html>
-<!-- App version: 2026.10.01.1-WEB -->
+<!-- App version: 2026.10.01.2-WEB -->
 <html>
 <head>
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover"/>
-  <meta name="app-version" content="2026.10.01.1-WEB" />
+  <meta name="app-version" content="2026.10.01.2-WEB" />
   <meta name="theme-color" content="#536f77" />
   <link rel="icon" href="/assets/distribution-hub-icon.svg" type="image/svg+xml" />
   <link rel="manifest" href="/site.webmanifest" />
@@ -2477,7 +2477,7 @@
 
   <footer style="max-width:1200px;margin:18px auto 120px;padding:0 12px;text-align:center;color:#6b7280;font-size:12px;">
     Designed by <a href="https://scriptspirit.dev" target="_blank" rel="noopener noreferrer" style="color:#1d4ed8;text-decoration:none;font-weight:700;">Script Spirit</a>
-<span id="appVersionFooter"> • Version 2026.10.01.1-WEB</span>
+<span id="appVersionFooter"> • Version 2026.10.01.2-WEB</span>
   </footer>
 
 
@@ -2500,7 +2500,7 @@
   window.addEventListener("unhandledrejection", e => console.error("Unhandled promise rejection:", e.reason));
   window.addEventListener("error", e => console.error("Unhandled error:", e.error || e.message));
   const $ = (id) => document.getElementById(id);
-  const APP_VERSION = "2026.10.01.1-WEB";
+  const APP_VERSION = "2026.10.01.2-WEB";
   $("appVersionFooter").textContent = ` • Version ${APP_VERSION}`;
 
   let cache = { stores: [], lines: [] };
@@ -2542,6 +2542,7 @@
   let campaignSendInProgress = false;
 
   let customerData = { accounts:[], applications:[], orders:[], unmatchedBadgerInvoices:[], ignoredBadgerInvoices:[], summary:{ new_applications:0, active_applications:0, new_orders:0, active_orders:0, invoice_needed:0 } };
+  const CUSTOMER_VIEW_DATA = { accounts:"accounts", online_requests:"orders", applications:"applications" };
   const savedCustomerView = localStorage.getItem("customer_work_view");
   let customerView = ["accounts", "invoices", "online_requests", "applications"].includes(savedCustomerView) ? savedCustomerView : savedCustomerView === "orders" ? "online_requests" : "invoices";
   let customerFilterText = "";
@@ -2549,6 +2550,7 @@
   let customerLoaded = false;
   let customerWorkQueueLoadRequest = 0;
   let selectedCustomerRecord = null;
+  let selectedBadgerInvoice = null;
   let staffAccessCode = "";
   let staffSession = null;
   let inventoryLoaded = false;
@@ -2823,7 +2825,11 @@
       invoice_status:invoice.invoice_status || "Unknown", payment_status:invoice.payment_status || "Unknown",
       badger_match_status:"Needs account match",
     }));
-    return matchedInvoices.concat(unmatchedInvoices).filter(invoice => {
+    const ignoredInvoices = (customerData.ignoredBadgerInvoices || []).map(invoice => Object.assign({}, invoice, {
+      account_id:"", business_name:invoice.customer_name || "Ignored Badger customer", contact_name:"", email:"",
+      invoice_status:"Ignored", payment_status:"Ignored", badger_match_status:"Ignored",
+    }));
+    return matchedInvoices.concat(unmatchedInvoices, ignoredInvoices).filter(invoice => {
       const key = String(invoice.invoice_number || invoice.badger_id || "");
       if (!key || seen.has(key)) return false;
       seen.add(key); return true;
@@ -2834,6 +2840,7 @@
     if (customerView === "invoices") return [
       { value:"all", label:"All invoices" }, { value:"Customer owes", label:"Customer owes" }, { value:"Owed to Badger", label:"Owed to Badger" },
       { value:"Check sent", label:"Check sent" }, { value:"Awaiting Badger", label:"Awaiting Badger" }, { value:"Closed", label:"Closed" }, { value:"Unknown", label:"Unknown" },
+      { value:"Needs account match", label:"Needs account match" }, { value:"Ignored", label:"Ignored" },
     ];
     const statuses = customerView === "online_requests" ? ORDER_STATUSES : customerView === "applications" ? APPLICATION_STATUSES : [];
     const operational = (customerView === "accounts" ? ["Payment due", "New"] : []).concat(["Awaiting invoice", "Ready", "Delivered", "Reorder due", "Inventory-counted"]);
@@ -2851,16 +2858,16 @@
   }
 
   function customerRecordsForView(){
-    const records = customerView === "invoices" ? customerInvoiceRecords() : [...(customerData[customerView] || [])];
+    const records = customerView === "invoices" ? customerInvoiceRecords() : [...(customerData[CUSTOMER_VIEW_DATA[customerView]] || [])];
     const activeStatuses = customerView === "online_requests"
       ? ["New", "Reviewing", "Confirmed", "Invoicing", "Ready for delivery"]
       : customerView === "applications" ? ["New", "Reviewing", "Needs information"] : [];
     const query = customerFilterText.trim().toLowerCase();
-    return records.filter(record => {
+    const filtered = records.filter(record => {
       const operational = Array.isArray(record.operational_statuses) ? record.operational_statuses : [];
-      const invoiceStatus = String(record.payment_status || record.invoice_status || "Unknown");
+      const invoiceStatus = ["Needs account match", "Ignored"].includes(record.badger_match_status) ? record.badger_match_status : String(record.payment_status || record.invoice_status || "Unknown");
       const statusMatch = customerView === "invoices"
-        ? (customerStatusFilter === "all" || customerStatusFilter === invoiceStatus)
+        ? (customerStatusFilter === "all" ? invoiceStatus !== "Ignored" : customerStatusFilter === invoiceStatus)
         : customerStatusFilter === "all"
         || (customerStatusFilter === "active"
           ? (customerView === "accounts" ? operational.some(status => !["Delivered", "Inventory-counted"].includes(status)) : activeStatuses.includes(record.workflow_status))
@@ -2871,6 +2878,10 @@
       if (!query) return true;
       return JSON.stringify(record).toLowerCase().includes(query);
     });
+    // Account-match work is actionable before ordinary invoice browsing.
+    return customerView === "invoices" && customerStatusFilter === "all"
+      ? filtered.sort((a, b) => Number(b.badger_match_status === "Needs account match") - Number(a.badger_match_status === "Needs account match"))
+      : filtered;
   }
 
   function customerStatusBadge(status){
@@ -2942,11 +2953,11 @@
       const orderSummary = isAccount
         ? `${Number(record.orders?.length || 0)} orders • ${Number(record.invoices?.length || 0)} invoices${Number(record.unpaid_invoices?.length || 0) ? ` • ${Number(record.unpaid_invoices.length)} unpaid (${record.outstanding_balance || "$0.00"})` : ""} • ${Number(record.deliveries?.length || 0)} deliveries • ${Number(record.history?.length || 0)} history events`
         : isInvoice
-        ? `Badger invoice ${record.invoice_number || "recorded"} • ${record.amount || "$0.00"} • ${formatOutreachDate(record.invoice_date) || "Date not recorded"}${record.match_reason ? ` • ${record.match_reason}` : ""}`
+        ? `Badger invoice ${record.invoice_number || "recorded"} • ${record.amount || "$0.00"} • ${formatOutreachDate(record.invoice_date) || "Date not recorded"}`
         : isOrder
         ? `${Number(record.line_count || record.lines?.length || 0)} product${Number(record.line_count || record.lines?.length || 0) === 1 ? "" : "s"} • ${Number(record.bottle_equivalent || 0)} bottle equivalent`
         : [record.business_type, record.delivery_city, record.delivery_state].filter(Boolean).join(" • ");
-      const displayStatus = isAccount ? record.primary_status : isInvoice ? (record.payment_status || record.invoice_status || "Unknown") : record.workflow_status;
+      const displayStatus = isAccount ? record.primary_status : isInvoice ? (["Needs account match", "Ignored"].includes(record.badger_match_status) ? record.badger_match_status : (record.payment_status || record.invoice_status || "Unknown")) : record.workflow_status;
       return `
         <article class="workflowCard ${displayStatus === "New" ? "newRecord" : ""}" data-customer-kind="${isAccount || (isInvoice && record.account_id) ? "account" : isOrder ? "order" : isInvoice ? "unmatched-invoice" : "application"}" data-customer-id="${escapeHtml(id)}">
           <div class="workflowCardTop">
@@ -2958,17 +2969,19 @@
           </div>
           <div class="workflowMeta">
             ${!isAccount && !isInvoice ? `<span class="badge">${escapeHtml(formatOutreachDate(record.submitted_at) || "No date")}</span>` : ""}
-            ${isInvoice ? `<span class="badge blue">Invoice ${escapeHtml(record.invoice_number || "recorded")}</span><span class="badge">${escapeHtml(formatOutreachDate(record.invoice_date) || "No date")}</span>${record.request_id ? `<span class="badge green">Online request ${escapeHtml(record.request_id)}</span>` : ""}` : ""}
+            ${isInvoice ? `<span class="badge blue">Invoice ${escapeHtml(record.invoice_number || "recorded")}</span><span class="badge">${escapeHtml(formatOutreachDate(record.invoice_date) || "No date")}</span>${record.request_id ? `<span class="badge green">Online request ${escapeHtml(record.request_id)}</span>` : ""}${record.match_reason ? `<span class="badge amber">${escapeHtml(record.match_reason)}</span>` : ""}` : ""}
             <span class="badge">${escapeHtml(id)}</span>
             ${isOrder && record.verification_status ? `<span class="badge ${record.verification_status === "Active account matched" ? "green" : "amber"}">${escapeHtml(record.verification_status)}</span>` : ""}
-            ${isOrder && record.badger_invoice_number ? `<span class="badge blue">Invoice ${escapeHtml(record.badger_invoice_number)}</span>` : ""}
+            ${isOrder && record.badger_invoice_number ? `<span class="badge blue">Invoice ${escapeHtml(record.badger_invoice_number)}</span>${record.badger_payment_status ? `<span class="badge ${customerStatusBadge(record.badger_payment_status)}">${escapeHtml(record.badger_payment_status)}</span>` : ""}` : ""}
             ${record.assigned_to ? `<span class="badge">${escapeHtml(record.assigned_to)}</span>` : ""}
             ${isAccount ? (record.operational_statuses || []).map(status => `<span class="badge">${escapeHtml(status)}</span>`).join("") : ""}
           </div>
           <p>${escapeHtml(orderSummary || "Details available")}</p>
           <div class="workflowActions">
-            ${isInvoice && !record.account_id
-              ? `<button class="actionBtn" type="button" disabled title="Link this Badger invoice to a Directory account in its account review."><i data-lucide="link"></i><span>Account match needed</span></button>`
+            ${isInvoice && record.badger_match_status === "Ignored"
+              ? `<button class="actionBtn" type="button" data-badger-invoice-action="restore" data-invoice-number="${escapeHtml(record.invoice_number || "")}"><i data-lucide="rotate-ccw"></i><span>Restore to matching</span></button>`
+              : isInvoice && !record.account_id
+              ? `<button class="actionBtn primary" type="button" data-badger-invoice-action="link" data-invoice-number="${escapeHtml(record.invoice_number || "")}"><i data-lucide="link"></i><span>Link to account</span></button>`
               : `<button class="actionBtn primary" type="button" data-customer-action="open"><i data-lucide="clipboard-check"></i><span>${isAccount || isInvoice ? "Account history" : "Review"}</span></button>`}
             ${email ? `<a class="actionBtn" href="mailto:${escapeHtml(email)}"><i data-lucide="mail"></i><span>Email</span></a>` : ""}
           </div>
@@ -3010,6 +3023,64 @@
     const collection = card.dataset.customerKind === "account" ? customerData.accounts : card.dataset.customerKind === "order" ? customerData.orders : customerData.applications;
     const key = card.dataset.customerKind === "account" ? "account_id" : card.dataset.customerKind === "order" ? "request_id" : "application_id";
     return collection.find(record => String(record[key]) === card.dataset.customerId) || null;
+  }
+
+  async function openBadgerInvoiceLink(record){
+    if (!record?.invoice_number) return;
+    selectedBadgerInvoice = record;
+    $("customerRecordTitle").textContent = "Link Badger invoice";
+    $("customerRecordSubtitle").textContent = `Invoice ${record.invoice_number} needs an account decision`;
+    $("customerRecordBody").innerHTML = '<div class="status">Loading Directory accounts…</div>';
+    $("customerRecordDialog").showModal();
+    try {
+      const result = await staffApiGet({ action:"customerAccountIndex" });
+      if (!result.ok) throw new Error(result.error || "Directory accounts could not be loaded.");
+      const options = (result.accounts || []).map(account =>
+        `<option value="${escapeHtml(account.account_id)}">${escapeHtml([account.business_name, account.city, account.account_id].filter(Boolean).join(" • "))}</option>`
+      ).join("");
+      $("customerRecordBody").innerHTML = `<div class="businessDetailGrid">
+        <section class="detailSection full"><h4>Badger invoice ${escapeHtml(record.invoice_number)}</h4>${detailRowsHtml([
+          { label:"Badger customer", value:record.customer_name || record.business_name }, { label:"Amount", value:record.amount || "$0.00" },
+          { label:"Invoice date", value:formatOutreachDate(record.invoice_date) || "Not recorded" }, { label:"Why unmatched", value:record.match_reason || "No account match" },
+        ])}</section>
+        <section class="detailSection full"><label for="badgerInvoiceAccountId">Directory account</label><select id="badgerInvoiceAccountId"><option value="">Choose an account…</option>${options}</select><p class="smallMuted">Linking also records this Badger customer name for future matching. Use “Not a Directory account” only when this invoice should never appear in the Hub.</p></section>
+        <section class="detailSection full"><div class="dlgActions"><button id="closeBadgerInvoiceLinkBtn" type="button">Cancel</button><button id="ignoreBadgerInvoiceBtn" class="actionBtn" type="button">Not a Directory account</button><button id="linkBadgerInvoiceBtn" class="primary" type="button">Link to account</button></div><div class="status" id="badgerInvoiceLinkStatus"></div></section>
+      </div>`;
+      refreshIcons();
+    } catch (error) {
+      $("customerRecordBody").innerHTML = `<div class="status">${escapeHtml(error?.message || String(error))}</div><div class="dlgActions"><button id="closeBadgerInvoiceLinkBtn" type="button">Close</button></div>`;
+    }
+  }
+
+  async function saveBadgerInvoiceLink(mode){
+    const invoice = selectedBadgerInvoice;
+    const staffName = $("customerStaffName").value.trim();
+    if (!invoice?.invoice_number || !staffName) return $("badgerInvoiceLinkStatus").textContent = "Enter your staff name before changing this invoice link.";
+    const accountId = $("badgerInvoiceAccountId")?.value || "";
+    if (mode === "link" && !accountId) return $("badgerInvoiceLinkStatus").textContent = "Choose a Directory account first.";
+    const button = mode === "link" ? $("linkBadgerInvoiceBtn") : $("ignoreBadgerInvoiceBtn");
+    if (button) button.disabled = true;
+    try {
+      const result = await staffApiPost({ action:"linkBadgerInvoice", invoice_number:invoice.invoice_number, account_id:accountId, mode, staff_name:staffName });
+      if (!result.ok) throw new Error(result.error || "Badger invoice link could not be saved.");
+      await loadCustomerWorkQueue();
+      $("customerRecordDialog").close();
+      selectedBadgerInvoice = null;
+      toast(result.message || "Badger invoice link saved");
+    } catch (error) {
+      $("badgerInvoiceLinkStatus").textContent = error?.message || String(error);
+      if (button) button.disabled = false;
+    }
+  }
+
+  async function restoreIgnoredBadgerInvoice(invoice){
+    const staffName = $("customerStaffName").value.trim();
+    if (!invoice?.invoice_number || !staffName) return toast("Enter your staff name before restoring this invoice.");
+    if (!window.confirm(`Restore Badger invoice ${invoice.invoice_number} to account matching?`)) return;
+    const result = await staffApiPost({ action:"linkBadgerInvoice", invoice_number:invoice.invoice_number, mode:"restore", staff_name:staffName });
+    if (!result.ok) throw new Error(result.error || "Badger invoice could not be restored.");
+    await loadCustomerWorkQueue();
+    toast(result.message || "Badger invoice restored to matching");
   }
 
   function selectOptionsHtml(options, selected){
@@ -6109,6 +6180,13 @@
     $("customerSearch").focus();
   });
   $("customerWorkflowList").addEventListener("click", event => {
+    const invoiceAction = event.target.closest("[data-badger-invoice-action]");
+    if (invoiceAction) {
+      const invoice = customerInvoiceRecords().find(item => String(item.invoice_number || "") === String(invoiceAction.dataset.invoiceNumber || ""));
+      if (invoiceAction.dataset.badgerInvoiceAction === "link" && invoice) openBadgerInvoiceLink(invoice);
+      if (invoiceAction.dataset.badgerInvoiceAction === "restore" && invoice) restoreIgnoredBadgerInvoice(invoice).catch(error => toast(error?.message || String(error)));
+      return;
+    }
     const button = event.target.closest("[data-customer-action='open']");
     if (!button) return;
     const record = findCustomerRecord(button);
@@ -6133,6 +6211,9 @@
     if (event.target.closest("[data-payment-reminder-resolution]")) resolvePaymentReminder(event.target.closest("[data-payment-reminder-resolution]"));
     if (event.target.closest("#backToCustomerRecordBtn") && selectedCustomerRecord) openCustomerRecord(selectedCustomerRecord);
     if (event.target.closest("#sendPaymentReminderBtn")) sendPaymentReminder();
+    if (event.target.closest("#linkBadgerInvoiceBtn")) saveBadgerInvoiceLink("link");
+    if (event.target.closest("#ignoreBadgerInvoiceBtn")) saveBadgerInvoiceLink("ignore");
+    if (event.target.closest("#closeBadgerInvoiceLinkBtn")) { selectedBadgerInvoice = null; $("customerRecordDialog").close(); }
   });
   $("customerRecordBody").addEventListener("change", event => {
     if (event.target.matches("#badgerInvoiceReviewed")) $("createBadgerInvoiceBtn").disabled = !event.target.checked;
