@@ -1,10 +1,10 @@
 <!doctype html>
-<!-- App version: 2026.10.01.5-WEB -->
+<!-- App version: 2026.10.01.6-WEB -->
 <html>
 <head>
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover"/>
-  <meta name="app-version" content="2026.10.01.5-WEB" />
+  <meta name="app-version" content="2026.10.01.6-WEB" />
   <meta name="theme-color" content="#536f77" />
   <link rel="icon" href="/assets/distribution-hub-icon.svg" type="image/svg+xml" />
   <link rel="manifest" href="/site.webmanifest" />
@@ -697,6 +697,20 @@
       min-height:76px;
       resize:vertical;
     }
+    input[type="checkbox"],input[type="radio"]{
+      width:18px;
+      height:18px;
+      min-height:0;
+      padding:0;
+      margin:0;
+      flex:none;
+      vertical-align:middle;
+      accent-color:var(--navy, #1f2a44);
+    }
+    .checkLabel{display:flex;align-items:center;gap:8px;font-weight:700;cursor:pointer}
+    label.workflowLine{margin:0;font-size:13px;font-weight:400;color:inherit;align-items:center;cursor:pointer}
+    label.workflowLine > span{display:flex;align-items:center;gap:8px}
+    label.actionBtn{margin:0;display:inline-flex;align-items:center;justify-content:center;gap:8px;font-size:inherit;cursor:pointer}
 
     button{
       border:1px solid #d1d5db;
@@ -2545,7 +2559,7 @@
 
   <footer style="max-width:1200px;margin:18px auto 120px;padding:0 12px;text-align:center;color:#6b7280;font-size:12px;">
     Designed by <a href="https://scriptspirit.dev" target="_blank" rel="noopener noreferrer" style="color:#1d4ed8;text-decoration:none;font-weight:700;">Script Spirit</a>
-<span id="appVersionFooter"> • Version 2026.10.01.5-WEB</span>
+<span id="appVersionFooter"> • Version 2026.10.01.6-WEB</span>
   </footer>
 
 
@@ -2568,7 +2582,7 @@
   window.addEventListener("unhandledrejection", e => console.error("Unhandled promise rejection:", e.reason));
   window.addEventListener("error", e => console.error("Unhandled error:", e.error || e.message));
   const $ = (id) => document.getElementById(id);
-  const APP_VERSION = "2026.10.01.5-WEB";
+  const APP_VERSION = "2026.10.01.6-WEB";
   $("appVersionFooter").textContent = ` • Version ${APP_VERSION}`;
   function screenCacheKey(screen){ return `distribution_hub:${APP_VERSION}:${staffSession?.email || "unknown"}:${screen}`; }
   function readScreenCache(screen){
@@ -3039,6 +3053,13 @@
     return "amber";
   }
 
+  function badgerAmountLabel(value){
+    const text = String(value ?? "").trim();
+    if (!text) return "$0.00";
+    const number = Number(text.replace(/[$,\s]/g, ""));
+    return Number.isFinite(number) ? new Intl.NumberFormat("en-US", { style:"currency", currency:"USD" }).format(number) : text;
+  }
+
   function badgerMoney(cents){
     return new Intl.NumberFormat("en-US", { style:"currency", currency:"USD" }).format(Number(cents || 0) / 100);
   }
@@ -3057,7 +3078,7 @@
         ${fresh ? "" : '<div class="status" role="alert">Badger status is stale or unavailable. Sync from Badger before acting on invoice payment status.</div>'}
         <section class="detailSection full" style="margin-top:10px"><h4>Owed to Badger</h4>
           <p class="smallMuted">${escapeHtml(badgerMoney(summary.owed_to_badger_cents))} across ${Number(summary.owed_to_badger_invoices || 0)} invoice(s). Oldest: ${escapeHtml(oldest)}.</p>
-          ${owed.length ? `<div class="workflowLineList">${owed.map(invoice => `<label class="workflowLine"><span><input type="checkbox" data-badger-owed-invoice value="${escapeHtml(invoice.invoice_number || "")}" /> Invoice ${escapeHtml(invoice.invoice_number || "recorded")} • ${escapeHtml(invoice.business_name || "Customer")} • ${escapeHtml(formatOutreachDate(invoice.invoice_date) || "Date not recorded")}</span><strong>${escapeHtml(invoice.amount || "$0.00")}</strong></label>`).join("")}</div>
+          ${owed.length ? `<div class="workflowLineList">${owed.map(invoice => `<label class="workflowLine"><span><input type="checkbox" data-badger-owed-invoice value="${escapeHtml(invoice.invoice_number || "")}" /> Invoice ${escapeHtml(invoice.invoice_number || "recorded")} • ${escapeHtml(invoice.business_name || "Customer")} • ${escapeHtml(formatOutreachDate(invoice.invoice_date) || "Date not recorded")}</span><strong>${escapeHtml(badgerAmountLabel(invoice.amount))}</strong></label>`).join("")}</div>
           <div class="workflowEditGrid" style="margin-top:10px"><div><label for="badgerCheckNumber">Check #</label><input id="badgerCheckNumber" maxlength="120" /></div><div><label for="badgerCheckDate">Check date</label><input id="badgerCheckDate" type="date" value="${customerInputDate(new Date())}" /></div><div class="full"><button class="primary" id="recordBadgerCheckBtn" type="button">Record check to Badger</button></div></div>` : '<div class="smallMuted">No matched invoices are currently owed to Badger.</div>'}
         </section>
       </div>`;
@@ -3090,7 +3111,7 @@
     const invoiceReview = unmatchedInvoices.length ? `<article class="workflowCard" data-badger-review="true">
       <div class="workflowCardTop"><div><h3>Badger invoices needing an account</h3><p>Link each invoice to the existing Directory Account ID. This does not enable inventory tracking.</p></div><span class="badge amber">${unmatchedInvoices.length} to match</span></div>
       <div class="workflowLineList">${unmatchedInvoices.map(invoice => `<div class="workflowLine" data-badger-invoice="${escapeHtml(invoice.invoice_number || "")}">
-        <span><strong>${escapeHtml(invoice.invoice_number || "Invoice")}</strong> • ${escapeHtml(invoice.customer_name || "No Badger customer name")}<br><small>${escapeHtml([formatOutreachDate(invoice.invoice_date), invoice.amount && `Amount ${invoice.amount}`, invoice.match_reason].filter(Boolean).join(" • "))}</small></span>
+        <span><strong>${escapeHtml(invoice.invoice_number || "Invoice")}</strong> • ${escapeHtml(invoice.customer_name || "No Badger customer name")}<br><small>${escapeHtml([formatOutreachDate(invoice.invoice_date), invoice.amount && `Amount ${badgerAmountLabel(invoice.amount)}`, invoice.match_reason].filter(Boolean).join(" • "))}</small></span>
         <span class="btnRow"><input class="badgerAccountPickerInput" list="badgerAccountPicker" aria-label="Account for ${escapeHtml(invoice.invoice_number || "invoice")}" placeholder="Type business, city, or Account ID" value="${escapeHtml(badgerAccountDrafts.get(String(invoice.invoice_number || "")) || "")}" autocomplete="off" /><button class="actionBtn primary" type="button" data-customer-action="link-badger-invoice">Link invoice</button><button class="actionBtn" type="button" data-customer-action="ignore-badger-invoice">Ignore / not a Directory account</button></span>
       </div>`).join("")}</div>
     </article>` : "";
@@ -3098,7 +3119,7 @@
       <summary><strong>Ignored Badger invoices</strong> <span class="badge">${ignoredInvoices.length} ignored</span></summary>
       <p>These are marked as not belonging to a Directory account. Restore one to return it to matching review.</p>
       <div class="workflowLineList">${ignoredInvoices.map(invoice => `<div class="workflowLine" data-badger-invoice="${escapeHtml(invoice.invoice_number || "")}">
-        <span><strong>${escapeHtml(invoice.invoice_number || "Invoice")}</strong> • ${escapeHtml(invoice.customer_name || "No Badger customer name")}<br><small>${escapeHtml([formatOutreachDate(invoice.invoice_date), invoice.amount && `Amount ${invoice.amount}`].filter(Boolean).join(" • "))}</small></span>
+        <span><strong>${escapeHtml(invoice.invoice_number || "Invoice")}</strong> • ${escapeHtml(invoice.customer_name || "No Badger customer name")}<br><small>${escapeHtml([formatOutreachDate(invoice.invoice_date), invoice.amount && `Amount ${badgerAmountLabel(invoice.amount)}`].filter(Boolean).join(" • "))}</small></span>
         <span class="btnRow"><button class="actionBtn" type="button" data-customer-action="restore-badger-invoice">Restore to matching</button></span>
       </div>`).join("")}</div>
     </details>` : "";
@@ -3112,7 +3133,7 @@
       const orderSummary = isAccount
         ? `${Number(record.orders?.length || 0)} orders • ${Number(record.invoices?.length || 0)} invoices${Number(record.unpaid_invoices?.length || 0) ? ` • ${Number(record.unpaid_invoices.length)} unpaid (${record.outstanding_balance || "$0.00"})` : ""} • ${Number(record.deliveries?.length || 0)} deliveries • ${Number(record.history?.length || 0)} history events`
         : isInvoice
-        ? `Badger invoice ${record.invoice_number || "recorded"} • ${record.amount || "$0.00"} • ${formatOutreachDate(record.invoice_date) || "Date not recorded"}`
+        ? `Badger invoice ${record.invoice_number || "recorded"} • ${badgerAmountLabel(record.amount)} • ${formatOutreachDate(record.invoice_date) || "Date not recorded"}`
         : isOrder
         ? `${Number(record.line_count || record.lines?.length || 0)} product${Number(record.line_count || record.lines?.length || 0) === 1 ? "" : "s"} • ${Number(record.bottle_equivalent || 0)} bottle equivalent`
         : [record.business_type, record.delivery_city, record.delivery_state].filter(Boolean).join(" • ");
@@ -3298,7 +3319,7 @@
       ).join("");
       $("customerRecordBody").innerHTML = `<div class="businessDetailGrid">
         <section class="detailSection full"><h4>Badger invoice ${escapeHtml(record.invoice_number)}</h4>${detailRowsHtml([
-          { label:"Badger customer", value:record.customer_name || record.business_name }, { label:"Amount", value:record.amount || "$0.00" },
+          { label:"Badger customer", value:record.customer_name || record.business_name }, { label:"Amount", value:badgerAmountLabel(record.amount) },
           { label:"Invoice date", value:formatOutreachDate(record.invoice_date) || "Not recorded" }, { label:"Why unmatched", value:record.match_reason || "No account match" },
         ])}</section>
         <section class="detailSection full"><label for="badgerInvoiceAccountId">Directory account</label><select id="badgerInvoiceAccountId"><option value="">Choose an account…</option>${options}</select><p class="smallMuted">Linking also records this Badger customer name for future matching. Use “Not a Directory account” only when this invoice should never appear in the Hub.</p></section>
@@ -3359,7 +3380,7 @@
       $("customerRecordSubtitle").textContent = `Account • ${record.account_id}`;
       const history = record.history || [];
       const invoices = record.invoices || [];
-      const invoiceLedgerHtml = invoices.length ? `<div class="workflowLineList">${invoices.map(invoice => `<div class="workflowLine"><span><strong>${escapeHtml(invoice.invoice_number || "Invoice")}</strong> • ${escapeHtml(invoice.customer_name || record.business_name)}<br><small>${escapeHtml(invoice.match_method || "Linked")}</small></span><strong>${escapeHtml([invoice.amount && `Amount ${invoice.amount}`, invoice.invoice_status, formatOutreachDate(invoice.invoice_date)].filter(Boolean).join(" • "))}</strong></div>`).join("")}</div>` : `<div class="smallMuted">No Badger invoices are linked to this account.</div>`;
+      const invoiceLedgerHtml = invoices.length ? `<div class="workflowLineList">${invoices.map(invoice => `<div class="workflowLine"><span><strong>${escapeHtml(invoice.invoice_number || "Invoice")}</strong> • ${escapeHtml(invoice.customer_name || record.business_name)}<br><small>${escapeHtml(invoice.match_method || "Linked")}</small></span><strong>${escapeHtml([invoice.amount && `Amount ${badgerAmountLabel(invoice.amount)}`, invoice.invoice_status, formatOutreachDate(invoice.invoice_date)].filter(Boolean).join(" • "))}</strong></div>`).join("")}</div>` : `<div class="smallMuted">No Badger invoices are linked to this account.</div>`;
       const historyHtml = history.length ? `<div class="activityTimeline">${history.map(item => `
         <div class="activityItem">
           <strong>${escapeHtml(item.type || "Activity")} · ${escapeHtml(item.title || item.status || "Recorded")}</strong>
@@ -3372,11 +3393,11 @@
       const paymentReminder = unpaidInvoices.length ? `
         <section class="detailSection full">
           <h4>Matched unpaid Badger invoices</h4>
-          <div class="workflowLineList">${unpaidInvoices.map(invoice => `<div class="workflowLine"><span>Invoice ${escapeHtml(invoice.invoice_number || "recorded")} • ${escapeHtml(formatOutreachDate(invoice.invoice_date) || "Date not recorded")}</span><strong>${escapeHtml(invoice.amount || "$0.00")}</strong><button type="button" class="actionBtn" data-badger-payment="paid_badger" data-invoice-number="${escapeHtml(invoice.invoice_number || "")}">Paid Badger</button><button type="button" class="actionBtn" data-badger-payment="paid_me" data-invoice-number="${escapeHtml(invoice.invoice_number || "")}">Paid us</button></div>`).join("")}</div>
+          <div class="workflowLineList">${unpaidInvoices.map(invoice => `<div class="workflowLine"><span>Invoice ${escapeHtml(invoice.invoice_number || "recorded")} • ${escapeHtml(formatOutreachDate(invoice.invoice_date) || "Date not recorded")}</span><strong>${escapeHtml(badgerAmountLabel(invoice.amount))}</strong><button type="button" class="actionBtn" data-badger-payment="paid_badger" data-invoice-number="${escapeHtml(invoice.invoice_number || "")}">Paid Badger</button><button type="button" class="actionBtn" data-badger-payment="paid_me" data-invoice-number="${escapeHtml(invoice.invoice_number || "")}">Paid us</button></div>`).join("")}</div>
           <p class="smallMuted">Outstanding balance: ${escapeHtml(record.outstanding_balance || "$0.00")}. ${Number(record.payment_reminder_eligible_invoices?.length || 0)} invoice(s) meet the reminder age gate.</p>
           <div class="dlgActions"><button class="primary" id="previewPaymentReminderBtn" type="button">Review payment reminder</button></div>
         </section>` : "";
-      const undoPaymentMarks = reversiblePaymentMarks.length ? `<section class="detailSection full"><h4>Recorded Badger payment marks</h4><div class="workflowLineList">${reversiblePaymentMarks.map(invoice => `<div class="workflowLine"><span>Invoice ${escapeHtml(invoice.invoice_number || "recorded")} • ${escapeHtml(invoice.payment_status || "Recorded")}</span><strong>${escapeHtml(invoice.amount || "$0.00")}</strong><button type="button" class="actionBtn" data-badger-payment="undo" data-invoice-number="${escapeHtml(invoice.invoice_number || "")}">Undo</button></div>`).join("")}</div></section>` : "";
+      const undoPaymentMarks = reversiblePaymentMarks.length ? `<section class="detailSection full"><h4>Recorded Badger payment marks</h4><div class="workflowLineList">${reversiblePaymentMarks.map(invoice => `<div class="workflowLine"><span>Invoice ${escapeHtml(invoice.invoice_number || "recorded")} • ${escapeHtml(invoice.payment_status || "Recorded")}</span><strong>${escapeHtml(badgerAmountLabel(invoice.amount))}</strong><button type="button" class="actionBtn" data-badger-payment="undo" data-invoice-number="${escapeHtml(invoice.invoice_number || "")}">Undo</button></div>`).join("")}</div></section>` : "";
       const pendingReminderNotice = pendingReminders.length ? `<section class="detailSection full"><h4>Reminder needs resolution</h4><div class="workflowLineList">${pendingReminders.map(reminder => `<div class="workflowLine"><span>${escapeHtml(reminder.invoice_numbers || "Invoices")} • pending since ${escapeHtml(formatOutreachDate(reminder.sent_at) || "date not recorded")}${reminder.error ? ` • ${escapeHtml(reminder.error)}` : ""}</span><button class="actionBtn" type="button" data-payment-reminder-resolution="retry" data-reminder-id="${escapeHtml(reminder.reminder_id || "")}">Retry</button><button class="actionBtn" type="button" data-payment-reminder-resolution="failed" data-reminder-id="${escapeHtml(reminder.reminder_id || "")}">Mark failed</button></div>`).join("")}</div></section>` : "";
       $("customerRecordBody").innerHTML = `
         <div class="businessDetailGrid">
@@ -3562,7 +3583,7 @@
   }
 
   function badgerReconcileRows(rows){
-    return rows.length ? `<div class="workflowLineList">${rows.map(invoice => `<div class="workflowLine"><span>Invoice ${escapeHtml(invoice.invoice_number || "recorded")} • ${escapeHtml(invoice.customer_name || "Customer")} • ${escapeHtml(formatOutreachDate(invoice.invoice_date) || "Date not recorded")}</span><strong>${escapeHtml(invoice.amount || "$0.00")}</strong></div>`).join("")}</div>` : '<div class="smallMuted">None.</div>';
+    return rows.length ? `<div class="workflowLineList">${rows.map(invoice => `<div class="workflowLine"><span>Invoice ${escapeHtml(invoice.invoice_number || "recorded")} • ${escapeHtml(invoice.customer_name || "Customer")} • ${escapeHtml(formatOutreachDate(invoice.invoice_date) || "Date not recorded")}</span><strong>${escapeHtml(badgerAmountLabel(invoice.amount))}</strong></div>`).join("")}</div>` : '<div class="smallMuted">None.</div>';
   }
 
   async function previewBadgerReconcile(){

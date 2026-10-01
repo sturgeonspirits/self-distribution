@@ -1182,6 +1182,8 @@ test("customer billing workflow keeps real Badger invoices distinct from Online 
     customerStatusFilter:"all", customerFilterText:"", ORDER_STATUSES:[], APPLICATION_STATUSES:[], customerInvoiceRecords:() => [], Array, String,
   });
   assert.equal(onlineRequests().length, 1, "Online requests must read the orders payload, not a nonexistent view key");
+  assert.match(index, /input\[type="checkbox"\],input\[type="radio"\]\{[\s\S]*?width:18px;[\s\S]*?min-height:0;/, "checkboxes are not stretched by the global input sizing");
+  assert.match(index, /\.checkLabel\{display:flex/);
 });
 
 test("campaign loading backfills legacy cities once and does not label absent legacy miles", async () => {
