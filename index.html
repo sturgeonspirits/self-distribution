@@ -1,10 +1,10 @@
 <!doctype html>
-<!-- App version: 2026.09.24.32-WEB -->
+<!-- App version: 2026.10.01.1-WEB -->
 <html>
 <head>
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover"/>
-  <meta name="app-version" content="2026.09.24.32-WEB" />
+  <meta name="app-version" content="2026.10.01.1-WEB" />
   <meta name="theme-color" content="#536f77" />
   <link rel="icon" href="/assets/distribution-hub-icon.svg" type="image/svg+xml" />
   <link rel="manifest" href="/site.webmanifest" />
@@ -2112,7 +2112,8 @@
       <div class="workflowControls">
         <div class="workflowTabs" aria-label="Customer work views">
           <button class="workflowTab active" id="accountsViewBtn" type="button">Accounts</button>
-          <button class="workflowTab" id="ordersViewBtn" type="button">Orders</button>
+          <button class="workflowTab" id="invoicesViewBtn" type="button">Invoices & payments</button>
+          <button class="workflowTab" id="ordersViewBtn" type="button">Online requests</button>
           <button class="workflowTab" id="applicationsViewBtn" type="button">Applications</button>
         </div>
         <div>
@@ -2476,7 +2477,7 @@
 
   <footer style="max-width:1200px;margin:18px auto 120px;padding:0 12px;text-align:center;color:#6b7280;font-size:12px;">
     Designed by <a href="https://scriptspirit.dev" target="_blank" rel="noopener noreferrer" style="color:#1d4ed8;text-decoration:none;font-weight:700;">Script Spirit</a>
-<span id="appVersionFooter"> • Version 2026.09.24.32-WEB</span>
+<span id="appVersionFooter"> • Version 2026.10.01.1-WEB</span>
   </footer>
 
 
@@ -2499,7 +2500,7 @@
   window.addEventListener("unhandledrejection", e => console.error("Unhandled promise rejection:", e.reason));
   window.addEventListener("error", e => console.error("Unhandled error:", e.error || e.message));
   const $ = (id) => document.getElementById(id);
-  const APP_VERSION = "2026.09.24.32-WEB";
+  const APP_VERSION = "2026.10.01.1-WEB";
   $("appVersionFooter").textContent = ` • Version ${APP_VERSION}`;
 
   let cache = { stores: [], lines: [] };
@@ -2540,10 +2541,11 @@
   let selectedCampaignApprovalToken = "";
   let campaignSendInProgress = false;
 
-  let customerData = { accounts:[], applications:[], orders:[], summary:{ new_applications:0, active_applications:0, new_orders:0, active_orders:0, invoice_needed:0 } };
-  let customerView = ["accounts", "orders", "applications"].includes(localStorage.getItem("customer_work_view")) ? localStorage.getItem("customer_work_view") : "accounts";
+  let customerData = { accounts:[], applications:[], orders:[], unmatchedBadgerInvoices:[], ignoredBadgerInvoices:[], summary:{ new_applications:0, active_applications:0, new_orders:0, active_orders:0, invoice_needed:0 } };
+  const savedCustomerView = localStorage.getItem("customer_work_view");
+  let customerView = ["accounts", "invoices", "online_requests", "applications"].includes(savedCustomerView) ? savedCustomerView : savedCustomerView === "orders" ? "online_requests" : "invoices";
   let customerFilterText = "";
-  let customerStatusFilter = customerView === "accounts" ? "all" : "active";
+  let customerStatusFilter = ["accounts", "invoices"].includes(customerView) ? "all" : "active";
   let customerLoaded = false;
   let customerWorkQueueLoadRequest = 0;
   let selectedCustomerRecord = null;
@@ -2808,8 +2810,32 @@
     return staffSession;
   }
 
+  function customerInvoiceRecords(){
+    const seen = new Set();
+    const matchedInvoices = customerData.accounts.flatMap(account => (account.invoices || []).map(invoice => Object.assign({}, invoice, {
+      account_id:account.account_id, business_name:account.business_name, contact_name:account.contact_name, email:account.email,
+    })));
+    // Do not hide a Badger invoice simply because it is not yet linked to a
+    // Directory account. It remains a real billing record, but cannot open an
+    // account history until staff resolve the match.
+    const unmatchedInvoices = (customerData.unmatchedBadgerInvoices || []).map(invoice => Object.assign({}, invoice, {
+      account_id:"", business_name:invoice.customer_name || "Unmatched Badger customer", contact_name:"", email:"",
+      invoice_status:invoice.invoice_status || "Unknown", payment_status:invoice.payment_status || "Unknown",
+      badger_match_status:"Needs account match",
+    }));
+    return matchedInvoices.concat(unmatchedInvoices).filter(invoice => {
+      const key = String(invoice.invoice_number || invoice.badger_id || "");
+      if (!key || seen.has(key)) return false;
+      seen.add(key); return true;
+    }).sort((a, b) => new Date(b.invoice_date || 0) - new Date(a.invoice_date || 0));
+  }
+
   function customerStatusOptions(){
-    const statuses = customerView === "orders" ? ORDER_STATUSES : customerView === "applications" ? APPLICATION_STATUSES : [];
+    if (customerView === "invoices") return [
+      { value:"all", label:"All invoices" }, { value:"Customer owes", label:"Customer owes" }, { value:"Owed to Badger", label:"Owed to Badger" },
+      { value:"Check sent", label:"Check sent" }, { value:"Awaiting Badger", label:"Awaiting Badger" }, { value:"Closed", label:"Closed" }, { value:"Unknown", label:"Unknown" },
+    ];
+    const statuses = customerView === "online_requests" ? ORDER_STATUSES : customerView === "applications" ? APPLICATION_STATUSES : [];
     const operational = (customerView === "accounts" ? ["Payment due", "New"] : []).concat(["Awaiting invoice", "Ready", "Delivered", "Reorder due", "Inventory-counted"]);
     return [{ value:"active", label:"Active work" }, { value:"all", label:"All statuses" }]
       .concat(operational.map(status => ({ value:`operational:${status}`, label:status })))
@@ -2818,21 +2844,24 @@
 
   function updateCustomerStatusOptions(){
     const options = customerStatusOptions();
-    if (!options.some(option => option.value === customerStatusFilter)) customerStatusFilter = "active";
+    if (!options.some(option => option.value === customerStatusFilter)) customerStatusFilter = ["accounts", "invoices"].includes(customerView) ? "all" : "active";
     $("customerStatusFilter").innerHTML = options.map(option =>
       `<option value="${escapeHtml(option.value)}" ${option.value === customerStatusFilter ? "selected" : ""}>${escapeHtml(option.label)}</option>`
     ).join("");
   }
 
   function customerRecordsForView(){
-    const records = [...(customerData[customerView] || [])];
-    const activeStatuses = customerView === "orders"
+    const records = customerView === "invoices" ? customerInvoiceRecords() : [...(customerData[customerView] || [])];
+    const activeStatuses = customerView === "online_requests"
       ? ["New", "Reviewing", "Confirmed", "Invoicing", "Ready for delivery"]
       : customerView === "applications" ? ["New", "Reviewing", "Needs information"] : [];
     const query = customerFilterText.trim().toLowerCase();
     return records.filter(record => {
       const operational = Array.isArray(record.operational_statuses) ? record.operational_statuses : [];
-      const statusMatch = customerStatusFilter === "all"
+      const invoiceStatus = String(record.payment_status || record.invoice_status || "Unknown");
+      const statusMatch = customerView === "invoices"
+        ? (customerStatusFilter === "all" || customerStatusFilter === invoiceStatus)
+        : customerStatusFilter === "all"
         || (customerStatusFilter === "active"
           ? (customerView === "accounts" ? operational.some(status => !["Delivered", "Inventory-counted"].includes(status)) : activeStatuses.includes(record.workflow_status))
           : customerStatusFilter.startsWith("operational:")
@@ -2846,7 +2875,7 @@
 
   function customerStatusBadge(status){
     const value = String(status || "").toLowerCase();
-    if (["account active", "completed"].includes(value)) return "green";
+    if (["account active", "completed", "closed"].includes(value)) return "green";
     if (["declined", "cancelled", "issue"].includes(value)) return "red";
     if (["new"].includes(value)) return "blue";
     return "amber";
@@ -2891,7 +2920,8 @@
     }
     $("accountsViewBtn").classList.toggle("active", customerView === "accounts");
     $("applicationsViewBtn").classList.toggle("active", customerView === "applications");
-    $("ordersViewBtn").classList.toggle("active", customerView === "orders");
+    $("invoicesViewBtn").classList.toggle("active", customerView === "invoices");
+    $("ordersViewBtn").classList.toggle("active", customerView === "online_requests");
     updateCustomerStatusOptions();
 
     const records = customerRecordsForView();
@@ -2904,18 +2934,21 @@
 
     list.innerHTML = records.map(record => {
       const isAccount = customerView === "accounts";
-      const isOrder = customerView === "orders";
-      const id = isAccount ? record.account_id : isOrder ? record.request_id : record.application_id;
-      const contact = isAccount ? record.contact_name : isOrder ? record.contact_name : record.primary_contact_name;
-      const email = isAccount ? record.email : isOrder ? record.email : record.primary_email;
+      const isInvoice = customerView === "invoices";
+      const isOrder = customerView === "online_requests";
+      const id = isAccount ? record.account_id : isInvoice ? record.account_id : isOrder ? record.request_id : record.application_id;
+      const contact = isAccount || isInvoice || isOrder ? record.contact_name : record.primary_contact_name;
+      const email = isAccount || isInvoice || isOrder ? record.email : record.primary_email;
       const orderSummary = isAccount
         ? `${Number(record.orders?.length || 0)} orders • ${Number(record.invoices?.length || 0)} invoices${Number(record.unpaid_invoices?.length || 0) ? ` • ${Number(record.unpaid_invoices.length)} unpaid (${record.outstanding_balance || "$0.00"})` : ""} • ${Number(record.deliveries?.length || 0)} deliveries • ${Number(record.history?.length || 0)} history events`
+        : isInvoice
+        ? `Badger invoice ${record.invoice_number || "recorded"} • ${record.amount || "$0.00"} • ${formatOutreachDate(record.invoice_date) || "Date not recorded"}${record.match_reason ? ` • ${record.match_reason}` : ""}`
         : isOrder
         ? `${Number(record.line_count || record.lines?.length || 0)} product${Number(record.line_count || record.lines?.length || 0) === 1 ? "" : "s"} • ${Number(record.bottle_equivalent || 0)} bottle equivalent`
         : [record.business_type, record.delivery_city, record.delivery_state].filter(Boolean).join(" • ");
-      const displayStatus = isAccount ? record.primary_status : record.workflow_status;
+      const displayStatus = isAccount ? record.primary_status : isInvoice ? (record.payment_status || record.invoice_status || "Unknown") : record.workflow_status;
       return `
-        <article class="workflowCard ${displayStatus === "New" ? "newRecord" : ""}" data-customer-kind="${isAccount ? "account" : isOrder ? "order" : "application"}" data-customer-id="${escapeHtml(id)}">
+        <article class="workflowCard ${displayStatus === "New" ? "newRecord" : ""}" data-customer-kind="${isAccount || (isInvoice && record.account_id) ? "account" : isOrder ? "order" : isInvoice ? "unmatched-invoice" : "application"}" data-customer-id="${escapeHtml(id)}">
           <div class="workflowCardTop">
             <div>
               <h3>${escapeHtml(record.business_name || record.legal_business_name || "Unnamed business")}</h3>
@@ -2924,7 +2957,8 @@
             <span class="badge ${customerStatusBadge(displayStatus)}">${escapeHtml(displayStatus || "Account active")}</span>
           </div>
           <div class="workflowMeta">
-            ${!isAccount ? `<span class="badge">${escapeHtml(formatOutreachDate(record.submitted_at) || "No date")}</span>` : ""}
+            ${!isAccount && !isInvoice ? `<span class="badge">${escapeHtml(formatOutreachDate(record.submitted_at) || "No date")}</span>` : ""}
+            ${isInvoice ? `<span class="badge blue">Invoice ${escapeHtml(record.invoice_number || "recorded")}</span><span class="badge">${escapeHtml(formatOutreachDate(record.invoice_date) || "No date")}</span>${record.request_id ? `<span class="badge green">Online request ${escapeHtml(record.request_id)}</span>` : ""}` : ""}
             <span class="badge">${escapeHtml(id)}</span>
             ${isOrder && record.verification_status ? `<span class="badge ${record.verification_status === "Active account matched" ? "green" : "amber"}">${escapeHtml(record.verification_status)}</span>` : ""}
             ${isOrder && record.badger_invoice_number ? `<span class="badge blue">Invoice ${escapeHtml(record.badger_invoice_number)}</span>` : ""}
@@ -2933,8 +2967,10 @@
           </div>
           <p>${escapeHtml(orderSummary || "Details available")}</p>
           <div class="workflowActions">
-            <button class="actionBtn primary" type="button" data-customer-action="open"><i data-lucide="clipboard-check"></i><span>${isAccount ? "History" : "Review"}</span></button>
-            <a class="actionBtn" href="mailto:${escapeHtml(email || "sales@sturgeonspirits.com")}"><i data-lucide="mail"></i><span>Email</span></a>
+            ${isInvoice && !record.account_id
+              ? `<button class="actionBtn" type="button" disabled title="Link this Badger invoice to a Directory account in its account review."><i data-lucide="link"></i><span>Account match needed</span></button>`
+              : `<button class="actionBtn primary" type="button" data-customer-action="open"><i data-lucide="clipboard-check"></i><span>${isAccount || isInvoice ? "Account history" : "Review"}</span></button>`}
+            ${email ? `<a class="actionBtn" href="mailto:${escapeHtml(email)}"><i data-lucide="mail"></i><span>Email</span></a>` : ""}
           </div>
         </article>`;
     }).join("");
@@ -2957,6 +2993,8 @@
       accounts:result.accounts || [],
       applications:result.applications || [],
       orders:result.orders || [],
+      unmatchedBadgerInvoices:result.unmatched_badger_invoices || [],
+      ignoredBadgerInvoices:result.ignored_badger_invoices || [],
       summary:result.summary || {},
     };
     customerLoaded = true;
@@ -6036,6 +6074,12 @@
     localStorage.setItem("customer_work_view", customerView);
     renderCustomerWorkflow();
   });
+  $("invoicesViewBtn").addEventListener("click", () => {
+    customerView = "invoices";
+    customerStatusFilter = "all";
+    localStorage.setItem("customer_work_view", customerView);
+    renderCustomerWorkflow();
+  });
   $("applicationsViewBtn").addEventListener("click", () => {
     customerView = "applications";
     customerStatusFilter = "active";
@@ -6043,7 +6087,7 @@
     renderCustomerWorkflow();
   });
   $("ordersViewBtn").addEventListener("click", () => {
-    customerView = "orders";
+    customerView = "online_requests";
     customerStatusFilter = "active";
     localStorage.setItem("customer_work_view", customerView);
     renderCustomerWorkflow();

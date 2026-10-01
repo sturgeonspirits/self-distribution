@@ -659,3 +659,29 @@ test("Badger Phase 5 invoice creation is review-gated and uses a narrow API boun
   assert.equal(needsRefresh("POST", "/api/invoice", 200, "not json"), false, "create is sent exactly once even on a non-JSON response");
   assert.equal(needsRefresh("GET", "/api/invoice/validateforcreate?number=0163&date=2026-09-30", 200, JSON.stringify({ isAuthorized:false, hasErrors:true, errors:["taken"] })), false);
 });
+
+test("customer billing workflow keeps real Badger invoices distinct from Online requests", async () => {
+  const [backend, index] = await Promise.all([
+    readFile(new URL("apps-script/Code.gs", root), "utf8"),
+    readFile(new URL("index.html", root), "utf8"),
+  ]);
+  const accountBuilder = backend.slice(backend.indexOf("function buildCustomerAccounts_"), backend.indexOf("function apiGetCustomerWorkQueue_"));
+  const invoiceRecordsSource = index.slice(index.indexOf("function customerInvoiceRecords"), index.indexOf("function customerStatusOptions"));
+  assert.match(accountBuilder, /sourceOrder \? Object\.assign\(\{\}, invoice, \{ request_id:sourceOrder\.request_id, online_request:true \}\) : invoice/);
+  assert.match(backend, /function linkCreatedBadgerInvoiceToOrder_\([\s\S]*?set\("badger_invoice_number", draft\.invoice_number\)/);
+  assert.match(index, /Invoices & payments/);
+  assert.match(index, />Online requests</);
+  assert.match(index, /Online request \$\{escapeHtml\(record\.request_id\)\}/);
+  assert.match(index, /Needs account match/);
+  const customerInvoiceRecords = vm.runInNewContext(`${invoiceRecordsSource}; customerInvoiceRecords`, {
+    customerData:{
+      accounts:[{ account_id:"A-1", business_name:"North Bar", contact_name:"Nora", email:"nora@example.test", invoices:[{ invoice_number:"SS0163", invoice_date:"2026-10-01", amount:"$50.00", payment_status:"Customer owes" }] }],
+      unmatchedBadgerInvoices:[{ invoice_number:"SS0164", invoice_date:"2026-09-30", customer_name:"No Match", amount:"$25.00", match_reason:"No account match" }],
+    },
+    Set, Date,
+  });
+  const invoices = customerInvoiceRecords();
+  assert.equal(invoices.length, 2);
+  assert.equal(invoices.find(invoice => invoice.invoice_number === "SS0163").account_id, "A-1");
+  assert.equal(invoices.find(invoice => invoice.invoice_number === "SS0164").badger_match_status, "Needs account match");
+});

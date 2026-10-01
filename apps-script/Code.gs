@@ -1,9 +1,9 @@
 /*********************************
  * Inventory API (JSON) for Netlify
- * App version: 2026.09.24.60
+ * App version: 2026.10.01.2
  *
  * CHANGES IN THIS VERSION
- * - Corrects Badger invoice validation, lookup, bill-to mapping, active-price parsing, timestamp formatting, and single-send create safety; adds pending-create failure resolution.
+ * - Exposes the permanent Online-request-to-Badger-invoice link in every matched account invoice record for the staff invoice and payment views.
  *
  * CHANGES IN 2026.09.24.56
  * - Corrects live payment-state classification, reversible payment marks, sync freshness validation, and pending-reminder resolution safeguards.
@@ -236,7 +236,7 @@
  * - Use only in the staging inventory backend until testing is complete.
  *********************************/
 
-const APP_VERSION = "2026.09.24.60";
+const APP_VERSION = "2026.10.01.2";
 
 const SHEET_NAMES = {
   STORES: "Stores",
@@ -6492,7 +6492,15 @@ function buildCustomerAccounts_(applications, orders, bypassBadgerCache) {
       amount:order.badger_amount,
       customer_name:order.badger_customer_name,
     }));
-    const invoices = linkedInvoices;
+    // An invoice created from an Online request is one business event. Preserve
+    // that request ID on the Badger record so every invoice/payment view can
+    // lead staff back to the originating request without inventing a request
+    // for invoices that predate the Hub.
+    const invoices = linkedInvoices.map(invoice => {
+      const invoiceKey = normalizeBadgerInvoiceNumber_(invoice.invoice_number);
+      const sourceOrder = accountOrders.find(order => normalizeBadgerInvoiceNumber_(order.badger_invoice_number) === invoiceKey);
+      return sourceOrder ? Object.assign({}, invoice, { request_id:sourceOrder.request_id, online_request:true }) : invoice;
+    });
     orderInvoices.forEach(item => {
       const invoiceKey = normalizeBadgerInvoiceNumber_(item.invoice_number);
       const assignedAccountId = assignedInvoiceAccounts.get(invoiceKey);
