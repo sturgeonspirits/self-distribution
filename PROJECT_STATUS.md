@@ -9,7 +9,7 @@ Read this file before inspecting the repository or changing the application. Upd
 | Component | Source version | Deployment state |
 | --- | --- | --- |
 | Netlify web app and staff proxy | `2026.10.01.8-WEB` on `codex/work` / `2026.10.01.8-WEB` live | Deployed by Karl on 2026-10-01. The Direct payments panel starts collapsed so invoice search results remain visible; it supports reviewed pass-through checks, customer-not-paid correction, and Hub-side void review. |
-| Inventory API Apps Script | `2026.10.01.5` on `codex/work` / `2026.10.01.4` live | `.5` fixes Void restore by preserving and reinstating the prior account link, match method, notes, and attribution. `.4` is deployed by Karl on 2026-10-01 and provides the Hub Void mark plus the undoable customer-not-paid payment correction. |
+| Inventory API Apps Script | `2026.10.01.5` on `codex/work` / `2026.10.01.5` live | Deployed by Karl to the staging Inventory API on 2026-10-01. `.5` fixes Void restore by preserving and reinstating the prior account link, match method, notes, and attribution. |
 | Distribution Outreach Apps Script | `2026.09.24.14-APP` on `codex/work` | Reminder delivery prerequisite; owner has not yet confirmed this exact version is deployed. |
 | Public customer Netlify proxy | `2026.09.18.3-WEB` | Deployed with Netlify; unchanged by the latest staff-app UI work |
 
@@ -21,7 +21,7 @@ Current Badger checkpoint: Karl ran `testBadgerLogin()` successfully on 2026-09-
 
 Badger tracker safety answer (Karl, 2026-09-30): the PDF importer never writes the `Paid to Me` or `Submitted` columns. Direct, audited P/Q writes to the live tracker are therefore safe; no Hub override ledger is needed.
 
-Phase 5 deployment prerequisite: after Claude review, deploy Inventory API `2026.10.01.5`; the manual Netlify `2026.10.01.8-WEB` release is already live. Run `seedCurrentPricesTab()` once, review and activate the tracker prices, then create the first real Badger invoice with Claude reviewing. Never create a test invoice in Badger.
+Phase 5 deployment state: staging Inventory API `2026.10.01.5` and Netlify `2026.10.01.8-WEB` are live. Next, run `seedCurrentPricesTab()` once in staging and review/activate the tracker prices with Claude before any Badger invoice creation. Never create a test invoice in Badger.
 
 Latest completed changes:
 
