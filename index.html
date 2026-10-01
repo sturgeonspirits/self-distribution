@@ -1,10 +1,10 @@
 <!doctype html>
-<!-- App version: 2026.09.24.31-WEB -->
+<!-- App version: 2026.09.24.32-WEB -->
 <html>
 <head>
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover"/>
-  <meta name="app-version" content="2026.09.24.31-WEB" />
+  <meta name="app-version" content="2026.09.24.32-WEB" />
   <meta name="theme-color" content="#536f77" />
   <link rel="icon" href="/assets/distribution-hub-icon.svg" type="image/svg+xml" />
   <link rel="manifest" href="/site.webmanifest" />
@@ -2476,7 +2476,7 @@
 
   <footer style="max-width:1200px;margin:18px auto 120px;padding:0 12px;text-align:center;color:#6b7280;font-size:12px;">
     Designed by <a href="https://scriptspirit.dev" target="_blank" rel="noopener noreferrer" style="color:#1d4ed8;text-decoration:none;font-weight:700;">Script Spirit</a>
-<span id="appVersionFooter"> • Version 2026.09.24.31-WEB</span>
+<span id="appVersionFooter"> • Version 2026.09.24.32-WEB</span>
   </footer>
 
 
@@ -2499,7 +2499,7 @@
   window.addEventListener("unhandledrejection", e => console.error("Unhandled promise rejection:", e.reason));
   window.addEventListener("error", e => console.error("Unhandled error:", e.error || e.message));
   const $ = (id) => document.getElementById(id);
-  const APP_VERSION = "2026.09.24.31-WEB";
+  const APP_VERSION = "2026.09.24.32-WEB";
   $("appVersionFooter").textContent = ` • Version ${APP_VERSION}`;
 
   let cache = { stores: [], lines: [] };
@@ -3246,6 +3246,11 @@
         $("customerRecordBody").innerHTML = `<section class="detailSection full"><h4>Matching invoice found in Badger</h4><p class="smallMuted">${escapeHtml(result.invoice_number)} matches this pending request. Adopt it instead of creating another invoice.</p><div class="dlgActions"><button id="backToCustomerRecordBtn" type="button">Back</button><button class="primary" id="adoptBadgerInvoiceBtn" type="button">Adopt ${escapeHtml(result.invoice_number)}</button></div></section>`;
         refreshIcons(); return;
       }
+      if (result.pending_creation) {
+        const pending = result.pending_creation;
+        $("customerRecordBody").innerHTML = `<section class="detailSection full"><h4>Badger invoice creation is pending</h4><p class="smallMuted">${escapeHtml(pending.invoice_number || "This invoice")} was started ${escapeHtml(formatOutreachDate(pending.at) || "at an unknown time")}. Check Badger before taking any further action.${pending.error ? ` Last result: ${escapeHtml(pending.error)}` : ""}</p><div class="dlgActions"><button id="backToCustomerRecordBtn" type="button">Back</button><button id="adoptBadgerInvoiceBtn" type="button">Check and adopt</button><button class="actionBtn" id="failBadgerInvoiceCreationBtn" type="button">Mark failed (reason)</button></div><div class="status" id="badgerInvoiceStatus"></div></section>`;
+        refreshIcons(); return;
+      }
       const warnings = (result.warnings || []).map(warning => `<div class="status" role="alert">${escapeHtml(warning)}</div>`).join("");
       $("customerRecordBody").innerHTML = `<div class="businessDetailGrid">
         <section class="detailSection"><h4>Invoice</h4>${detailRowsHtml([{label:"Number", value:result.invoice_number}, {label:"Customer ID", value:result.customer_id}, {label:"Total", value:result.total}])}<label for="badgerInvoiceDate">Date</label><input id="badgerInvoiceDate" type="date" value="${escapeHtml(result.date || "")}" /></section>
@@ -3275,6 +3280,17 @@
     const result = await staffApiPost({ action:"adoptBadgerInvoice", request_id:record.request_id, staff_name:staffName });
     if (!result.ok) throw new Error(result.error || "Badger invoice adoption failed.");
     await loadCustomerWorkQueue(); toast(result.message || "Badger invoice adopted");
+    const refreshed = customerData.orders.find(item => item.request_id === record.request_id); if (refreshed) openCustomerRecord(refreshed);
+  }
+
+  async function failBadgerInvoiceCreation(){
+    const record = selectedCustomerRecord; const staffName = $("customerStaffName").value.trim();
+    if (!record?.request_id || !staffName) return toast("Enter your staff name before marking a pending invoice failed.");
+    const reason = window.prompt("Why can this pending Badger invoice creation be marked failed?");
+    if (!reason?.trim()) return;
+    const result = await staffApiPost({ action:"failBadgerInvoiceCreation", request_id:record.request_id, staff_name:staffName, reason:reason.trim() });
+    if (!result.ok) throw new Error(result.error || "Badger invoice creation could not be marked failed.");
+    toast(result.message || "Pending Badger invoice creation marked failed");
     const refreshed = customerData.orders.find(item => item.request_id === record.request_id); if (refreshed) openCustomerRecord(refreshed);
   }
 
@@ -6066,6 +6082,7 @@
     if (event.target.closest("#recalculateBadgerInvoiceBtn")) previewBadgerInvoice(true).catch(error => toast(error?.message || String(error)));
     if (event.target.closest("#createBadgerInvoiceBtn")) createBadgerInvoice();
     if (event.target.closest("#adoptBadgerInvoiceBtn")) adoptBadgerInvoice().catch(error => toast(error?.message || String(error)));
+    if (event.target.closest("#failBadgerInvoiceCreationBtn")) failBadgerInvoiceCreation().catch(error => toast(error?.message || String(error)));
     if (event.target.closest("#previewPaymentReminderBtn")) previewPaymentReminder();
     if (event.target.closest("[data-badger-payment]")) markBadgerPayment(event.target.closest("[data-badger-payment]"));
     if (event.target.closest("[data-badger-reconcile-apply]")) applyBadgerReconcile(event.target.closest("[data-badger-reconcile-apply]")).catch(error => toast(error?.message || String(error)));

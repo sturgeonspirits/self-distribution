@@ -601,8 +601,13 @@ test("Badger Phase 5 invoice creation is review-gated and uses a narrow API boun
   assert.match(urlSource, /\/Api\/Invoice\/Paged\/orderorinvoicenumber/);
   assert.match(urlSource, /\^\\\/api\\\/invoice\\\/\\d\+\$/);
   assert.match(urlSource, /\^\\\/api\\\/customer\\\/\\d\+\$/);
-  assert.match(urlSource, /validateforcreate\\\?number=SS\\d\{4\}/);
+  assert.match(urlSource, /validateforcreate\\\?number=\\d\{4\}/);
+  assert.doesNotMatch(urlSource, /validateforcreate\\\?number=SS/);
   assert.match(urlSource, /method or path is not allow-listed/);
+  const badgerUrl = vm.runInNewContext(`const BADGER_BASE_URL = "https://badger.example"; ${urlSource}; badgerUrl_`);
+  assert.equal(badgerUrl("GET", "/api/invoice/validateforcreate?number=0163&date=2026-09-30"), "https://badger.example/api/invoice/validateforcreate?number=0163&date=2026-09-30");
+  assert.throws(() => badgerUrl("GET", "/api/invoice/validateforcreate?number=SS0163&date=2026-09-30"));
+  assert.throws(() => badgerUrl("PUT", "/api/invoice/1"));
   const creationSource = backend.slice(backend.indexOf("function apiCreateBadgerInvoice_"), backend.indexOf("function apiAdoptBadgerInvoice_"));
   const draftSource = backend.slice(backend.indexOf("function badgerInvoiceDraft_"), backend.indexOf("function badgerInvoiceMatchesDraft_"));
   assert.match(creationSource, /p\?\.reviewed !== true/);
@@ -616,11 +621,41 @@ test("Badger Phase 5 invoice creation is review-gated and uses a narrow API boun
   assert.match(creationSource, /badgerRemoteInvoiceDetails_/);
   assert.match(backend, /function seedCurrentPricesTab\(\)/);
   assert.match(backend, /Current Prices already exists; no rows were changed/);
+  assert.match(backend, /"Unit Price"/);
   assert.match(backend, /filter\(row => toBool_\(row\.active\)\)/);
+  assert.match(backend, /parameters:\{ value:String\(invoiceNumber \|\| ""\) \}/);
+  assert.match(backend, /Utilities\.formatDate\(new Date\(`\$\{draft\.date\}T00:00:00`\), "America\/Chicago", "yyyy-MM-dd'T'HH:mm:ssXXX"\)/);
   assert.match(proxy, /"createBadgerInvoice"/);
   assert.match(proxy, /SEND_ACTIONS = new Set\([\s\S]*?"createBadgerInvoice"/);
   assert.match(index, /id="previewBadgerInvoiceBtn"/);
   assert.match(index, /id="badgerInvoiceReviewed"/);
   assert.match(index, /action:"createBadgerInvoice"/);
+  assert.match(index, /id="failBadgerInvoiceCreationBtn"/);
   assert.match(index, /if \(!applied\.ok\) throw new Error\(applied\.error \|\| "Reconciliation was not applied\."\)/);
+
+  const validationSource = backend.slice(backend.indexOf("function badgerValidationError_"), backend.indexOf("function badgerValidateInvoiceNumber_"));
+  const validationError = vm.runInNewContext(`${validationSource}; badgerValidationError_`);
+  assert.match(validationError({ data:0, isSuccess:false, hasErrors:true, errors:["The invoice number is already used."] }), /already used/);
+  assert.equal(validationError({ isSuccess:true, hasErrors:false }), "");
+  let validationPath = "";
+  const validateInvoiceNumber = vm.runInNewContext(`${validationSource}\n${backend.slice(backend.indexOf("function badgerValidateInvoiceNumber_"), backend.indexOf("function badgerOrderForInvoice_"))}; badgerValidateInvoiceNumber_`, { badgerJson_:(path) => { validationPath = path; return { isSuccess:true, hasErrors:false }; } });
+  assert.equal(validateInvoiceNumber("SS0163", "2026-09-30"), true);
+  assert.match(validationPath, /number=0163/);
+
+  const customerSource = backend.slice(backend.indexOf("function badgerBillToCustomer_"), backend.indexOf("function badgerInvoiceDraft_"));
+  const billToCustomer = vm.runInNewContext(`${customerSource}; badgerBillToCustomer_`);
+  assert.equal(JSON.stringify(billToCustomer({ name:"North Bar", resellerNumber:"R-4", addressLine1:"10 Main", addressLine2:"Suite B", city:"Oshkosh", postalCode:"54901" })), JSON.stringify({
+    id:"", billToName:"North Bar", billToResellerNumber:"R-4", billToAddressLine1:"10 Main", billToAddressLine2:"Suite B", billToCity:"Oshkosh", billToPostalCode:"54901", email:"", phone:"",
+  }));
+
+  const moneySource = backend.slice(backend.indexOf("function badgerMoneyToCents_"), backend.indexOf("function badgerMoneyLabel_"));
+  const priceSource = backend.slice(backend.indexOf("function badgerCurrentPriceCents_"), backend.indexOf("function badgerCurrentPrices_"));
+  const currentPriceCents = vm.runInNewContext(`${moneySource}\n${priceSource}; badgerCurrentPriceCents_`);
+  assert.equal(currentPriceCents({ unit_price:"12.50" }), 1250);
+  assert.equal(currentPriceCents({ "unit_price_(per_bottle)":"9.25" }), 925);
+
+  const refreshSource = backend.slice(backend.indexOf("function badgerResponseNeedsSessionRefresh_"), backend.indexOf("function badgerRequest_"));
+  const needsRefresh = vm.runInNewContext(`${refreshSource}; badgerResponseNeedsSessionRefresh_`);
+  assert.equal(needsRefresh("POST", "/api/invoice", 200, "not json"), false, "create is sent exactly once even on a non-JSON response");
+  assert.equal(needsRefresh("GET", "/api/invoice/validateforcreate?number=0163&date=2026-09-30", 200, JSON.stringify({ isAuthorized:false, hasErrors:true, errors:["taken"] })), false);
 });

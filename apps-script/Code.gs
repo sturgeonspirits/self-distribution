@@ -1,9 +1,9 @@
 /*********************************
  * Inventory API (JSON) for Netlify
- * App version: 2026.09.24.59
+ * App version: 2026.09.24.60
  *
  * CHANGES IN THIS VERSION
- * - Adds review-gated Badger invoice preview and creation for confirmed orders, with allow-listed API calls, active tracker prices, pending-create recovery, and post-create verification.
+ * - Corrects Badger invoice validation, lookup, bill-to mapping, active-price parsing, timestamp formatting, and single-send create safety; adds pending-create failure resolution.
  *
  * CHANGES IN 2026.09.24.56
  * - Corrects live payment-state classification, reversible payment marks, sync freshness validation, and pending-reminder resolution safeguards.
@@ -236,7 +236,7 @@
  * - Use only in the staging inventory backend until testing is complete.
  *********************************/
 
-const APP_VERSION = "2026.09.24.59";
+const APP_VERSION = "2026.09.24.60";
 
 const SHEET_NAMES = {
   STORES: "Stores",
@@ -5317,7 +5317,7 @@ function badgerUrl_(method, path) {
   const normalizedMethod = String(method || "").toUpperCase();
   const normalizedPath = String(path || "");
   const allowed = (normalizedMethod === "POST" && new Set(["/Login/Authenticate", "/Api/invoice/Paged", "/Api/Invoice/Paged/orderorinvoicenumber", "/api/invoice"]).has(normalizedPath))
-    || (normalizedMethod === "GET" && (/^\/api\/invoice\/\d+$/.test(normalizedPath) || /^\/api\/customer\/\d+$/.test(normalizedPath) || /^\/api\/invoice\/validateforcreate\?number=SS\d{4}&date=\d{4}-\d{2}-\d{2}$/.test(normalizedPath)));
+    || (normalizedMethod === "GET" && (/^\/api\/invoice\/\d+$/.test(normalizedPath) || /^\/api\/customer\/\d+$/.test(normalizedPath) || /^\/api\/invoice\/validateforcreate\?number=\d{4}&date=\d{4}-\d{2}-\d{2}$/.test(normalizedPath)));
   if (!allowed) throw new Error("Badger request method or path is not allow-listed.");
   return `${BADGER_BASE_URL}${normalizedPath}`;
 }
@@ -5642,6 +5642,18 @@ function apiApplyBadgerReconcile_(p) {
   bumpReadCacheVersion_(); clearBadgerInvoiceCache_(); return { message:`Applied ${invoices.length} reconciliation update(s).`, count:invoices.length };
 }
 
+function badgerResponseNeedsSessionRefresh_(method, path, status, responseText) {
+  // A create is never replayed: after its immediately preceding validation GET,
+  // an unreadable or unusual response is an unknown outcome, not a retry signal.
+  if (String(method || "").toUpperCase() === "POST" && String(path || "") === "/api/invoice") return false;
+  if (status === 401 || (status >= 300 && status < 400)) return true;
+  try {
+    const payload = JSON.parse(responseText);
+    const errors = Array.isArray(payload?.errors) ? payload.errors : [];
+    return payload?.isAuthorized === false && !errors.length && payload?.hasErrors !== true;
+  } catch (_) { return true; }
+}
+
 function badgerRequest_(path, options) {
   const requestOptions = Object.assign({}, options || {});
   const method = String(requestOptions.method || "get").toUpperCase();
@@ -5649,11 +5661,7 @@ function badgerRequest_(path, options) {
   const send = forceRefresh => UrlFetchApp.fetch(url, Object.assign({}, requestOptions, { method:method.toLowerCase(), headers:Object.assign({}, requestOptions.headers || {}, { Cookie:badgerSession_(forceRefresh) }), muteHttpExceptions:true, followRedirects:false }));
   let response = send(false);
   const status = response.getResponseCode();
-  let requiresRefresh = status === 401 || (status >= 300 && status < 400);
-  if (!requiresRefresh) {
-    try { const payload = JSON.parse(response.getContentText()); requiresRefresh = payload && payload.isAuthorized === false; }
-    catch (_) { requiresRefresh = true; }
-  }
+  const requiresRefresh = badgerResponseNeedsSessionRefresh_(method, path, status, response.getContentText());
   if (requiresRefresh) response = send(true);
   return response;
 }
@@ -5796,7 +5804,7 @@ function seedCurrentPricesTab() {
   const tracker = SpreadsheetApp.openById(BADGER_TRACKER_SPREADSHEET_ID);
   if (tracker.getSheetByName(BADGER_CURRENT_PRICES_SHEET_NAME)) return { message:"Current Prices already exists; no rows were changed." };
   const sheet = tracker.insertSheet(BADGER_CURRENT_PRICES_SHEET_NAME);
-  const headers = ["SKU ID", "Badger Description", "Unit Price (per bottle)", "Volume", "Unit of Measure ID", "Proof", "Beverage Class", "Active", "Account ID", "Updated At", "Notes"];
+  const headers = ["SKU ID", "Badger Description", "Unit Price", "Volume", "Unit of Measure ID", "Proof", "Beverage Class", "Active", "Account ID", "Updated At", "Notes"];
   sheet.getRange(1, 1, 1, headers.length).setValues([headers]).setFontWeight("bold");
   const lineSheet = tracker.getSheetByName("Invoice Lines");
   const lineRows = lineSheet && lineSheet.getLastRow() >= 2 ? getAllRowsAsObjects_(lineSheet) : [];
@@ -5814,6 +5822,10 @@ function seedCurrentPricesTab() {
   return { message:`Created Current Prices with ${rows.length} inactive rows for review.`, count:rows.length };
 }
 
+function badgerCurrentPriceCents_(row) {
+  return badgerMoneyToCents_(row.unit_price ?? row["unit_price_(per_bottle)"]);
+}
+
 function badgerCurrentPrices_(bypassCache) {
   const cache = CacheService.getScriptCache(); const cacheKey = `${BADGER_INVOICE_CACHE_PREFIX}:current_prices`;
   if (!bypassCache) {
@@ -5821,7 +5833,7 @@ function badgerCurrentPrices_(bypassCache) {
   }
   const sheet = SpreadsheetApp.openById(BADGER_TRACKER_SPREADSHEET_ID).getSheetByName(BADGER_CURRENT_PRICES_SHEET_NAME);
   const rows = !sheet || sheet.getLastRow() < 2 ? [] : getAllRowsAsObjects_(sheet).filter(row => toBool_(row.active)).map(row => ({
-    sku_id:String(row.sku_id || "").trim(), description:String(row.badger_description || "").trim(), unit_price_cents:badgerMoneyToCents_(row.unit_price_per_bottle), volume:String(row.volume || "").trim(), unit_of_measure_id:Number(row.unit_of_measure_id || 0), proof:Number(row.proof || 0), beverage_class:String(row.beverage_class || "Spirit").trim() || "Spirit", account_id:String(row.account_id || "").trim(), updated_at:row.updated_at || "",
+    sku_id:String(row.sku_id || "").trim(), description:String(row.badger_description || "").trim(), unit_price_cents:badgerCurrentPriceCents_(row), volume:String(row.volume || "").trim(), unit_of_measure_id:Number(row.unit_of_measure_id || 0), proof:Number(row.proof || 0), beverage_class:String(row.beverage_class || "Spirit").trim() || "Spirit", account_id:String(row.account_id || "").trim(), updated_at:row.updated_at || "",
   })).filter(row => row.sku_id && row.unit_price_cents > 0);
   try { cache.put(cacheKey, JSON.stringify(rows), BADGER_INVOICE_CACHE_TTL_SECONDS); } catch (_) {}
   return rows;
@@ -5839,7 +5851,7 @@ function getBadgerInvoiceCreationsSheet_() {
 function badgerInvoiceCreationRows_(requestId) {
   const sheet = getBadgerInvoiceCreationsSheet_(); const h = getHeaderMap_(sheet);
   const rows = sheet.getLastRow() < 2 ? [] : sheet.getRange(2, 1, sheet.getLastRow() - 1, sheet.getLastColumn()).getValues();
-  return rows.map((row, index) => ({ row:row, row_number:index + 2, request_id:String(row[h.request_id] || ""), invoice_number:String(row[h["invoice_#"]] || ""), customer_id:String(row[h.customer_id] || ""), total_cents:Number(row[h.total_cents] || 0), fingerprint:String(row[h.fingerprint] || ""), status:String(row[h.status] || ""), badger_invoice_id:String(row[h.badger_invoice_id] || ""), at:row[h.at] || "" })).filter(item => !requestId || item.request_id === String(requestId));
+  return rows.map((row, index) => ({ row:row, row_number:index + 2, request_id:String(row[h.request_id] || ""), invoice_number:String(row[h["invoice_#"]] || ""), customer_id:String(row[h.customer_id] || ""), total_cents:Number(row[h.total_cents] || 0), fingerprint:String(row[h.fingerprint] || ""), status:String(row[h.status] || ""), badger_invoice_id:String(row[h.badger_invoice_id] || ""), at:row[h.at] || "", error:String(row[h.error] || "") })).filter(item => !requestId || item.request_id === String(requestId));
 }
 
 function badgerJson_(path, options, label) {
@@ -5849,7 +5861,7 @@ function badgerJson_(path, options, label) {
 }
 
 function badgerRemoteInvoiceByNumber_(invoiceNumber) {
-  const payload = badgerJson_("/Api/Invoice/Paged/orderorinvoicenumber", { method:"post", contentType:"application/json", payload:JSON.stringify({ pageSize:20, page:0, sorts:[], filters:[], parameters:{ searchValue:String(invoiceNumber || "") } }) }, "Badger invoice lookup");
+  const payload = badgerJson_("/Api/Invoice/Paged/orderorinvoicenumber", { method:"post", contentType:"application/json", payload:JSON.stringify({ pageSize:20, page:0, sorts:[], filters:[], parameters:{ value:String(invoiceNumber || "") } }) }, "Badger invoice lookup");
   const rows = Array.isArray(payload?.data?.data) ? payload.data.data : Array.isArray(payload?.data) ? payload.data : Array.isArray(payload) ? payload : [];
   const key = normalizeBadgerInvoiceNumber_(invoiceNumber);
   return rows.find(row => normalizeBadgerInvoiceNumber_(row.number || row.invoiceNumber || row.invoice_number) === key) || null;
@@ -5861,11 +5873,19 @@ function badgerRemoteInvoiceDetails_(invoiceId) {
   return payload?.data || payload;
 }
 
+function badgerValidationError_(payload) {
+  const data = payload && Object.prototype.hasOwnProperty.call(payload, "data") ? payload.data : payload;
+  if (data?.isSuccess === true && data?.hasErrors !== true) return "";
+  const errors = Array.isArray(data?.errors) ? data.errors : Array.isArray(payload?.errors) ? payload.errors : [];
+  return String(errors[0] || "number taken — preview again");
+}
+
 function badgerValidateInvoiceNumber_(invoiceNumber, date) {
   if (!/^SS\d{4}$/.test(String(invoiceNumber || "")) || !/^\d{4}-\d{2}-\d{2}$/.test(String(date || ""))) throw new Error("Proposed Badger invoice number or date is invalid.");
-  const payload = badgerJson_(`/api/invoice/validateforcreate?number=${invoiceNumber}&date=${date}`, { method:"get" }, "Badger invoice-number validation");
-  const data = payload?.data || payload;
-  if (data === false || data?.isValid === false || data?.available === false || data?.exists === true) throw new Error("number taken — preview again");
+  const orderNumber = String(invoiceNumber).slice(2);
+  const payload = badgerJson_(`/api/invoice/validateforcreate?number=${orderNumber}&date=${date}`, { method:"get" }, "Badger invoice-number validation");
+  const error = badgerValidationError_(payload);
+  if (error) throw new Error(error);
   return true;
 }
 
@@ -5880,12 +5900,12 @@ function badgerOrderForInvoice_(requestId) {
   return { sheet:sheet, headers:h, row_number:rowNumber, order:onlineOrderRecord_(raw, new Map([[String(requestId || ""), lines]])) };
 }
 
-function badgerCustomerIdForAccount_(accountId) {
+function badgerCustomerIdForAccount_(accountId, account) {
   const directory = getOutreachSheet_(OUTREACH_SHEET_NAME); const directoryRow = getAllRowsAsObjects_(directory).find(row => String(row.account_id || "") === String(accountId || "")) || {};
   const override = String(directoryRow.badger_customer_id || "").trim();
   if (/^\d+$/.test(override)) return override;
-  const account = currentBadgerPaymentAccount_(accountId, false);
-  const match = (account.invoices || []).filter(invoice => invoice.badger_match_status === "Matched" && /^\d+$/.test(String(invoice.customer_id || "")))
+  const paymentAccount = account || currentBadgerPaymentAccount_(accountId, false);
+  const match = (paymentAccount.invoices || []).filter(invoice => invoice.badger_match_status === "Matched" && /^\d+$/.test(String(invoice.customer_id || "")))
     .sort((a, b) => recordTimestamp_(b.invoice_date) - recordTimestamp_(a.invoice_date))[0];
   if (!match) throw new Error("Create this customer in Badger (or invoice them once by hand) first.");
   return String(match.customer_id);
@@ -5897,14 +5917,29 @@ function badgerNextInvoiceNumber_() {
   return `SS${String(highest + 1).padStart(4, "0")}`;
 }
 
-function badgerInvoiceDraft_(requestId, p, skipValidation) {
+function badgerBillToCustomer_(customer) {
+  const source = customer || {};
+  return {
+    id:source.id || "", billToName:String(source.name || source.billToName || "").trim(),
+    billToResellerNumber:String(source.resellerNumber || source.billToResellerNumber || "").trim(),
+    billToAddressLine1:String(source.addressLine1 || source.billToAddressLine1 || "").trim(),
+    billToAddressLine2:String(source.addressLine2 || source.billToAddressLine2 || "").trim(),
+    billToCity:String(source.city || source.billToCity || "").trim(),
+    billToPostalCode:String(source.postalCode || source.billToPostalCode || "").trim(),
+    email:String(source.email || "").trim(), phone:String(source.phone || "").trim(),
+  };
+}
+
+function badgerInvoiceDraft_(requestId, p, skipValidation, accountSnapshot) {
   const source = badgerOrderForInvoice_(requestId); const order = source.order;
   if (String(order.workflow_status || "") !== "Confirmed") throw new Error("Only Confirmed orders can create a Badger invoice.");
   if (String(order.badger_invoice_number || "").trim()) throw new Error("This order already has a Badger invoice.");
   if (!String(order.account_id || "").trim()) throw new Error("Link this order to an account before creating a Badger invoice.");
-  const customerId = badgerCustomerIdForAccount_(order.account_id);
+  const account = accountSnapshot || currentBadgerPaymentAccount_(order.account_id, false);
+  const customerId = badgerCustomerIdForAccount_(order.account_id, account);
   const customer = badgerJson_(`/api/customer/${customerId}`, { method:"get" }, "Badger customer lookup");
-  const customerData = customer?.data || customer;
+  const customerData = badgerBillToCustomer_(customer?.data || customer);
+  if (!customerData.billToName || !customerData.billToAddressLine1) throw new Error("Badger customer needs a name and address before this invoice can be previewed.");
   const today = Utilities.formatDate(new Date(), Session.getScriptTimeZone(), "yyyy-MM-dd");
   const date = String(p?.date || today).trim();
   if (!/^\d{4}-\d{2}-\d{2}$/.test(date)) throw new Error("Invoice date must use YYYY-MM-DD.");
@@ -5929,7 +5964,6 @@ function badgerInvoiceDraft_(requestId, p, skipValidation) {
   const directoryAddress = [directory.street_address || directory.address, directory.city, directory.zip_code || directory.zip].filter(Boolean).join("|");
   if (badgerAddress && directoryAddress && normalizeCustomerMatchKey_(badgerAddress) !== normalizeCustomerMatchKey_(directoryAddress)) warnings.push("Badger bill-to address differs from the Directory.");
   try {
-    const account = currentBadgerPaymentAccount_(order.account_id, false);
     const lastInvoice = (account.invoices || []).filter(invoice => /^\d+$/.test(String(invoice.badger_id || ""))).sort((a, b) => recordTimestamp_(b.invoice_date) - recordTimestamp_(a.invoice_date))[0];
     if (lastInvoice) {
       const priorLines = badgerRemoteInvoiceDetails_(lastInvoice.badger_id).lines || [];
@@ -5979,7 +6013,7 @@ function apiPreviewBadgerInvoice_(p) {
   if (pending) {
     const remote = badgerRemoteInvoiceByNumber_(pending.invoice_number);
     if (badgerInvoiceMatchesDraft_(remote, draft)) return Object.assign({}, draft, { pending_creation_id:pending.row_number, adoptable_invoice:{ badger_invoice_id:String(remote.id || remote.invoiceId || ""), invoice_number:pending.invoice_number } });
-    throw new Error("A Badger invoice creation is pending for this order. Check before retrying.");
+    return Object.assign({}, draft, { pending_creation:{ at:pending.at, error:String(pending.error || ""), invoice_number:pending.invoice_number } });
   }
   return draft;
 }
@@ -6000,7 +6034,8 @@ function apiCreateBadgerInvoice_(p) {
     const pendingRow = writeBadgerInvoiceCreation_(draft, "PENDING", actor, "", "Awaiting Badger confirmation.");
     const creationSheet = getBadgerInvoiceCreationsSheet_();
     try {
-      const result = badgerJson_("/api/invoice", { method:"post", contentType:"application/json", payload:JSON.stringify({ date:new Date(`${draft.date}T12:00:00`).toISOString(), orderNumber:draft.order_number, customerId:Number(draft.customer_id), billToName:draft.customer.billToName || "", billToAddressLine1:draft.customer.billToAddressLine1 || "", billToAddressLine2:draft.customer.billToAddressLine2 || "", billToCity:draft.customer.billToCity || "", billToPostalCode:draft.customer.billToPostalCode || "", billToResellerNumber:draft.customer.billToResellerNumber || draft.customer.resellerNumber || "", lines:draft.lines.map(line => ({ quantity:line.quantity, description:line.description, unitPrice:line.unitPrice, unitOfMeasureId:line.unitOfMeasureId, beverageClass:"Spirit", alcoholProof:line.alcoholProof })) }) }, "Badger invoice create");
+      const badgerDate = Utilities.formatDate(new Date(`${draft.date}T00:00:00`), "America/Chicago", "yyyy-MM-dd'T'HH:mm:ssXXX");
+      const result = badgerJson_("/api/invoice", { method:"post", contentType:"application/json", payload:JSON.stringify({ date:badgerDate, orderNumber:draft.order_number, customerId:Number(draft.customer_id), billToName:draft.customer.billToName || "", billToAddressLine1:draft.customer.billToAddressLine1 || "", billToAddressLine2:draft.customer.billToAddressLine2 || "", billToCity:draft.customer.billToCity || "", billToPostalCode:draft.customer.billToPostalCode || "", billToResellerNumber:draft.customer.billToResellerNumber || "", lines:draft.lines.map(line => ({ quantity:line.quantity, description:line.description, unitPrice:line.unitPrice, unitOfMeasureId:line.unitOfMeasureId, beverageClass:"Spirit", alcoholProof:line.alcoholProof })) }) }, "Badger invoice create");
       const created = badgerRemoteInvoiceByNumber_(draft.invoice_number) || result?.data || result;
       const badgerInvoiceId = String(created?.id || created?.invoiceId || "");
       const confirmed = badgerInvoiceId ? badgerRemoteInvoiceDetails_(badgerInvoiceId) : created;
