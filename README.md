@@ -46,7 +46,7 @@ The newsletter option is selected by default and tells applicants to uncheck it 
 
 ## Staff access
 
-Staff sign in with their approved Zoho work account through a separate Zoho OIDC client. The Hub stores only a short-lived, HttpOnly signed session; it never receives a Zoho password or the Zoho Mail sender token. Netlify verifies the session and injects the verified display name into staff writes, so names typed into the browser cannot spoof audit attribution.
+Staff sign in with their approved Zoho work account through the existing Zoho OIDC client. The Hub stores the approved email roster, role, and workspace areas in a `Staff Access` sheet; Netlify rechecks that roster for every signed Zoho session, so removals and role changes take effect without an environment-variable edit or redeploy.
 
 Netlify environment variables required for staff login:
 
@@ -55,13 +55,14 @@ Netlify environment variables required for staff login:
 - `ZOHO_OIDC_REDIRECT_URI` — `https://distribution-hub.netlify.app/api/auth?action=callback`
 - `ZOHO_OIDC_ISSUER` — normally `https://accounts.zoho.com`
 - `APP_SESSION_SECRET` — a new random secret at least 32 characters long
-- `STAFF_ROLES_JSON` — for example `{ "inventory@sturgeonspirits.com": { "role": "staff", "areas": ["inventory"] }, "outreach@sturgeonspirits.com": { "role": "staff", "areas": ["outreach"] }, "orders@sturgeonspirits.com": { "role": "staff", "areas": ["orders"] }, "owner@sturgeonspirits.com": "admin" }`
 
-For staff users, `areas` may contain `inventory`, `outreach`, and/or `orders` (the Orders & Accounts workspace). They can see and call only those areas. `admin` users receive all three areas and additionally control product/SKU changes, staging initialization, and integration reconciliation. Removing an email from `STAFF_ROLES_JSON` revokes existing sessions on their next request.
+After deploying the Inventory API, run `setupStaffAccess()` once and add active rows with Staff ID, display name, Zoho email, role, and comma-separated areas. `admin` receives all areas; staff users may receive `inventory`, `outreach`, and/or `orders`.
+
+Removing or deactivating an email in `Staff Access` revokes its existing Zoho session on the next request.
 
 ## Versioning
 
-All deployable files are stamped with the same app version. When updating Apps Script, confirm the `APP_VERSION` value in `apps-script/Code.gs` matches the version shown in this README and the Netlify-hosted app footer.
+Each deployable surface is stamped with its own release version. When updating Apps Script, confirm the leading `App version` and `APP_VERSION` in `apps-script/Code.gs` match. Before a Netlify release, keep the web app footer, `index.html` metadata, staff proxy, and tracking redirect on the same `-WEB` version.
 
 ## Deploy flow
 
@@ -72,12 +73,13 @@ All deployable files are stamped with the same app version. When updating Apps S
 5. Open the **staging Inventory Backend** Apps Script project.
 6. Replace its complete `Code.gs` with `apps-script/Code.gs`; do not append snippets.
 7. Add Inventory Backend Script Properties `OUTREACH_MAILER_URL` (the Distribution Outreach `/exec` URL) and the same `OUTREACH_MAILER_SHARED_SECRET`. Do not copy Zoho credentials here.
-8. Deploy the Inventory Backend as a Web App and verify its root JSON reports version `2026.09.18.2`.
+8. Deploy the Inventory Backend as a Web App and verify its root JSON reports the source `APP_VERSION`.
 9. Keep the existing GitHub-to-Netlify connection and environment variables:
    - `APPS_SCRIPT_URL` = your Apps Script `/exec` URL
    - `API_KEY` = the same private key stored in Apps Script Properties
-   - the Zoho OIDC and staff-role environment variables listed in **Staff access**
-10. Redeploy Netlify only after both staging Apps Script web apps are deployed and the Inventory Backend reports version `2026.09.18.2`.
+   - the Zoho OIDC environment variables listed in **Staff access**
+10. Run `setupStaffAccess()` in the staging Inventory Backend and add the approved Zoho-email roster before the Netlify release. `STAFF_ROLES_JSON` is not used by this version.
+11. Redeploy Netlify only after both staging Apps Script web apps are deployed and the Inventory Backend reports its source `APP_VERSION`.
 
 ## API auth
 

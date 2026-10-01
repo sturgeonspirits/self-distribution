@@ -10,7 +10,20 @@ const root = new URL("../", import.meta.url);
 async function loadFunction(path, suffix = Math.random()) {
   let source = await readFile(new URL(path, root), "utf8");
   if (path === "netlify/functions/inventory.js") {
-    const auth = await readFile(new URL("netlify/functions/auth.js", root), "utf8");
+    let auth = await readFile(new URL("netlify/functions/auth.js", root), "utf8");
+    // Inventory-proxy tests mock the upstream action itself. Keep that focused
+    // on proxy behavior; roster lookups are covered by source assertions below.
+    auth = auth.replace(/async function roleFor\(email\) \{[\s\S]*?\n\}\n\nasync function sessionFor/, `async function roleFor(email) {
+  try {
+    const entries = JSON.parse(process.env.STAFF_ROLES_JSON || "{}");
+    const value = entries[String(email || "").trim().toLowerCase()];
+    const role = typeof value === "string" ? value : value?.role;
+    const areas = role === "admin" ? STAFF_AREAS : (value?.areas || STAFF_AREAS);
+    return role ? { role, areas, staffId:"test-staff", name:"Staff Member" } : "";
+  } catch (_) { return ""; }
+}
+
+async function sessionFor`);
     const authUrl = `data:text/javascript;base64,${Buffer.from(auth).toString("base64")}`;
     source = source.replace('from "./auth.js";', `from "${authUrl}";`);
     const relay = await readFile(new URL("netlify/lib/drive-relay.js", root), "utf8");
@@ -329,6 +342,21 @@ test("roles and workspace areas are enforced server-side and revoked users lose 
   assert.equal(fetches, 0);
 });
 
+test("production authorization reads the protected Hub roster rather than a staff-role environment variable", async () => {
+  const [auth, backend] = await Promise.all([
+    readFile(new URL("netlify/functions/auth.js", root), "utf8"),
+    readFile(new URL("apps-script/Code.gs", root), "utf8"),
+  ]);
+  assert.doesNotMatch(auth, /process\.env\.STAFF_ROLES_JSON/);
+  assert.match(auth, /action:"staffAccessLookup"/);
+  assert.match(auth, /ROSTER_LOOKUP_TIMEOUT_MS = 2000/);
+  assert.match(auth, /String\(user\.email \|\| ""\)\.trim\(\)\.toLowerCase\(\) === normalizedEmail/);
+  assert.match(backend, /function setupStaffAccess\(\)/);
+  assert.match(backend, /function staffAccessForEmail_\(email\)/);
+  assert.match(backend, /case "staffAccessLookup": res = apiStaffAccessLookup_/);
+  assert.match(backend, /"staffAccessLookup"/);
+});
+
 test("campaign bulk exclusion and external contact logging remain staff-scoped", async () => {
   const source = await readFile(new URL("netlify/functions/inventory.js", root), "utf8");
   const script = await readFile(new URL("apps-script/Code.gs", root), "utf8");
@@ -418,9 +446,9 @@ test("large read responses are compressed and reads retry within the proxy limit
   assert.match(proxy, /import \{ gunzipSync \} from "node:zlib";/);
   assert.match(proxy, /url\.searchParams\.set\("gz", "1"\)/);
   assert.match(proxy, /const READ_UPSTREAM_ATTEMPTS = 2;/);
-  assert.match(proxy, /const READ_UPSTREAM_TIMEOUT_MS = 11500;/);
-  // Two read attempts must fit inside Netlify's ~26 s function limit.
-  assert.ok(2 * 11500 < 25000);
+  assert.match(proxy, /const READ_UPSTREAM_TIMEOUT_MS = 11000;/);
+  // Two read attempts plus the current-roster check fit inside Netlify's ~26 s limit.
+  assert.ok(2 * 11000 + 2000 < 26000);
   // Writes and sends stay single-attempt.
   assert.match(proxy, /attempts:UPSTREAM_WRITE_ATTEMPTS/);
   assert.match(proxy, /const SEND_UPSTREAM_ATTEMPTS = 1;/);
@@ -912,8 +940,8 @@ test("campaign criteria preview uses centroid distances, JSON rules, and distinc
   assert.match(proxy, /ADMIN_ACTIONS = new Set\([\s\S]*?"recalculateOutreachMiles"/);
   assert.match(proxy, /\["recalculateOutreachMiles", "outreach"\]/);
   assert.match(proxy, /"previewOutreachCampaign"/);
-  assert.match(proxy, /const UPSTREAM_TIMEOUT_MS = 25000/);
-  assert.match(proxy, /const SEND_UPSTREAM_TIMEOUT_MS = 24000/);
+  assert.match(proxy, /const UPSTREAM_TIMEOUT_MS = 23000/);
+  assert.match(proxy, /const SEND_UPSTREAM_TIMEOUT_MS = 23000/);
   assert.match(proxy, /const UPSTREAM_WRITE_ATTEMPTS = 1/);
   assert.match(index, /id="recalculateOutreachMilesBtn"/);
   assert.match(index, /action:"recalculateOutreachMiles"/);
