@@ -1,10 +1,10 @@
 <!doctype html>
-<!-- App version: 2026.09.24.30-WEB -->
+<!-- App version: 2026.09.24.31-WEB -->
 <html>
 <head>
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover"/>
-  <meta name="app-version" content="2026.09.24.30-WEB" />
+  <meta name="app-version" content="2026.09.24.31-WEB" />
   <meta name="theme-color" content="#536f77" />
   <link rel="icon" href="/assets/distribution-hub-icon.svg" type="image/svg+xml" />
   <link rel="manifest" href="/site.webmanifest" />
@@ -2476,7 +2476,7 @@
 
   <footer style="max-width:1200px;margin:18px auto 120px;padding:0 12px;text-align:center;color:#6b7280;font-size:12px;">
     Designed by <a href="https://scriptspirit.dev" target="_blank" rel="noopener noreferrer" style="color:#1d4ed8;text-decoration:none;font-weight:700;">Script Spirit</a>
-<span id="appVersionFooter"> • Version 2026.09.24.30-WEB</span>
+<span id="appVersionFooter"> • Version 2026.09.24.31-WEB</span>
   </footer>
 
 
@@ -2499,7 +2499,7 @@
   window.addEventListener("unhandledrejection", e => console.error("Unhandled promise rejection:", e.reason));
   window.addEventListener("error", e => console.error("Unhandled error:", e.error || e.message));
   const $ = (id) => document.getElementById(id);
-  const APP_VERSION = "2026.09.24.30-WEB";
+  const APP_VERSION = "2026.09.24.31-WEB";
   $("appVersionFooter").textContent = ` • Version ${APP_VERSION}`;
 
   let cache = { stores: [], lines: [] };
@@ -3072,7 +3072,7 @@
         <div><label for="customerRecordDeliveryStatus">Delivery status</label><select id="customerRecordDeliveryStatus">${selectOptionsHtml(DELIVERY_STATUSES, record.delivery_status || "Not scheduled")}</select></div>
         <div><label for="customerRecordDeliveryDate">Requested delivery date</label><input id="customerRecordDeliveryDate" type="date" value="${escapeHtml(customerInputDate(record.requested_delivery_date))}" /></div>
         <div class="full"><label for="customerRecordStaffNotes">Staff notes</label><textarea id="customerRecordStaffNotes" maxlength="4000">${escapeHtml(record.staff_notes || "")}</textarea></div>
-        <div class="full"><div class="status" id="customerRecordStatusMessage"></div><div class="dlgActions"><button class="primary" id="saveCustomerRecordBtn" type="button">Save order</button></div></div>
+        <div class="full"><div class="status" id="customerRecordStatusMessage"></div><div class="dlgActions">${record.workflow_status === "Confirmed" && !record.badger_invoice_number ? '<button id="previewBadgerInvoiceBtn" type="button">Create Badger invoice</button>' : ""}<button class="primary" id="saveCustomerRecordBtn" type="button">Save order</button></div></div>
       </div>` : `
       <div class="workflowEditGrid">
         <div><label for="customerRecordStatus">Application status</label><select id="customerRecordStatus">${selectOptionsHtml(APPLICATION_STATUSES, record.workflow_status || "New")}</select></div>
@@ -3220,6 +3220,62 @@
     await loadCustomerWorkQueue();
     toast(applied.message || "Reconciliation applied");
     previewBadgerReconcile().catch(error => toast(error?.message || String(error)));
+  }
+
+  function badgerInvoiceDraftEdits(){
+    return Array.from(document.querySelectorAll("[data-badger-invoice-sku]")).map(input => {
+      const sku = input.dataset.badgerInvoiceSku;
+      const quantity = document.querySelector(`[data-badger-invoice-quantity="${CSS.escape(sku)}"]`)?.value;
+      const unitPrice = document.querySelector(`[data-badger-invoice-price="${CSS.escape(sku)}"]`)?.value;
+      return { sku_id:sku, quantity:Number(quantity), unit_price:Number(unitPrice) };
+    });
+  }
+
+  async function previewBadgerInvoice(useEdits = false){
+    const record = selectedCustomerRecord;
+    if (!record?.request_id) return;
+    const date = useEdits ? $("badgerInvoiceDate")?.value : "";
+    const lines = useEdits ? badgerInvoiceDraftEdits() : [];
+    $("customerRecordTitle").textContent = "Create Badger invoice";
+    $("customerRecordSubtitle").textContent = `Review before creating • ${record.business_name || record.request_id}`;
+    $("customerRecordBody").innerHTML = '<div class="status">Preparing the Badger invoice preview…</div>';
+    try {
+      const result = await staffApiPost({ action:"previewBadgerInvoice", request_id:record.request_id, date:date, lines:lines });
+      if (!result.ok) throw new Error(result.error || "The Badger invoice preview could not be prepared.");
+      if (result.adoptable_invoice) {
+        $("customerRecordBody").innerHTML = `<section class="detailSection full"><h4>Matching invoice found in Badger</h4><p class="smallMuted">${escapeHtml(result.invoice_number)} matches this pending request. Adopt it instead of creating another invoice.</p><div class="dlgActions"><button id="backToCustomerRecordBtn" type="button">Back</button><button class="primary" id="adoptBadgerInvoiceBtn" type="button">Adopt ${escapeHtml(result.invoice_number)}</button></div></section>`;
+        refreshIcons(); return;
+      }
+      const warnings = (result.warnings || []).map(warning => `<div class="status" role="alert">${escapeHtml(warning)}</div>`).join("");
+      $("customerRecordBody").innerHTML = `<div class="businessDetailGrid">
+        <section class="detailSection"><h4>Invoice</h4>${detailRowsHtml([{label:"Number", value:result.invoice_number}, {label:"Customer ID", value:result.customer_id}, {label:"Total", value:result.total}])}<label for="badgerInvoiceDate">Date</label><input id="badgerInvoiceDate" type="date" value="${escapeHtml(result.date || "")}" /></section>
+        <section class="detailSection"><h4>Bill to</h4>${detailRowsHtml([{label:"Name", value:result.customer?.billToName}, {label:"Address", value:[result.customer?.billToAddressLine1, result.customer?.billToAddressLine2, result.customer?.billToCity, result.customer?.billToPostalCode].filter(Boolean).join(", ")}, {label:"Reseller #", value:result.customer?.billToResellerNumber || result.customer?.resellerNumber}])}</section>
+        <section class="detailSection full"><h4>Lines</h4><div class="workflowLineList">${(result.lines || []).map(line => `<div class="workflowLine"><span>${escapeHtml(line.description)}<input aria-label="Quantity for ${escapeHtml(line.sku_id)}" data-badger-invoice-sku="${escapeHtml(line.sku_id)}" data-badger-invoice-quantity="${escapeHtml(line.sku_id)}" type="number" min="1" step="1" value="${Number(line.quantity || 0)}" /></span><strong>$<input aria-label="Unit price for ${escapeHtml(line.sku_id)}" data-badger-invoice-price="${escapeHtml(line.sku_id)}" type="number" min="0.01" step="0.01" value="${Number(line.unitPrice || 0).toFixed(2)}" /></strong></div>`).join("")}</div></section>
+        ${warnings}<section class="detailSection full"><label class="checkLabel"><input id="badgerInvoiceReviewed" type="checkbox" /><span>I reviewed this invoice.</span></label><div class="dlgActions"><button id="backToCustomerRecordBtn" type="button">Back</button><button id="recalculateBadgerInvoiceBtn" type="button">Recalculate preview</button><button class="primary" id="createBadgerInvoiceBtn" type="button" disabled data-fingerprint="${escapeHtml(result.draft_fingerprint || "")}">Create invoice</button></div><div class="status" id="badgerInvoiceStatus"></div></section>
+      </div>`;
+      refreshIcons();
+    } catch (error) { $("customerRecordBody").innerHTML = `<div class="status">${escapeHtml(error?.message || String(error))}</div><div class="dlgActions"><button id="backToCustomerRecordBtn" type="button">Back</button></div>`; }
+  }
+
+  async function createBadgerInvoice(){
+    const record = selectedCustomerRecord; const button = $("createBadgerInvoiceBtn"); const staffName = $("customerStaffName").value.trim();
+    if (!record?.request_id || !button || !staffName) return $("badgerInvoiceStatus").textContent = "Enter your staff name before creating an invoice.";
+    button.disabled = true; $("badgerInvoiceStatus").textContent = "Creating in Badger…";
+    try {
+      const result = await staffApiPost({ action:"createBadgerInvoice", request_id:record.request_id, staff_name:staffName, reviewed:$("badgerInvoiceReviewed").checked, draft_fingerprint:button.dataset.fingerprint, date:$("badgerInvoiceDate").value, lines:badgerInvoiceDraftEdits() });
+      if (!result.ok) throw new Error(result.error || "Badger invoice creation failed.");
+      await loadCustomerWorkQueue(); toast(result.message || "Badger invoice created");
+      const refreshed = customerData.orders.find(item => item.request_id === record.request_id); if (refreshed) openCustomerRecord(refreshed);
+    } catch (error) { $("badgerInvoiceStatus").textContent = error?.message || String(error); button.disabled = false; }
+  }
+
+  async function adoptBadgerInvoice(){
+    const record = selectedCustomerRecord; const staffName = $("customerStaffName").value.trim();
+    if (!record?.request_id || !staffName) return toast("Enter your staff name before adopting a Badger invoice.");
+    const result = await staffApiPost({ action:"adoptBadgerInvoice", request_id:record.request_id, staff_name:staffName });
+    if (!result.ok) throw new Error(result.error || "Badger invoice adoption failed.");
+    await loadCustomerWorkQueue(); toast(result.message || "Badger invoice adopted");
+    const refreshed = customerData.orders.find(item => item.request_id === record.request_id); if (refreshed) openCustomerRecord(refreshed);
   }
 
   async function recordBadgerCheck(button){
@@ -6006,12 +6062,20 @@
   $("closeCustomerRecordBtn").addEventListener("click", () => $("customerRecordDialog").close());
   $("customerRecordBody").addEventListener("click", event => {
     if (event.target.closest("#saveCustomerRecordBtn")) saveCustomerRecord();
+    if (event.target.closest("#previewBadgerInvoiceBtn")) previewBadgerInvoice().catch(error => toast(error?.message || String(error)));
+    if (event.target.closest("#recalculateBadgerInvoiceBtn")) previewBadgerInvoice(true).catch(error => toast(error?.message || String(error)));
+    if (event.target.closest("#createBadgerInvoiceBtn")) createBadgerInvoice();
+    if (event.target.closest("#adoptBadgerInvoiceBtn")) adoptBadgerInvoice().catch(error => toast(error?.message || String(error)));
     if (event.target.closest("#previewPaymentReminderBtn")) previewPaymentReminder();
     if (event.target.closest("[data-badger-payment]")) markBadgerPayment(event.target.closest("[data-badger-payment]"));
     if (event.target.closest("[data-badger-reconcile-apply]")) applyBadgerReconcile(event.target.closest("[data-badger-reconcile-apply]")).catch(error => toast(error?.message || String(error)));
     if (event.target.closest("[data-payment-reminder-resolution]")) resolvePaymentReminder(event.target.closest("[data-payment-reminder-resolution]"));
     if (event.target.closest("#backToCustomerRecordBtn") && selectedCustomerRecord) openCustomerRecord(selectedCustomerRecord);
     if (event.target.closest("#sendPaymentReminderBtn")) sendPaymentReminder();
+  });
+  $("customerRecordBody").addEventListener("change", event => {
+    if (event.target.matches("#badgerInvoiceReviewed")) $("createBadgerInvoiceBtn").disabled = !event.target.checked;
+    if (event.target.matches("#badgerInvoiceDate, [data-badger-invoice-quantity], [data-badger-invoice-price]")) previewBadgerInvoice(true).catch(error => toast(error?.message || String(error)));
   });
   $("loadHubStatusBtn").addEventListener("click", () => loadHubSystemStatus().catch(handleCustomerError));
   $("initializeHubBtn").addEventListener("click", () => initializeHardenedHub().catch(handleCustomerError));

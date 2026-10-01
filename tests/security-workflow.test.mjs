@@ -3,6 +3,7 @@ import test from "node:test";
 import assert from "node:assert/strict";
 import { readFile } from "node:fs/promises";
 import { createHmac } from "node:crypto";
+import vm from "node:vm";
 
 const root = new URL("../", import.meta.url);
 
@@ -553,8 +554,7 @@ test("Badger Phase 4 keeps payment states, reminder guards, batching, and review
   const reminderSend = backend.slice(backend.indexOf("function apiSendBadgerPaymentReminder_"), backend.indexOf("function apiResolvePaymentReminder_"));
   const batchWriter = backend.slice(backend.indexOf("function writeBadgerPaymentMarksBatch_"), backend.indexOf("function apiMarkBadgerInvoicePayment_"));
   const reconcile = backend.slice(backend.indexOf("function badgerReconcileGroups_"), backend.indexOf("function badgerRequest_"));
-  assert.match(accountBuilder, /invoice\.is_closed \? "Closed" : !paymentMark\.paid_to_me \? "Customer owes" : submitted === "no" \? "Owed to Badger" : submitted === "yes" \? "Check sent" : "Awaiting Badger"/);
-  assert.match(accountBuilder, /!badgerStatusIsFresh \? "Unknown"/);
+  assert.match(accountBuilder, /badgerInvoicePaymentState_\(badgerStatusIsFresh, invoice\.is_closed, paymentMark\.paid_to_me, paymentMark\.submitted\)/);
   assert.match(accountBuilder, /invoiceDate && invoiceDate\.getTime\(\) < paymentReminderCutoff/);
   assert.match(accountBuilder, /has_payment_mark:activePaymentMarkKeys\.has\(invoiceKey\)/);
   assert.match(accountBuilder, /payment_reminder_eligible_invoices:paymentReminderEligibleInvoices/);
@@ -572,9 +572,8 @@ test("Badger Phase 4 keeps payment states, reminder guards, batching, and review
   assert.match(reconcile, /paid_not_marked:\[\], paid_check_no:\[\], unpaid_review:\[\], missing_tracker:\[\]/);
   assert.match(reconcile, /new Set\(\["paid_not_marked", "paid_check_no"\]\)/);
   assert.match(backend, /BADGER_BASE_URL = "https:\/\/badgerstatecoop\.com\/BSWCSite"/);
-  assert.match(backend, /function badgerUrl_\(path\)/);
-  assert.match(backend, /new Set\(\["\/Login\/Authenticate", "\/Api\/invoice\/Paged"\]\)/);
-  assert.match(backend, /Badger request path is not allow-listed/);
+  assert.match(backend, /function badgerUrl_\(method, path\)/);
+  assert.match(backend, /Badger request method or path is not allow-listed/);
   assert.match(proxy, /"recordBadgerCheck"/);
   assert.match(proxy, /"resolvePaymentReminder"/);
   assert.match(index, /id="recordBadgerCheckBtn"/);
@@ -582,4 +581,46 @@ test("Badger Phase 4 keeps payment states, reminder guards, batching, and review
   assert.match(index, /data-badger-reconcile-apply="paid_not_marked"/);
   assert.match(index, /Badger status is stale or unavailable/);
   assert.match(index, /id="owedToBadgerCount"/);
+});
+
+test("Badger Phase 5 invoice creation is review-gated and uses a narrow API boundary", async () => {
+  const [backend, index, proxy] = await Promise.all([
+    readFile(new URL("apps-script/Code.gs", root), "utf8"),
+    readFile(new URL("index.html", root), "utf8"),
+    readFile(new URL("netlify/functions/inventory.js", root), "utf8"),
+  ]);
+  const stateSource = backend.slice(backend.indexOf("function badgerInvoicePaymentState_"), backend.indexOf("function cachedBadgerInvoices_"));
+  const paymentState = vm.runInNewContext(`${stateSource}; badgerInvoicePaymentState_`);
+  assert.equal(paymentState(false, false, false, ""), "Unknown");
+  assert.equal(paymentState(true, true, false, ""), "Closed");
+  assert.equal(paymentState(true, false, false, ""), "Customer owes");
+  assert.equal(paymentState(true, false, true, "No"), "Owed to Badger");
+  assert.equal(paymentState(true, false, true, "Yes"), "Check sent");
+  assert.equal(paymentState(true, false, true, "N/A"), "Awaiting Badger");
+  const urlSource = backend.slice(backend.indexOf("function badgerUrl_"), backend.indexOf("function badgerCookieHeader_"));
+  assert.match(urlSource, /\/Api\/Invoice\/Paged\/orderorinvoicenumber/);
+  assert.match(urlSource, /\^\\\/api\\\/invoice\\\/\\d\+\$/);
+  assert.match(urlSource, /\^\\\/api\\\/customer\\\/\\d\+\$/);
+  assert.match(urlSource, /validateforcreate\\\?number=SS\\d\{4\}/);
+  assert.match(urlSource, /method or path is not allow-listed/);
+  const creationSource = backend.slice(backend.indexOf("function apiCreateBadgerInvoice_"), backend.indexOf("function apiAdoptBadgerInvoice_"));
+  const draftSource = backend.slice(backend.indexOf("function badgerInvoiceDraft_"), backend.indexOf("function badgerInvoiceMatchesDraft_"));
+  assert.match(creationSource, /p\?\.reviewed !== true/);
+  assert.match(creationSource, /draft\.draft_fingerprint !== fingerprint/);
+  assert.match(creationSource, /status === "PENDING"/);
+  assert.match(draftSource, /This order already has a Badger invoice/);
+  assert.match(draftSource, /badgerNextInvoiceNumber_\(\)/);
+  assert.doesNotMatch(creationSource, /badgerNextInvoiceNumber_\(\)/, "create never auto-bumps a number after validation");
+  assert.match(creationSource, /badgerValidateInvoiceNumber_\(draft\.invoice_number, draft\.date\)/);
+  assert.match(creationSource, /Invoice may have been created — check before retrying/);
+  assert.match(creationSource, /badgerRemoteInvoiceDetails_/);
+  assert.match(backend, /function seedCurrentPricesTab\(\)/);
+  assert.match(backend, /Current Prices already exists; no rows were changed/);
+  assert.match(backend, /filter\(row => toBool_\(row\.active\)\)/);
+  assert.match(proxy, /"createBadgerInvoice"/);
+  assert.match(proxy, /SEND_ACTIONS = new Set\([\s\S]*?"createBadgerInvoice"/);
+  assert.match(index, /id="previewBadgerInvoiceBtn"/);
+  assert.match(index, /id="badgerInvoiceReviewed"/);
+  assert.match(index, /action:"createBadgerInvoice"/);
+  assert.match(index, /if \(!applied\.ok\) throw new Error\(applied\.error \|\| "Reconciliation was not applied\."\)/);
 });

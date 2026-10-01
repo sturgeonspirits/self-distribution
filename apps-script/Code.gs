@@ -1,9 +1,9 @@
 /*********************************
  * Inventory API (JSON) for Netlify
- * App version: 2026.09.24.58
+ * App version: 2026.09.24.59
  *
  * CHANGES IN THIS VERSION
- * - Batches Badger reconciliation and check updates, exposes reversible payment marks and pending reminders in account data, and reports eligible payment and Badger-owed totals.
+ * - Adds review-gated Badger invoice preview and creation for confirmed orders, with allow-listed API calls, active tracker prices, pending-create recovery, and post-create verification.
  *
  * CHANGES IN 2026.09.24.56
  * - Corrects live payment-state classification, reversible payment marks, sync freshness validation, and pending-reminder resolution safeguards.
@@ -236,7 +236,7 @@
  * - Use only in the staging inventory backend until testing is complete.
  *********************************/
 
-const APP_VERSION = "2026.09.24.58";
+const APP_VERSION = "2026.09.24.59";
 
 const SHEET_NAMES = {
   STORES: "Stores",
@@ -258,6 +258,8 @@ const BADGER_STATUS_SHEET_NAME = "Badger Invoice Status";
 const BADGER_SYNC_LOG_SHEET_NAME = "Badger Sync Log";
 const BADGER_SYNC_MAX_AGE_MS = 48 * 60 * 60 * 1000;
 const BADGER_PAYMENT_LOG_SHEET_NAME = "Badger Invoice Payment Log";
+const BADGER_CURRENT_PRICES_SHEET_NAME = "Current Prices";
+const BADGER_INVOICE_CREATIONS_SHEET_NAME = "Badger Invoice Creations";
 const OUTREACH_SHEET_NAME = "Distribution Directory and Leads";
 const OUTREACH_ACTIVITY_SHEET_NAME = "Activity Log";
 const OUTREACH_DRAFTS_SHEET_NAME = "Outreach Drafts";
@@ -922,7 +924,7 @@ function handle_(e, body) {
   try {
     assertAuthorized_(e, body);
     if (!action) {
-      return json_({ ok:true, service:"sturgeon-distribution-hub", version:APP_VERSION, actions:["initData","listSkus","addSkuToStore","upsertProduct","submitCounts","createReorder","managerGrid","salesSinceCount","updateStoreContacts","outreachDashboard","outreachRecord","outreachSendStatus","outreachNewsletterContacts","outreachCampaigns","outreachCampaign","previewOutreachCampaign","createOutreachCampaign","updateOutreachCampaignRecipient","setOutreachCampaignRecipientExclusion","setOutreachCampaignRecipientExclusions","approveOutreachCampaign","reopenOutreachCampaign","reconcileCampaignSends","rebuildCampaignRecipients","sendOutreachCampaignBatch","saveOutreachDraft","sendOutreachEmail","sendOutreachTestEmail","updateOutreachOutcome","logOutreachContact","updateOutreachBusiness","updateOutreachPrograms","createOutreachBusiness","importOutreachBusinesses","recalculateOutreachMiles","backfillEngagementDetails","upsertNewsletterContact","submitCustomerApplication","submitOnlineOrderRequest","customerWorkQueue","customerAccountIndex","linkBadgerInvoice","syncBadgerStatus","markBadgerInvoicePayment","recordBadgerCheck","resolvePaymentReminder","badgerReconcilePreview","applyBadgerReconcile","previewBadgerPaymentReminder","sendBadgerPaymentReminder","updateCustomerApplication","updateOnlineOrderRequest","hubSystemStatus","initializeHardenedHub","repairHubStructure","reconcileIntegrations"] });
+      return json_({ ok:true, service:"sturgeon-distribution-hub", version:APP_VERSION, actions:["initData","listSkus","addSkuToStore","upsertProduct","submitCounts","createReorder","managerGrid","salesSinceCount","updateStoreContacts","outreachDashboard","outreachRecord","outreachSendStatus","outreachNewsletterContacts","outreachCampaigns","outreachCampaign","previewOutreachCampaign","createOutreachCampaign","updateOutreachCampaignRecipient","setOutreachCampaignRecipientExclusion","setOutreachCampaignRecipientExclusions","approveOutreachCampaign","reopenOutreachCampaign","reconcileCampaignSends","rebuildCampaignRecipients","sendOutreachCampaignBatch","saveOutreachDraft","sendOutreachEmail","sendOutreachTestEmail","updateOutreachOutcome","logOutreachContact","updateOutreachBusiness","updateOutreachPrograms","createOutreachBusiness","importOutreachBusinesses","recalculateOutreachMiles","backfillEngagementDetails","upsertNewsletterContact","submitCustomerApplication","submitOnlineOrderRequest","customerWorkQueue","customerAccountIndex","linkBadgerInvoice","syncBadgerStatus","markBadgerInvoicePayment","recordBadgerCheck","resolvePaymentReminder","badgerReconcilePreview","applyBadgerReconcile","previewBadgerPaymentReminder","sendBadgerPaymentReminder","previewBadgerInvoice","createBadgerInvoice","adoptBadgerInvoice","failBadgerInvoiceCreation","updateCustomerApplication","updateOnlineOrderRequest","hubSystemStatus","initializeHardenedHub","repairHubStructure","reconcileIntegrations"] });
     }
 
     invalidateReadCache = !READ_ACTIONS.has(action);
@@ -979,6 +981,10 @@ function handle_(e, body) {
       case "applyBadgerReconcile": res = apiApplyBadgerReconcile_(body); break;
       case "previewBadgerPaymentReminder": res = apiPreviewBadgerPaymentReminder_(body); break;
       case "sendBadgerPaymentReminder": res = apiSendBadgerPaymentReminder_(body); break;
+      case "previewBadgerInvoice": res = apiPreviewBadgerInvoice_(body); break;
+      case "createBadgerInvoice": res = apiCreateBadgerInvoice_(body); break;
+      case "adoptBadgerInvoice": res = apiAdoptBadgerInvoice_(body); break;
+      case "failBadgerInvoiceCreation": res = apiFailBadgerInvoiceCreation_(body); break;
       case "updateCustomerApplication": res = apiUpdateCustomerApplication_(body); break;
       case "updateOnlineOrderRequest": res = apiUpdateOnlineOrderRequest_(body); break;
       case "hubSystemStatus": res = apiGetHubSystemStatus_(); break;
@@ -5307,10 +5313,13 @@ const BADGER_INVOICE_CACHE_PREFIX = "hub_badger_invoices_v1";
 const BADGER_INVOICE_CACHE_TTL_SECONDS = 900;
 const BADGER_INVOICE_CACHE_CHUNK_SIZE = 80000;
 
-function badgerUrl_(path) {
-  const allowed = new Set(["/Login/Authenticate", "/Api/invoice/Paged"]);
-  if (!allowed.has(String(path || ""))) throw new Error("Badger request path is not allow-listed.");
-  return `${BADGER_BASE_URL}${path}`;
+function badgerUrl_(method, path) {
+  const normalizedMethod = String(method || "").toUpperCase();
+  const normalizedPath = String(path || "");
+  const allowed = (normalizedMethod === "POST" && new Set(["/Login/Authenticate", "/Api/invoice/Paged", "/Api/Invoice/Paged/orderorinvoicenumber", "/api/invoice"]).has(normalizedPath))
+    || (normalizedMethod === "GET" && (/^\/api\/invoice\/\d+$/.test(normalizedPath) || /^\/api\/customer\/\d+$/.test(normalizedPath) || /^\/api\/invoice\/validateforcreate\?number=SS\d{4}&date=\d{4}-\d{2}-\d{2}$/.test(normalizedPath)));
+  if (!allowed) throw new Error("Badger request method or path is not allow-listed.");
+  return `${BADGER_BASE_URL}${normalizedPath}`;
 }
 
 function badgerCookieHeader_(headers) {
@@ -5331,7 +5340,7 @@ function badgerSession_(forceRefresh) {
   const username = String(properties.getProperty("BADGER_USERNAME") || "").trim();
   const password = String(properties.getProperty("BADGER_PASSWORD") || "");
   if (!username || !password) throw new Error("Badger login requires BADGER_USERNAME and BADGER_PASSWORD Script Properties.");
-  const response = UrlFetchApp.fetch(badgerUrl_("/Login/Authenticate"), {
+  const response = UrlFetchApp.fetch(badgerUrl_("POST", "/Login/Authenticate"), {
     method:"post",
     contentType:"application/json",
     payload:JSON.stringify({ username:username, password:password }),
@@ -5354,7 +5363,7 @@ function badgerSession_(forceRefresh) {
 
 function testBadgerLogin() {
   const today = Utilities.formatDate(new Date(), Session.getScriptTimeZone(), "yyyy-MM-dd");
-  const response = UrlFetchApp.fetch(badgerUrl_("/Api/invoice/Paged"), {
+  const response = UrlFetchApp.fetch(badgerUrl_("POST", "/Api/invoice/Paged"), {
     method:"post",
     contentType:"application/json",
     payload:JSON.stringify({
@@ -5534,14 +5543,8 @@ function writeBadgerPaymentMarksBatch_(updates, action, actor, checkNumber, chec
       sheet.getRange(firstRow, h.submitted + 1, block.length, 1).setValues(block.map(item => [item.submitted]));
     }
   });
-  const firstPaymentColumn = Math.min(h.paid_to_me, h.submitted);
-  const verified = sheet.getRange(2, firstPaymentColumn + 1, rowCount, Math.abs(h.paid_to_me - h.submitted) + 1).getValues();
-  if (prepared.some(item => {
-    const verifiedRow = verified[item.row_number - 2];
-    return /^(true|yes|1)$/i.test(String(verifiedRow[h.paid_to_me - firstPaymentColumn])) !== item.paid_to_me
-      || String(verifiedRow[h.submitted - firstPaymentColumn] || "").trim() !== item.submitted;
-  })) throw new Error("Badger tracker did not retain every payment mark.");
   const log = getBadgerInvoicePaymentLogSheet_();
+  ensureHeaderColumns_(log, ["Error"]);
   const logHeaders = getHeaderMap_(log); const at = new Date();
   const logRows = prepared.map(item => {
     const row = Array(log.getLastColumn()).fill("");
@@ -5549,8 +5552,23 @@ function writeBadgerPaymentMarksBatch_(updates, action, actor, checkNumber, chec
     set("log_id", permanentId_("BPL")); set("action", action); set("invoice_#", item.invoice_number); set("old_paid_to_me", item.old_paid_to_me); set("new_paid_to_me", item.paid_to_me); set("old_submitted", item.old_submitted); set("new_submitted", item.submitted); set("staff", actor); set("at", at); set("check_#", checkNumber || ""); set("check_date", checkDate || ""); set("undone_log_id", item.undone_log_id); set("app_version", APP_VERSION);
     return row;
   });
-  log.getRange(log.getLastRow() + 1, 1, logRows.length, log.getLastColumn()).setValues(logRows);
-  appendAudit_(action, "Badger payment batch", prepared.map(item => item.invoice_number).join(", "), "", actor, BADGER_TRACKER_SPREADSHEET_ID, BADGER_PAYMENT_LOG_SHEET_NAME, "Completed", `${prepared.length} invoice(s) updated in one batch.`);
+  const appendBatchLog = error => {
+    if (error && logHeaders.error !== undefined) logRows.forEach(row => { row[logHeaders.error] = error; });
+    log.getRange(log.getLastRow() + 1, 1, logRows.length, log.getLastColumn()).setValues(logRows);
+    appendAudit_(action, "Badger payment batch", prepared.map(item => item.invoice_number).join(", "), "", actor, BADGER_TRACKER_SPREADSHEET_ID, BADGER_PAYMENT_LOG_SHEET_NAME, error ? "Verify failed" : "Completed", error || `${prepared.length} invoice(s) updated in one batch.`);
+  };
+  const firstPaymentColumn = Math.min(h.paid_to_me, h.submitted);
+  let verifyFailed = false;
+  try {
+    const verified = sheet.getRange(2, firstPaymentColumn + 1, rowCount, Math.abs(h.paid_to_me - h.submitted) + 1).getValues();
+    verifyFailed = prepared.some(item => {
+      const verifiedRow = verified[item.row_number - 2];
+      return /^(true|yes|1)$/i.test(String(verifiedRow[h.paid_to_me - firstPaymentColumn])) !== item.paid_to_me
+        || String(verifiedRow[h.submitted - firstPaymentColumn] || "").trim() !== item.submitted;
+    });
+  } catch (error) { appendBatchLog("verify failed"); throw new Error("Badger tracker verification failed after the update."); }
+  if (verifyFailed) { appendBatchLog("verify failed"); throw new Error("Badger tracker did not retain every payment mark."); }
+  appendBatchLog("");
   return { count:prepared.length, invoice_numbers:prepared.map(item => item.invoice_number) };
 }
 
@@ -5625,8 +5643,10 @@ function apiApplyBadgerReconcile_(p) {
 }
 
 function badgerRequest_(path, options) {
-  const url = badgerUrl_(path);
-  const send = forceRefresh => UrlFetchApp.fetch(url, Object.assign({}, options, { headers:Object.assign({}, options.headers || {}, { Cookie:badgerSession_(forceRefresh) }), muteHttpExceptions:true, followRedirects:false }));
+  const requestOptions = Object.assign({}, options || {});
+  const method = String(requestOptions.method || "get").toUpperCase();
+  const url = badgerUrl_(method, path);
+  const send = forceRefresh => UrlFetchApp.fetch(url, Object.assign({}, requestOptions, { method:method.toLowerCase(), headers:Object.assign({}, requestOptions.headers || {}, { Cookie:badgerSession_(forceRefresh) }), muteHttpExceptions:true, followRedirects:false }));
   let response = send(false);
   const status = response.getResponseCode();
   let requiresRefresh = status === 401 || (status >= 300 && status < 400);
@@ -5704,6 +5724,16 @@ function badgerMoneyLabel_(cents) {
   return `$${(Math.max(0, Number(cents) || 0) / 100).toFixed(2)}`;
 }
 
+function badgerInvoicePaymentState_(isFresh, isClosed, paidToMe, submitted) {
+  if (!isFresh) return "Unknown";
+  if (isClosed) return "Closed";
+  if (!paidToMe) return "Customer owes";
+  const submittedValue = String(submitted || "").trim().toLowerCase();
+  if (submittedValue === "no") return "Owed to Badger";
+  if (submittedValue === "yes") return "Check sent";
+  return "Awaiting Badger";
+}
+
 function cachedBadgerInvoices_(bypassCache) {
   const cache = CacheService.getScriptCache();
   const manifestKey = `${BADGER_INVOICE_CACHE_PREFIX}:manifest`;
@@ -5745,6 +5775,7 @@ function clearBadgerInvoiceCache_() {
   const cache = CacheService.getScriptCache();
   const manifestKey = `${BADGER_INVOICE_CACHE_PREFIX}:manifest`;
   try { cache.remove(BADGER_LOCATION_NAMES_CACHE_KEY); } catch (_) {}
+  try { cache.remove(`${BADGER_INVOICE_CACHE_PREFIX}:current_prices`); } catch (_) {}
   try {
     const manifest = JSON.parse(cache.get(manifestKey) || "null");
     cache.remove(manifestKey);
@@ -5754,6 +5785,262 @@ function clearBadgerInvoiceCache_() {
   } catch (error) {
     console.warn("Badger invoice cache clear failed: " + String(error && error.message || error));
   }
+}
+
+function badgerVolumeUnitOfMeasureId_(volume) {
+  const normalized = String(volume || "").toLowerCase().replace(/\s/g, "");
+  return ({ "750ml":3, "375ml":5, "1.75l":20, "1750ml":20, "1500ml":2, "200ml":25, "100ml":26, "50ml":19 })[normalized] || "";
+}
+
+function seedCurrentPricesTab() {
+  const tracker = SpreadsheetApp.openById(BADGER_TRACKER_SPREADSHEET_ID);
+  if (tracker.getSheetByName(BADGER_CURRENT_PRICES_SHEET_NAME)) return { message:"Current Prices already exists; no rows were changed." };
+  const sheet = tracker.insertSheet(BADGER_CURRENT_PRICES_SHEET_NAME);
+  const headers = ["SKU ID", "Badger Description", "Unit Price (per bottle)", "Volume", "Unit of Measure ID", "Proof", "Beverage Class", "Active", "Account ID", "Updated At", "Notes"];
+  sheet.getRange(1, 1, 1, headers.length).setValues([headers]).setFontWeight("bold");
+  const lineSheet = tracker.getSheetByName("Invoice Lines");
+  const lineRows = lineSheet && lineSheet.getLastRow() >= 2 ? getAllRowsAsObjects_(lineSheet) : [];
+  const catalog = apiListSkus_().skus || [];
+  const rows = catalog.map(sku => {
+    const descriptionKey = normalizeCustomerMatchKey_(sku.sku_name);
+    const match = lineRows.slice().reverse().find(line => normalizeCustomerMatchKey_(firstPresent_(line, ["description", "badger_description", "sku_name", "item"])) === descriptionKey) || {};
+    const description = String(firstPresent_(match, ["description", "badger_description", "sku_name", "item"]) || sku.sku_name || "");
+    const volume = String(firstPresent_(match, ["volume", "size", "unit_volume"]) || sku.size || "");
+    const unitPrice = firstPresent_(match, ["unit_price", "unit price", "price"]) || "";
+    return [sku.sku_id, description, unitPrice, volume, badgerVolumeUnitOfMeasureId_(volume), "", "Spirit", false, "", new Date(), "check price"];
+  });
+  if (rows.length) sheet.getRange(2, 1, rows.length, headers.length).setValues(rows);
+  sheet.setFrozenRows(1);
+  return { message:`Created Current Prices with ${rows.length} inactive rows for review.`, count:rows.length };
+}
+
+function badgerCurrentPrices_(bypassCache) {
+  const cache = CacheService.getScriptCache(); const cacheKey = `${BADGER_INVOICE_CACHE_PREFIX}:current_prices`;
+  if (!bypassCache) {
+    try { const cached = JSON.parse(cache.get(cacheKey) || "null"); if (Array.isArray(cached)) return cached; } catch (_) {}
+  }
+  const sheet = SpreadsheetApp.openById(BADGER_TRACKER_SPREADSHEET_ID).getSheetByName(BADGER_CURRENT_PRICES_SHEET_NAME);
+  const rows = !sheet || sheet.getLastRow() < 2 ? [] : getAllRowsAsObjects_(sheet).filter(row => toBool_(row.active)).map(row => ({
+    sku_id:String(row.sku_id || "").trim(), description:String(row.badger_description || "").trim(), unit_price_cents:badgerMoneyToCents_(row.unit_price_per_bottle), volume:String(row.volume || "").trim(), unit_of_measure_id:Number(row.unit_of_measure_id || 0), proof:Number(row.proof || 0), beverage_class:String(row.beverage_class || "Spirit").trim() || "Spirit", account_id:String(row.account_id || "").trim(), updated_at:row.updated_at || "",
+  })).filter(row => row.sku_id && row.unit_price_cents > 0);
+  try { cache.put(cacheKey, JSON.stringify(rows), BADGER_INVOICE_CACHE_TTL_SECONDS); } catch (_) {}
+  return rows;
+}
+
+function badgerPriceForOrderLine_(prices, accountId, line) {
+  const candidates = prices.filter(price => price.sku_id === String(line.sku_id || ""));
+  return candidates.find(price => price.account_id === String(accountId || "")) || candidates.find(price => !price.account_id) || null;
+}
+
+function getBadgerInvoiceCreationsSheet_() {
+  return ensureSheet_(getOutreachSs_(), BADGER_INVOICE_CREATIONS_SHEET_NAME, ["Request ID", "Invoice #", "Customer ID", "Total Cents", "Fingerprint", "Status", "Badger Invoice ID", "Staff", "At", "Error", "App Version"]);
+}
+
+function badgerInvoiceCreationRows_(requestId) {
+  const sheet = getBadgerInvoiceCreationsSheet_(); const h = getHeaderMap_(sheet);
+  const rows = sheet.getLastRow() < 2 ? [] : sheet.getRange(2, 1, sheet.getLastRow() - 1, sheet.getLastColumn()).getValues();
+  return rows.map((row, index) => ({ row:row, row_number:index + 2, request_id:String(row[h.request_id] || ""), invoice_number:String(row[h["invoice_#"]] || ""), customer_id:String(row[h.customer_id] || ""), total_cents:Number(row[h.total_cents] || 0), fingerprint:String(row[h.fingerprint] || ""), status:String(row[h.status] || ""), badger_invoice_id:String(row[h.badger_invoice_id] || ""), at:row[h.at] || "" })).filter(item => !requestId || item.request_id === String(requestId));
+}
+
+function badgerJson_(path, options, label) {
+  const response = badgerRequest_(path, options || {}); const status = response.getResponseCode();
+  if (status < 200 || status >= 300) throw new Error(`${label || "Badger request"} failed (HTTP ${status}).`);
+  try { return JSON.parse(response.getContentText()); } catch (_) { throw new Error(`${label || "Badger request"} returned invalid JSON.`); }
+}
+
+function badgerRemoteInvoiceByNumber_(invoiceNumber) {
+  const payload = badgerJson_("/Api/Invoice/Paged/orderorinvoicenumber", { method:"post", contentType:"application/json", payload:JSON.stringify({ pageSize:20, page:0, sorts:[], filters:[], parameters:{ searchValue:String(invoiceNumber || "") } }) }, "Badger invoice lookup");
+  const rows = Array.isArray(payload?.data?.data) ? payload.data.data : Array.isArray(payload?.data) ? payload.data : Array.isArray(payload) ? payload : [];
+  const key = normalizeBadgerInvoiceNumber_(invoiceNumber);
+  return rows.find(row => normalizeBadgerInvoiceNumber_(row.number || row.invoiceNumber || row.invoice_number) === key) || null;
+}
+
+function badgerRemoteInvoiceDetails_(invoiceId) {
+  if (!/^\d+$/.test(String(invoiceId || ""))) throw new Error("Badger invoice ID is invalid.");
+  const payload = badgerJson_(`/api/invoice/${invoiceId}`, { method:"get" }, "Badger invoice confirmation");
+  return payload?.data || payload;
+}
+
+function badgerValidateInvoiceNumber_(invoiceNumber, date) {
+  if (!/^SS\d{4}$/.test(String(invoiceNumber || "")) || !/^\d{4}-\d{2}-\d{2}$/.test(String(date || ""))) throw new Error("Proposed Badger invoice number or date is invalid.");
+  const payload = badgerJson_(`/api/invoice/validateforcreate?number=${invoiceNumber}&date=${date}`, { method:"get" }, "Badger invoice-number validation");
+  const data = payload?.data || payload;
+  if (data === false || data?.isValid === false || data?.available === false || data?.exists === true) throw new Error("number taken — preview again");
+  return true;
+}
+
+function badgerOrderForInvoice_(requestId) {
+  const sheet = getOnlineOrderRequestsSheet_(false);
+  if (!sheet) throw new Error("Online Order Requests sheet is missing.");
+  const rowNumber = findRecordRow_(sheet, "request_id", requestId);
+  if (!rowNumber) throw new Error("Order request not found.");
+  const h = getHeaderMap_(sheet); const row = sheet.getRange(rowNumber, 1, 1, sheet.getLastColumn()).getValues()[0];
+  const raw = Object.keys(h).reduce((item, key) => { item[key] = row[h[key]]; return item; }, { source_row:rowNumber });
+  const lines = rowsWithSource_(getOnlineOrderLinesSheet_(false)).filter(line => String(line.request_id || "") === String(requestId || ""));
+  return { sheet:sheet, headers:h, row_number:rowNumber, order:onlineOrderRecord_(raw, new Map([[String(requestId || ""), lines]])) };
+}
+
+function badgerCustomerIdForAccount_(accountId) {
+  const directory = getOutreachSheet_(OUTREACH_SHEET_NAME); const directoryRow = getAllRowsAsObjects_(directory).find(row => String(row.account_id || "") === String(accountId || "")) || {};
+  const override = String(directoryRow.badger_customer_id || "").trim();
+  if (/^\d+$/.test(override)) return override;
+  const account = currentBadgerPaymentAccount_(accountId, false);
+  const match = (account.invoices || []).filter(invoice => invoice.badger_match_status === "Matched" && /^\d+$/.test(String(invoice.customer_id || "")))
+    .sort((a, b) => recordTimestamp_(b.invoice_date) - recordTimestamp_(a.invoice_date))[0];
+  if (!match) throw new Error("Create this customer in Badger (or invoice them once by hand) first.");
+  return String(match.customer_id);
+}
+
+function badgerNextInvoiceNumber_() {
+  const highest = readBadgerInvoices_().map(invoice => /^SS(\d{4})$/.exec(normalizeBadgerInvoiceNumber_(invoice.invoice_number))).filter(Boolean).map(match => Number(match[1])).reduce((max, number) => Math.max(max, number), 0);
+  if (highest >= 9999) throw new Error("No four-digit Badger invoice number remains.");
+  return `SS${String(highest + 1).padStart(4, "0")}`;
+}
+
+function badgerInvoiceDraft_(requestId, p, skipValidation) {
+  const source = badgerOrderForInvoice_(requestId); const order = source.order;
+  if (String(order.workflow_status || "") !== "Confirmed") throw new Error("Only Confirmed orders can create a Badger invoice.");
+  if (String(order.badger_invoice_number || "").trim()) throw new Error("This order already has a Badger invoice.");
+  if (!String(order.account_id || "").trim()) throw new Error("Link this order to an account before creating a Badger invoice.");
+  const customerId = badgerCustomerIdForAccount_(order.account_id);
+  const customer = badgerJson_(`/api/customer/${customerId}`, { method:"get" }, "Badger customer lookup");
+  const customerData = customer?.data || customer;
+  const today = Utilities.formatDate(new Date(), Session.getScriptTimeZone(), "yyyy-MM-dd");
+  const date = String(p?.date || today).trim();
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(date)) throw new Error("Invoice date must use YYYY-MM-DD.");
+  const prices = badgerCurrentPrices_(false); const overrides = new Map((Array.isArray(p?.lines) ? p.lines : []).map(line => [String(line.sku_id || ""), line]));
+  const blocked = [];
+  const lines = (order.lines || []).map(line => {
+    const price = badgerPriceForOrderLine_(prices, order.account_id, line); const override = overrides.get(String(line.sku_id || "")) || {};
+    if (!price) { blocked.push(String(line.sku_name || line.sku_id || "product")); return null; }
+    const requested = Number(override.quantity !== undefined ? override.quantity : (line.quantity || 0)); const bottles = /case/i.test(String(line.unit || "")) ? requested * Number(line.units_per_case || 0) : requested;
+    const cents = override.unit_price === undefined ? price.unit_price_cents : badgerMoneyToCents_(override.unit_price);
+    if (!(bottles > 0) || !(cents > 0) || !(price.unit_of_measure_id > 0) || !(price.proof > 0)) { blocked.push(String(line.sku_name || line.sku_id || "product")); return null; }
+    return { sku_id:String(line.sku_id || ""), quantity:bottles, description:price.description, unit_price_cents:cents, unitPrice:cents / 100, unitOfMeasureId:price.unit_of_measure_id, beverageClass:price.beverage_class, alcoholProof:price.proof };
+  }).filter(Boolean);
+  if (blocked.length) throw new Error(`Active Current Prices with unit, price, and proof are required for: ${blocked.join(", ")}.`);
+  const number = String((skipValidation && p?.invoice_number) || badgerNextInvoiceNumber_()).trim();
+  if (!skipValidation) badgerValidateInvoiceNumber_(number, date);
+  const total_cents = lines.reduce((sum, line) => sum + Math.round(line.quantity * line.unit_price_cents), 0);
+  const fingerprint = sha256_([customerId, number, date].concat(lines.slice().sort((a, b) => a.sku_id.localeCompare(b.sku_id)).map(line => `${line.sku_id}:${line.quantity}:${line.unit_price_cents}:${line.unitOfMeasureId}:${line.alcoholProof}`)).join("|"));
+  const directory = getAllRowsAsObjects_(getOutreachSheet_(OUTREACH_SHEET_NAME)).find(row => String(row.account_id || "") === String(order.account_id || "")) || {};
+  const warnings = [];
+  const badgerAddress = [customerData.billToAddressLine1, customerData.billToCity, customerData.billToPostalCode].filter(Boolean).join("|");
+  const directoryAddress = [directory.street_address || directory.address, directory.city, directory.zip_code || directory.zip].filter(Boolean).join("|");
+  if (badgerAddress && directoryAddress && normalizeCustomerMatchKey_(badgerAddress) !== normalizeCustomerMatchKey_(directoryAddress)) warnings.push("Badger bill-to address differs from the Directory.");
+  try {
+    const account = currentBadgerPaymentAccount_(order.account_id, false);
+    const lastInvoice = (account.invoices || []).filter(invoice => /^\d+$/.test(String(invoice.badger_id || ""))).sort((a, b) => recordTimestamp_(b.invoice_date) - recordTimestamp_(a.invoice_date))[0];
+    if (lastInvoice) {
+      const priorLines = badgerRemoteInvoiceDetails_(lastInvoice.badger_id).lines || [];
+      lines.forEach(line => {
+        const prior = priorLines.find(item => normalizeCustomerMatchKey_(item.description) === normalizeCustomerMatchKey_(line.description));
+        if (prior && badgerMoneyToCents_(prior.unitPrice ?? prior.unit_price) !== line.unit_price_cents) warnings.push(`Price differs from this account's last invoice for ${line.description}.`);
+      });
+    }
+  } catch (error) { console.warn("Could not compare Badger invoice prices: " + String(error?.message || error)); }
+  if (!badgerSyncState_().is_fresh) warnings.push("Badger status sync is not fresh.");
+  return { source:source, order:order, customer_id:customerId, customer:customerData, date:date, invoice_number:number, order_number:number.slice(2), lines:lines, total_cents:total_cents, total:badgerMoneyLabel_(total_cents), draft_fingerprint:fingerprint, warnings:warnings };
+}
+
+function badgerInvoiceMatchesDraft_(invoice, draft) {
+  if (!invoice || !draft) return false;
+  const remoteCustomerId = String(invoice.customerId || invoice.customer_id || invoice.billToCustomerId || invoice.billToId || "");
+  const remoteTotal = badgerMoneyToCents_(invoice.totalDue ?? invoice.total_due ?? invoice.dollarAmount ?? invoice.amount);
+  return remoteCustomerId === String(draft.customer_id) && remoteTotal === Number(draft.total_cents);
+}
+
+function writeBadgerInvoiceCreation_(draft, status, actor, badgerInvoiceId, error) {
+  const sheet = getBadgerInvoiceCreationsSheet_(); const h = getHeaderMap_(sheet); const row = Array(sheet.getLastColumn()).fill("");
+  const set = (key, value) => { if (h[key] !== undefined) row[h[key]] = value; };
+  set("request_id", draft.order.request_id); set("invoice_#", draft.invoice_number); set("customer_id", draft.customer_id); set("total_cents", draft.total_cents); set("fingerprint", draft.draft_fingerprint); set("status", status); set("badger_invoice_id", badgerInvoiceId || ""); set("staff", actor); set("at", new Date()); set("error", error || ""); set("app_version", APP_VERSION);
+  sheet.appendRow(row);
+  return sheet.getLastRow();
+}
+
+function updateBadgerInvoiceCreation_(sheet, rowNumber, status, actor, badgerInvoiceId, error) {
+  const h = getHeaderMap_(sheet);
+  const set = (key, value) => { if (h[key] !== undefined) sheet.getRange(rowNumber, h[key] + 1).setValue(value); };
+  set("status", status); set("badger_invoice_id", badgerInvoiceId || ""); set("staff", actor); set("at", new Date()); set("error", error || ""); set("app_version", APP_VERSION);
+}
+
+function linkCreatedBadgerInvoiceToOrder_(draft, invoice, actor) {
+  const sheet = draft.source.sheet; const h = draft.source.headers; const rowNumber = draft.source.row_number;
+  const set = (key, value) => { if (h[key] !== undefined) sheet.getRange(rowNumber, h[key] + 1).setValue(value); };
+  set("badger_invoice_number", draft.invoice_number); set("invoice_status", "Invoice received"); set("integration_status", "Synchronized"); set("badger_match_status", "Matched"); set("badger_customer_name", String(invoice.billToName || invoice.customerName || draft.customer.billToName || "")); set("badger_invoice_date", draft.date); set("badger_amount", badgerMoneyLabel_(draft.total_cents)); set("review_updated_at", new Date()); set("review_updated_by", actor);
+  appendCustomerWorkflowLog_("Order", draft.order.request_id, draft.order.account_id, draft.order.business_name, draft.order.workflow_status, draft.order.workflow_status, actor, `Created Badger invoice ${draft.invoice_number}.`);
+  appendAudit_("CREATE_BADGER_INVOICE", "Order", draft.order.request_id, draft.order.account_id, actor, ONLINE_ORDER_REQUESTS_SHEET_NAME, BADGER_INVOICE_CREATIONS_SHEET_NAME, "Completed", `${draft.invoice_number}; ${draft.total}`);
+}
+
+function apiPreviewBadgerInvoice_(p) {
+  const requestId = publicText_(p?.request_id || "", 80, "Request ID");
+  const pending = badgerInvoiceCreationRows_(requestId).filter(item => item.status === "PENDING").sort((a, b) => recordTimestamp_(b.at) - recordTimestamp_(a.at))[0];
+  const draft = badgerInvoiceDraft_(requestId, pending ? Object.assign({}, p, { invoice_number:pending.invoice_number }) : p, !!pending);
+  if (pending) {
+    const remote = badgerRemoteInvoiceByNumber_(pending.invoice_number);
+    if (badgerInvoiceMatchesDraft_(remote, draft)) return Object.assign({}, draft, { pending_creation_id:pending.row_number, adoptable_invoice:{ badger_invoice_id:String(remote.id || remote.invoiceId || ""), invoice_number:pending.invoice_number } });
+    throw new Error("A Badger invoice creation is pending for this order. Check before retrying.");
+  }
+  return draft;
+}
+
+function apiCreateBadgerInvoice_(p) {
+  const requestId = publicText_(p?.request_id || "", 80, "Request ID");
+  const actor = authenticatedActor_(p, "Sturgeon Distribution Hub");
+  const fingerprint = publicText_(p?.draft_fingerprint || "", 128, "Draft fingerprint");
+  if (p?.reviewed !== true) throw new Error("Review the invoice and confirm the checkbox before creating it.");
+  if (!/^[a-f0-9]{64}$/i.test(fingerprint)) throw new Error("Preview the invoice again before creating it.");
+  const lock = LockService.getScriptLock(); if (!lock.tryLock(10000)) throw new Error("Another invoice action is in progress. Try again shortly.");
+  try {
+    if (badgerInvoiceCreationRows_(requestId).some(item => item.status === "PENDING")) throw new Error("A Badger invoice creation is already pending for this order.");
+    const draft = badgerInvoiceDraft_(requestId, p, false);
+    if (draft.draft_fingerprint !== fingerprint) throw new Error("Invoice changed — preview again.");
+    // The second validation is intentional: a number is never auto-bumped after preview.
+    badgerValidateInvoiceNumber_(draft.invoice_number, draft.date);
+    const pendingRow = writeBadgerInvoiceCreation_(draft, "PENDING", actor, "", "Awaiting Badger confirmation.");
+    const creationSheet = getBadgerInvoiceCreationsSheet_();
+    try {
+      const result = badgerJson_("/api/invoice", { method:"post", contentType:"application/json", payload:JSON.stringify({ date:new Date(`${draft.date}T12:00:00`).toISOString(), orderNumber:draft.order_number, customerId:Number(draft.customer_id), billToName:draft.customer.billToName || "", billToAddressLine1:draft.customer.billToAddressLine1 || "", billToAddressLine2:draft.customer.billToAddressLine2 || "", billToCity:draft.customer.billToCity || "", billToPostalCode:draft.customer.billToPostalCode || "", billToResellerNumber:draft.customer.billToResellerNumber || draft.customer.resellerNumber || "", lines:draft.lines.map(line => ({ quantity:line.quantity, description:line.description, unitPrice:line.unitPrice, unitOfMeasureId:line.unitOfMeasureId, beverageClass:"Spirit", alcoholProof:line.alcoholProof })) }) }, "Badger invoice create");
+      const created = badgerRemoteInvoiceByNumber_(draft.invoice_number) || result?.data || result;
+      const badgerInvoiceId = String(created?.id || created?.invoiceId || "");
+      const confirmed = badgerInvoiceId ? badgerRemoteInvoiceDetails_(badgerInvoiceId) : created;
+      if (!badgerInvoiceMatchesDraft_(confirmed, draft)) throw new Error("Badger did not confirm the created invoice total and customer.");
+      updateBadgerInvoiceCreation_(creationSheet, pendingRow, "CREATED", actor, badgerInvoiceId, "");
+      linkCreatedBadgerInvoiceToOrder_(draft, confirmed, actor);
+      bumpReadCacheVersion_(); clearBadgerInvoiceCache_();
+      return { message:`Created Badger invoice ${draft.invoice_number}.`, invoice_number:draft.invoice_number, badger_invoice_id:badgerInvoiceId };
+    } catch (error) {
+      updateBadgerInvoiceCreation_(creationSheet, pendingRow, "PENDING", actor, "", String(error?.message || error).slice(0, 1000));
+      throw new Error("Invoice may have been created — check before retrying.");
+    }
+  } finally { lock.releaseLock(); }
+}
+
+function apiAdoptBadgerInvoice_(p) {
+  const requestId = publicText_(p?.request_id || "", 80, "Request ID"); const actor = authenticatedActor_(p, "Sturgeon Distribution Hub");
+  const lock = LockService.getScriptLock(); if (!lock.tryLock(10000)) throw new Error("Another invoice action is in progress. Try again shortly.");
+  try {
+    const pending = badgerInvoiceCreationRows_(requestId).filter(item => item.status === "PENDING").sort((a, b) => b.row_number - a.row_number)[0];
+    if (!pending) throw new Error("No pending Badger invoice creation is available to adopt.");
+    const draft = badgerInvoiceDraft_(requestId, { invoice_number:pending.invoice_number }, true); const remote = badgerRemoteInvoiceByNumber_(pending.invoice_number);
+    if (!badgerInvoiceMatchesDraft_(remote, draft)) throw new Error("Badger does not have a matching invoice to adopt.");
+    const id = String(remote.id || remote.invoiceId || ""); const confirmed = id ? badgerRemoteInvoiceDetails_(id) : remote;
+    if (!badgerInvoiceMatchesDraft_(confirmed, draft)) throw new Error("Badger does not have a matching invoice to adopt.");
+    updateBadgerInvoiceCreation_(getBadgerInvoiceCreationsSheet_(), pending.row_number, "CREATED", actor, id, "Adopted after pending create."); linkCreatedBadgerInvoiceToOrder_(draft, confirmed, actor); bumpReadCacheVersion_(); clearBadgerInvoiceCache_();
+    return { message:`Adopted Badger invoice ${draft.invoice_number}.`, invoice_number:draft.invoice_number };
+  } finally { lock.releaseLock(); }
+}
+
+function apiFailBadgerInvoiceCreation_(p) {
+  const requestId = publicText_(p?.request_id || "", 80, "Request ID"); const reason = publicText_(p?.reason || "", 1000, "Failure reason"); const actor = authenticatedActor_(p, "Sturgeon Distribution Hub");
+  if (!reason) throw new Error("A failure reason is required.");
+  const lock = LockService.getScriptLock(); if (!lock.tryLock(10000)) throw new Error("Another invoice action is in progress. Try again shortly.");
+  try {
+    const pending = badgerInvoiceCreationRows_(requestId).filter(item => item.status === "PENDING").sort((a, b) => b.row_number - a.row_number)[0];
+    if (!pending || Date.now() - recordTimestamp_(pending.at) < 24 * 60 * 60 * 1000) throw new Error("Only a pending creation older than 24 hours can be marked failed.");
+    if (badgerRemoteInvoiceByNumber_(pending.invoice_number)) throw new Error("Badger has this invoice; adopt it instead of marking the creation failed.");
+    updateBadgerInvoiceCreation_(getBadgerInvoiceCreationsSheet_(), pending.row_number, "FAILED", actor, "", reason); bumpReadCacheVersion_(); return { message:"Pending Badger invoice creation marked failed." };
+  } finally { lock.releaseLock(); }
 }
 
 function normalizeBadgerInvoiceNumber_(value) {
@@ -6120,8 +6407,7 @@ function buildCustomerAccounts_(applications, orders, bypassBadgerCache) {
     if (!invoicesByAccount.has(accountId)) invoicesByAccount.set(accountId, []);
     assignedInvoiceAccounts.set(invoiceKey, accountId);
     const paymentMark = paymentMarks.get(invoiceKey) || { paid_to_me:false, submitted:"" };
-    const submitted = String(paymentMark.submitted || "").trim().toLowerCase();
-    const status = !badgerStatusIsFresh ? "Unknown" : invoice.is_closed ? "Closed" : !paymentMark.paid_to_me ? "Customer owes" : submitted === "no" ? "Owed to Badger" : submitted === "yes" ? "Check sent" : "Awaiting Badger";
+    const status = badgerInvoicePaymentState_(badgerStatusIsFresh, invoice.is_closed, paymentMark.paid_to_me, paymentMark.submitted);
     invoicesByAccount.get(accountId).push(Object.assign({}, invoice, {
       account_id:accountId,
       match_method:matchMethod,

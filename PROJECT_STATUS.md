@@ -8,8 +8,8 @@ Read this file before inspecting the repository or changing the application. Upd
 
 | Component | Source version | Deployment state |
 | --- | --- | --- |
-| Netlify web app and staff proxy | `2026.09.24.30-WEB` on `codex/work` / `2026.09.24.24-WEB` live | Phase 4 web controls remain un-deployed; Netlify release is manual. |
-| Inventory API Apps Script | `2026.09.24.58` on `codex/work` and live | Phase 4 batches reconciliation/check writes, exposes reversible marks and reminder state, and reports eligible payment totals. Deployed by Karl on 2026-09-30. Before using payment operations, run Sync from Badger immediately, re-run `installHubReadCacheWarmer()`, and install the daily status trigger. |
+| Netlify web app and staff proxy | `2026.09.24.31-WEB` on `codex/work` / `2026.09.24.24-WEB` live | Phase 5 adds review-gated Badger invoice preview/create controls; Netlify release remains manual and is not deployed. |
+| Inventory API Apps Script | `2026.09.24.59` on `codex/work` / `2026.09.24.58` live | Phase 5 adds allow-listed, review-gated Badger invoice creation with active tracker prices, a pending-create ledger, post-create verification, and adoption recovery. Commit only; do not deploy before Claude review. |
 | Distribution Outreach Apps Script | `2026.09.24.14-APP` on `codex/work` | Reminder delivery prerequisite; owner has not yet confirmed this exact version is deployed. |
 | Public customer Netlify proxy | `2026.09.18.3-WEB` | Deployed with Netlify; unchanged by the latest staff-app UI work |
 
@@ -20,6 +20,8 @@ Current remote: `https://github.com/sturgeonspirits/self-distribution.git`
 Current Badger checkpoint: Karl ran `testBadgerLogin()` successfully on 2026-09-30 (163 invoices). The `payment_reminders_enabled` Hub Configuration flag defaults off when absent; do not enable it before review completes. The Distribution Outreach mailer must be `2026.09.24.14-APP` before reminders are enabled.
 
 Badger tracker safety answer (Karl, 2026-09-30): the PDF importer never writes the `Paid to Me` or `Submitted` columns. Direct, audited P/Q writes to the live tracker are therefore safe; no Hub override ledger is needed.
+
+Phase 5 deployment prerequisites: after review, deploy Inventory API `.59` and the manual Netlify `.31-WEB` release; run `seedCurrentPricesTab()` once, review and activate the tracker prices, then create the first real Badger invoice with Claude reviewing. Never create a test invoice in Badger.
 
 Latest completed changes:
 
