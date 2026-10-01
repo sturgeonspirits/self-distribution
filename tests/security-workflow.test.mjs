@@ -1187,6 +1187,10 @@ test("customer billing workflow keeps real Badger invoices distinct from Online 
   assert.match(backend, /else if \(mode === "not_paid"\) writeBadgerPaymentMark_\(invoiceNumber, false, "", "MARK_CUSTOMER_NOT_PAID", actor\)/);
   assert.match(backend, /\["link", "ignore", "void", "restore"\]\.includes\(mode\)/);
   assert.match(backend, /if \(mode === "void" && !voidReason\) throw new Error\("Enter why this invoice is void\."\)/);
+  assert.match(backend, /"Void Prior Account ID", "Void Prior Match Method", "Void Prior Notes", "Void Prior Linked At", "Void Prior Linked By"/);
+  assert.match(backend, /set\("void_prior_account_id", values\[h\.account_id\] \|\| ""\)/);
+  assert.match(backend, /restore\("account_id", values\[h\.void_prior_account_id\] \|\| ""\)/);
+  assert.match(backend, /return \{ message:`Invoice \$\{invoice\.invoice_number \|\| invoiceNumber\} restored to its prior \$\{priorMethod\} link\.`/);
   assert.match(backend, /voided_badger_invoices:ledger\.voided_badger_invoices/);
   assert.match(backend, /if \(String\(links\.get\(key\)\?\.match_method \|\| ""\)\.trim\(\)\.toLowerCase\(\) === "void"\) return;/, "voided invoices never enter reconcile groups");
   assert.match(index, /Direct payments to run through Badger/);

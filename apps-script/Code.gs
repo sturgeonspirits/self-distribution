@@ -1,10 +1,9 @@
 /*********************************
  * Inventory API (JSON) for Netlify
- * App version: 2026.10.01.4
+ * App version: 2026.10.01.5
  *
  * CHANGES IN THIS VERSION
- * - Adds a Hub-side Void mark for Badger invoices created in error (Badger cannot delete them); voided invoices leave every ledger, balance, reminder, reconcile group and pass-through check, and can be restored.
- * - Adds the "Customer hasn't paid" payment mark (clears Paid to Me and Submitted) for invoices the tracker wrongly shows as paid directly.
+ * - Preserves a Badger invoice's complete prior link state when it is marked Void, so Restore reinstates the exact manual link instead of losing it.
  *
  * CHANGES IN 2026.10.01.3
  * - Exposes the permanent Online-request-to-Badger-invoice link and current Badger payment state in both staff invoice and Online-request views.
@@ -240,7 +239,7 @@
  * - Use only in the staging inventory backend until testing is complete.
  *********************************/
 
-const APP_VERSION = "2026.10.01.4";
+const APP_VERSION = "2026.10.01.5";
 
 const SHEET_NAMES = {
   STORES: "Stores",
@@ -6230,7 +6229,8 @@ function readBadgerInvoiceLinks_() {
 
 function getBadgerInvoiceLinksSheet_() {
   return ensureSheet_(getOutreachSs_(), BADGER_INVOICE_LINKS_SHEET_NAME, [
-    "Badger Invoice Number", "Account ID", "Badger Customer Name", "Match Method", "Linked At", "Linked By", "Notes", "App Version"
+    "Badger Invoice Number", "Account ID", "Badger Customer Name", "Match Method", "Linked At", "Linked By", "Notes", "App Version",
+    "Void Prior Account ID", "Void Prior Match Method", "Void Prior Notes", "Void Prior Linked At", "Void Prior Linked By"
   ]);
 }
 
@@ -6277,6 +6277,24 @@ function apiLinkBadgerInvoice_(p) {
     if (mode === "restore") {
       const restoredMethod = existingIndex < 0 ? "" : String(rows[existingIndex][h.match_method] || "").trim().toLowerCase();
       if (!["ignored", "void"].includes(restoredMethod)) throw new Error("Only an ignored or voided invoice can be restored.");
+      if (restoredMethod === "void") {
+        const values = rows[existingIndex].slice();
+        const priorMethod = String(values[h.void_prior_match_method] || "").trim();
+        if (priorMethod) {
+          const restore = (key, value) => { if (h[key] !== undefined) values[h[key]] = value; };
+          restore("account_id", values[h.void_prior_account_id] || "");
+          restore("match_method", priorMethod);
+          restore("notes", values[h.void_prior_notes] || "");
+          restore("linked_at", values[h.void_prior_linked_at] || "");
+          restore("linked_by", values[h.void_prior_linked_by] || "");
+          restore("void_prior_account_id", ""); restore("void_prior_match_method", ""); restore("void_prior_notes", ""); restore("void_prior_linked_at", ""); restore("void_prior_linked_by", "");
+          restore("app_version", APP_VERSION);
+          sheet.getRange(existingIndex + 2, 1, 1, values.length).setValues([values]);
+          appendAudit_("RESTORE_BADGER_INVOICE", "Invoice", String(invoice.invoice_number || invoiceNumber), String(values[h.account_id] || ""), authenticatedActor_(p, "Sturgeon Distribution Hub"), BADGER_TRACKER_SPREADSHEET_ID, BADGER_INVOICE_LINKS_SHEET_NAME, "Restored prior link", priorMethod);
+          bumpReadCacheVersion_();
+          return { message:`Invoice ${invoice.invoice_number || invoiceNumber} restored to its prior ${priorMethod} link.`, invoice_number:String(invoice.invoice_number || invoiceNumber) };
+        }
+      }
       sheet.deleteRow(existingIndex + 2);
       appendAudit_("RESTORE_BADGER_INVOICE", "Invoice", String(invoice.invoice_number || invoiceNumber), "", authenticatedActor_(p, "Sturgeon Distribution Hub"), BADGER_TRACKER_SPREADSHEET_ID, BADGER_INVOICE_LINKS_SHEET_NAME, "Restored", invoice.customer_name || "Badger customer");
       bumpReadCacheVersion_();
@@ -6289,6 +6307,18 @@ function apiLinkBadgerInvoice_(p) {
     }
     const values = existingIndex >= 0 ? rows[existingIndex].slice() : Array(sheet.getLastColumn()).fill("");
     const set = (key, value) => { if (h[key] !== undefined) values[h[key]] = value; };
+    const priorMatchMethod = String(values[h.match_method] || "").trim();
+    const wasVoid = priorMatchMethod.toLowerCase() === "void";
+    if (mode === "void" && !wasVoid) {
+      set("void_prior_account_id", values[h.account_id] || "");
+      set("void_prior_match_method", priorMatchMethod);
+      set("void_prior_notes", values[h.notes] || "");
+      set("void_prior_linked_at", values[h.linked_at] || "");
+      set("void_prior_linked_by", values[h.linked_by] || "");
+    }
+    if (mode !== "void") {
+      set("void_prior_account_id", ""); set("void_prior_match_method", ""); set("void_prior_notes", ""); set("void_prior_linked_at", ""); set("void_prior_linked_by", "");
+    }
     set("badger_invoice_number", invoice.invoice_number || invoiceNumber);
     set("account_id", mode === "link" ? accountId : "");
     set("badger_customer_name", invoice.customer_name || "");
