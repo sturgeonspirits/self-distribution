@@ -2,8 +2,8 @@
 
 These files update the existing attached Inventory API spreadsheet without changing its ID or any Apps Script properties.
 
-Source: `Distribution Hub - Inventory Backend` (`1XVe0ffTLWQ4QJ3ersJ4RTh_XFTXiGjd7vyv5UnQ0sOY`).
-Target: the currently attached `STAGING - Inventory Backend - 2026-09-15` workbook (`1asGSIuz65hhbXbanDSuLdgsasDKqAyVWgu7DGi42Il8`). It may be renamed after import; the ID must remain unchanged.
+Source: `Inventory-distribution-Main` (`1XVe0ffTLWQ4QJ3ersJ4RTh_XFTXiGjd7vyv5UnQ0sOY`).
+Target: the currently attached `Distribution Hub - Inventory Backend` workbook (`1asGSIuz65hhbXbanDSuLdgsasDKqAyVWgu7DGi42Il8`). Its ID must remain unchanged.
 
 ## Import in this order
 
