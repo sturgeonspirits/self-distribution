@@ -1,10 +1,10 @@
 <!doctype html>
-<!-- App version: 2026.10.02.12-WEB -->
+<!-- App version: 2026.10.02.13-WEB -->
 <html>
 <head>
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover"/>
-  <meta name="app-version" content="2026.10.02.12-WEB" />
+  <meta name="app-version" content="2026.10.02.13-WEB" />
   <meta name="theme-color" content="#536f77" />
   <link rel="icon" href="/assets/distribution-hub-icon.svg" type="image/svg+xml" />
   <link rel="manifest" href="/site.webmanifest" />
@@ -2194,10 +2194,10 @@
       <details class="managerCard" id="hubSystemPanel" style="margin-bottom:12px">
         <summary>System status and reconciliation</summary>
         <div class="managerBody">
-          <div class="status" id="hubSystemStatus">Load status to verify the staging Hub and integrations.</div>
+          <div class="status" id="hubSystemStatus">Load status to verify the Hub and integrations.</div>
           <div class="btnRow" style="margin-top:10px">
             <button id="loadHubStatusBtn" type="button"><i data-lucide="activity"></i><span>Check status</span></button>
-            <button id="initializeHubBtn" type="button"><i data-lucide="shield-check"></i><span>Initialize staging Hub</span></button>
+            <!-- 2026.10.02.13-WEB: "Initialize staging Hub" removed. It switched live inventory to copies inside the Hub workbook. -->
             <button id="reconcileHubBtn" type="button"><i data-lucide="refresh-cw"></i><span>Reconcile records</span></button>
           </div>
         </div>
@@ -2566,7 +2566,7 @@
 
   <footer style="max-width:1200px;margin:18px auto 120px;padding:0 12px;text-align:center;color:#6b7280;font-size:12px;">
     Designed by <a href="https://scriptspirit.dev" target="_blank" rel="noopener noreferrer" style="color:#1d4ed8;text-decoration:none;font-weight:700;">Script Spirit</a>
-<span id="appVersionFooter"> • Version 2026.10.02.12-WEB</span>
+<span id="appVersionFooter"> • Version 2026.10.02.13-WEB</span>
   </footer>
 
 
@@ -2589,7 +2589,7 @@
   window.addEventListener("unhandledrejection", e => console.error("Unhandled promise rejection:", e.reason));
   window.addEventListener("error", e => console.error("Unhandled error:", e.error || e.message));
   const $ = (id) => document.getElementById(id);
-  const APP_VERSION = "2026.10.02.12-WEB";
+  const APP_VERSION = "2026.10.02.13-WEB";
   $("appVersionFooter").textContent = ` • Version ${APP_VERSION}`;
   function screenCacheKey(screen){ return `distribution_hub:${APP_VERSION}:${staffSession?.email || "unknown"}:${screen}`; }
   function readScreenCache(screen){
@@ -2961,7 +2961,7 @@
       if (input) { input.value = staffSession.name; input.readOnly = true; }
     });
     const isAdmin = staffSession.role === "admin";
-    ["initializeHubBtn", "reconcileHubBtn", "addExistingBtn", "addProductBtn"].forEach(id => $(id).hidden = !isAdmin);
+    ["reconcileHubBtn", "addExistingBtn", "addProductBtn"].forEach(id => $(id).hidden = !isAdmin);
     $("outreachAdminPanel").hidden = !isAdmin;
     $("inventoryNavBtn").hidden = !staffSession.areas.includes("inventory");
     $("outreachNavBtn").hidden = !staffSession.areas.includes("outreach");
@@ -5631,25 +5631,16 @@
   }
 
   async function loadHubSystemStatus(){
-    $("hubSystemStatus").textContent = "Checking staging Hub...";
+    $("hubSystemStatus").textContent = "Checking Hub...";
     const result = await staffApiGet({ action:"hubSystemStatus" });
     if (!result.ok) throw new Error(result.error || "System status could not be loaded.");
     const sheetSummary = (result.inventory_sheets || []).map(item => `${item.name}: ${item.matches ? "verified" : "not copied"}`).join(" · ");
     $("hubSystemStatus").textContent = `${result.migration_status} · Inventory reads from ${result.operational_spreadsheet}. Badger: ${result.badger_tracker}. Toast: ${result.toast_adapter}. ${sheetSummary}`;
-    $("initializeHubBtn").disabled = result.migration_status === "ACTIVE";
     return result;
   }
 
-  async function initializeHardenedHub(){
-    const staffName = $("customerStaffName").value.trim();
-    if (!staffName) return $("hubSystemStatus").textContent = "Enter your staff name first.";
-    if (!confirm("Initialize the hardened STAGING Hub now? This copies and checksum-verifies inventory tabs. It does not modify production.")) return;
-    $("hubSystemStatus").textContent = "Copying and verifying staging inventory tabs...";
-    const result = await staffApiPost({ action:"initializeHardenedHub", confirmation:"STAGING ONLY", staff_name:staffName });
-    if (!result.ok) throw new Error(result.error || "Staging Hub initialization failed.");
-    $("hubSystemStatus").textContent = result.message;
-    await loadHubSystemStatus();
-  }
+  // 2026.10.02.13-WEB: initializeHardenedHub() removed with its button; the live app
+  // keeps inventory in Distribution Hub - Inventory Backend.
 
   async function reconcileHubRecords(){
     const staffName = $("customerStaffName").value.trim();
@@ -7054,7 +7045,6 @@
     if (event.target.matches("#badgerInvoiceDate, [data-badger-invoice-quantity], [data-badger-invoice-price]")) previewBadgerInvoice(true).catch(error => toast(error?.message || String(error)));
   });
   $("loadHubStatusBtn").addEventListener("click", () => loadHubSystemStatus().catch(handleCustomerError));
-  $("initializeHubBtn").addEventListener("click", () => initializeHardenedHub().catch(handleCustomerError));
   $("reconcileHubBtn").addEventListener("click", () => reconcileHubRecords().catch(handleCustomerError));
   $("recalculateOutreachMilesBtn").addEventListener("click", () => recalculateOutreachMiles());
 

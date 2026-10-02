@@ -94,6 +94,22 @@ test("duplicate and unknown inventory actions are rejected before authentication
   assert.equal(fetches, 0);
 });
 
+// 2026.10.02.13-WEB: the staging migration action must not be reachable from the live app.
+test("the Hub migration action is not proxied and has no button", async () => {
+  const { handler } = await loadFunction("netlify/functions/inventory.js", "no-hub-migration");
+  process.env.APPS_SCRIPT_URL = "https://example.test/exec";
+  process.env.API_KEY = "backend-key";
+  let fetches = 0;
+  globalThis.fetch = async () => { fetches += 1; throw new Error("should not proxy"); };
+  const refused = await handler(event("initializeHardenedHub", { method:"POST", body:{ confirmation:"STAGING ONLY", staff_name:"Admin" } }));
+  assert.equal(refused.statusCode, 400);
+  assert.equal(JSON.parse(refused.body).code, "UNKNOWN_ACTION");
+  assert.equal(fetches, 0);
+  const html = await readFile(new URL("index.html", root), "utf8");
+  assert.doesNotMatch(html, /id="initializeHubBtn"/);
+  assert.doesNotMatch(html, /action:"initializeHardenedHub"/);
+});
+
 test("authenticated inventory GET and POST preserve action payload, API key, and Zoho actor", async () => {
   const { handler } = await loadFunction("netlify/functions/inventory.js", "authenticated-regression");
   process.env.APPS_SCRIPT_URL = "https://example.test/exec";

@@ -1,9 +1,9 @@
-// App version: 2026.10.02.12-WEB
+// App version: 2026.10.02.13-WEB
 import { gunzipSync } from "node:zlib";
 import { requireStaffSession } from "./auth.js";
 import { fetchWithDriveRelay, relayConfig } from "../lib/drive-relay.js";
 
-const APP_VERSION = "2026.10.02.12-WEB";
+const APP_VERSION = "2026.10.02.13-WEB";
 const STAFF_ACTIONS = new Set([
   "outreachDashboard",
   "outreachRecord",
@@ -47,7 +47,6 @@ const STAFF_ACTIONS = new Set([
   "createOutreachBusiness",
   "importOutreachBusinesses",
   "hubSystemStatus",
-  "initializeHardenedHub",
   "reconcileIntegrations",
   "sendOutreachEmail",
   "sendOutreachTestEmail",
@@ -77,7 +76,8 @@ const SEND_UPSTREAM_TIMEOUT_MS = 24000;
 const SEND_ACTIONS = new Set(["sendOutreachEmail", "sendOutreachTestEmail", "sendOutreachCampaignBatch", "sendBadgerPaymentReminder", "createBadgerInvoice"]);
 const SNAPSHOT_ACTIONS = new Set(["createOutreachCampaign"]);
 const CAMPAIGN_READ_ACTIONS = new Set(["outreachCampaigns", "outreachCampaign", "previewOutreachCampaign"]);
-const ADMIN_ACTIONS = new Set(["initializeHardenedHub", "repairHubStructure", "reconcileIntegrations", "recalculateOutreachMiles", "backfillEngagementDetails", "upsertProduct", "addSkuToStore"]);
+// 2026.10.02.13-WEB: initializeHardenedHub is no longer proxied; the request is refused as unknown.
+const ADMIN_ACTIONS = new Set(["repairHubStructure", "reconcileIntegrations", "recalculateOutreachMiles", "backfillEngagementDetails", "upsertProduct", "addSkuToStore"]);
 const ACTION_AREAS = new Map([
   ["outreachDashboard", "outreach"], ["outreachRecord", "outreach"], ["outreachSendStatus", "outreach"], ["outreachNewsletterContacts", "outreach"],
   ["outreachCampaigns", "outreach"], ["outreachCampaign", "outreach"], ["previewOutreachCampaign", "outreach"], ["createOutreachCampaign", "outreach"], ["updateOutreachCampaignRecipient", "outreach"], ["setOutreachCampaignRecipientExclusion", "outreach"], ["setOutreachCampaignRecipientExclusions", "outreach"],
@@ -86,7 +86,7 @@ const ACTION_AREAS = new Map([
   ["updateOutreachPrograms", "outreach"], ["upsertNewsletterContact", "outreach"], ["createOutreachBusiness", "outreach"],
   ["importOutreachBusinesses", "outreach"], ["recalculateOutreachMiles", "outreach"], ["backfillEngagementDetails", "outreach"], ["sendOutreachEmail", "outreach"], ["sendOutreachTestEmail", "outreach"],
   ["customerWorkQueue", "orders"], ["customerAccountIndex", "orders"], ["linkBadgerInvoice", "orders"], ["syncBadgerStatus", "orders"], ["markBadgerInvoicePayment", "orders"], ["recordBadgerCheck", "orders"], ["resolvePaymentReminder", "orders"], ["badgerReconcilePreview", "orders"], ["applyBadgerReconcile", "orders"], ["previewBadgerPaymentReminder", "orders"], ["sendBadgerPaymentReminder", "orders"], ["previewBadgerInvoice", "orders"], ["createBadgerInvoice", "orders"], ["adoptBadgerInvoice", "orders"], ["failBadgerInvoiceCreation", "orders"], ["updateCustomerApplication", "orders"], ["updateOnlineOrderRequest", "orders"],
-  ["hubSystemStatus", "orders"], ["initializeHardenedHub", "orders"], ["repairHubStructure", "orders"], ["reconcileIntegrations", "orders"],
+  ["hubSystemStatus", "orders"], ["repairHubStructure", "orders"], ["reconcileIntegrations", "orders"],
   ["initData", "inventory"], ["listSkus", "inventory"], ["addSkuToStore", "inventory"], ["upsertProduct", "inventory"],
   ["submitCounts", "inventory"], ["createReorder", "inventory"], ["managerGrid", "inventory"], ["salesSinceCount", "inventory"], ["updateStoreContacts", "inventory"],
 ]);
