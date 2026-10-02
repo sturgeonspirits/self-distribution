@@ -7,14 +7,30 @@ import vm from "node:vm";
 
 const root = new URL("../", import.meta.url);
 
-async function loadFunction(path, suffix = Math.random()) {
+async function loadFunction(path, suffix = Math.random(), { useRealRoster = false } = {}) {
   let source = await readFile(new URL(path, root), "utf8");
   const dataUrl = text => `data:text/javascript;base64,${Buffer.from(text).toString("base64")}#${suffix}`;
   const relay = await readFile(new URL("netlify/lib/drive-relay.js", root), "utf8");
   const relayUrl = dataUrl(relay);
   const roster = (await readFile(new URL("netlify/lib/staff-roster.js", root), "utf8")).replace('from "./drive-relay.js";', `from "${relayUrl}";`);
   const rosterUrl = dataUrl(roster);
-  const authSource = () => readFile(new URL("netlify/functions/auth.js", root), "utf8").then(text => text.replace('from "../lib/staff-roster.js";', `from "${rosterUrl}";`));
+  const authSource = () => readFile(new URL("netlify/functions/auth.js", root), "utf8").then(text => {
+    const testRoster = `async function loadStaffRoster() {
+  try {
+    const raw = JSON.parse(process.env.TEST_STAFF_ROSTER_JSON || process.env.STAFF_ROLES_JSON || "{}");
+    const entries = Object.entries(raw || {}).reduce((result, [email, value]) => {
+      const role = typeof value === "string" ? value : value?.role;
+      const areas = role === "admin" ? ["inventory", "outreach", "orders"] : (value?.areas || ["inventory", "outreach", "orders"]);
+      if (["staff", "admin"].includes(role) && Array.isArray(areas) && areas.length) result[String(email).trim().toLowerCase()] = { role, areas };
+      return result;
+    }, {});
+    return { source:"sheet", entries };
+  } catch (_) { return { source:"unavailable" }; }
+}`;
+    return useRealRoster
+      ? text.replace('from "../lib/staff-roster.js";', `from "${rosterUrl}";`)
+      : text.replace('import { loadStaffRoster } from "../lib/staff-roster.js";', testRoster);
+  });
   if (path === "netlify/lib/staff-roster.js") source = roster;
   if (path === "netlify/functions/auth.js") source = await authSource();
   if (path === "netlify/functions/inventory.js") {
@@ -1268,8 +1284,11 @@ test("staff access sheet parsing: flexible headers, ticked areas, inactive rows,
   assert.equal(warnings.length, 2);
   const chatLayout = rosterFromCsv("Staff ID,Display Name,Email,Role,Areas,Active\nkarl,Karl,karl@sturgeonspirits.com,admin,,TRUE\npat,Pat,pat@sturgeonspirits.com,staff,\"outreach, orders\",TRUE");
   assert.deepEqual(chatLayout.entries["pat@sturgeonspirits.com"], { role:"staff", areas:["outreach", "orders"], name:"Pat" });
-  assert.throws(() => rosterFromCsv("Email,Inventory\nkarl@sturgeonspirits.com,TRUE"), /Email and Role/);
-  assert.throws(() => rosterFromCsv("Email,Role,Inventory\npat@sturgeonspirits.com,staff,TRUE"), /no active admin/);
+  assert.throws(() => rosterFromCsv("Email,Inventory,Active\nkarl@sturgeonspirits.com,TRUE,TRUE"), /Email, Role, and Active/);
+  assert.throws(() => rosterFromCsv("Email,Role,Inventory\npat@sturgeonspirits.com,staff,TRUE"), /Email, Role, and Active/);
+  const blankRole = rosterFromCsv("Email,Role,Inventory,Active\nkarl@sturgeonspirits.com,admin,TRUE,TRUE\npat@sturgeonspirits.com,,TRUE,TRUE");
+  assert.equal(blankRole.entries["pat@sturgeonspirits.com"], undefined);
+  assert.match(blankRole.warnings[0], /not admin or staff/);
 });
 
 async function rosterHarness(suffix, csvOrStatus) {
@@ -1294,8 +1313,8 @@ async function rosterHarness(suffix, csvOrStatus) {
     calls.apps.push(options.body ? JSON.parse(options.body) : text);
     return new Response(JSON.stringify({ ok:true }), { status:200 });
   };
-  const inventory = await loadFunction("netlify/functions/inventory.js", `${suffix}-inv`);
-  const auth = await loadFunction("netlify/functions/auth.js", `${suffix}-auth`);
+  const inventory = await loadFunction("netlify/functions/inventory.js", `${suffix}-inv`, { useRealRoster:true });
+  const auth = await loadFunction("netlify/functions/auth.js", `${suffix}-auth`, { useRealRoster:true });
   return { inventory:inventory.handler, auth:auth.handler, calls };
 }
 
@@ -1306,7 +1325,7 @@ function clearRosterEnv() {
 }
 
 test("the staff access sheet is authoritative over STAFF_ROLES_JSON and is cached between requests", async () => {
-  const csv = "Email,Role,Inventory,Outreach,Orders\nkarl@sturgeonspirits.com,admin,,,\nstaff@sturgeonspirits.com,staff,TRUE,FALSE,FALSE";
+  const csv = "Email,Role,Inventory,Outreach,Orders,Active\nkarl@sturgeonspirits.com,admin,,,,TRUE\nstaff@sturgeonspirits.com,staff,TRUE,FALSE,FALSE,TRUE";
   process.env.STAFF_ROLES_JSON = '{"staff@sturgeonspirits.com":"admin","old@sturgeonspirits.com":"admin"}';
   const { inventory, calls } = await rosterHarness("roster-authoritative", csv);
   try {
@@ -1324,7 +1343,7 @@ test("the staff access sheet is authoritative over STAFF_ROLES_JSON and is cache
 });
 
 test("session endpoint reports the sheet role and areas", async () => {
-  const csv = "Email,Role,Inventory,Outreach,Orders\nkarl@sturgeonspirits.com,admin,,,\nstaff@sturgeonspirits.com,staff,FALSE,TRUE,TRUE";
+  const csv = "Email,Role,Inventory,Outreach,Orders,Active\nkarl@sturgeonspirits.com,admin,,,,TRUE\nstaff@sturgeonspirits.com,staff,FALSE,TRUE,TRUE,TRUE";
   process.env.STAFF_ROLES_JSON = "{}";
   process.env.ZOHO_OIDC_CLIENT_ID = "client";
   process.env.ZOHO_OIDC_CLIENT_SECRET = "secret";
@@ -1342,22 +1361,21 @@ test("session endpoint reports the sheet role and areas", async () => {
   }
 });
 
-test("an unreadable or admin-less staff sheet falls back without locking anyone out or widening access", async () => {
+test("an unreadable or invalid Staff Access tab fails closed even when a legacy role map exists", async () => {
   process.env.STAFF_ROLES_JSON = '{"karl@sturgeonspirits.com":"admin"}';
   const { inventory, calls } = await rosterHarness("roster-down", 500);
   try {
     const signed = staffSession({ role:"staff", areas:["inventory"] });
-    assert.equal((await inventory(event("initData", { session:signed }))).statusCode, 200);
-    assert.equal(JSON.parse((await inventory(event("customerWorkQueue", { session:signed }))).body).code, "STAFF_AREA_FORBIDDEN");
+    assert.equal((await inventory(event("initData", { session:signed }))).statusCode, 401);
     assert.equal((await inventory(event("initData", { session:staffSession() }))).statusCode, 401);
-    assert.equal((await inventory(event("customerWorkQueue", { session:staffSession({ email:"karl@sturgeonspirits.com" }) }))).statusCode, 200);
+    assert.equal((await inventory(event("customerWorkQueue", { session:staffSession({ email:"karl@sturgeonspirits.com" }) }))).statusCode, 401);
     assert.equal(calls.roster, 1, "a failed read is not retried on every request");
   } finally {
     clearRosterEnv();
   }
-  const noAdmin = await rosterHarness("roster-no-admin", "Email,Role,Inventory\nstaff@sturgeonspirits.com,staff,TRUE");
+  const noAdmin = await rosterHarness("roster-no-admin", "Email,Role,Inventory,Active\nstaff@sturgeonspirits.com,staff,TRUE,TRUE");
   try {
-    assert.equal((await noAdmin.inventory(event("customerWorkQueue", { session:staffSession({ email:"karl@sturgeonspirits.com" }) }))).statusCode, 200);
+    assert.equal((await noAdmin.inventory(event("customerWorkQueue", { session:staffSession({ email:"karl@sturgeonspirits.com" }) }))).statusCode, 401);
   } finally {
     clearRosterEnv();
   }

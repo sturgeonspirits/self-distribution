@@ -16,10 +16,10 @@
 // Safety rules:
 // - The roster is cached in memory for ROSTER_TTL_MS, so a removal takes effect within
 //   that time on every request (existing sessions included).
-// - If the sheet cannot be read, the last good copy is used. If there has never been a
-//   good copy in this function instance, the caller falls back (see auth.js).
-// - A sheet without an Email or Role column, or with no active admin, is treated as
-//   misconfigured rather than as "nobody has access", so a bad edit cannot lock Karl out.
+// - If the tab cannot be refreshed after its two-minute cache lifetime, the caller
+//   fails closed. A roster change therefore cannot be bypassed during an outage.
+// - A tab without Email, Role, or Active, or with no active admin, is misconfigured
+//   and denied rather than silently granting a partial or stale roster.
 
 import { accessToken } from "./drive-relay.js";
 
@@ -38,7 +38,7 @@ export function rosterConfig(env = process.env) {
   const privateKey = String(env.GOOGLE_SA_PRIVATE_KEY || "").replace(/\\n/g, "\n").trim();
   const sheetId = String(env.STAFF_ROSTER_SHEET_ID || "").trim();
   const tab = String(env.STAFF_ROSTER_TAB || "Staff Access").trim() || "Staff Access";
-  return { clientEmail, privateKey, sheetId, tab, enabled:!!(clientEmail && privateKey && sheetId) };
+  return { clientEmail, privateKey, sheetId, tab, configured:!!sheetId, enabled:!!(clientEmail && privateKey && sheetId) };
 }
 
 export function parseCsv(text) {
@@ -94,8 +94,8 @@ export function rosterFromRows(values) {
     const key = headerKey(cell);
     if (key && columns[key] === undefined) columns[key] = index;
   });
-  if (columns.email === undefined || columns.role === undefined) {
-    throw new Error("The Staff Access tab needs Email and Role columns.");
+  if (columns.email === undefined || columns.role === undefined || columns.active === undefined) {
+    throw new Error("The Staff Access tab needs Email, Role, and Active columns.");
   }
   const entries = {};
   const warnings = [];
@@ -104,9 +104,9 @@ export function rosterFromRows(values) {
     const email = String(row[columns.email] || "").trim().toLowerCase();
     if (!email) return;
     if (!/^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(email)) { warnings.push(`Row ${line}: "${email}" is not an email address.`); return; }
-    if (columns.active !== undefined && !ticked(row[columns.active])) return;
+    if (!ticked(row[columns.active])) return;
     const roleText = String(row[columns.role] || "").trim().toLowerCase();
-    const role = roleText === "admin" ? "admin" : roleText === "staff" || roleText === "" ? "staff" : "";
+    const role = roleText === "admin" ? "admin" : roleText === "staff" ? "staff" : "";
     if (!role) { warnings.push(`Row ${line}: role "${roleText}" is not admin or staff.`); return; }
     const listed = columns.areas === undefined ? [] : String(row[columns.areas] || "").toLowerCase().split(/[,;\s]+/).map(area => area === "accounts" ? "orders" : area);
     const areas = role === "admin" ? [...STAFF_AREAS] : STAFF_AREAS.filter(area => listed.includes(area) || (columns[area] !== undefined && ticked(row[columns[area]])));
@@ -115,7 +115,7 @@ export function rosterFromRows(values) {
     entries[email] = { role, areas, name:String(row[columns.name] ?? "").trim() };
   });
   if (!Object.values(entries).some(entry => entry.role === "admin")) {
-    throw new Error("The Staff Access tab has no active admin; ignoring it so no one is locked out.");
+    throw new Error("The Staff Access tab has no active admin; denying access until it is corrected.");
   }
   return { entries, warnings };
 }
@@ -145,11 +145,10 @@ async function fetchRosterRows(config) {
   }
 }
 
-// Returns { entries, source:"sheet" } when a current or last-good roster is available,
-// { source:"unconfigured" } when no sheet is set up, or { source:"unavailable" } when
-// the sheet is set up but has never been read successfully by this instance.
+// Returns { entries, source:"sheet" } only while a current cache exists. Once that
+// cache expires, any failed refresh is unavailable and callers fail closed.
 export async function loadStaffRoster({ config = rosterConfig(), now = Date.now() } = {}) {
-  if (!config.enabled) return { source:"unconfigured" };
+  if (!config.enabled) return { source:config.configured ? "unavailable" : "unconfigured" };
   const fresh = cache && now - cache.fetchedAt < ROSTER_TTL_MS;
   if (fresh) return { entries:cache.entries, source:"sheet" };
   const backingOff = now - lastFailureAt < RETRY_AFTER_FAILURE_MS;
@@ -170,7 +169,9 @@ export async function loadStaffRoster({ config = rosterConfig(), now = Date.now(
     }
     await inFlight;
   }
-  return cache ? { entries:cache.entries, source:"sheet" } : { source:"unavailable" };
+  return cache && Date.now() - cache.fetchedAt < ROSTER_TTL_MS
+    ? { entries:cache.entries, source:"sheet" }
+    : { source:"unavailable" };
 }
 
 // Test hook.

@@ -58,9 +58,8 @@ Netlify environment variables required for staff login:
 - `ZOHO_OIDC_ISSUER` — normally `https://accounts.zoho.com`
 - `APP_SESSION_SECRET` — a new random secret at least 32 characters long
 - `STAFF_ROSTER_SHEET_ID` — the Hub spreadsheet ID (`1tWJ2ZnFT15cjuk7qvCWbJUJX1pAQYYsbSy5owWa8Uzo`), shared Viewer with the relay service account (`GOOGLE_SA_CLIENT_EMAIL`, `GOOGLE_SA_PRIVATE_KEY`); the Google Sheets API must be enabled in that account's Cloud project. Optional `STAFF_ROSTER_TAB` overrides the tab name.
-- `STAFF_ROLES_JSON` — optional backup only, for example `{ "owner@sturgeonspirits.com": "admin" }`. Used when no sheet is configured, or for new sign-ins while the sheet has never been readable.
 
-Sheet columns: Staff ID, Display Name, Email, Role, Areas (for example `inventory, orders`) or Inventory/Outreach/Orders tick boxes, and Active. `admin` receives all three areas and additionally controls product/SKU changes, staging initialization, and integration reconciliation. A removal or role change takes effect within about 2 minutes, including for existing sessions. When the sheet is readable it is authoritative and `STAFF_ROLES_JSON` is ignored.
+The Staff Access tab must include Email, Role, and Active. It may also include Staff ID, Display Name, Areas (for example `inventory, orders`) or Inventory/Outreach/Orders tick boxes. `admin` receives all three areas and additionally controls product/SKU changes, staging initialization, and integration reconciliation. A removal or role change takes effect within about 2 minutes, including for existing sessions; an expired cache that cannot refresh denies access rather than using old roles.
 
 ## Versioning
 

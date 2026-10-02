@@ -3,11 +3,10 @@
 // ZOHO_OIDC_CLIENT_ID, ZOHO_OIDC_CLIENT_SECRET, APP_SESSION_SECRET.
 // Staff access comes from the "Staff Access" tab of the Hub spreadsheet (STAFF_ROSTER_SHEET_ID,
 // read with GOOGLE_SA_CLIENT_EMAIL / GOOGLE_SA_PRIVATE_KEY; see netlify/lib/staff-roster.js).
-// STAFF_ROLES_JSON (for example {"name@company.com":"admin"}) is optional: it is used
-// only when no roster sheet is configured, or for new sign-ins while the sheet has
-// never been readable in this function instance.
+// Staff email, role, and workspace access are never read from Netlify environment
+// variables. A missing or unavailable roster denies access.
 import { createHash, createHmac, createPublicKey, randomBytes, timingSafeEqual, verify as verifySignature } from "node:crypto";
-import { STAFF_AREAS, loadStaffRoster } from "../lib/staff-roster.js";
+import { loadStaffRoster } from "../lib/staff-roster.js";
 
 const SESSION_COOKIE = "distribution_staff_session";
 const STATE_COOKIE = "distribution_zoho_state";
@@ -87,44 +86,13 @@ function safeReturnTo(value) {
   return path.startsWith("/") && !path.startsWith("//") ? path : "/";
 }
 
-function configuredRoles() {
-  try {
-    const entries = JSON.parse(process.env.STAFF_ROLES_JSON || "{}");
-    if (!entries || Array.isArray(entries) || typeof entries !== "object") return {};
-    return Object.entries(entries).reduce((roles, [email, value]) => {
-      const role = typeof value === "string" ? value : value?.role;
-      if (!["staff", "admin"].includes(role)) return roles;
-      const areas = role === "admin"
-        ? STAFF_AREAS
-        : typeof value === "string"
-          ? STAFF_AREAS
-          : STAFF_AREAS.filter(area => Array.isArray(value?.areas) && value.areas.includes(area));
-      if (areas.length) roles[String(email).trim().toLowerCase()] = { role, areas };
-      return roles;
-    }, {});
-  } catch (_) {
-    return {};
-  }
-}
-
-function areasOk(areas) {
-  return Array.isArray(areas) && areas.length > 0 && areas.every(area => STAFF_AREAS.includes(area));
-}
-
-// Returns { role, areas } or "" (no access). When the roster sheet is configured but has
-// never been readable here, an existing session keeps the role and areas that were
-// signed into its cookie at sign-in (at most 8 hours); a new sign-in uses STAFF_ROLES_JSON.
-async function roleFor(email, session = null) {
+// Returns { role, areas } or "" (no access). The Hub roster is the sole authority.
+async function roleFor(email) {
   const key = String(email || "").trim().toLowerCase();
   const roster = await loadStaffRoster();
   if (roster.source === "sheet") {
     const entry = roster.entries[key];
     return entry ? { role:entry.role, areas:[...entry.areas] } : "";
-  }
-  const fallback = configuredRoles()[key];
-  if (fallback) return fallback;
-  if (roster.source === "unavailable" && session && ["staff", "admin"].includes(session.role) && areasOk(session.areas)) {
-    return { role:session.role, areas:[...session.areas] };
   }
   return "";
 }
@@ -134,7 +102,7 @@ async function sessionFor(event) {
   if (!settings.sessionSecret) return null;
   const session = decodeSigned(cookies(event)[SESSION_COOKIE], settings.sessionSecret);
   if (!session?.email || !session?.sub) return null;
-  const access = await roleFor(session.email, session);
+  const access = await roleFor(session.email);
   return access ? { ...session, ...access } : null;
 }
 
