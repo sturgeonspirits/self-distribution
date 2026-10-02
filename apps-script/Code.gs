@@ -1,8 +1,11 @@
 /*********************************
  * Inventory API (JSON) for Netlify
- * App version: 2026.10.01.5
+ * App version: 2026.10.02.6
  *
  * CHANGES IN THIS VERSION
+ * - Routes Inventory reads and writes to the current Distribution Hub - Inventory Backend workbook, which contains the complete count history through 2026-09-16. The prior attached Inventory Backend remains an explicit rollback source.
+ *
+ * CHANGES IN 2026.10.01.5
  * - Preserves a Badger invoice's complete prior link state when it is marked Void, so Restore reinstates the exact manual link instead of losing it.
  *
  * CHANGES IN 2026.10.01.3
@@ -236,10 +239,10 @@
  *
  * PASTE INSTRUCTIONS
  * - This is the complete Code.gs source, not a partial snippet.
- * - Use only in the staging inventory backend until testing is complete.
+ * - Deploy only after verifying the configured Inventory Backend is the intended current workbook.
  *********************************/
 
-const APP_VERSION = "2026.10.01.5";
+const APP_VERSION = "2026.10.02.6";
 
 const SHEET_NAMES = {
   STORES: "Stores",
@@ -249,9 +252,9 @@ const SHEET_NAMES = {
   REORDERS: "Reorders",
 };
 
-const LEGACY_INVENTORY_SPREADSHEET_ID = "1asGSIuz65hhbXbanDSuLdgsasDKqAyVWgu7DGi42Il8"; // staging rollback source
+const LEGACY_INVENTORY_SPREADSHEET_ID = "1XVe0ffTLWQ4QJ3ersJ4RTh_XFTXiGjd7vyv5UnQ0sOY"; // current Distribution Hub - Inventory Backend
 const REQUIRE_API_KEY = true;
-const OUTREACH_SPREADSHEET_ID = "1tWJ2ZnFT15cjuk7qvCWbJUJX1pAQYYsbSy5owWa8Uzo"; // staging only
+const OUTREACH_SPREADSHEET_ID = "1tWJ2ZnFT15cjuk7qvCWbJUJX1pAQYYsbSy5owWa8Uzo"; // Distribution Hub
 const BADGER_TRACKER_SPREADSHEET_ID = "1nmHzrZLB2Kv-bLf3z0GBXbkO0XqUL-ETCxUlOlidSEk"; // live Badger tracker; P/Q remain staff-maintained workflow marks
 const BADGER_BASE_URL = "https://badgerstatecoop.com/BSWCSite";
 const BADGER_SESSION_CACHE_KEY = "hub_badger_session_v1";

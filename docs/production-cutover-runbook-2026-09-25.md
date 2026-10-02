@@ -16,9 +16,9 @@ Checked 2026-09-25: the Hub workbook's `Hub Configuration` tab has only its head
 
 | Data | Hub currently uses | Production source | Cutover action |
 | --- | --- | --- | --- |
-| Directory, outreach, campaigns, orders, applications | `1tWJ2ZnFT15cjuk7qvCWbJUJX1pAQYYsbSy5owWa8Uzo` (named "STAGING", but it already holds live outreach, including the 111-recipient campaign sent 2026-09-25) | Same workbook | Keep. Optionally rename it to drop "STAGING". |
-| Inventory (Stores, SKUs, Inventory, Counts, Reorders) | Staging copy `1asGSIuz65hhbXbanDSuLdgsasDKqAyVWgu7DGi42Il8`, copied 2026-09-15 (last counts in it are April 2026) | `1BO3u4N6_tEYHzOrPajckgUAcbQazL1fz9tTjVl_UNxs`, which holds the 2026-09-17 count | Point the Hub at production (step 3). |
-| Badger invoices | Staging copy `10KM-L-iAXJ4WQ1HfLWWoGkINsi9tEvVs6J5XiHBsMIQ` (parser reads a test fixture folder) | `1nmHzrZLB2Kv-bLf3z0GBXbkO0XqUL-ETCxUlOlidSEk`, fed from the central Drive invoice folder | Point the Hub at production (step 3). The Hub only reads this workbook. |
+| Directory, outreach, campaigns, orders, applications | `1tWJ2ZnFT15cjuk7qvCWbJUJX1pAQYYsbSy5owWa8Uzo` (`Distribution Hub`) | Same workbook | Keep. |
+| Inventory (Stores, SKUs, Inventory, Counts, Reorders) | Older attached copy `1asGSIuz65hhbXbanDSuLdgsasDKqAyVWgu7DGi42Il8` (`STAGING - Inventory Backend - 2026-09-15`), whose Counts history ends 2026-04-13 | `1XVe0ffTLWQ4QJ3ersJ4RTh_XFTXiGjd7vyv5UnQ0sOY` (`Distribution Hub - Inventory Backend`), which contains the same initial records plus 192 later count rows through 2026-09-16 | Point the Hub at the current workbook (step 3). Retain the older copy for rollback. |
+| Badger invoices | `1nmHzrZLB2Kv-bLf3z0GBXbkO0XqUL-ETCxUlOlidSEk` (`Distribution Hub - Badger Invoice Tracker`), fed from the central Drive invoice folder | Same workbook | Already live; do not change this ID. The Hub reads it directly. |
 
 ## Before cutover day
 
@@ -32,16 +32,17 @@ Checked 2026-09-25: the Hub workbook's `Hub Configuration` tab has only its head
 
 1. **Freeze the old app.** Tell staff not to submit counts in `sturgeon-staff-distribution` from now on.
 2. **Protect production headers.** Compare the header rows of production `Stores`, `SKUs`, `Inventory`, `Counts` and `Reorders` with the staging copy. If they differ (for example the `Reorders` layout), stop and resolve before step 3. The Hub may add missing columns, and the old app must not break if you need to roll back. Also add the **Out of Stock** checkbox column to the production `SKUs` tab, with the same ticks as the staging copy, so out-of-stock products stay blocked on the order page after cutover.
-3. **Point the Hub at production.** After confirming the precondition above, change these in `apps-script/Code.gs`:
-   - `LEGACY_INVENTORY_SPREADSHEET_ID` to `1BO3u4N6_tEYHzOrPajckgUAcbQazL1fz9tTjVl_UNxs`
-   - `BADGER_TRACKER_SPREADSHEET_ID` to `1nmHzrZLB2Kv-bLf3z0GBXbkO0XqUL-ETCxUlOlidSEk`
-   - their comments, from "staging" to "production"
+3. **Point the Hub at the current Inventory Backend.** After confirming the precondition above, change these in `apps-script/Code.gs`:
+   - `LEGACY_INVENTORY_SPREADSHEET_ID` to `1XVe0ffTLWQ4QJ3ersJ4RTh_XFTXiGjd7vyv5UnQ0sOY` (`Distribution Hub - Inventory Backend`)
+   - its comment to identify the current Inventory Backend
+
+   Do **not** change `BADGER_TRACKER_SPREADSHEET_ID`: it already points to the live `Badger-invoice-Tracker`.
 
    Bump `APP_VERSION`, update `PROJECT_STATUS.md`, commit, paste the full `Code.gs`, and deploy a new version of the existing web-app deployment.
 4. **Grant access.** The Inventory API script's account must be able to edit the production Inventory Backend and view the production Badger Tracker. Run any function once in the editor to approve new permissions if Google asks.
-5. **Re-attach triggers and refresh caches.** Run `installHubReadCacheWarmer()` so the change trigger watches the production Badger Tracker, not the staging copy. Then run `warmHubReadCaches()`.
+5. **Re-attach triggers and refresh caches.** Run `installHubReadCacheWarmer()` to re-establish the current tracker change trigger, then run `warmHubReadCaches()`.
 6. **Verify, and write the results down:**
-   - [ ] Inventory: each store's on-hand totals and the 2026-09-17 count dates match the production sheet.
+   - [ ] Inventory: each store's on-hand totals and the 2026-09-16 count dates match `Distribution Hub - Inventory Backend`.
    - [ ] One test count submitted in the Hub appears in production `Counts`. Delete that test row afterward.
    - [ ] Orders & Accounts shows invoices through the newest PDF in the central folder. The "Badger invoices to match" count is reasonable, with learned and location matches applied.
    - [ ] Outreach and Campaigns load normally.
@@ -49,7 +50,7 @@ Checked 2026-09-25: the Hub workbook's `Hub Configuration` tab has only its head
 
 ## Rollback (if verification fails)
 
-1. Revert `LEGACY_INVENTORY_SPREADSHEET_ID` and `BADGER_TRACKER_SPREADSHEET_ID` to the staging IDs and redeploy the Inventory API. This works only while the migration flag is off, as required above.
+1. Revert `LEGACY_INVENTORY_SPREADSHEET_ID` to `1asGSIuz65hhbXbanDSuLdgsasDKqAyVWgu7DGi42Il8` and redeploy the Inventory API. Do not change the live Badger tracker ID. This rollback works only while the migration flag is off, as required above.
 2. Remove the old site's redirect so staff can use `sturgeon-staff-distribution` again.
 3. If the Hub wrote anything incorrect to production inventory, restore the affected tabs from the step "Back up" copies.
 
