@@ -25,7 +25,7 @@ Checked 2026-09-25: the Hub workbook's `Hub Configuration` tab has only its head
 - [ ] Deploy the current Inventory API and Netlify versions from `PROJECT_STATUS.md`. Use the phone app for a few days of normal work.
 - [ ] Sign in once with a non-admin staff account (for example an inventory-only user) and confirm it sees only its assigned workspace.
 - [ ] Rotate the exposed Supabase service-role key named in `docs/badger-parser-audit-2026-09-15.md`, and update it wherever the production parser stores it.
-- [ ] Make sure every person who uses the old app has an entry in `STAFF_ROLES_JSON` with the right areas.
+- [ ] Make sure every person who uses the old app has a row in the Hub Staff Access sheet with the right areas (see `docs/staff-access-sheet-setup.md`).
 - [ ] Back up: in Drive, make a dated copy of the production Inventory Backend and the production Badger Invoice Tracker.
 
 ## Cutover day (about 30 minutes)

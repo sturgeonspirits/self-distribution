@@ -1,15 +1,18 @@
 // Zoho OIDC authentication for the staff application.
 // Required Netlify environment variables:
-// ZOHO_OIDC_CLIENT_ID, ZOHO_OIDC_CLIENT_SECRET, and APP_SESSION_SECRET.
-// The active staff roster is read from the Hub spreadsheet, never STAFF_ROLES_JSON.
+// ZOHO_OIDC_CLIENT_ID, ZOHO_OIDC_CLIENT_SECRET, APP_SESSION_SECRET.
+// Staff access comes from the "Hub Staff Access" Google Sheet (STAFF_ROSTER_SHEET_ID,
+// read with GOOGLE_SA_CLIENT_EMAIL / GOOGLE_SA_PRIVATE_KEY; see netlify/lib/staff-roster.js).
+// STAFF_ROLES_JSON (for example {"name@company.com":"admin"}) is optional: it is used
+// only when no roster sheet is configured, or for new sign-ins while the sheet has
+// never been readable in this function instance.
 import { createHash, createHmac, createPublicKey, randomBytes, timingSafeEqual, verify as verifySignature } from "node:crypto";
+import { STAFF_AREAS, loadStaffRoster } from "../lib/staff-roster.js";
 
 const SESSION_COOKIE = "distribution_staff_session";
 const STATE_COOKIE = "distribution_zoho_state";
 const SESSION_SECONDS = 8 * 60 * 60;
 const STATE_SECONDS = 10 * 60;
-const ROSTER_LOOKUP_TIMEOUT_MS = 2000;
-const STAFF_AREAS = ["inventory", "outreach", "orders"];
 
 function base64url(value) {
   return Buffer.from(typeof value === "string" ? value : JSON.stringify(value)).toString("base64url");
@@ -84,22 +87,46 @@ function safeReturnTo(value) {
   return path.startsWith("/") && !path.startsWith("//") ? path : "/";
 }
 
-async function roleFor(email) {
-  const apiUrl = String(process.env.APPS_SCRIPT_URL || "").trim();
-  const apiKey = String(process.env.API_KEY || "");
-  const normalizedEmail = String(email || "").trim().toLowerCase();
-  if (!apiUrl || !apiKey || !normalizedEmail) return "";
-  const controller = new AbortController();
-  const timer = setTimeout(() => controller.abort(), ROSTER_LOOKUP_TIMEOUT_MS);
+function configuredRoles() {
   try {
-    const url = new URL(apiUrl);
-    url.searchParams.set("api_key", apiKey);
-    const response = await fetch(url, { method:"POST", headers:{ "Content-Type":"application/json" }, body:JSON.stringify({ action:"staffAccessLookup", email:normalizedEmail, api_key:apiKey }), signal:controller.signal });
-    const result = await response.json().catch(() => ({}));
-    const user = result?.ok && result?.user;
-    return user && String(user.email || "").trim().toLowerCase() === normalizedEmail && ["staff", "admin"].includes(user.role) && Array.isArray(user.areas) && user.areas.length ? { role:user.role, areas:user.areas, staffId:user.staff_id, name:user.name } : "";
-  } catch (_) { return ""; }
-  finally { clearTimeout(timer); }
+    const entries = JSON.parse(process.env.STAFF_ROLES_JSON || "{}");
+    if (!entries || Array.isArray(entries) || typeof entries !== "object") return {};
+    return Object.entries(entries).reduce((roles, [email, value]) => {
+      const role = typeof value === "string" ? value : value?.role;
+      if (!["staff", "admin"].includes(role)) return roles;
+      const areas = role === "admin"
+        ? STAFF_AREAS
+        : typeof value === "string"
+          ? STAFF_AREAS
+          : STAFF_AREAS.filter(area => Array.isArray(value?.areas) && value.areas.includes(area));
+      if (areas.length) roles[String(email).trim().toLowerCase()] = { role, areas };
+      return roles;
+    }, {});
+  } catch (_) {
+    return {};
+  }
+}
+
+function areasOk(areas) {
+  return Array.isArray(areas) && areas.length > 0 && areas.every(area => STAFF_AREAS.includes(area));
+}
+
+// Returns { role, areas } or "" (no access). When the roster sheet is configured but has
+// never been readable here, an existing session keeps the role and areas that were
+// signed into its cookie at sign-in (at most 8 hours); a new sign-in uses STAFF_ROLES_JSON.
+async function roleFor(email, session = null) {
+  const key = String(email || "").trim().toLowerCase();
+  const roster = await loadStaffRoster();
+  if (roster.source === "sheet") {
+    const entry = roster.entries[key];
+    return entry ? { role:entry.role, areas:[...entry.areas] } : "";
+  }
+  const fallback = configuredRoles()[key];
+  if (fallback) return fallback;
+  if (roster.source === "unavailable" && session && ["staff", "admin"].includes(session.role) && areasOk(session.areas)) {
+    return { role:session.role, areas:[...session.areas] };
+  }
+  return "";
 }
 
 async function sessionFor(event) {
@@ -107,14 +134,14 @@ async function sessionFor(event) {
   if (!settings.sessionSecret) return null;
   const session = decodeSigned(cookies(event)[SESSION_COOKIE], settings.sessionSecret);
   if (!session?.email || !session?.sub) return null;
-  const access = await roleFor(session.email);
-  return access ? { ...session, ...access, name:access.name || session.name, sub:access.staffId || session.sub } : null;
+  const access = await roleFor(session.email, session);
+  return access ? { ...session, ...access } : null;
 }
 
 export async function requireStaffSession(event) {
   const settings = config();
   if (!settings.sessionSecret) return { error:"Staff sign-in is not configured.", code:"STAFF_AUTH_NOT_CONFIGURED", statusCode:503 };
-    const session = await sessionFor(event);
+  const session = await sessionFor(event);
   return session || { error:"Sign in with Zoho to continue.", code:"STAFF_AUTH_REQUIRED", statusCode:401 };
 }
 
@@ -187,7 +214,7 @@ async function finishLogin(event) {
   const claims = await verifyIdToken(token.id_token, payload.nonce, settings);
   const email = String(claims.email).trim().toLowerCase();
   const access = await roleFor(email);
-  if (!access) return json(403, { ok:false, error:"Your Zoho account is not approved for Hub access." }, { "Set-Cookie":clearCookie(STATE_COOKIE) });
+  if (!access) return json(403, { ok:false, error:"Your Zoho account is not on the Hub staff list. Ask Karl to add it to the Hub Staff Access sheet." }, { "Set-Cookie":clearCookie(STATE_COOKIE) });
   const now = Math.floor(Date.now() / 1000);
   const name = String(claims.name || [claims.given_name, claims.family_name].filter(Boolean).join(" ") || email).slice(0, 120);
   const session = encodeSigned({ sub:String(claims.sub), email, name, role:access.role, areas:access.areas, exp:now + SESSION_SECONDS }, settings.sessionSecret);
@@ -206,7 +233,7 @@ export async function handler(event) {
   if (action === "logout") return json(200, { ok:true }, { "Set-Cookie":clearCookie(SESSION_COOKIE) });
   if (action === "session") {
     if (!configured()) return json(503, { ok:false, error:"Zoho staff sign-in is not configured.", code:"STAFF_AUTH_NOT_CONFIGURED" });
-  const session = await sessionFor(event);
+    const session = await sessionFor(event);
     return session ? json(200, { ok:true, user:{ email:session.email, name:session.name, role:session.role, areas:session.areas } }) : json(401, { ok:false, error:"Sign in with Zoho to continue.", code:"STAFF_AUTH_REQUIRED" });
   }
   return json(404, { ok:false, error:"Unknown authentication action." });

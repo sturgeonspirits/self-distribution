@@ -62,19 +62,18 @@ const STAFF_ACTIONS = new Set([
   "updateStoreContacts",
 ]);
 
-// The site allows roughly 26 seconds for this synchronous function. Every
-// protected request first performs a short fail-closed roster lookup, so leave
-// enough time for that before proxying a write or send. Those operations must
-// remain single-attempt because Apps Script may finish after the browser times out.
+// The site allows roughly 26 seconds for this synchronous function. Keep these
+// requests about one second below that ceiling; writes and sends must remain
+// single-attempt because Apps Script may finish after the browser times out.
 const UPSTREAM_ATTEMPTS = 1;
 const UPSTREAM_WRITE_ATTEMPTS = 1;
-const UPSTREAM_TIMEOUT_MS = 23000;
+const UPSTREAM_TIMEOUT_MS = 25000;
 const SEND_UPSTREAM_ATTEMPTS = 1;
 const READ_UPSTREAM_ATTEMPTS = 2;
-const READ_UPSTREAM_TIMEOUT_MS = 11000;
-// Sends use one controlled window; never retry an
+const READ_UPSTREAM_TIMEOUT_MS = 11500;
+// Sends use the established 24-second single-attempt window; never retry an
 // uncertain send because the original request may still be holding the lock.
-const SEND_UPSTREAM_TIMEOUT_MS = 23000;
+const SEND_UPSTREAM_TIMEOUT_MS = 24000;
 const SEND_ACTIONS = new Set(["sendOutreachEmail", "sendOutreachTestEmail", "sendOutreachCampaignBatch", "sendBadgerPaymentReminder", "createBadgerInvoice"]);
 const SNAPSHOT_ACTIONS = new Set(["createOutreachCampaign"]);
 const CAMPAIGN_READ_ACTIONS = new Set(["outreachCampaigns", "outreachCampaign", "previewOutreachCampaign"]);

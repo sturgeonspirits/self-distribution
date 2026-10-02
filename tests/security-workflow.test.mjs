@@ -9,32 +9,23 @@ const root = new URL("../", import.meta.url);
 
 async function loadFunction(path, suffix = Math.random()) {
   let source = await readFile(new URL(path, root), "utf8");
+  const dataUrl = text => `data:text/javascript;base64,${Buffer.from(text).toString("base64")}#${suffix}`;
+  const relay = await readFile(new URL("netlify/lib/drive-relay.js", root), "utf8");
+  const relayUrl = dataUrl(relay);
+  const roster = (await readFile(new URL("netlify/lib/staff-roster.js", root), "utf8")).replace('from "./drive-relay.js";', `from "${relayUrl}";`);
+  const rosterUrl = dataUrl(roster);
+  const authSource = () => readFile(new URL("netlify/functions/auth.js", root), "utf8").then(text => text.replace('from "../lib/staff-roster.js";', `from "${rosterUrl}";`));
+  if (path === "netlify/lib/staff-roster.js") source = roster;
+  if (path === "netlify/functions/auth.js") source = await authSource();
   if (path === "netlify/functions/inventory.js") {
-    let auth = await readFile(new URL("netlify/functions/auth.js", root), "utf8");
-    // Inventory-proxy tests mock the upstream action itself. Keep that focused
-    // on proxy behavior; roster lookups are covered by source assertions below.
-    auth = auth.replace(/async function roleFor\(email\) \{[\s\S]*?\n\}\n\nasync function sessionFor/, `async function roleFor(email) {
-  try {
-    const entries = JSON.parse(process.env.STAFF_ROLES_JSON || "{}");
-    const value = entries[String(email || "").trim().toLowerCase()];
-    const role = typeof value === "string" ? value : value?.role;
-    const areas = role === "admin" ? STAFF_AREAS : (value?.areas || STAFF_AREAS);
-    return role ? { role, areas, staffId:"test-staff", name:"Staff Member" } : "";
-  } catch (_) { return ""; }
-}
-
-async function sessionFor`);
-    const authUrl = `data:text/javascript;base64,${Buffer.from(auth).toString("base64")}`;
-    source = source.replace('from "./auth.js";', `from "${authUrl}";`);
-    const relay = await readFile(new URL("netlify/lib/drive-relay.js", root), "utf8");
-    const relayUrl = `data:text/javascript;base64,${Buffer.from(relay).toString("base64")}`;
+    source = source.replace('from "./auth.js";', `from "${dataUrl(await authSource())}";`);
     source = source.replace('from "../lib/drive-relay.js";', `from "${relayUrl}";`);
   }
   return import(`data:text/javascript;base64,${Buffer.from(source).toString("base64")}#${suffix}`);
 }
 
-function staffSession({ email = "staff@sturgeonspirits.com", name = "Staff Member", sub = "zoho-user-1", exp = Math.floor(Date.now() / 1000) + 3600 } = {}) {
-  const encoded = Buffer.from(JSON.stringify({ email, name, sub, exp })).toString("base64url");
+function staffSession({ email = "staff@sturgeonspirits.com", name = "Staff Member", sub = "zoho-user-1", exp = Math.floor(Date.now() / 1000) + 3600, role, areas } = {}) {
+  const encoded = Buffer.from(JSON.stringify({ email, name, sub, exp, ...(role ? { role, areas } : {}) })).toString("base64url");
   const signature = createHmac("sha256", process.env.APP_SESSION_SECRET).update(encoded).digest("base64url");
   return `distribution_staff_session=${encodeURIComponent(`${encoded}.${signature}`)}`;
 }
@@ -342,21 +333,6 @@ test("roles and workspace areas are enforced server-side and revoked users lose 
   assert.equal(fetches, 0);
 });
 
-test("production authorization reads the protected Hub roster rather than a staff-role environment variable", async () => {
-  const [auth, backend] = await Promise.all([
-    readFile(new URL("netlify/functions/auth.js", root), "utf8"),
-    readFile(new URL("apps-script/Code.gs", root), "utf8"),
-  ]);
-  assert.doesNotMatch(auth, /process\.env\.STAFF_ROLES_JSON/);
-  assert.match(auth, /action:"staffAccessLookup"/);
-  assert.match(auth, /ROSTER_LOOKUP_TIMEOUT_MS = 2000/);
-  assert.match(auth, /String\(user\.email \|\| ""\)\.trim\(\)\.toLowerCase\(\) === normalizedEmail/);
-  assert.match(backend, /function setupStaffAccess\(\)/);
-  assert.match(backend, /function staffAccessForEmail_\(email\)/);
-  assert.match(backend, /case "staffAccessLookup": res = apiStaffAccessLookup_/);
-  assert.match(backend, /"staffAccessLookup"/);
-});
-
 test("campaign bulk exclusion and external contact logging remain staff-scoped", async () => {
   const source = await readFile(new URL("netlify/functions/inventory.js", root), "utf8");
   const script = await readFile(new URL("apps-script/Code.gs", root), "utf8");
@@ -446,9 +422,9 @@ test("large read responses are compressed and reads retry within the proxy limit
   assert.match(proxy, /import \{ gunzipSync \} from "node:zlib";/);
   assert.match(proxy, /url\.searchParams\.set\("gz", "1"\)/);
   assert.match(proxy, /const READ_UPSTREAM_ATTEMPTS = 2;/);
-  assert.match(proxy, /const READ_UPSTREAM_TIMEOUT_MS = 11000;/);
-  // Two read attempts plus the current-roster check fit inside Netlify's ~26 s limit.
-  assert.ok(2 * 11000 + 2000 < 26000);
+  assert.match(proxy, /const READ_UPSTREAM_TIMEOUT_MS = 11500;/);
+  // Two read attempts must fit inside Netlify's ~26 s function limit.
+  assert.ok(2 * 11500 < 25000);
   // Writes and sends stay single-attempt.
   assert.match(proxy, /attempts:UPSTREAM_WRITE_ATTEMPTS/);
   assert.match(proxy, /const SEND_UPSTREAM_ATTEMPTS = 1;/);
@@ -940,8 +916,8 @@ test("campaign criteria preview uses centroid distances, JSON rules, and distinc
   assert.match(proxy, /ADMIN_ACTIONS = new Set\([\s\S]*?"recalculateOutreachMiles"/);
   assert.match(proxy, /\["recalculateOutreachMiles", "outreach"\]/);
   assert.match(proxy, /"previewOutreachCampaign"/);
-  assert.match(proxy, /const UPSTREAM_TIMEOUT_MS = 23000/);
-  assert.match(proxy, /const SEND_UPSTREAM_TIMEOUT_MS = 23000/);
+  assert.match(proxy, /const UPSTREAM_TIMEOUT_MS = 25000/);
+  assert.match(proxy, /const SEND_UPSTREAM_TIMEOUT_MS = 24000/);
   assert.match(proxy, /const UPSTREAM_WRITE_ATTEMPTS = 1/);
   assert.match(index, /id="recalculateOutreachMilesBtn"/);
   assert.match(index, /action:"recalculateOutreachMiles"/);
@@ -1271,4 +1247,116 @@ test("campaign approval confirmation is inline, counted, and required before app
   assert.match(campaignActions, /setCampaignStatus\("Enter your staff name before approving\.", true\)/);
   assert.match(campaignActions, /setCampaignStatus\("An exclusion reason is required\.", true\)/);
   assert.match(campaignActions, /setCampaignStatus\("Refresh and re-open this campaign before sending/, "send validation stays in the dialog");
+});
+
+test("staff access sheet parsing: flexible headers, ticked areas, inactive rows, and lockout guards", async () => {
+  const { rosterFromCsv, parseCsv } = await loadFunction("netlify/lib/staff-roster.js", "roster-parse");
+  assert.deepEqual(parseCsv('a,"b, ""c""",d\r\n1,2,3'), [["a", 'b, "c"', "d"], ["1", "2", "3"]]);
+  const csv = [
+    "Name,Email Address,Role,Inventory,Outreach,Orders & Accounts,Active,Notes",
+    "Karl,Karl@SturgeonSpirits.com,Admin,FALSE,FALSE,FALSE,TRUE,owner",
+    "Pat,pat@sturgeonspirits.com,staff,TRUE,FALSE,x,TRUE,",
+    "Gone,gone@sturgeonspirits.com,staff,TRUE,TRUE,TRUE,FALSE,left in May",
+    "Nobody,none@sturgeonspirits.com,staff,FALSE,FALSE,FALSE,TRUE,",
+    "Typo,typo@sturgeonspirits.com,manager,TRUE,TRUE,TRUE,TRUE,",
+    ",,,,,,,",
+  ].join("\n");
+  const { entries, warnings } = rosterFromCsv(csv);
+  assert.deepEqual(Object.keys(entries).sort(), ["karl@sturgeonspirits.com", "pat@sturgeonspirits.com"]);
+  assert.deepEqual(entries["karl@sturgeonspirits.com"].areas, ["inventory", "outreach", "orders"]);
+  assert.deepEqual(entries["pat@sturgeonspirits.com"], { role:"staff", areas:["inventory", "orders"], name:"Pat" });
+  assert.equal(warnings.length, 2);
+  const chatLayout = rosterFromCsv("Staff ID,Display Name,Email,Role,Areas,Active\nkarl,Karl,karl@sturgeonspirits.com,admin,,TRUE\npat,Pat,pat@sturgeonspirits.com,staff,\"outreach, orders\",TRUE");
+  assert.deepEqual(chatLayout.entries["pat@sturgeonspirits.com"], { role:"staff", areas:["outreach", "orders"], name:"Pat" });
+  assert.throws(() => rosterFromCsv("Email,Inventory\nkarl@sturgeonspirits.com,TRUE"), /Email and Role/);
+  assert.throws(() => rosterFromCsv("Email,Role,Inventory\npat@sturgeonspirits.com,staff,TRUE"), /no active admin/);
+});
+
+async function rosterHarness(suffix, csvOrStatus) {
+  const { generateKeyPairSync } = await import("node:crypto");
+  const { privateKey } = generateKeyPairSync("rsa", { modulusLength:2048 });
+  process.env.APPS_SCRIPT_URL = "https://script.google.test/exec";
+  process.env.APP_SESSION_SECRET = "test-session-secret-that-is-long-enough";
+  process.env.GOOGLE_SA_CLIENT_EMAIL = "relay@example.iam.gserviceaccount.com";
+  process.env.GOOGLE_SA_PRIVATE_KEY = privateKey.export({ type:"pkcs8", format:"pem" }).replace(/\n/g, "\\n");
+  process.env.STAFF_ROSTER_SHEET_ID = "roster-sheet";
+  delete process.env.RELAY_MANIFEST_FILE_ID;
+  const calls = { roster:0, apps:[] };
+  globalThis.fetch = async (url, options = {}) => {
+    const text = String(url);
+    if (text.startsWith("https://oauth2.googleapis.com/token")) return new Response(JSON.stringify({ access_token:"token", expires_in:3600 }), { status:200 });
+    if (text.includes("/drive/v3/files/roster-sheet/export")) {
+      calls.roster += 1;
+      return typeof csvOrStatus === "number" ? new Response("nope", { status:csvOrStatus }) : new Response(csvOrStatus, { status:200 });
+    }
+    calls.apps.push(options.body ? JSON.parse(options.body) : text);
+    return new Response(JSON.stringify({ ok:true }), { status:200 });
+  };
+  const inventory = await loadFunction("netlify/functions/inventory.js", `${suffix}-inv`);
+  const auth = await loadFunction("netlify/functions/auth.js", `${suffix}-auth`);
+  return { inventory:inventory.handler, auth:auth.handler, calls };
+}
+
+function clearRosterEnv() {
+  delete process.env.STAFF_ROSTER_SHEET_ID;
+  delete process.env.GOOGLE_SA_CLIENT_EMAIL;
+  delete process.env.GOOGLE_SA_PRIVATE_KEY;
+}
+
+test("the staff access sheet is authoritative over STAFF_ROLES_JSON and is cached between requests", async () => {
+  const csv = "Email,Role,Inventory,Outreach,Orders\nkarl@sturgeonspirits.com,admin,,,\nstaff@sturgeonspirits.com,staff,TRUE,FALSE,FALSE";
+  process.env.STAFF_ROLES_JSON = '{"staff@sturgeonspirits.com":"admin","old@sturgeonspirits.com":"admin"}';
+  const { inventory, calls } = await rosterHarness("roster-authoritative", csv);
+  try {
+    const allowed = await inventory(event("initData", { session:staffSession() }));
+    assert.equal(allowed.statusCode, 200);
+    assert.equal(calls.apps[0].authenticated_staff_role, "staff");
+    const areaBlocked = await inventory(event("customerWorkQueue", { session:staffSession() }));
+    assert.equal(JSON.parse(areaBlocked.body).code, "STAFF_AREA_FORBIDDEN");
+    const removed = await inventory(event("initData", { session:staffSession({ email:"old@sturgeonspirits.com", role:"admin", areas:["inventory", "outreach", "orders"] }) }));
+    assert.equal(removed.statusCode, 401);
+    assert.equal(calls.roster, 1);
+  } finally {
+    clearRosterEnv();
+  }
+});
+
+test("session endpoint reports the sheet role and areas", async () => {
+  const csv = "Email,Role,Inventory,Outreach,Orders\nkarl@sturgeonspirits.com,admin,,,\nstaff@sturgeonspirits.com,staff,FALSE,TRUE,TRUE";
+  process.env.STAFF_ROLES_JSON = "{}";
+  process.env.ZOHO_OIDC_CLIENT_ID = "client";
+  process.env.ZOHO_OIDC_CLIENT_SECRET = "secret";
+  process.env.ZOHO_OIDC_REDIRECT_URI = "https://example.test/api/auth?action=callback";
+  const { auth } = await rosterHarness("roster-session", csv);
+  try {
+    const response = await auth({ httpMethod:"GET", headers:{ cookie:staffSession() }, queryStringParameters:{ action:"session" } });
+    assert.equal(response.statusCode, 200);
+    assert.deepEqual(JSON.parse(response.body).user.areas, ["outreach", "orders"]);
+  } finally {
+    clearRosterEnv();
+    delete process.env.ZOHO_OIDC_CLIENT_ID;
+    delete process.env.ZOHO_OIDC_CLIENT_SECRET;
+    delete process.env.ZOHO_OIDC_REDIRECT_URI;
+  }
+});
+
+test("an unreadable or admin-less staff sheet falls back without locking anyone out or widening access", async () => {
+  process.env.STAFF_ROLES_JSON = '{"karl@sturgeonspirits.com":"admin"}';
+  const { inventory, calls } = await rosterHarness("roster-down", 500);
+  try {
+    const signed = staffSession({ role:"staff", areas:["inventory"] });
+    assert.equal((await inventory(event("initData", { session:signed }))).statusCode, 200);
+    assert.equal(JSON.parse((await inventory(event("customerWorkQueue", { session:signed }))).body).code, "STAFF_AREA_FORBIDDEN");
+    assert.equal((await inventory(event("initData", { session:staffSession() }))).statusCode, 401);
+    assert.equal((await inventory(event("customerWorkQueue", { session:staffSession({ email:"karl@sturgeonspirits.com" }) }))).statusCode, 200);
+    assert.equal(calls.roster, 1, "a failed read is not retried on every request");
+  } finally {
+    clearRosterEnv();
+  }
+  const noAdmin = await rosterHarness("roster-no-admin", "Email,Role,Inventory\nstaff@sturgeonspirits.com,staff,TRUE");
+  try {
+    assert.equal((await noAdmin.inventory(event("customerWorkQueue", { session:staffSession({ email:"karl@sturgeonspirits.com" }) }))).statusCode, 200);
+  } finally {
+    clearRosterEnv();
+  }
 });

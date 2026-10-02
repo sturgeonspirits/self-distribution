@@ -40,7 +40,7 @@ function base64Url(value) {
   return Buffer.from(value).toString("base64").replace(/=+$/, "").replace(/\+/g, "-").replace(/\//g, "_");
 }
 
-async function accessToken(config) {
+export async function accessToken(config) {
   if (cachedToken && cachedToken.expiresAt - 60000 > Date.now()) return cachedToken.value;
   const now = Math.floor(Date.now() / 1000);
   const header = base64Url(JSON.stringify({ alg:"RS256", typ:"JWT" }));

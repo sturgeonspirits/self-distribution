@@ -1,9 +1,9 @@
 /*********************************
  * Inventory API (JSON) for Netlify
- * App version: 2026.10.01.6
+ * App version: 2026.10.01.5
  *
  * CHANGES IN THIS VERSION
- * - Moves the Zoho-authenticated staff approval roster, roles, and workspace scopes from Netlify environment variables into the Hub's Staff Access sheet.
+ * - Preserves a Badger invoice's complete prior link state when it is marked Void, so Restore reinstates the exact manual link instead of losing it.
  *
  * CHANGES IN 2026.10.01.3
  * - Exposes the permanent Online-request-to-Badger-invoice link and current Badger payment state in both staff invoice and Online-request views.
@@ -239,7 +239,7 @@
  * - Use only in the staging inventory backend until testing is complete.
  *********************************/
 
-const APP_VERSION = "2026.10.01.6";
+const APP_VERSION = "2026.10.01.5";
 
 const SHEET_NAMES = {
   STORES: "Stores",
@@ -263,8 +263,6 @@ const BADGER_SYNC_MAX_AGE_MS = 48 * 60 * 60 * 1000;
 const BADGER_PAYMENT_LOG_SHEET_NAME = "Badger Invoice Payment Log";
 const BADGER_CURRENT_PRICES_SHEET_NAME = "Current Prices";
 const BADGER_INVOICE_CREATIONS_SHEET_NAME = "Badger Invoice Creations";
-const STAFF_ACCESS_SHEET_NAME = "Staff Access";
-const STAFF_AREAS = ["inventory", "outreach", "orders"];
 const OUTREACH_SHEET_NAME = "Distribution Directory and Leads";
 const OUTREACH_ACTIVITY_SHEET_NAME = "Activity Log";
 const OUTREACH_DRAFTS_SHEET_NAME = "Outreach Drafts";
@@ -414,35 +412,6 @@ function installBadgerStatusSyncTrigger() {
 
 function scheduledBadgerStatusSync() {
   return syncBadgerStatus_("Scheduled Badger status sync");
-}
-
-// Zoho remains the staff identity provider. This sheet is only the Hub-owned
-// approval roster, so adding/removing staff or changing scopes needs no Netlify
-// environment-variable edit or redeploy.
-function staffAccessHeaders_() {
-  return ["Staff ID", "Display Name", "Email", "Role", "Areas", "Active", "Updated At", "Updated By", "App Version"];
-}
-
-function setupStaffAccess() {
-  const sheet = ensureSheet_(getOutreachSs_(), STAFF_ACCESS_SHEET_NAME, staffAccessHeaders_());
-  return { message:"Staff Access is ready. Add active Zoho email addresses, roles, and comma-separated work areas.", sheet:sheet.getName() };
-}
-
-function staffAccessForEmail_(email) {
-  const normalized = publicEmail_(email, "Staff email", true);
-  const sheet = getOutreachSs_().getSheetByName(STAFF_ACCESS_SHEET_NAME);
-  if (!sheet || sheet.getLastRow() < 2) throw new Error("No active staff roster is configured. Run setupStaffAccess() and add an approved Zoho email.");
-  const row = getAllRowsAsObjects_(sheet).find(item => publicEmail_(item.email || "", "Staff email", false) === normalized && toBool_(item.active));
-  if (!row) throw new Error("Your Zoho account is not approved for Hub access.");
-  const role = String(row.role || "").trim().toLowerCase();
-  if (!["staff", "admin"].includes(role)) throw new Error("This staff roster row has an invalid role.");
-  const areas = role === "admin" ? STAFF_AREAS.slice() : String(row.areas || "").split(",").map(area => area.trim().toLowerCase()).filter(area => STAFF_AREAS.includes(area));
-  if (!areas.length) throw new Error("This staff roster row has no permitted workspaces.");
-  return { staff_id:String(row.staff_id || normalized).trim(), email:normalized, name:String(row.display_name || normalized).trim().slice(0, 120), role:role, areas:[...new Set(areas)] };
-}
-
-function apiStaffAccessLookup_(p) {
-  return { user:staffAccessForEmail_(p.email) };
 }
 
 function getLegacyInventorySs_() {
@@ -958,13 +927,12 @@ function handle_(e, body) {
   try {
     assertAuthorized_(e, body);
     if (!action) {
-      return json_({ ok:true, service:"sturgeon-distribution-hub", version:APP_VERSION, actions:["initData","listSkus","addSkuToStore","upsertProduct","submitCounts","createReorder","managerGrid","salesSinceCount","updateStoreContacts","outreachDashboard","outreachRecord","outreachSendStatus","outreachNewsletterContacts","outreachCampaigns","outreachCampaign","previewOutreachCampaign","createOutreachCampaign","updateOutreachCampaignRecipient","setOutreachCampaignRecipientExclusion","setOutreachCampaignRecipientExclusions","approveOutreachCampaign","reopenOutreachCampaign","reconcileCampaignSends","rebuildCampaignRecipients","sendOutreachCampaignBatch","saveOutreachDraft","sendOutreachEmail","sendOutreachTestEmail","updateOutreachOutcome","logOutreachContact","updateOutreachBusiness","updateOutreachPrograms","createOutreachBusiness","importOutreachBusinesses","recalculateOutreachMiles","backfillEngagementDetails","upsertNewsletterContact","submitCustomerApplication","submitOnlineOrderRequest","customerWorkQueue","customerAccountIndex","linkBadgerInvoice","syncBadgerStatus","markBadgerInvoicePayment","recordBadgerCheck","resolvePaymentReminder","badgerReconcilePreview","applyBadgerReconcile","previewBadgerPaymentReminder","sendBadgerPaymentReminder","previewBadgerInvoice","createBadgerInvoice","adoptBadgerInvoice","failBadgerInvoiceCreation","updateCustomerApplication","updateOnlineOrderRequest","staffAccessLookup","hubSystemStatus","initializeHardenedHub","repairHubStructure","reconcileIntegrations"] });
+      return json_({ ok:true, service:"sturgeon-distribution-hub", version:APP_VERSION, actions:["initData","listSkus","addSkuToStore","upsertProduct","submitCounts","createReorder","managerGrid","salesSinceCount","updateStoreContacts","outreachDashboard","outreachRecord","outreachSendStatus","outreachNewsletterContacts","outreachCampaigns","outreachCampaign","previewOutreachCampaign","createOutreachCampaign","updateOutreachCampaignRecipient","setOutreachCampaignRecipientExclusion","setOutreachCampaignRecipientExclusions","approveOutreachCampaign","reopenOutreachCampaign","reconcileCampaignSends","rebuildCampaignRecipients","sendOutreachCampaignBatch","saveOutreachDraft","sendOutreachEmail","sendOutreachTestEmail","updateOutreachOutcome","logOutreachContact","updateOutreachBusiness","updateOutreachPrograms","createOutreachBusiness","importOutreachBusinesses","recalculateOutreachMiles","backfillEngagementDetails","upsertNewsletterContact","submitCustomerApplication","submitOnlineOrderRequest","customerWorkQueue","customerAccountIndex","linkBadgerInvoice","syncBadgerStatus","markBadgerInvoicePayment","recordBadgerCheck","resolvePaymentReminder","badgerReconcilePreview","applyBadgerReconcile","previewBadgerPaymentReminder","sendBadgerPaymentReminder","previewBadgerInvoice","createBadgerInvoice","adoptBadgerInvoice","failBadgerInvoiceCreation","updateCustomerApplication","updateOnlineOrderRequest","hubSystemStatus","initializeHardenedHub","repairHubStructure","reconcileIntegrations"] });
     }
 
     invalidateReadCache = !READ_ACTIONS.has(action);
     let res;
     switch (action) {
-      case "staffAccessLookup": res = apiStaffAccessLookup_(body || {}); invalidateReadCache = false; break;
       case "initData": res = apiGetInitData_((e?.parameter?.store_id) || (body?.store_id) || "", false, String((e?.parameter?.refresh) || (body?.refresh) || "") === "1"); break;
       case "listSkus": res = apiListSkus_(); break;
       case "addSkuToStore": res = apiAddSkuToStore_(body); break;

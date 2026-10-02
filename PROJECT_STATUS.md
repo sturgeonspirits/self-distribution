@@ -8,8 +8,8 @@ Read this file before inspecting the repository or changing the application. Upd
 
 | Component | Source version | Deployment state |
 | --- | --- | --- |
-| Netlify web app and staff proxy | `2026.10.01.9-WEB` on `codex/work` / `2026.10.01.8-WEB` live | `.9` is not deployed. It preserves Zoho OIDC and reads the current approved staff roster, roles, and work areas from the staging Hub instead of `STAFF_ROLES_JSON`. |
-| Inventory API Apps Script | `2026.10.01.6` on `codex/work` / `2026.10.01.5` live | `.6` is not deployed. It adds the staging-Hub `Staff Access` roster required by the `.9` staff proxy. |
+| Netlify web app and staff proxy | `2026.10.01.9-WEB` on `codex/work` / `2026.10.01.8-WEB` live | Deployed by Karl on 2026-10-01. The Direct payments panel starts collapsed so invoice search results remain visible; it supports reviewed pass-through checks, customer-not-paid correction, and Hub-side void review. |
+| Inventory API Apps Script | `2026.10.01.5` on `codex/work` / `2026.10.01.5` live | Deployed by Karl to the staging Inventory API on 2026-10-01. `.5` fixes Void restore by preserving and reinstating the prior account link, match method, notes, and attribution. |
 | Distribution Outreach Apps Script | `2026.09.24.14-APP` on `codex/work` | Reminder delivery prerequisite; owner has not yet confirmed this exact version is deployed. |
 | Public customer Netlify proxy | `2026.09.18.3-WEB` | Deployed with Netlify; unchanged by the latest staff-app UI work |
 
@@ -21,9 +21,11 @@ Current Badger checkpoint: Karl ran `testBadgerLogin()` successfully on 2026-09-
 
 Badger tracker safety answer (Karl, 2026-09-30): the PDF importer never writes the `Paid to Me` or `Submitted` columns. Direct, audited P/Q writes to the live tracker are therefore safe; no Hub override ledger is needed.
 
-Phase 5 deployment state: staging Inventory API `2026.10.01.5` and Netlify `2026.10.01.8-WEB` are live. The next source release is `.6` / `.9-WEB`, which must be reviewed and provisioned in staging before deployment: deploy `.6`, run `setupStaffAccess()`, add approved Zoho roster rows, then deploy `.9-WEB` and verify one admin and one staff user. Do not remove the existing Zoho OIDC variables. Never create a test invoice in Badger.
+Phase 5 deployment state: staging Inventory API `2026.10.01.5` and Netlify `2026.10.01.8-WEB` are live. Next, run `seedCurrentPricesTab()` once in staging and review/activate the tracker prices with Claude before any Badger invoice creation. Never create a test invoice in Badger.
 
 Latest completed changes:
+
+- Staff access from a sheet (`.9-WEB`, not yet deployed; combines chat's `44a2fc3` and Claude's `157b7f4`). Zoho stays the login. Sign-in roles and work areas now come from the first tab of the Google Sheet **Hub Staff Access** (`1BT_lEW3aDC9xphKURWFvC3HGsHDteUaEvUWxKICKgEY`) instead of `STAFF_ROLES_JSON`, so staff can be added or removed without a Netlify edit or deploy. `netlify/lib/staff-roster.js` exports the tab as CSV through the Drive API with the relay service account, caches it for 2 minutes per function instance, and backs off 30 s after a failed read. Columns: Email, Name, Role, Inventory, Outreach, Orders, Active. A sheet missing Email/Role or with no active admin is ignored (no lockout). When the sheet is readable it is authoritative; when it has never been readable in that instance, existing sessions keep the role signed at sign-in and new sign-ins use `STAFF_ROLES_JSON`. The parser also accepts chat's layout (Staff ID, Display Name, Areas comma list). Chat's per-request Apps Script `staffAccessLookup` (2 s timeout, fail-closed, uncached) was replaced because a stalled Apps Script handoff would sign staff out; no Apps Script change is needed, so the Inventory API stays `2026.10.01.5`. `requireStaffSession` is now async. Inactive until `STAFF_ROSTER_SHEET_ID` is set. Setup: `docs/staff-access-sheet-setup.md`.
 
 - First Inventory load after sign-in (`.49-WEB`). The Inventory tab often stayed blank after sign-in while Outreach and Orders loaded, and needed a second click. Cause: the Inventory workspace stays hidden until both startup requests finish (store list, then the store's lines, one after the other), and during that time the screen showed only the sign-in panel, whose "Loading stores…" line is inside the hidden workspace. If either request failed, the error went to the Orders & Accounts status line (`handleCustomerError`), so Inventory stayed blank until the tab was clicked again, which re-ran the load. Now `startInventory()` shows "Loading inventory…" on the Inventory screen, loads the remembered store at the same time as the store list, retries once after 1.5 s, runs one load at a time, and on failure shows the error with a Try again button on the Inventory screen. Sign-in errors still go through `handleCustomerError`.
 
@@ -161,6 +163,8 @@ Record names only—never record their values here.
 - `ZOHO_OIDC_REDIRECT_URI`
 - `ZOHO_OIDC_ISSUER` (use `https://accounts.zoho.com` unless the organization uses another Zoho data center)
 - `APP_SESSION_SECRET` (a new random secret, at least 32 characters)
+- `STAFF_ROSTER_SHEET_ID` (the Hub Staff Access sheet; shared Viewer with the relay service account)
+- `STAFF_ROLES_JSON` (optional backup; keep only the owner admin entry once the sheet is live)
 - `TRACKING_LINK_SECRET`
 - `SELL_SHEET_URL`
 
@@ -180,7 +184,7 @@ Record names only—never record their values here.
 - `ZOHO_REFRESH_TOKEN`
 - `TRACKING_LINK_SECRET`
 
-The shared outreach secret must match in the two Apps Script projects. Zoho mail properties belong only in Distribution Outreach. Zoho OIDC client credentials belong only in Netlify; staff emails, roles, and workspace areas belong in the Hub `Staff Access` sheet. Neither is the API key or outreach secret.
+The shared outreach secret must match in the two Apps Script projects. Zoho mail properties belong only in Distribution Outreach. Zoho OIDC client credentials and the staff-role map belong only in Netlify; they are not the API key or outreach secret.
 
 ### Tracked outreach-link setup
 
@@ -217,10 +221,10 @@ Production deploys are Netlify Git builds from `codex/distribution-system-founda
 ### Zoho staff login rollout
 
 1. In Zoho API Console, create a server-based OIDC client with callback URL `https://distribution-hub.netlify.app/api/auth?action=callback`.
-2. Add the Zoho/session Netlify variables listed above. Do not configure staff emails, roles, or work areas as Netlify variables.
-3. Deploy the Inventory API, run `setupStaffAccess()`, and add active roster rows with staff ID, display name, approved Zoho email, role, and permitted areas.
-4. Deploy the Netlify web app, then sign in with one approved `admin` account and one `staff` account.
-5. Confirm a removed email is rejected on its next request, each staff user sees only their assigned workspace, and an admin can manage products/system tools.
+2. Add the Zoho/session Netlify variables listed above. Example role-map shape: `{ "inventory@sturgeonspirits.com": { "role": "staff", "areas": ["inventory"] }, "outreach@sturgeonspirits.com": { "role": "staff", "areas": ["outreach"] }, "orders@sturgeonspirits.com": { "role": "staff", "areas": ["orders"] }, "owner@sturgeonspirits.com": "admin" }`.
+3. Deploy the Netlify web app, then sign in with one approved `admin` account and one `staff` account.
+4. Deploy the Inventory API source version `2026.09.22.4` so spreadsheet “updated by” fields use the Zoho-verified actor.
+5. Confirm a removed email is rejected immediately, each staff user sees only their assigned workspace, and an admin can manage products/system tools.
 
 ### Inventory API Apps Script change
 
@@ -268,7 +272,7 @@ If a send times out or returns an unreadable response, do not retry blindly. Che
 - Newsletter records exist, but newsletter sending remains disabled.
 - Campaigns verified live: Karl sent a 111-recipient campaign on 2026-09-25 without problems.
 - Production cutover is pending. See `docs/production-cutover-runbook-2026-09-25.md`. The Hub still reads the staging Inventory Backend copy (from 2026-09-15; missing the 2026-09-17 count) and the staging Badger Tracker.
-- Before deploying the staff-roster release, use `docs/claude-review-staff-roster-predeploy.md` for review. In staging, confirm a removed roster row, role change, and area change each take effect on the next request before considering production cutover.
+- Staff access sheet (`.9-WEB`): after deploy, fill the Hub Staff Access sheet, share it with the service account, set `STAFF_ROSTER_SHEET_ID`, verify an admin and a non-admin sign-in, then trim `STAFF_ROLES_JSON` to the owner entry.
 
 ## Low-token workflow for future Codex tasks
 
