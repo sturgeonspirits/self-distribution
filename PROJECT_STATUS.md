@@ -9,7 +9,7 @@ Read this file before inspecting the repository or changing the application. Upd
 | Component | Source version | Deployment state |
 | --- | --- | --- |
 | Netlify web app and staff proxy | `2026.10.02.12-WEB` on `codex/work` / `2026.10.01.8-WEB` live | `.12` is not deployed. It preserves Zoho OIDC and reads the current approved staff roster from the staging Hub's `Staff Access` tab. |
-| Inventory API Apps Script | `2026.10.02.6` on `codex/work` / `2026.10.01.5` live | `.6` is prepared but not deployed. It changes only the Inventory Backend ID to `Distribution Hub - Inventory Backend`, which includes the count history through 2026-09-16; it leaves the live Badger tracker ID unchanged. |
+| Inventory API Apps Script | `2026.10.01.5` on `codex/work` / `2026.10.01.5` live | Deployed by Karl to the staging Inventory API on 2026-10-01. `.5` fixes Void restore by preserving and reinstating the prior account link, match method, notes, and attribution. |
 | Distribution Outreach Apps Script | `2026.09.24.14-APP` on `codex/work` | Reminder delivery prerequisite; owner has not yet confirmed this exact version is deployed. |
 | Public customer Netlify proxy | `2026.09.18.3-WEB` | Deployed with Netlify; unchanged by the latest staff-app UI work |
 
@@ -21,11 +21,11 @@ Current Badger checkpoint: Karl ran `testBadgerLogin()` successfully on 2026-09-
 
 Badger tracker safety answer (Karl, 2026-09-30): the PDF importer never writes the `Paid to Me` or `Submitted` columns. Direct, audited P/Q writes to the live tracker are therefore safe; no Hub override ledger is needed.
 
-Phase 5 deployment state: Inventory API `.6` is prepared for production cutover; `.5` remains live against the older attached Inventory Backend. Netlify `2026.10.01.8-WEB` is live. Before deploying `.6`, review the current Inventory Backend source in `docs/production-cutover-runbook-2026-09-25.md`. Never create a test invoice in Badger.
+Phase 5 deployment state: staging Inventory API `2026.10.01.5` and Netlify `2026.10.01.8-WEB` are live. Next, run `seedCurrentPricesTab()` once in staging and review/activate the tracker prices with Claude before any Badger invoice creation. Never create a test invoice in Badger.
 
 Latest completed changes:
 
-- Staff access from the Hub (`.12-WEB`, deployment state must be confirmed in Netlify). Zoho stays the login. Roles and work areas come only from the **Staff Access** tab of the Hub spreadsheet (`1tWJ2ZnFT15cjuk7qvCWbJUJX1pAQYYsbSy5owWa8Uzo`); no staff email, role, or area is read from a Netlify environment variable. `netlify/lib/staff-roster.js` reads the tab through the Google Sheets API (`values.get`, drive.readonly scope) with the relay service account and caches a successful read for two minutes per function instance. Email, Role, and Active headers are required; blank roles and inactive rows are denied. Once a cache expires, an unavailable or invalid roster returns retryable `503 STAFF_ROSTER_UNAVAILABLE` without clearing the browser's Zoho session; an email absent from a readable roster still receives `401 STAFF_AUTH_REQUIRED`. **Do not promote this release until the Staff Access tab is populated with an active admin, the Hub is shared Viewer with the relay service account, the Google Sheets API is enabled, `STAFF_ROSTER_SHEET_ID` is set, and both an admin and a staff account pass staging sign-in.** Rollback after a failed promotion: restore `.8-WEB` by returning foundation to `be8752c` (see `docs/staff-access-setup.md`). The Inventory API `.6` change is independent of staff roster authorization.
+- Staff access from the Hub (`.12-WEB`, not yet deployed). Zoho stays the login. Roles and work areas come only from the **Staff Access** tab of the Hub spreadsheet (`1tWJ2ZnFT15cjuk7qvCWbJUJX1pAQYYsbSy5owWa8Uzo`); no staff email, role, or area is read from a Netlify environment variable. `netlify/lib/staff-roster.js` reads the tab through the Google Sheets API (`values.get`, drive.readonly scope) with the relay service account and caches a successful read for two minutes per function instance. Email, Role, and Active headers are required; blank roles and inactive rows are denied. Once a cache expires, an unavailable or invalid roster returns retryable `503 STAFF_ROSTER_UNAVAILABLE` without clearing the browser's Zoho session; an email absent from a readable roster still receives `401 STAFF_AUTH_REQUIRED`. **Do not promote this release until the Staff Access tab is populated with an active admin, the Hub is shared Viewer with the relay service account, the Google Sheets API is enabled, `STAFF_ROSTER_SHEET_ID` is set, and both an admin and a staff account pass staging sign-in.** Rollback after a failed promotion: restore `.8-WEB` by returning foundation to `be8752c` (see `docs/staff-access-setup.md`). No Apps Script change: the Inventory API stays `2026.10.01.5`.
 
 - First Inventory load after sign-in (`.49-WEB`). The Inventory tab often stayed blank after sign-in while Outreach and Orders loaded, and needed a second click. Cause: the Inventory workspace stays hidden until both startup requests finish (store list, then the store's lines, one after the other), and during that time the screen showed only the sign-in panel, whose "Loading stores…" line is inside the hidden workspace. If either request failed, the error went to the Orders & Accounts status line (`handleCustomerError`), so Inventory stayed blank until the tab was clicked again, which re-ran the load. Now `startInventory()` shows "Loading inventory…" on the Inventory screen, loads the remembered store at the same time as the store list, retries once after 1.5 s, runs one load at a time, and on failure shows the error with a Try again button on the Inventory screen. Sign-in errors still go through `handleCustomerError`.
 
@@ -108,13 +108,11 @@ Latest completed changes:
 - Inventory API editor: https://script.google.com/u/0/home/projects/1mUm3iOIJYpXkd36PsTqvi7uBGlPL7NokZwJLgdtZ3oSJTdCAuN3l9p-b/edit
 - Distribution Outreach editor: https://script.google.com/u/0/home/projects/1T7vAcnmNjZsI8Ym9udfbsi4DDuoDB82SNeoQmjtKTiR0PHer6g_XuFan/edit
 
-### Operational spreadsheets
+### Staging spreadsheets
 
-- Distribution Hub: https://docs.google.com/spreadsheets/d/1tWJ2ZnFT15cjuk7qvCWbJUJX1pAQYYsbSy5owWa8Uzo/edit
-- Current live Inventory API backend (until `.6` deployment): https://docs.google.com/spreadsheets/d/1asGSIuz65hhbXbanDSuLdgsasDKqAyVWgu7DGi42Il8/edit
-- Current Inventory Backend target (`Distribution Hub - Inventory Backend`): https://docs.google.com/spreadsheets/d/1XVe0ffTLWQ4QJ3ersJ4RTh_XFTXiGjd7vyv5UnQ0sOY/edit
-- Distribution Hub - Badger Invoice Tracker: https://docs.google.com/spreadsheets/d/1nmHzrZLB2Kv-bLf3z0GBXbkO0XqUL-ETCxUlOlidSEk/edit
-- Inventory Backend rollback source after `.6` deployment: https://docs.google.com/spreadsheets/d/1asGSIuz65hhbXbanDSuLdgsasDKqAyVWgu7DGi42Il8/edit
+- Distribution Directory and Leads: https://docs.google.com/spreadsheets/d/1tWJ2ZnFT15cjuk7qvCWbJUJX1pAQYYsbSy5owWa8Uzo/edit
+- Inventory Backend rollback source: https://docs.google.com/spreadsheets/d/1asGSIuz65hhbXbanDSuLdgsasDKqAyVWgu7DGi42Il8/edit
+- Badger Invoice Tracker: https://docs.google.com/spreadsheets/d/10KM-L-iAXJ4WQ1HfLWWoGkINsi9tEvVs6J5XiHBsMIQ/edit
 
 ## Authoritative source files
 
@@ -272,7 +270,7 @@ If a send times out or returns an unreadable response, do not retry blindly. Che
 - Toast stock integration is not planned. Toast Standard API access requires a Restaurant Management Suite subscription the owner has declined (2026-09-25). The order page keeps staff-confirmed availability.
 - Newsletter records exist, but newsletter sending remains disabled.
 - Campaigns verified live: Karl sent a 111-recipient campaign on 2026-09-25 without problems.
-- Production cutover is pending. See `docs/production-cutover-runbook-2026-09-25.md`. The live `.5` Inventory API still reads the older attached Inventory Backend, whose Counts history ends 2026-04-13. Prepared `.6` switches only inventory to `Distribution Hub - Inventory Backend`, which has 192 additional Counts rows through 2026-09-16. The API already reads the live `Distribution Hub - Badger Invoice Tracker`; do not change its ID.
+- Production cutover is pending. See `docs/production-cutover-runbook-2026-09-25.md`. The Hub still reads the staging Inventory Backend copy (from 2026-09-15; missing the 2026-09-17 count) and the staging Badger Tracker.
 - Staff access tab (`.12-WEB`): complete the Staff Access tab, service-account share, Google Sheets API enablement, and `STAFF_ROSTER_SHEET_ID` before promotion; verify an admin and a non-admin sign-in in staging before promoting. If a promotion blocks sign-in, return foundation to `.8-WEB` commit `be8752c` as documented in `docs/staff-access-setup.md`.
 
 ## Low-token workflow for future Codex tasks
