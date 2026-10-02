@@ -1361,22 +1361,48 @@ test("session endpoint reports the sheet role and areas", async () => {
   }
 });
 
-test("an unreadable or invalid Staff Access tab fails closed even when a legacy role map exists", async () => {
+test("an unreadable or invalid Staff Access tab fails closed with a retryable roster error", async () => {
   process.env.STAFF_ROLES_JSON = '{"karl@sturgeonspirits.com":"admin"}';
-  const { inventory, calls } = await rosterHarness("roster-down", 500);
+  process.env.ZOHO_OIDC_CLIENT_ID = "client";
+  process.env.ZOHO_OIDC_CLIENT_SECRET = "secret";
+  process.env.ZOHO_OIDC_REDIRECT_URI = "https://example.test/api/auth?action=callback";
+  const { inventory, auth, calls } = await rosterHarness("roster-down", 500);
   try {
     const signed = staffSession({ role:"staff", areas:["inventory"] });
-    assert.equal((await inventory(event("initData", { session:signed }))).statusCode, 401);
-    assert.equal((await inventory(event("initData", { session:staffSession() }))).statusCode, 401);
-    assert.equal((await inventory(event("customerWorkQueue", { session:staffSession({ email:"karl@sturgeonspirits.com" }) }))).statusCode, 401);
-    assert.equal(calls.roster, 1, "a failed read is not retried on every request");
+    const unavailable = await inventory(event("initData", { session:signed }));
+    assert.equal(unavailable.statusCode, 503);
+    assert.equal(JSON.parse(unavailable.body).code, "STAFF_ROSTER_UNAVAILABLE");
+    assert.match(JSON.parse(unavailable.body).error, /Staff list temporarily unavailable/);
+    assert.equal((await inventory(event("initData", { session:staffSession() }))).statusCode, 503);
+    assert.equal((await inventory(event("customerWorkQueue", { session:staffSession({ email:"karl@sturgeonspirits.com" }) }))).statusCode, 503);
+    const sessionResponse = await auth({ httpMethod:"GET", headers:{ cookie:signed }, queryStringParameters:{ action:"session" } });
+    assert.equal(sessionResponse.statusCode, 503);
+    assert.equal(JSON.parse(sessionResponse.body).code, "STAFF_ROSTER_UNAVAILABLE");
+    assert.equal(calls.roster, 2, "each function module backs off after its one failed read");
   } finally {
     clearRosterEnv();
+    delete process.env.ZOHO_OIDC_CLIENT_ID;
+    delete process.env.ZOHO_OIDC_CLIENT_SECRET;
+    delete process.env.ZOHO_OIDC_REDIRECT_URI;
   }
   const noAdmin = await rosterHarness("roster-no-admin", "Email,Role,Inventory,Active\nstaff@sturgeonspirits.com,staff,TRUE,TRUE");
   try {
-    assert.equal((await noAdmin.inventory(event("customerWorkQueue", { session:staffSession({ email:"karl@sturgeonspirits.com" }) }))).statusCode, 401);
+    const invalid = await noAdmin.inventory(event("customerWorkQueue", { session:staffSession({ email:"karl@sturgeonspirits.com" }) }));
+    assert.equal(invalid.statusCode, 503);
+    assert.equal(JSON.parse(invalid.body).code, "STAFF_ROSTER_UNAVAILABLE");
   } finally {
     clearRosterEnv();
   }
+});
+
+test("roster errors are retryable server errors, not browser sign-outs", async () => {
+  const [auth, index] = await Promise.all([
+    readFile(new URL("netlify/functions/auth.js", root), "utf8"),
+    readFile(new URL("index.html", root), "utf8"),
+  ]);
+  assert.match(auth, /STAFF_ROSTER_UNAVAILABLE/);
+  assert.match(auth, /Staff list temporarily unavailable, try again in a minute\./);
+  assert.match(auth, /The Staff Access tab could not be read\. Ask Karl to check the staff list/);
+  assert.match(index, /res\.status === 401 \|\| json\.code === "STAFF_AUTH_REQUIRED"/);
+  assert.doesNotMatch(index, /STAFF_ROSTER_UNAVAILABLE[\s\S]{0,80}staffAuth/);
 });

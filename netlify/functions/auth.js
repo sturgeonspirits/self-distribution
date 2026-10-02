@@ -12,6 +12,7 @@ const SESSION_COOKIE = "distribution_staff_session";
 const STATE_COOKIE = "distribution_zoho_state";
 const SESSION_SECONDS = 8 * 60 * 60;
 const STATE_SECONDS = 10 * 60;
+const STAFF_ROSTER_UNAVAILABLE_MESSAGE = "Staff list temporarily unavailable, try again in a minute.";
 
 function base64url(value) {
   return Buffer.from(typeof value === "string" ? value : JSON.stringify(value)).toString("base64url");
@@ -86,15 +87,15 @@ function safeReturnTo(value) {
   return path.startsWith("/") && !path.startsWith("//") ? path : "/";
 }
 
-// Returns { role, areas } or "" (no access). The Hub roster is the sole authority.
-async function roleFor(email) {
+// Returns an approved access object, an unapproved result, or an unavailable roster.
+async function rosterAccessFor(email) {
   const key = String(email || "").trim().toLowerCase();
   const roster = await loadStaffRoster();
+  if (roster.source !== "sheet") return { unavailable:true, reason:roster.reason || "Staff Access tab is unavailable." };
   if (roster.source === "sheet") {
     const entry = roster.entries[key];
-    return entry ? { role:entry.role, areas:[...entry.areas] } : "";
+    return entry ? { access:{ role:entry.role, areas:[...entry.areas] } } : { denied:true };
   }
-  return "";
 }
 
 async function sessionFor(event) {
@@ -102,14 +103,16 @@ async function sessionFor(event) {
   if (!settings.sessionSecret) return null;
   const session = decodeSigned(cookies(event)[SESSION_COOKIE], settings.sessionSecret);
   if (!session?.email || !session?.sub) return null;
-  const access = await roleFor(session.email);
-  return access ? { ...session, ...access } : null;
+  const rosterAccess = await rosterAccessFor(session.email);
+  if (rosterAccess.unavailable) return { unavailable:true, reason:rosterAccess.reason };
+  return rosterAccess.access ? { ...session, ...rosterAccess.access } : null;
 }
 
 export async function requireStaffSession(event) {
   const settings = config();
   if (!settings.sessionSecret) return { error:"Staff sign-in is not configured.", code:"STAFF_AUTH_NOT_CONFIGURED", statusCode:503 };
   const session = await sessionFor(event);
+  if (session?.unavailable) return { error:STAFF_ROSTER_UNAVAILABLE_MESSAGE, code:"STAFF_ROSTER_UNAVAILABLE", statusCode:503 };
   return session || { error:"Sign in with Zoho to continue.", code:"STAFF_AUTH_REQUIRED", statusCode:401 };
 }
 
@@ -181,11 +184,12 @@ async function finishLogin(event) {
   if (!tokenResponse.ok || !token.id_token) return json(401, { ok:false, error:"Zoho did not approve this sign-in request." }, { "Set-Cookie":clearCookie(STATE_COOKIE) });
   const claims = await verifyIdToken(token.id_token, payload.nonce, settings);
   const email = String(claims.email).trim().toLowerCase();
-  const access = await roleFor(email);
-  if (!access) return json(403, { ok:false, error:"Your Zoho account is not on the Hub staff list. Ask Karl to add it to the Staff Access tab in the Hub." }, { "Set-Cookie":clearCookie(STATE_COOKIE) });
+  const rosterAccess = await rosterAccessFor(email);
+  if (rosterAccess.unavailable) return json(503, { ok:false, error:"The Staff Access tab could not be read. Ask Karl to check the staff list and try again in a minute.", code:"STAFF_ROSTER_UNAVAILABLE" }, { "Set-Cookie":clearCookie(STATE_COOKIE) });
+  if (!rosterAccess.access) return json(403, { ok:false, error:"Your Zoho account is not on the Hub staff list. Ask Karl to add it to the Staff Access tab in the Hub." }, { "Set-Cookie":clearCookie(STATE_COOKIE) });
   const now = Math.floor(Date.now() / 1000);
   const name = String(claims.name || [claims.given_name, claims.family_name].filter(Boolean).join(" ") || email).slice(0, 120);
-  const session = encodeSigned({ sub:String(claims.sub), email, name, role:access.role, areas:access.areas, exp:now + SESSION_SECONDS }, settings.sessionSecret);
+  const session = encodeSigned({ sub:String(claims.sub), email, name, role:rosterAccess.access.role, areas:rosterAccess.access.areas, exp:now + SESSION_SECONDS }, settings.sessionSecret);
   return {
     statusCode:302,
     headers:{ Location:payload.returnTo, "Cache-Control":"no-store" },
@@ -202,6 +206,7 @@ export async function handler(event) {
   if (action === "session") {
     if (!configured()) return json(503, { ok:false, error:"Zoho staff sign-in is not configured.", code:"STAFF_AUTH_NOT_CONFIGURED" });
     const session = await sessionFor(event);
+    if (session?.unavailable) return json(503, { ok:false, error:STAFF_ROSTER_UNAVAILABLE_MESSAGE, code:"STAFF_ROSTER_UNAVAILABLE" });
     return session ? json(200, { ok:true, user:{ email:session.email, name:session.name, role:session.role, areas:session.areas } }) : json(401, { ok:false, error:"Sign in with Zoho to continue.", code:"STAFF_AUTH_REQUIRED" });
   }
   return json(404, { ok:false, error:"Unknown authentication action." });

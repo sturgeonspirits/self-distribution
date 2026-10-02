@@ -11,7 +11,7 @@
 //   Staff ID | Display Name | Email | Role | Areas | Inventory | Outreach | Orders | Active
 // Role is "admin" or "staff". Admins get every area. Staff get the areas ticked in the
 // Inventory/Outreach/Orders columns and/or listed in Areas ("inventory, orders").
-// Active is optional; when the column exists, an unticked row has no access.
+// Active is required; only a ticked row has access.
 //
 // Safety rules:
 // - The roster is cached in memory for ROSTER_TTL_MS, so a removal takes effect within
@@ -31,6 +31,7 @@ const SHEETS_URL = "https://sheets.googleapis.com/v4/spreadsheets/";
 
 let cache = null;          // { entries, fetchedAt }
 let lastFailureAt = 0;
+let lastFailureReason = "";
 let inFlight = null;
 
 export function rosterConfig(env = process.env) {
@@ -146,9 +147,14 @@ async function fetchRosterRows(config) {
 }
 
 // Returns { entries, source:"sheet" } only while a current cache exists. Once that
-// cache expires, any failed refresh is unavailable and callers fail closed.
+// cache expires, any failed refresh is unavailable and callers fail closed. The reason
+// is deliberately available to auth.js so it can distinguish a retryable roster outage
+// from an email that is not approved.
 export async function loadStaffRoster({ config = rosterConfig(), now = Date.now() } = {}) {
-  if (!config.enabled) return { source:config.configured ? "unavailable" : "unconfigured" };
+  if (!config.enabled) return {
+    source:config.configured ? "unavailable" : "unconfigured",
+    reason:config.configured ? "Staff Access configuration is incomplete." : "Staff Access is not configured.",
+  };
   const fresh = cache && now - cache.fetchedAt < ROSTER_TTL_MS;
   if (fresh) return { entries:cache.entries, source:"sheet" };
   const backingOff = now - lastFailureAt < RETRY_AFTER_FAILURE_MS;
@@ -159,9 +165,11 @@ export async function loadStaffRoster({ config = rosterConfig(), now = Date.now(
           const { entries, warnings } = rosterFromRows(await fetchRosterRows(config));
           if (warnings.length) console.warn("Staff Access tab warnings:", warnings.join(" | "));
           cache = { entries, fetchedAt:Date.now() };
+          lastFailureReason = "";
         } catch (error) {
           lastFailureAt = Date.now();
-          console.error("Staff Access tab could not be used:", error?.message || error);
+          lastFailureReason = String(error?.message || error);
+          console.error("Staff Access tab could not be used:", lastFailureReason);
         } finally {
           inFlight = null;
         }
@@ -171,12 +179,13 @@ export async function loadStaffRoster({ config = rosterConfig(), now = Date.now(
   }
   return cache && Date.now() - cache.fetchedAt < ROSTER_TTL_MS
     ? { entries:cache.entries, source:"sheet" }
-    : { source:"unavailable" };
+    : { source:"unavailable", reason:lastFailureReason || "Staff Access tab could not be read." };
 }
 
 // Test hook.
 export function resetStaffRosterCache() {
   cache = null;
   lastFailureAt = 0;
+  lastFailureReason = "";
   inFlight = null;
 }

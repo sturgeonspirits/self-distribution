@@ -1,6 +1,6 @@
 # Sturgeon Distribution Hub — Project Status
 
-Last updated: 2026-10-01
+Last updated: 2026-10-02
 
 Read this file before inspecting the repository or changing the application. Update it whenever a deployment, version, service URL, known issue, or required setup step changes. Never put secret values in this file.
 
@@ -8,7 +8,7 @@ Read this file before inspecting the repository or changing the application. Upd
 
 | Component | Source version | Deployment state |
 | --- | --- | --- |
-| Netlify web app and staff proxy | `2026.10.01.11-WEB` on `codex/work` / `2026.10.01.8-WEB` live | `.11` is not deployed. It preserves Zoho OIDC and reads the current approved staff roster from the staging Hub's `Staff Access` tab. |
+| Netlify web app and staff proxy | `2026.10.02.12-WEB` on `codex/work` / `2026.10.01.8-WEB` live | `.12` is not deployed. It preserves Zoho OIDC and reads the current approved staff roster from the staging Hub's `Staff Access` tab. |
 | Inventory API Apps Script | `2026.10.01.5` on `codex/work` / `2026.10.01.5` live | Deployed by Karl to the staging Inventory API on 2026-10-01. `.5` fixes Void restore by preserving and reinstating the prior account link, match method, notes, and attribution. |
 | Distribution Outreach Apps Script | `2026.09.24.14-APP` on `codex/work` | Reminder delivery prerequisite; owner has not yet confirmed this exact version is deployed. |
 | Public customer Netlify proxy | `2026.09.18.3-WEB` | Deployed with Netlify; unchanged by the latest staff-app UI work |
@@ -25,7 +25,7 @@ Phase 5 deployment state: staging Inventory API `2026.10.01.5` and Netlify `2026
 
 Latest completed changes:
 
-- Staff access from the Hub (`.11-WEB`, not yet deployed). Zoho stays the login. Roles and work areas come only from the **Staff Access** tab of the Hub spreadsheet (`1tWJ2ZnFT15cjuk7qvCWbJUJX1pAQYYsbSy5owWa8Uzo`); no staff email, role, or area is read from a Netlify environment variable. `netlify/lib/staff-roster.js` reads the tab through the Google Sheets API (`values.get`, drive.readonly scope) with the relay service account and caches a successful read for two minutes per function instance. Email, Role, and Active headers are required; blank roles and inactive rows are denied. Once a cache expires, a failed refresh denies access rather than using stale authorization. No Apps Script change: the Inventory API stays `2026.10.01.5`. Setup: `docs/staff-access-setup.md`.
+- Staff access from the Hub (`.12-WEB`, not yet deployed). Zoho stays the login. Roles and work areas come only from the **Staff Access** tab of the Hub spreadsheet (`1tWJ2ZnFT15cjuk7qvCWbJUJX1pAQYYsbSy5owWa8Uzo`); no staff email, role, or area is read from a Netlify environment variable. `netlify/lib/staff-roster.js` reads the tab through the Google Sheets API (`values.get`, drive.readonly scope) with the relay service account and caches a successful read for two minutes per function instance. Email, Role, and Active headers are required; blank roles and inactive rows are denied. Once a cache expires, an unavailable or invalid roster returns retryable `503 STAFF_ROSTER_UNAVAILABLE` without clearing the browser's Zoho session; an email absent from a readable roster still receives `401 STAFF_AUTH_REQUIRED`. **Do not promote this release until the Staff Access tab is populated with an active admin, the Hub is shared Viewer with the relay service account, the Google Sheets API is enabled, `STAFF_ROSTER_SHEET_ID` is set, and both an admin and a staff account pass staging sign-in.** Rollback after a failed promotion: restore `.8-WEB` by returning foundation to `be8752c` (see `docs/staff-access-setup.md`). No Apps Script change: the Inventory API stays `2026.10.01.5`.
 
 - First Inventory load after sign-in (`.49-WEB`). The Inventory tab often stayed blank after sign-in while Outreach and Orders loaded, and needed a second click. Cause: the Inventory workspace stays hidden until both startup requests finish (store list, then the store's lines, one after the other), and during that time the screen showed only the sign-in panel, whose "Loading stores…" line is inside the hidden workspace. If either request failed, the error went to the Orders & Accounts status line (`handleCustomerError`), so Inventory stayed blank until the tab was clicked again, which re-ran the load. Now `startInventory()` shows "Loading inventory…" on the Inventory screen, loads the remembered store at the same time as the store list, retries once after 1.5 s, runs one load at a time, and on failure shows the error with a Try again button on the Inventory screen. Sign-in errors still go through `handleCustomerError`.
 
@@ -271,7 +271,7 @@ If a send times out or returns an unreadable response, do not retry blindly. Che
 - Newsletter records exist, but newsletter sending remains disabled.
 - Campaigns verified live: Karl sent a 111-recipient campaign on 2026-09-25 without problems.
 - Production cutover is pending. See `docs/production-cutover-runbook-2026-09-25.md`. The Hub still reads the staging Inventory Backend copy (from 2026-09-15; missing the 2026-09-17 count) and the staging Badger Tracker.
-- Staff access tab (`.11-WEB`): add the Staff Access tab to the Hub, share the Hub with the service account (Viewer), enable the Google Sheets API in the relay Cloud project, set `STAFF_ROSTER_SHEET_ID`, deploy, verify an admin and a non-admin sign-in, then remove `STAFF_ROLES_JSON` from Netlify.
+- Staff access tab (`.12-WEB`): complete the Staff Access tab, service-account share, Google Sheets API enablement, and `STAFF_ROSTER_SHEET_ID` before promotion; verify an admin and a non-admin sign-in in staging before promoting. If a promotion blocks sign-in, return foundation to `.8-WEB` commit `be8752c` as documented in `docs/staff-access-setup.md`.
 
 ## Low-token workflow for future Codex tasks
 
