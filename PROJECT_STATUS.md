@@ -8,7 +8,7 @@ Read this file before inspecting the repository or changing the application. Upd
 
 | Component | Source version | Deployment state |
 | --- | --- | --- |
-| Netlify web app and staff proxy | `2026.10.01.9-WEB` on `codex/work` / `2026.10.01.8-WEB` live | Deployed by Karl on 2026-10-01. The Direct payments panel starts collapsed so invoice search results remain visible; it supports reviewed pass-through checks, customer-not-paid correction, and Hub-side void review. |
+| Netlify web app and staff proxy | `2026.10.01.10-WEB` on `codex/work` / `2026.10.01.8-WEB` live | Deployed by Karl on 2026-10-01. The Direct payments panel starts collapsed so invoice search results remain visible; it supports reviewed pass-through checks, customer-not-paid correction, and Hub-side void review. |
 | Inventory API Apps Script | `2026.10.01.5` on `codex/work` / `2026.10.01.5` live | Deployed by Karl to the staging Inventory API on 2026-10-01. `.5` fixes Void restore by preserving and reinstating the prior account link, match method, notes, and attribution. |
 | Distribution Outreach Apps Script | `2026.09.24.14-APP` on `codex/work` | Reminder delivery prerequisite; owner has not yet confirmed this exact version is deployed. |
 | Public customer Netlify proxy | `2026.09.18.3-WEB` | Deployed with Netlify; unchanged by the latest staff-app UI work |
@@ -25,7 +25,7 @@ Phase 5 deployment state: staging Inventory API `2026.10.01.5` and Netlify `2026
 
 Latest completed changes:
 
-- Staff access from a sheet (`.9-WEB`, not yet deployed; combines chat's `44a2fc3` and Claude's `157b7f4`). Zoho stays the login. Sign-in roles and work areas now come from the first tab of the Google Sheet **Hub Staff Access** (`1BT_lEW3aDC9xphKURWFvC3HGsHDteUaEvUWxKICKgEY`) instead of `STAFF_ROLES_JSON`, so staff can be added or removed without a Netlify edit or deploy. `netlify/lib/staff-roster.js` exports the tab as CSV through the Drive API with the relay service account, caches it for 2 minutes per function instance, and backs off 30 s after a failed read. Columns: Email, Name, Role, Inventory, Outreach, Orders, Active. A sheet missing Email/Role or with no active admin is ignored (no lockout). When the sheet is readable it is authoritative; when it has never been readable in that instance, existing sessions keep the role signed at sign-in and new sign-ins use `STAFF_ROLES_JSON`. The parser also accepts chat's layout (Staff ID, Display Name, Areas comma list). Chat's per-request Apps Script `staffAccessLookup` (2 s timeout, fail-closed, uncached) was replaced because a stalled Apps Script handoff would sign staff out; no Apps Script change is needed, so the Inventory API stays `2026.10.01.5`. `requireStaffSession` is now async. Inactive until `STAFF_ROSTER_SHEET_ID` is set. Setup: `docs/staff-access-sheet-setup.md`.
+- Staff access from the Hub (`.10-WEB`, not yet deployed). Zoho stays the login. Roles and work areas come from the **Staff Access** tab of the Hub spreadsheet (`1tWJ2ZnFT15cjuk7qvCWbJUJX1pAQYYsbSy5owWa8Uzo`) instead of `STAFF_ROLES_JSON`; Karl asked for a tab rather than a separate sheet, so `.9-WEB`'s standalone "Hub Staff Access" sheet is dropped. `netlify/lib/staff-roster.js` reads the tab through the Google Sheets API (`values.get`, drive.readonly scope) with the relay service account, caches it for 2 minutes per function instance, backs off 30 s after a failed read, and gives the token request plus read one 3.5 s deadline. Accepted columns: Email, Role, Inventory/Outreach/Orders ticks or an Areas list, Active, plus optional Staff ID, Name/Display Name, Notes. A missing tab, missing Email/Role column, or no active admin is ignored (no lockout). When the tab is readable it is authoritative; when it has never been readable in that instance, existing sessions keep the role signed at sign-in and new sign-ins use `STAFF_ROLES_JSON`. No Apps Script change: the Inventory API stays `2026.10.01.5`. Inactive until `STAFF_ROSTER_SHEET_ID` is set. Setup: `docs/staff-access-setup.md`.
 
 - First Inventory load after sign-in (`.49-WEB`). The Inventory tab often stayed blank after sign-in while Outreach and Orders loaded, and needed a second click. Cause: the Inventory workspace stays hidden until both startup requests finish (store list, then the store's lines, one after the other), and during that time the screen showed only the sign-in panel, whose "Loading stores…" line is inside the hidden workspace. If either request failed, the error went to the Orders & Accounts status line (`handleCustomerError`), so Inventory stayed blank until the tab was clicked again, which re-ran the load. Now `startInventory()` shows "Loading inventory…" on the Inventory screen, loads the remembered store at the same time as the store list, retries once after 1.5 s, runs one load at a time, and on failure shows the error with a Try again button on the Inventory screen. Sign-in errors still go through `handleCustomerError`.
 
@@ -163,7 +163,7 @@ Record names only—never record their values here.
 - `ZOHO_OIDC_REDIRECT_URI`
 - `ZOHO_OIDC_ISSUER` (use `https://accounts.zoho.com` unless the organization uses another Zoho data center)
 - `APP_SESSION_SECRET` (a new random secret, at least 32 characters)
-- `STAFF_ROSTER_SHEET_ID` (the Hub Staff Access sheet; shared Viewer with the relay service account)
+- `STAFF_ROSTER_SHEET_ID` (the Hub spreadsheet ID; Hub shared Viewer with the relay service account; Google Sheets API enabled in its Cloud project)
 - `STAFF_ROLES_JSON` (optional backup; keep only the owner admin entry once the sheet is live)
 - `TRACKING_LINK_SECRET`
 - `SELL_SHEET_URL`
@@ -272,7 +272,7 @@ If a send times out or returns an unreadable response, do not retry blindly. Che
 - Newsletter records exist, but newsletter sending remains disabled.
 - Campaigns verified live: Karl sent a 111-recipient campaign on 2026-09-25 without problems.
 - Production cutover is pending. See `docs/production-cutover-runbook-2026-09-25.md`. The Hub still reads the staging Inventory Backend copy (from 2026-09-15; missing the 2026-09-17 count) and the staging Badger Tracker.
-- Staff access sheet (`.9-WEB`): after deploy, fill the Hub Staff Access sheet, share it with the service account, set `STAFF_ROSTER_SHEET_ID`, verify an admin and a non-admin sign-in, then trim `STAFF_ROLES_JSON` to the owner entry.
+- Staff access tab (`.10-WEB`): add the Staff Access tab to the Hub, share the Hub with the service account (Viewer), enable the Google Sheets API in the relay Cloud project, set `STAFF_ROSTER_SHEET_ID`, deploy, verify an admin and a non-admin sign-in, then trim `STAFF_ROLES_JSON` to the owner entry.
 
 ## Low-token workflow for future Codex tasks
 

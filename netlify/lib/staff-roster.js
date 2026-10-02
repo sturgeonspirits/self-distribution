@@ -1,10 +1,11 @@
 // Staff access roster read from a Google Sheet.
 //
-// The roster lives in the FIRST tab of a dedicated Google Sheet ("Hub Staff Access").
-// Karl adds, removes, or changes staff there; no Netlify variable edit or redeploy.
-// Netlify reads it with the same read-only service account as the Drive relay
-// (GOOGLE_SA_CLIENT_EMAIL / GOOGLE_SA_PRIVATE_KEY), by exporting the first tab as CSV.
-// The sheet must be shared with that service account as Viewer.
+// The roster lives in the "Staff Access" tab of the Hub spreadsheet (STAFF_ROSTER_SHEET_ID;
+// tab name overridable with STAFF_ROSTER_TAB). Karl adds, removes, or changes staff there;
+// no Netlify variable edit or redeploy. Netlify reads that one tab through the Google Sheets
+// API with the same read-only service account as the Drive relay (GOOGLE_SA_CLIENT_EMAIL /
+// GOOGLE_SA_PRIVATE_KEY). The Hub must be shared with that service account as Viewer, and
+// the Google Sheets API must be enabled in the service account's Cloud project.
 //
 // Columns (header names, any order, case-insensitive; extra columns are ignored):
 //   Staff ID | Display Name | Email | Role | Areas | Inventory | Outreach | Orders | Active
@@ -26,7 +27,7 @@ export const STAFF_AREAS = ["inventory", "outreach", "orders"];
 const ROSTER_TTL_MS = 2 * 60 * 1000;
 const RETRY_AFTER_FAILURE_MS = 30 * 1000;
 const FETCH_TIMEOUT_MS = 3500;
-const DRIVE_FILE_URL = "https://www.googleapis.com/drive/v3/files/";
+const SHEETS_URL = "https://sheets.googleapis.com/v4/spreadsheets/";
 
 let cache = null;          // { entries, fetchedAt }
 let lastFailureAt = 0;
@@ -36,7 +37,8 @@ export function rosterConfig(env = process.env) {
   const clientEmail = String(env.GOOGLE_SA_CLIENT_EMAIL || "").trim();
   const privateKey = String(env.GOOGLE_SA_PRIVATE_KEY || "").replace(/\\n/g, "\n").trim();
   const sheetId = String(env.STAFF_ROSTER_SHEET_ID || "").trim();
-  return { clientEmail, privateKey, sheetId, enabled:!!(clientEmail && privateKey && sheetId) };
+  const tab = String(env.STAFF_ROSTER_TAB || "Staff Access").trim() || "Staff Access";
+  return { clientEmail, privateKey, sheetId, tab, enabled:!!(clientEmail && privateKey && sheetId) };
 }
 
 export function parseCsv(text) {
@@ -81,15 +83,19 @@ function headerKey(value) {
 
 // Returns { entries:{ email:{ role, areas, name } }, warnings:[] } or throws when misconfigured.
 export function rosterFromCsv(text) {
-  const rows = parseCsv(text).filter(row => row.some(cell => String(cell).trim()));
-  if (!rows.length) throw new Error("The staff access sheet is empty.");
+  return rosterFromRows(parseCsv(text));
+}
+
+export function rosterFromRows(values) {
+  const rows = (Array.isArray(values) ? values : []).map(row => (Array.isArray(row) ? row : []).map(cell => String(cell ?? ""))).filter(row => row.some(cell => cell.trim()));
+  if (!rows.length) throw new Error("The Staff Access tab is empty or missing.");
   const columns = {};
   rows[0].forEach((cell, index) => {
     const key = headerKey(cell);
     if (key && columns[key] === undefined) columns[key] = index;
   });
   if (columns.email === undefined || columns.role === undefined) {
-    throw new Error("The staff access sheet's first tab needs Email and Role columns.");
+    throw new Error("The Staff Access tab needs Email and Role columns.");
   }
   const entries = {};
   const warnings = [];
@@ -109,28 +115,30 @@ export function rosterFromCsv(text) {
     entries[email] = { role, areas, name:String(row[columns.name] ?? "").trim() };
   });
   if (!Object.values(entries).some(entry => entry.role === "admin")) {
-    throw new Error("The staff access sheet has no active admin; ignoring it so no one is locked out.");
+    throw new Error("The Staff Access tab has no active admin; ignoring it so no one is locked out.");
   }
   return { entries, warnings };
 }
 
-async function fetchRosterCsv(config) {
-  // One deadline covers the token request and the export, so a stalled Google call
+async function fetchRosterRows(config) {
+  // One deadline covers the token request and the read, so a stalled Google call
   // can never hold a staff request open.
   const controller = new AbortController();
   let timer;
   const deadline = new Promise((_, reject) => {
-    timer = setTimeout(() => { controller.abort(); reject(new Error("Staff access sheet read timed out.")); }, FETCH_TIMEOUT_MS);
+    timer = setTimeout(() => { controller.abort(); reject(new Error("Staff Access tab read timed out.")); }, FETCH_TIMEOUT_MS);
   });
   try {
     return await Promise.race([deadline, (async () => {
       const token = await accessToken(config);
-      const response = await fetch(`${DRIVE_FILE_URL}${encodeURIComponent(config.sheetId)}/export?mimeType=text%2Fcsv`, {
+      const range = encodeURIComponent(`'${config.tab.replace(/'/g, "''")}'!A1:Z1000`);
+      const response = await fetch(`${SHEETS_URL}${encodeURIComponent(config.sheetId)}/values/${range}?majorDimension=ROWS&valueRenderOption=FORMATTED_VALUE`, {
         headers:{ Authorization:`Bearer ${token}` },
         signal:controller.signal,
       });
-      if (!response.ok) throw new Error(`Staff access sheet read failed (HTTP ${response.status}).`);
-      return await response.text();
+      if (!response.ok) throw new Error(`Staff Access tab read failed (HTTP ${response.status}).`);
+      const data = await response.json();
+      return Array.isArray(data.values) ? data.values : [];
     })()]);
   } finally {
     clearTimeout(timer);
@@ -149,12 +157,12 @@ export async function loadStaffRoster({ config = rosterConfig(), now = Date.now(
     if (!inFlight) {
       inFlight = (async () => {
         try {
-          const { entries, warnings } = rosterFromCsv(await fetchRosterCsv(config));
-          if (warnings.length) console.warn("Staff access sheet warnings:", warnings.join(" | "));
+          const { entries, warnings } = rosterFromRows(await fetchRosterRows(config));
+          if (warnings.length) console.warn("Staff Access tab warnings:", warnings.join(" | "));
           cache = { entries, fetchedAt:Date.now() };
         } catch (error) {
           lastFailureAt = Date.now();
-          console.error("Staff access sheet could not be used:", error?.message || error);
+          console.error("Staff Access tab could not be used:", error?.message || error);
         } finally {
           inFlight = null;
         }

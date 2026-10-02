@@ -1285,9 +1285,11 @@ async function rosterHarness(suffix, csvOrStatus) {
   globalThis.fetch = async (url, options = {}) => {
     const text = String(url);
     if (text.startsWith("https://oauth2.googleapis.com/token")) return new Response(JSON.stringify({ access_token:"token", expires_in:3600 }), { status:200 });
-    if (text.includes("/drive/v3/files/roster-sheet/export")) {
+    if (text.startsWith("https://sheets.googleapis.com/v4/spreadsheets/roster-sheet/values/")) {
       calls.roster += 1;
-      return typeof csvOrStatus === "number" ? new Response("nope", { status:csvOrStatus }) : new Response(csvOrStatus, { status:200 });
+      assert.match(decodeURIComponent(text), /'Staff Access'!A1:Z1000/);
+      if (typeof csvOrStatus === "number") return new Response("nope", { status:csvOrStatus });
+      return new Response(JSON.stringify({ values:csvOrStatus.split("\n").map(line => line.split(",")) }), { status:200 });
     }
     calls.apps.push(options.body ? JSON.parse(options.body) : text);
     return new Response(JSON.stringify({ ok:true }), { status:200 });

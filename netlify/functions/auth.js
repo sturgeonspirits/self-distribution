@@ -1,7 +1,7 @@
 // Zoho OIDC authentication for the staff application.
 // Required Netlify environment variables:
 // ZOHO_OIDC_CLIENT_ID, ZOHO_OIDC_CLIENT_SECRET, APP_SESSION_SECRET.
-// Staff access comes from the "Hub Staff Access" Google Sheet (STAFF_ROSTER_SHEET_ID,
+// Staff access comes from the "Staff Access" tab of the Hub spreadsheet (STAFF_ROSTER_SHEET_ID,
 // read with GOOGLE_SA_CLIENT_EMAIL / GOOGLE_SA_PRIVATE_KEY; see netlify/lib/staff-roster.js).
 // STAFF_ROLES_JSON (for example {"name@company.com":"admin"}) is optional: it is used
 // only when no roster sheet is configured, or for new sign-ins while the sheet has
@@ -214,7 +214,7 @@ async function finishLogin(event) {
   const claims = await verifyIdToken(token.id_token, payload.nonce, settings);
   const email = String(claims.email).trim().toLowerCase();
   const access = await roleFor(email);
-  if (!access) return json(403, { ok:false, error:"Your Zoho account is not on the Hub staff list. Ask Karl to add it to the Hub Staff Access sheet." }, { "Set-Cookie":clearCookie(STATE_COOKIE) });
+  if (!access) return json(403, { ok:false, error:"Your Zoho account is not on the Hub staff list. Ask Karl to add it to the Staff Access tab in the Hub." }, { "Set-Cookie":clearCookie(STATE_COOKIE) });
   const now = Math.floor(Date.now() / 1000);
   const name = String(claims.name || [claims.given_name, claims.family_name].filter(Boolean).join(" ") || email).slice(0, 120);
   const session = encodeSigned({ sub:String(claims.sub), email, name, role:access.role, areas:access.areas, exp:now + SESSION_SECONDS }, settings.sessionSecret);

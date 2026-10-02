@@ -48,7 +48,7 @@ The newsletter option is selected by default and tells applicants to uncheck it 
 
 Staff sign in with their approved Zoho work account through the existing Zoho OIDC client. The Hub stores only a short-lived, HttpOnly signed session; it never receives a Zoho password or the Zoho Mail sender token. Netlify verifies the session and injects the verified display name into staff writes, so names typed into the browser cannot spoof audit attribution.
 
-Who may sign in, and to which workspaces, comes from the **Hub Staff Access** Google Sheet, not from Netlify variables. Netlify reads its first tab directly through the Drive API with the relay service account and caches it for 2 minutes, so no Apps Script call is added to staff requests. See `docs/staff-access-sheet-setup.md`.
+Who may sign in, and to which workspaces, comes from the **Staff Access** tab of the Hub spreadsheet, not from Netlify variables. Netlify reads that tab directly through the Google Sheets API with the relay service account and caches it for 2 minutes, so no Apps Script call is added to staff requests. See `docs/staff-access-setup.md`.
 
 Netlify environment variables required for staff login:
 
@@ -57,7 +57,7 @@ Netlify environment variables required for staff login:
 - `ZOHO_OIDC_REDIRECT_URI` — `https://distribution-hub.netlify.app/api/auth?action=callback`
 - `ZOHO_OIDC_ISSUER` — normally `https://accounts.zoho.com`
 - `APP_SESSION_SECRET` — a new random secret at least 32 characters long
-- `STAFF_ROSTER_SHEET_ID` — the Hub Staff Access sheet, shared Viewer with the relay service account (`GOOGLE_SA_CLIENT_EMAIL`, `GOOGLE_SA_PRIVATE_KEY`)
+- `STAFF_ROSTER_SHEET_ID` — the Hub spreadsheet ID (`1tWJ2ZnFT15cjuk7qvCWbJUJX1pAQYYsbSy5owWa8Uzo`), shared Viewer with the relay service account (`GOOGLE_SA_CLIENT_EMAIL`, `GOOGLE_SA_PRIVATE_KEY`); the Google Sheets API must be enabled in that account's Cloud project. Optional `STAFF_ROSTER_TAB` overrides the tab name.
 - `STAFF_ROLES_JSON` — optional backup only, for example `{ "owner@sturgeonspirits.com": "admin" }`. Used when no sheet is configured, or for new sign-ins while the sheet has never been readable.
 
 Sheet columns: Staff ID, Display Name, Email, Role, Areas (for example `inventory, orders`) or Inventory/Outreach/Orders tick boxes, and Active. `admin` receives all three areas and additionally controls product/SKU changes, staging initialization, and integration reconciliation. A removal or role change takes effect within about 2 minutes, including for existing sessions. When the sheet is readable it is authoritative and `STAFF_ROLES_JSON` is ignored.
@@ -80,7 +80,7 @@ Each deployable surface is stamped with its own release version. When updating A
    - `APPS_SCRIPT_URL` = your Apps Script `/exec` URL
    - `API_KEY` = the same private key stored in Apps Script Properties
    - the Zoho OIDC environment variables listed in **Staff access**
-10. Fill the Hub Staff Access sheet and set `STAFF_ROSTER_SHEET_ID` before the Netlify release (see `docs/staff-access-sheet-setup.md`).
+10. Fill the Hub's Staff Access tab and set `STAFF_ROSTER_SHEET_ID` before the Netlify release (see `docs/staff-access-setup.md`).
 11. Redeploy Netlify only after both staging Apps Script web apps are deployed and the Inventory Backend reports its source `APP_VERSION`.
 
 ## API auth
