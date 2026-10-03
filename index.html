@@ -1,10 +1,10 @@
 <!doctype html>
-<!-- App version: 2026.10.03.15-WEB -->
+<!-- App version: 2026.10.03.16-WEB -->
 <html>
 <head>
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover"/>
-  <meta name="app-version" content="2026.10.03.15-WEB" />
+  <meta name="app-version" content="2026.10.03.16-WEB" />
   <meta name="theme-color" content="#536f77" />
   <link rel="icon" href="/assets/distribution-hub-icon.svg" type="image/svg+xml" />
   <link rel="manifest" href="/site.webmanifest" />
@@ -1380,6 +1380,28 @@
     .inventorySummaryProduct{font-weight:900}
     .inventorySummaryMeta{font-size:11px;color:var(--muted);margin-top:2px}
     .inventorySummaryEmpty{padding:20px;text-align:center;color:var(--muted)}
+    .inventoryStoreSummary{
+      width:100%;
+      min-width:520px;
+      border-collapse:separate;
+      border-spacing:0;
+      font-size:13px;
+    }
+    .inventoryStoreSummary th,
+    .inventoryStoreSummary td{
+      padding:10px 8px;
+      text-align:left;
+      vertical-align:top;
+      border-right:1px solid #eef2f7;
+      border-bottom:1px solid #eef2f7;
+      background:#fff;
+    }
+    .inventoryStoreSummary th{background:#f9fafb;color:var(--muted);font-size:12px}
+    .inventoryStoreSummary .stickyLeft{min-width:220px;max-width:220px}
+    .inventoryStockList{display:flex;gap:8px;flex-wrap:wrap}
+    .inventoryStockItem{padding:6px 8px;border:1px solid var(--line);border-radius:7px;background:#f9fafb;font-weight:800}
+    .inventoryStockItem.low{border-color:var(--amber-line);background:var(--amber-bg);color:var(--amber)}
+    .inventoryStockItem.needs{border-color:var(--red-line);background:var(--red-bg);color:var(--red)}
 
     .bottomBar{
       position:fixed;
@@ -1984,6 +2006,11 @@
         <div class="summaryBox"><div class="num" id="inventorySummaryOnHand">0</div><div class="lbl">Units on hand</div></div>
         <div class="summaryBox"><div class="num" id="inventorySummaryAttention">0</div><div class="lbl">Locations needing attention</div></div>
       </div>
+      <h3 style="margin:18px 0 0">Inventory by location</h3>
+      <p class="smallMuted">Each location shows only products currently in stock. Products not carried there are omitted.</p>
+      <div class="managerGridWrap">
+        <table class="inventoryStoreSummary" id="inventoryLocationSummaryGrid"><thead></thead><tbody></tbody></table>
+      </div>
       <label for="inventorySummarySearch" style="margin-top:14px">Find a product</label>
       <div class="searchWrap">
         <input id="inventorySummarySearch" placeholder="Search product, SKU, or size…" autocomplete="off" />
@@ -1992,11 +2019,6 @@
         <table class="inventorySummaryTable" id="inventoryProductTotalsTable">
           <thead></thead><tbody></tbody>
         </table>
-      </div>
-      <h3 style="margin:18px 0 0">Inventory by product and store</h3>
-      <p class="smallMuted">Stores are across the top. Empty cells mean that location has no inventory recorded for the product.</p>
-      <div class="managerGridWrap">
-        <table class="managerGrid" id="inventoryLocationSummaryGrid"><thead></thead><tbody></tbody><tfoot></tfoot></table>
       </div>
     </section>
 
@@ -2638,7 +2660,7 @@
 
   <footer style="max-width:1200px;margin:18px auto 120px;padding:0 12px;text-align:center;color:#6b7280;font-size:12px;">
     Designed by <a href="https://scriptspirit.dev" target="_blank" rel="noopener noreferrer" style="color:#1d4ed8;text-decoration:none;font-weight:700;">Script Spirit</a>
-<span id="appVersionFooter"> • Version 2026.10.03.15-WEB</span>
+<span id="appVersionFooter"> • Version 2026.10.03.16-WEB</span>
   </footer>
 
 
@@ -2661,7 +2683,7 @@
   window.addEventListener("unhandledrejection", e => console.error("Unhandled promise rejection:", e.reason));
   window.addEventListener("error", e => console.error("Unhandled error:", e.error || e.message));
   const $ = (id) => document.getElementById(id);
-  const APP_VERSION = "2026.10.03.15-WEB";
+  const APP_VERSION = "2026.10.03.16-WEB";
   $("appVersionFooter").textContent = ` • Version ${APP_VERSION}`;
   function screenCacheKey(screen){ return `distribution_hub:${APP_VERSION}:${staffSession?.email || "unknown"}:${screen}`; }
   function readScreenCache(screen){
@@ -6494,7 +6516,6 @@
     const locationTable = $("inventoryLocationSummaryGrid");
     const locationHead = locationTable.querySelector("thead");
     const locationBody = locationTable.querySelector("tbody");
-    const locationFoot = locationTable.querySelector("tfoot");
     const stores = managerGridData.stores || [];
     const search = ($("inventorySummarySearch")?.value || "").trim().toLowerCase();
     // A missing store/SKU row is represented by a zero-value grid cell. Do not
@@ -6521,67 +6542,38 @@
 
     locationHead.innerHTML = "";
     locationBody.innerHTML = "";
-    locationFoot.innerHTML = "";
     if (!rows.length) return;
 
     const header = document.createElement("tr");
     const locationLabel = document.createElement("th");
     locationLabel.className = "stickyLeft";
-    locationLabel.textContent = "Product";
+    locationLabel.textContent = "Count location";
     header.appendChild(locationLabel);
-    stores.forEach(store => {
-      const th = document.createElement("th");
-      th.innerHTML = `<div style="font-weight:1000">${escapeHtml(store.store_name || store.store_id)}</div><div class="smallMuted" style="margin-top:4px">${escapeHtml(store.route || store.store_id || "")}</div>`;
-      header.appendChild(th);
-    });
-    const totalHeading = document.createElement("th");
-    totalHeading.textContent = "Total";
-    header.appendChild(totalHeading);
+    const stockLabel = document.createElement("th");
+    stockLabel.textContent = "Available inventory";
+    header.appendChild(stockLabel);
     locationHead.appendChild(header);
 
-    rows.forEach(({ sku, cells, onHand }) => {
+    stores.forEach(store => {
       const tr = document.createElement("tr");
-      const productCell = document.createElement("td");
-      productCell.className = "stickyLeft";
-      productCell.innerHTML = `<div class="storeName">${escapeHtml(sku.sku_name || sku.sku_id)}</div><div class="storeMeta">${escapeHtml(sku.sku_id || "")}${sku.size ? ` • ${escapeHtml(sku.size)}` : ""}</div>`;
-      tr.appendChild(productCell);
-      cells.forEach(cell => {
+      const storeCell = document.createElement("td");
+      storeCell.className = "stickyLeft";
+      storeCell.innerHTML = `<div class="storeName">${escapeHtml(store.store_name || store.store_id)}</div><div class="storeMeta">${escapeHtml(store.store_id || "")}${store.route ? ` • ${escapeHtml(store.route)}` : ""}</div>`;
+      tr.appendChild(storeCell);
+      const stockCell = document.createElement("td");
+      const inventoryItems = rows.map(({ sku, index }) => {
+        const cell = store.cells?.[index] || {};
         const onHand = Math.max(0, Number(cell.on_hand_units || 0));
-        const td = document.createElement("td");
-        if (onHand > 0) {
-          td.className = "invCell " + (cell.needs_attention ? "needs" : cell.below_par ? "low" : "ok");
-          td.innerHTML = `<div class="main">${onHand}</div><div class="sub">PAR ${Math.max(0, Number(cell.par_level_units || 0))}</div>`;
-        } else {
-          td.className = "invCell ok";
-          td.setAttribute("aria-label", "No inventory recorded");
-        }
-        tr.appendChild(td);
-      });
-      const totalCell = document.createElement("td");
-      totalCell.className = "invCell ok";
-      totalCell.innerHTML = `<div class="main">${onHand}</div>`;
-      tr.appendChild(totalCell);
+        if (!onHand) return "";
+        const className = cell.needs_attention ? " needs" : cell.below_par ? " low" : "";
+        return `<span class="inventoryStockItem${className}">${escapeHtml(sku.sku_name || sku.sku_id)}: ${onHand}</span>`;
+      }).filter(Boolean);
+      stockCell.innerHTML = inventoryItems.length
+        ? `<div class="inventoryStockList">${inventoryItems.join("")}</div>`
+        : `<span class="smallMuted">No inventory recorded</span>`;
+      tr.appendChild(stockCell);
       locationBody.appendChild(tr);
     });
-
-    const totalRow = document.createElement("tr");
-    const totalLabel = document.createElement("td");
-    totalLabel.className = "stickyLeft";
-    totalLabel.innerHTML = `<div class="storeName">All products</div><div class="storeMeta">Store totals</div>`;
-    totalRow.appendChild(totalLabel);
-    stores.forEach((_store, storeIndex) => {
-      const storeTotal = rows.reduce((total, row) => total + Math.max(0, Number(row.cells[storeIndex]?.on_hand_units || 0)), 0);
-      const td = document.createElement("td");
-      td.className = "invCell ok";
-      td.innerHTML = `<div class="main">${storeTotal}</div>`;
-      totalRow.appendChild(td);
-    });
-    const grandTotal = rows.reduce((total, row) => total + row.onHand, 0);
-    const grandTotalCell = document.createElement("td");
-    grandTotalCell.className = "invCell ok";
-    grandTotalCell.innerHTML = `<div class="main">${grandTotal}</div>`;
-    totalRow.appendChild(grandTotalCell);
-    locationFoot.appendChild(totalRow);
   }
 
   async function loadManagerGrid() {

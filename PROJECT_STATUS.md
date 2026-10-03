@@ -8,7 +8,7 @@ Read this file before inspecting the repository or changing the application. Upd
 
 | Component | Source version | Deployment state |
 | --- | --- | --- |
-| Netlify web app and staff proxy | `2026.10.03.15-WEB` on `codex/work` / `.14` pushed to `codex/distribution-system-foundation` | `.12` (staff roster from the Hub's `Staff Access` tab) was previously live. `.14` was sent to Netlify for the Inventory Summary; deployment status has not been verified. `.15` removes zero-stock clutter and transposes that summary for the next deployment. |
+| Netlify web app and staff proxy | `2026.10.03.16-WEB` on `codex/work` / `.14` pushed to `codex/distribution-system-foundation` | `.12` (staff roster from the Hub's `Staff Access` tab) was previously live. `.14` was sent to Netlify for the Inventory Summary; deployment status has not been verified. `.16` shows each count location with only its actually stocked products for the next deployment. |
 | Inventory API Apps Script | `2026.10.01.5` on `codex/work` / `2026.10.01.5` live | Deployed by Karl to the staging Inventory API on 2026-10-01. `.5` fixes Void restore by preserving and reinstating the prior account link, match method, notes, and attribution. |
 | Distribution Outreach Apps Script | `2026.09.24.14-APP` on `codex/work` | Reminder delivery prerequisite; owner has not yet confirmed this exact version is deployed. |
 | Public customer Netlify proxy | `2026.09.18.3-WEB` | Deployed with Netlify; unchanged by the latest staff-app UI work |
@@ -25,7 +25,7 @@ Phase 5 deployment state: staging Inventory API `2026.10.01.5` and Netlify `2026
 
 Latest completed changes:
 
-- Inventory Summary (`2026.10.03.15-WEB`, repo only, 2026-10-03): every signed-in staff member whose Staff Access row has Inventory checked can open Inventory → **Inventory Summary**. It is read-only and uses the existing `managerGrid` inventory-staff API read—no new permissions, Netlify variables, spreadsheet tabs, or Apps Script deployment. It excludes products with zero stock at every location; products are rows and stores are columns, with blank cells where a store has no recorded inventory. The product table and final column retain per-product totals; the final row retains per-store totals. Requires a normal Netlify web deployment to become visible.
+- Inventory Summary (`2026.10.03.16-WEB`, repo only, 2026-10-03): every signed-in staff member whose Staff Access row has Inventory checked can open Inventory → **Inventory Summary**. It is read-only and uses the existing `managerGrid` inventory-staff API read—no new permissions, Netlify variables, spreadsheet tabs, or Apps Script deployment. It excludes products with zero stock at every location. The top per-store list keeps count locations in the left column and displays only products actually stocked there; the searchable product-total table follows it. Requires a normal Netlify web deployment to become visible.
 
 - Badger invoice parser `2026.10.03.1` (repo, 2026-10-03): adds a daily automatic import at about 5:45 am Central (production only), switched on/off from the Sturgeon Invoice Parser menu; Parser Status shows whether it is on. Install: paste `docs/reference/badger-parser/Code.gs` over `Invoice Parser.gs` in the live tracker (and staging), reload, then **Turn On Daily Automatic Import** once and approve the new trigger permission. Tests: 17 pass.
 
