@@ -1,6 +1,6 @@
 # Sturgeon Distribution Hub — Project Status
 
-Last updated: 2026-10-02
+Last updated: 2026-10-03
 
 Read this file before inspecting the repository or changing the application. Update it whenever a deployment, version, service URL, known issue, or required setup step changes. Never put secret values in this file.
 
@@ -8,7 +8,7 @@ Read this file before inspecting the repository or changing the application. Upd
 
 | Component | Source version | Deployment state |
 | --- | --- | --- |
-| Netlify web app and staff proxy | `2026.10.02.13-WEB` on `codex/work` / `2026.10.02.12-WEB` live | `.12` (staff roster from the Hub's `Staff Access` tab) is live on `codex/distribution-system-foundation`. `.13` removes the "Initialize staging Hub" button and stops the proxy from forwarding `initializeHardenedHub`; it is not deployed yet. |
+| Netlify web app and staff proxy | `2026.10.03.14-WEB` on `codex/work` / `2026.10.02.12-WEB` live | `.12` (staff roster from the Hub's `Staff Access` tab) is live on `codex/distribution-system-foundation`. `.13` removes the "Initialize staging Hub" button and stops the proxy from forwarding `initializeHardenedHub`; it is not deployed yet. `.14` adds an inventory-staff summary page and is not deployed yet. |
 | Inventory API Apps Script | `2026.10.01.5` on `codex/work` / `2026.10.01.5` live | Deployed by Karl to the staging Inventory API on 2026-10-01. `.5` fixes Void restore by preserving and reinstating the prior account link, match method, notes, and attribution. |
 | Distribution Outreach Apps Script | `2026.09.24.14-APP` on `codex/work` | Reminder delivery prerequisite; owner has not yet confirmed this exact version is deployed. |
 | Public customer Netlify proxy | `2026.09.18.3-WEB` | Deployed with Netlify; unchanged by the latest staff-app UI work |
@@ -24,6 +24,8 @@ Badger tracker safety answer (Karl, 2026-09-30): the PDF importer never writes t
 Phase 5 deployment state: staging Inventory API `2026.10.01.5` and Netlify `2026.10.01.8-WEB` are live. Next, run `seedCurrentPricesTab()` once in staging and review/activate the tracker prices with Claude before any Badger invoice creation. Never create a test invoice in Badger.
 
 Latest completed changes:
+
+- Inventory Summary (`2026.10.03.14-WEB`, repo only, 2026-10-03): every signed-in staff member whose Staff Access row has Inventory checked can open Inventory → **Inventory Summary**. It is read-only and uses the existing `managerGrid` inventory-staff API read—no new permissions, Netlify variables, spreadsheet tabs, or Apps Script deployment. It shows active count locations, active products, bottles on hand, locations needing attention, a searchable per-product total, and a per-location count matrix with an all-locations total row. Requires a normal Netlify web deployment to become visible.
 
 - Badger invoice parser `2026.10.03.1` (repo, 2026-10-03): adds a daily automatic import at about 5:45 am Central (production only), switched on/off from the Sturgeon Invoice Parser menu; Parser Status shows whether it is on. Install: paste `docs/reference/badger-parser/Code.gs` over `Invoice Parser.gs` in the live tracker (and staging), reload, then **Turn On Daily Automatic Import** once and approve the new trigger permission. Tests: 17 pass.
 

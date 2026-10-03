@@ -110,6 +110,17 @@ test("the Hub migration action is not proxied and has no button", async () => {
   assert.doesNotMatch(html, /action:"initializeHardenedHub"/);
 });
 
+test("inventory staff can see the read-only product and location summary", async () => {
+  const html = await readFile(new URL("index.html", root), "utf8");
+  const proxy = await readFile(new URL("netlify/functions/inventory.js", root), "utf8");
+  assert.match(html, /id="inventorySummaryViewBtn"/);
+  assert.match(html, /id="inventorySummaryView"/);
+  assert.match(html, /function inventorySummaryRows\(\)/);
+  assert.match(html, /All locations<\/div><div class="storeMeta">Product totals/);
+  assert.match(proxy, /\["managerGrid", "inventory"\]/);
+  assert.doesNotMatch(proxy.match(/const ADMIN_ACTIONS = new Set\(\[([\s\S]*?)\]\);/)[1], /managerGrid/);
+});
+
 test("authenticated inventory GET and POST preserve action payload, API key, and Zoho actor", async () => {
   const { handler } = await loadFunction("netlify/functions/inventory.js", "authenticated-regression");
   process.env.APPS_SCRIPT_URL = "https://example.test/exec";

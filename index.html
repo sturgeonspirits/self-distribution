@@ -1,10 +1,10 @@
 <!doctype html>
-<!-- App version: 2026.10.02.13-WEB -->
+<!-- App version: 2026.10.03.14-WEB -->
 <html>
 <head>
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover"/>
-  <meta name="app-version" content="2026.10.02.13-WEB" />
+  <meta name="app-version" content="2026.10.03.14-WEB" />
   <meta name="theme-color" content="#536f77" />
   <link rel="icon" href="/assets/distribution-hub-icon.svg" type="image/svg+xml" />
   <link rel="manifest" href="/site.webmanifest" />
@@ -1339,6 +1339,47 @@
       flex-wrap:wrap;
       margin-top:10px;
     }
+    .inventorySummaryHeader{
+      display:flex;
+      justify-content:space-between;
+      gap:12px;
+      flex-wrap:wrap;
+      align-items:flex-start;
+      margin-top:14px;
+    }
+    .inventorySummaryHeader h2{margin:0;font-size:20px}
+    .inventorySummaryTableWrap{
+      overflow:auto;
+      border:1px solid var(--line);
+      border-radius:8px;
+      background:#fff;
+      margin-top:12px;
+    }
+    .inventorySummaryTable{
+      width:100%;
+      min-width:650px;
+      border-collapse:collapse;
+      font-size:13px;
+    }
+    .inventorySummaryTable th,
+    .inventorySummaryTable td{
+      padding:10px;
+      text-align:left;
+      border-bottom:1px solid #eef2f7;
+      vertical-align:middle;
+    }
+    .inventorySummaryTable th{
+      background:#f9fafb;
+      font-size:12px;
+      color:var(--muted);
+      white-space:nowrap;
+    }
+    .inventorySummaryTable td.num,
+    .inventorySummaryTable th.num{text-align:right}
+    .inventorySummaryTable tr:last-child td{border-bottom:0}
+    .inventorySummaryProduct{font-weight:900}
+    .inventorySummaryMeta{font-size:11px;color:var(--muted);margin-top:2px}
+    .inventorySummaryEmpty{padding:20px;text-align:center;color:var(--muted)}
 
     .bottomBar{
       position:fixed;
@@ -1845,12 +1886,12 @@
   <div id="inventoryWorkspace" hidden>
   <details class="card managerSummary" id="managerSummaryCard">
     <summary style="display:flex;justify-content:space-between;gap:10px;align-items:center;">
-      <span>Manager Summary Grid</span>
+      <span>Inventory by Location</span>
       <span class="smallMuted">Open / Close</span>
     </summary>
 
     <div style="margin-top:10px;display:flex;justify-content:space-between;gap:10px;flex-wrap:wrap;align-items:center">
-      <div class="smallMuted">Stores on the left, bottle inventory across the top.</div>
+      <div class="smallMuted">Stores on the left, bottle inventory across the top. Product totals are in Inventory Summary.</div>
       <div class="tinyRow">
         <button id="refreshManagerGridBtn">Refresh Manager Grid</button>
         <button id="backToInventoryBtn" class="primary">Back to Inventory</button>
@@ -1887,7 +1928,7 @@
   </details>
 
   <div class="card" id="mainInventoryScreen">
-    <div class="grid2 setupGrid">
+    <div class="grid2 setupGrid" data-inventory-count-only>
       <div>
         <label>Store</label>
         <select id="storeSelect"></select>
@@ -1898,7 +1939,7 @@
       </div>
     </div>
 
-    <details class="storeContacts" id="storeContactsDetails">
+    <details class="storeContacts" id="storeContactsDetails" data-inventory-count-only>
       <summary>
         <span class="storeContactsTitle">Store contacts</span>
         <span class="storeContactSummary" id="storeContactSummary">Add manager names</span>
@@ -1917,8 +1958,8 @@
       </div>
     </details>
 
-    <label for="search">Search</label>
-    <div class="searchWrap">
+    <label for="search" data-inventory-count-only>Search</label>
+    <div class="searchWrap" data-inventory-count-only>
       <input id="search" placeholder="Search product, SKU, UPC…" autocomplete="off" enterkeyhint="search" />
       <button class="searchClear" id="clearSearchBtn" type="button" aria-label="Clear search" hidden>×</button>
     </div>
@@ -1926,9 +1967,40 @@
     <div class="viewTabs" aria-label="Inventory views">
       <button class="viewTab active" id="countViewBtn" type="button">Inventory Count</button>
       <button class="viewTab" id="soldViewBtn" type="button">Sold Since Count</button>
+      <button class="viewTab" id="inventorySummaryViewBtn" type="button">Inventory Summary</button>
     </div>
 
-    <div class="locationMode" id="locationMode" aria-label="Count location">
+    <section id="inventorySummaryView" hidden aria-labelledby="inventorySummaryTitle">
+      <div class="inventorySummaryHeader">
+        <div>
+          <h2 id="inventorySummaryTitle">Inventory Summary</h2>
+          <p class="smallMuted">Read-only totals across every active inventory count location.</p>
+        </div>
+        <button id="refreshInventorySummaryBtn" type="button"><i data-lucide="refresh-cw"></i><span>Refresh summary</span></button>
+      </div>
+      <div class="summaryGrid">
+        <div class="summaryBox"><div class="num" id="inventorySummaryLocations">0</div><div class="lbl">Count locations</div></div>
+        <div class="summaryBox"><div class="num" id="inventorySummaryProducts">0</div><div class="lbl">Products</div></div>
+        <div class="summaryBox"><div class="num" id="inventorySummaryOnHand">0</div><div class="lbl">Bottles on hand</div></div>
+        <div class="summaryBox"><div class="num" id="inventorySummaryAttention">0</div><div class="lbl">Locations needing attention</div></div>
+      </div>
+      <label for="inventorySummarySearch" style="margin-top:14px">Find a product</label>
+      <div class="searchWrap">
+        <input id="inventorySummarySearch" placeholder="Search product, SKU, or size…" autocomplete="off" />
+      </div>
+      <div class="inventorySummaryTableWrap">
+        <table class="inventorySummaryTable" id="inventoryProductTotalsTable">
+          <thead></thead><tbody></tbody>
+        </table>
+      </div>
+      <h3 style="margin:18px 0 0">Inventory by location</h3>
+      <p class="smallMuted">Each cell is the current on-hand bottle count. The total row adds every location for each product.</p>
+      <div class="managerGridWrap">
+        <table class="managerGrid" id="inventoryLocationSummaryGrid"><thead></thead><tbody></tbody><tfoot></tfoot></table>
+      </div>
+    </section>
+
+    <div class="locationMode" id="locationMode" aria-label="Count location" data-inventory-count-only>
       <div class="locationModeLabel">Location</div>
       <div class="segmented">
         <button class="segmentBtn active" id="locShelfBtn" type="button">Shelf</button>
@@ -1936,7 +2008,7 @@
       </div>
     </div>
 
-    <div class="topTools" id="countTools">
+    <div class="topTools" id="countTools" data-inventory-count-only>
       <div class="filters">
         <button class="filterChip" id="filterNeeds">Needs attention</button>
         <button class="filterChip" id="filterChanged">Changed</button>
@@ -1949,7 +2021,7 @@
       </div>
     </div>
 
-    <div class="summaryGrid" id="countSummaryGrid">
+    <div class="summaryGrid" id="countSummaryGrid" data-inventory-count-only>
       <div class="summaryBox">
         <div class="num" id="sumTotal">0</div>
         <div class="lbl">SKUs in store</div>
@@ -1968,7 +2040,7 @@
       </div>
     </div>
 
-    <div class="soldSummaryGrid" id="soldSummaryGrid" hidden>
+    <div class="soldSummaryGrid" id="soldSummaryGrid" hidden data-inventory-count-only>
       <div class="summaryBox">
         <div class="num" id="soldTotal">0</div>
         <div class="lbl">Bottles sold</div>
@@ -1983,9 +2055,9 @@
       </div>
     </div>
 
-    <div class="status" id="status"></div>
+    <div class="status" id="status" data-inventory-count-only></div>
 
-    <details class="manager" id="managerDetails">
+    <details class="manager" id="managerDetails" data-inventory-count-only>
       <summary>Manager Tools</summary>
 
       <div style="margin-top:10px">
@@ -2016,7 +2088,7 @@
     </details>
   </div>
 
-  <div class="list" id="list"></div>
+  <div class="list" id="list" data-inventory-count-only></div>
   </div>
   </section>
 
@@ -2566,7 +2638,7 @@
 
   <footer style="max-width:1200px;margin:18px auto 120px;padding:0 12px;text-align:center;color:#6b7280;font-size:12px;">
     Designed by <a href="https://scriptspirit.dev" target="_blank" rel="noopener noreferrer" style="color:#1d4ed8;text-decoration:none;font-weight:700;">Script Spirit</a>
-<span id="appVersionFooter"> • Version 2026.10.02.13-WEB</span>
+<span id="appVersionFooter"> • Version 2026.10.03.14-WEB</span>
   </footer>
 
 
@@ -2589,7 +2661,7 @@
   window.addEventListener("unhandledrejection", e => console.error("Unhandled promise rejection:", e.reason));
   window.addEventListener("error", e => console.error("Unhandled error:", e.error || e.message));
   const $ = (id) => document.getElementById(id);
-  const APP_VERSION = "2026.10.02.13-WEB";
+  const APP_VERSION = "2026.10.03.14-WEB";
   $("appVersionFooter").textContent = ` • Version ${APP_VERSION}`;
   function screenCacheKey(screen){ return `distribution_hub:${APP_VERSION}:${staffSession?.email || "unknown"}:${screen}`; }
   function readScreenCache(screen){
@@ -2609,7 +2681,9 @@
   let filterMode = "all";
   let filterText = "";
   let activeLocation = localStorage.getItem("inv_count_location") === "back" ? "back" : "shelf";
-  let activeView = localStorage.getItem("inv_active_view") === "sold" ? "sold" : "count";
+  let activeView = ["sold", "summary"].includes(localStorage.getItem("inv_active_view"))
+    ? localStorage.getItem("inv_active_view")
+    : "count";
   let activeAppSection = ["inventory", "outreach", "customers"].includes(localStorage.getItem("distribution_section"))
     ? localStorage.getItem("distribution_section")
     : "inventory";
@@ -5925,24 +5999,32 @@
 
   function updateViewChrome(){
     const isSold = activeView === "sold";
-    $("countViewBtn").classList.toggle("active", !isSold);
+    const isSummary = activeView === "summary";
+    $("countViewBtn").classList.toggle("active", !isSold && !isSummary);
     $("soldViewBtn").classList.toggle("active", isSold);
-    $("locationMode").hidden = isSold;
-    $("countTools").hidden = isSold;
-    $("countSummaryGrid").hidden = isSold;
+    $("inventorySummaryViewBtn").classList.toggle("active", isSummary);
+    $("inventorySummaryView").hidden = !isSummary;
+    document.querySelectorAll("[data-inventory-count-only]").forEach(el => { el.hidden = isSummary; });
+    $("locationMode").hidden = isSold || isSummary;
+    $("countTools").hidden = isSold || isSummary;
+    $("countSummaryGrid").hidden = isSold || isSummary;
     $("soldSummaryGrid").hidden = !isSold;
-    $("managerDetails").hidden = isSold;
-    $("bottomBar").hidden = isSold || activeAppSection !== "inventory";
+    $("managerDetails").hidden = isSold || isSummary;
+    $("managerSummaryCard").hidden = isSummary;
+    $("bottomBar").hidden = isSold || isSummary || activeAppSection !== "inventory";
     if (isSold) updateSoldSummaryUi();
-    else updateSummaryUi();
+    else if (!isSummary) updateSummaryUi();
   }
 
   async function setActiveView(view){
-    activeView = view === "sold" ? "sold" : "count";
+    activeView = ["sold", "summary"].includes(view) ? view : "count";
     localStorage.setItem("inv_active_view", activeView);
     updateViewChrome();
     if (activeView === "sold") {
       await loadSalesSinceCount($("storeSelect").value);
+    } else if (activeView === "summary") {
+      renderInventorySummary();
+      await loadManagerGrid();
     } else {
       render();
     }
@@ -6035,6 +6117,12 @@
   function render(){
     if (activeView === "sold") {
       renderSales();
+      return;
+    }
+    if (activeView === "summary") {
+      $("list").innerHTML = "";
+      updateViewChrome();
+      renderInventorySummary();
       return;
     }
 
@@ -6384,6 +6472,97 @@
     });
   }
 
+  function inventorySummaryRows(){
+    const skus = managerGridData.skus || [];
+    const stores = managerGridData.stores || [];
+    return skus.map((sku, index) => {
+      const cells = stores.map(store => store.cells?.[index] || {});
+      const onHand = cells.reduce((total, cell) => total + Math.max(0, Number(cell.on_hand_units || 0)), 0);
+      const par = cells.reduce((total, cell) => total + Math.max(0, Number(cell.par_level_units || 0)), 0);
+      const trackedLocations = cells.filter(cell =>
+        Number(cell.on_hand_units || 0) !== 0 || Number(cell.par_level_units || 0) !== 0 || Number(cell.reorder_point_units || 0) !== 0
+      ).length;
+      const attentionLocations = cells.filter(cell => !!cell.needs_attention).length;
+      return { sku, index, onHand, par, trackedLocations, attentionLocations };
+    });
+  }
+
+  function renderInventorySummary(){
+    const productTable = $("inventoryProductTotalsTable");
+    const productHead = productTable.querySelector("thead");
+    const productBody = productTable.querySelector("tbody");
+    const locationTable = $("inventoryLocationSummaryGrid");
+    const locationHead = locationTable.querySelector("thead");
+    const locationBody = locationTable.querySelector("tbody");
+    const locationFoot = locationTable.querySelector("tfoot");
+    const stores = managerGridData.stores || [];
+    const search = ($("inventorySummarySearch")?.value || "").trim().toLowerCase();
+    const allRows = inventorySummaryRows();
+    const rows = allRows.filter(({ sku }) => !search || [sku.sku_name, sku.sku_id, sku.size]
+      .map(value => String(value || "").toLowerCase()).join(" | ").includes(search));
+
+    $("inventorySummaryLocations").textContent = stores.length;
+    $("inventorySummaryProducts").textContent = allRows.length;
+    $("inventorySummaryOnHand").textContent = allRows.reduce((total, row) => total + row.onHand, 0);
+    $("inventorySummaryAttention").textContent = allRows.reduce((total, row) => total + row.attentionLocations, 0);
+
+    productHead.innerHTML = `<tr><th>Product</th><th class="num">Locations carrying</th><th class="num">On hand</th><th class="num">Total PAR</th><th class="num">Need attention</th></tr>`;
+    productBody.innerHTML = rows.length
+      ? rows.map(({ sku, onHand, par, trackedLocations, attentionLocations }) => `
+          <tr>
+            <td><div class="inventorySummaryProduct">${escapeHtml(sku.sku_name || sku.sku_id)}</div><div class="inventorySummaryMeta">${escapeHtml(sku.sku_id || "")}${sku.size ? ` • ${escapeHtml(sku.size)}` : ""}</div></td>
+            <td class="num">${trackedLocations}</td><td class="num">${onHand}</td><td class="num">${par}</td>
+            <td class="num">${attentionLocations ? `<span class="gridBadge red">${attentionLocations}</span>` : "0"}</td>
+          </tr>`).join("")
+      : `<tr><td colspan="5" class="inventorySummaryEmpty">${allRows.length ? "No products match that search." : "Loading inventory summary…"}</td></tr>`;
+
+    locationHead.innerHTML = "";
+    locationBody.innerHTML = "";
+    locationFoot.innerHTML = "";
+    if (!rows.length) return;
+
+    const header = document.createElement("tr");
+    const locationLabel = document.createElement("th");
+    locationLabel.className = "stickyLeft";
+    locationLabel.textContent = "Count location";
+    header.appendChild(locationLabel);
+    rows.forEach(({ sku }) => {
+      const th = document.createElement("th");
+      th.innerHTML = `<div style="font-weight:1000">${escapeHtml(sku.sku_name || sku.sku_id)}</div><div class="smallMuted" style="margin-top:4px">${escapeHtml(sku.size || "")}</div>`;
+      header.appendChild(th);
+    });
+    locationHead.appendChild(header);
+
+    stores.forEach(store => {
+      const tr = document.createElement("tr");
+      const storeCell = document.createElement("td");
+      storeCell.className = "stickyLeft";
+      storeCell.innerHTML = `<div class="storeName">${escapeHtml(store.store_name || store.store_id)}</div><div class="storeMeta">${escapeHtml(store.store_id || "")}${store.route ? ` • ${escapeHtml(store.route)}` : ""}</div>`;
+      tr.appendChild(storeCell);
+      rows.forEach(({ index }) => {
+        const cell = store.cells?.[index] || {};
+        const td = document.createElement("td");
+        td.className = "invCell " + (cell.needs_attention ? "needs" : cell.below_par ? "low" : "ok");
+        td.innerHTML = `<div class="main">${Math.max(0, Number(cell.on_hand_units || 0))}</div><div class="sub">PAR ${Math.max(0, Number(cell.par_level_units || 0))}</div>`;
+        tr.appendChild(td);
+      });
+      locationBody.appendChild(tr);
+    });
+
+    const totalRow = document.createElement("tr");
+    const totalLabel = document.createElement("td");
+    totalLabel.className = "stickyLeft";
+    totalLabel.innerHTML = `<div class="storeName">All locations</div><div class="storeMeta">Product totals</div>`;
+    totalRow.appendChild(totalLabel);
+    rows.forEach(({ onHand, par }) => {
+      const td = document.createElement("td");
+      td.className = "invCell ok";
+      td.innerHTML = `<div class="main">${onHand}</div><div class="sub">PAR ${par}</div>`;
+      totalRow.appendChild(td);
+    });
+    locationFoot.appendChild(totalRow);
+  }
+
   async function loadManagerGrid() {
     try {
       const res = await staffApiGet({ action:"managerGrid" });
@@ -6393,6 +6572,7 @@
         skus: res.skus || []
       };
       renderManagerGrid();
+      renderInventorySummary();
     } catch (err) {
       setStatus(err.message || String(err));
     }
@@ -6865,6 +7045,9 @@
   $("filterAll").addEventListener("click", () => setFilter("all"));
   $("countViewBtn").addEventListener("click", () => setActiveView("count").catch(e => setStatus(e.message)));
   $("soldViewBtn").addEventListener("click", () => setActiveView("sold").catch(e => setStatus(e.message)));
+  $("inventorySummaryViewBtn").addEventListener("click", () => setActiveView("summary").catch(e => setStatus(e.message)));
+  $("inventorySummarySearch").addEventListener("input", renderInventorySummary);
+  $("refreshInventorySummaryBtn").addEventListener("click", () => loadManagerGrid());
   $("locShelfBtn").addEventListener("click", () => setLocationMode("shelf"));
   $("locBackBtn").addEventListener("click", () => setLocationMode("back"));
 
