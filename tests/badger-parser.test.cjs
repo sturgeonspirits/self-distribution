@@ -1,4 +1,4 @@
-// Badger parser 2026.10.02.1 tests (2026-10-02). Run: node tests/badger-parser.test.cjs — fakes SpreadsheetApp, Drive, etc.
+// Badger parser 2026.10.03.1 tests (2026-10-03). Run: node tests/badger-parser.test.cjs — fakes SpreadsheetApp, Drive, ScriptApp, etc.
 const fs = require("fs");
 const vm = require("vm");
 const assert = require("assert");
@@ -34,15 +34,15 @@ function makeSheet(name, rows) {
   return s;
 }
 
-function makeEnv({ ssId, sheets = {}, files = [], texts = {}, props = {} }) {
+function makeEnv({ ssId, sheets = {}, files = [], texts = {}, props = {}, noActive = false }) {
   const tabs = {}; Object.entries(sheets).forEach(([n, rows]) => tabs[n] = makeSheet(n, rows));
   const toasts = [];
   const ss = { getId: () => ssId, getSheetByName: n => tabs[n] || null, insertSheet: n => (tabs[n] = makeSheet(n, [])), toast: m => toasts.push(m), setActiveSheet: () => {} };
   const propStore = Object.assign({}, props);
-  const docs = {}; let docSeq = 0; const trashed = [];
+  const docs = {}; let docSeq = 0; const trashed = []; const triggers = [];
   const ctx = {
     console: { log: () => {}, warn: () => {} },
-    SpreadsheetApp: { getActive: () => ss, getUi: () => ({ createMenu: () => { const m = { items: [], addItem: (a, b) => (m.items.push(b), m), addSeparator: () => m, addToUi: () => (ctx.__menu = m) }; return m; } }),
+    SpreadsheetApp: { getActive: () => (noActive ? null : ss), openById: id => (id === ssId ? ss : null), getUi: () => ({ createMenu: () => { const m = { items: [], addItem: (a, b) => (m.items.push(b), m), addSeparator: () => m, addToUi: () => (ctx.__menu = m) }; return m; } }),
       newDataValidation: () => { const b = { requireValueInList: () => b, setAllowInvalid: () => b, build: () => ({}) }; return b; } },
     PropertiesService: { getScriptProperties: () => ({ getProperties: () => Object.assign({}, propStore), getProperty: k => (k in propStore ? propStore[k] : null), setProperty: (k, v) => { propStore[k] = String(v); }, deleteProperty: k => { delete propStore[k]; } }) },
     LockService: { getScriptLock: () => ({ tryLock: () => true, releaseLock: () => {} }) },
@@ -58,14 +58,17 @@ function makeEnv({ ssId, sheets = {}, files = [], texts = {}, props = {} }) {
       update: (_m, id) => trashed.push(id),
     } },
     DocumentApp: { openById: id => ({ getBody: () => ({ getText: () => docs[id] }) }) },
-    ScriptApp: { getOAuthToken: () => "t" },
+    ScriptApp: { getOAuthToken: () => "t",
+      getProjectTriggers: () => triggers.slice(),
+      deleteTrigger: t => { const i = triggers.indexOf(t); if (i >= 0) triggers.splice(i, 1); },
+      newTrigger: handler => { const spec = { handler }; const b = { timeBased: () => b, inTimezone: z => (spec.tz = z, b), atHour: h => (spec.hour = h, b), nearMinute: m => (spec.minute = m, b), everyDays: d => (spec.days = d, b), create: () => { const t = { spec, getHandlerFunction: () => handler }; triggers.push(t); return t; } }; return b; } },
     UrlFetchApp: { fetch: url => { const fileId = decodeURIComponent(url.split("/files/")[1].split("?")[0]); return { getResponseCode: () => 200, getBlob: () => ({ fileId, setName: () => {}, getContentType: () => "application/pdf" }) }; } },
     Utilities: { sleep: () => {}, formatDate: () => "20261002" },
     Session: { getScriptTimeZone: () => "America/Chicago" },
   };
   vm.createContext(ctx);
   vm.runInContext(SRC, ctx);
-  return { ctx, tabs, toasts, propStore, trashed };
+  return { ctx, tabs, toasts, propStore, trashed, triggers };
 }
 
 const invText = (no, cust, lines) => `Badger State Winery Cooperative\nInvoice #: ${no}\nDate: 9/16/2026\nCustomer Name: ${cust}\nAmount Due: $264.00\n` + lines.map(l => `${l.q} 750mL ${l.d} Spirits $22.00 $${(22 * l.q).toFixed(2)}`).join("\n") + "\n" + "x".repeat(60);
@@ -191,6 +194,32 @@ t("reset is refused in production and two-step in staging", () => {
   const s = makeEnv({ ssId: STAGE_ID, sheets: { "TEST - Invoices": [INV_H, ["x", "F", "f", "SS1"]] } });
   s.ctx.resetTestOutput(); assert.strictEqual(s.tabs["TEST - Invoices"].rows[1][3], "SS1", "first run only arms");
   s.ctx.resetTestOutput(); assert.strictEqual(s.tabs["TEST - Invoices"].rows[1][3], "", "second run clears");
+});
+
+t("daily automatic import: on installs exactly one 5:45 Central trigger, off removes it, staging refuses", () => {
+  const e = makeEnv({ ssId: PROD_ID, sheets: prodSheets() });
+  e.ctx.turnOnDailyAutomaticImport(); e.ctx.turnOnDailyAutomaticImport();
+  assert.strictEqual(e.triggers.length, 1, "turning on twice still leaves one trigger");
+  const sp = e.triggers[0].spec;
+  assert.strictEqual(JSON.stringify(sp), JSON.stringify({ handler: "scheduledInvoiceImport", tz: "America/Chicago", hour: 5, minute: 45, days: 1 }));
+  e.ctx.showParserStatus(); assert.ok(/daily automatic import: ON/.test(e.toasts[e.toasts.length - 1]));
+  e.ctx.turnOffAutomaticImport(); assert.strictEqual(e.triggers.length, 0);
+  e.ctx.onOpen(); assert.ok(e.ctx.__menu.items.includes("turnOnDailyAutomaticImport"));
+  const s = makeEnv({ ssId: STAGE_ID });
+  assert.throws(() => s.ctx.turnOnDailyAutomaticImport(), /only for the production tracker/);
+  s.ctx.onOpen(); assert.ok(!s.ctx.__menu.items.includes("turnOnDailyAutomaticImport"));
+});
+
+t("scheduled run with no active spreadsheet opens the production tracker and imports", () => {
+  const e = makeEnv({ ssId: PROD_ID, sheets: prodSheets(), noActive: true, files: [pdf("F9", "0165.pdf")], texts: { F9: invText("SS0165", "Acorn Ridge", [{ q: 6, d: "Gin" }]) } });
+  const r = e.ctx.scheduledInvoiceImport();
+  assert.strictEqual(r.environment, "PRODUCTION"); assert.strictEqual(r.imported, 1);
+  assert.strictEqual(e.tabs["Invoices"].rows[1][3], "SS0165");
+});
+
+t("scheduled run refuses in staging", () => {
+  const s = makeEnv({ ssId: STAGE_ID });
+  assert.throws(() => s.ctx.scheduledInvoiceImport(), /not the production tracker/);
 });
 
 t("no Supabase code and no pop-up dialogs remain", () => {

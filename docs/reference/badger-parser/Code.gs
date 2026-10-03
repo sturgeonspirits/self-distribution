@@ -1,9 +1,18 @@
 /**
  * STURGEON SPIRITS — BADGER INVOICE PARSER
  *
- * VERSION: 2026.10.02.1
+ * VERSION: 2026.10.03.1
  *
- * CHANGES IN THIS VERSION (from 2026.09.15.5-TEST)
+ * CHANGES IN THIS VERSION (2026.10.03.1, from 2026.10.02.1)
+ * - Daily automatic import (production only). Menu items "Turn On Daily
+ *   Automatic Import" and "Turn Off Automatic Import" add or remove one
+ *   time-driven trigger that runs scheduledInvoiceImport() once a day at about
+ *   5:45 am Central, before the Distribution Hub's 6:10 am Badger status sync.
+ *   A scheduled run does exactly what the menu import does; if it fails, Google
+ *   emails the script owner its standard trigger-failure notice.
+ * - Parser Status reports whether the daily import is on.
+ *
+ * CHANGES IN 2026.10.02.1 (from 2026.09.15.5-TEST)
  * - One file for both trackers. The parser looks at which spreadsheet it is
  *   running in: the production Badger Invoice Tracker uses the live Badger
  *   invoice folder and the real tabs; the staging tracker uses the private
@@ -38,7 +47,7 @@
  * - Requires the Drive advanced service (v3), as before.
  */
 
-const BADGER_PARSER_VERSION = "2026.10.02.1";
+const BADGER_PARSER_VERSION = "2026.10.03.1";
 
 const PARSER_PRODUCTION_FOLDER_ID = "1ccOfQpk69SLyMYskD2srlNqHCGm1VBJ5";
 
@@ -94,7 +103,12 @@ const PARSER_SETTINGS = Object.freeze({
   RESET_CONFIRM_WINDOW_MS: 2 * 60 * 1000,
   LEGACY_PROPERTY_PREFIXES: ["processed_pdf_", "ocr_count_"],
   RETIRED_PROPERTY_KEYS: ["SUPABASE_URL", "SUPABASE_KEY"],
-  PRODUCT_SIMILARITY_THRESHOLD: 0.92
+  PRODUCT_SIMILARITY_THRESHOLD: 0.92,
+  // 2026.10.03.1 — daily automatic import (production only)
+  AUTO_IMPORT_HANDLER: "scheduledInvoiceImport",
+  AUTO_IMPORT_HOUR: 5,
+  AUTO_IMPORT_MINUTE: 45,
+  AUTO_IMPORT_TIMEZONE: "America/Chicago"
 });
 
 const PARSER_INVOICE_HEADERS = Object.freeze([
@@ -118,10 +132,13 @@ let PARSER_ENV_CACHE_ = null;
 
 /* -------------------- ENVIRONMENT -------------------- */
 
-function parserEnv_() {
+function parserEnv_(fallbackSpreadsheetId) {
   if (PARSER_ENV_CACHE_) return PARSER_ENV_CACHE_;
 
-  const ss = SpreadsheetApp.getActive();
+  // 2026.10.03.1 — a time-driven run may have no active spreadsheet; the scheduled
+  // handler passes the production tracker ID so it can open it directly.
+  let ss = SpreadsheetApp.getActive();
+  if (!ss && fallbackSpreadsheetId) ss = SpreadsheetApp.openById(fallbackSpreadsheetId);
   if (!ss) throw new Error("Run the parser from the Badger Invoice Tracker spreadsheet.");
 
   const id = ss.getId();
@@ -167,6 +184,12 @@ function onOpen() {
       .addItem("Repair Missing Customer Names", "repairMissingCustomerNames")
       .addItem("Parser Status", "showParserStatus")
       .addItem("One-time: Move Old Parser Settings", "migrateLegacyParserSettings");
+    if (env.name === "PRODUCTION") {
+      menu
+        .addSeparator()
+        .addItem("Turn On Daily Automatic Import (about 5:45 am)", "turnOnDailyAutomaticImport")
+        .addItem("Turn Off Automatic Import", "turnOffAutomaticImport");
+    }
     if (env.allowReset) {
       menu.addSeparator().addItem("RESET TEST OUTPUT (run twice)", "resetTestOutput");
     }
@@ -194,10 +217,56 @@ function showParserStatus() {
   return notify_(
     `Version ${BADGER_PARSER_VERSION} · ${env.name} (${env.label}) · reads the ${env.folderLabel} · ` +
     `writes "${env.sheets.invoices}" and "${env.sheets.lines}" · Parser State rows: ${stateRows} · ` +
-    `OCR today: ${ocr.count}/${PARSER_SETTINGS.OCR_DAILY_LIMIT} · old processed_pdf_/ocr_count_ settings left: ${legacyCount}` +
+    `OCR today: ${ocr.count}/${PARSER_SETTINGS.OCR_DAILY_LIMIT} · old processed_pdf_/ocr_count_ settings left: ${legacyCount} · ` +
+    `daily automatic import: ${dailyImportTriggers_().length ? "ON (about 5:45 am)" : "off"}` +
     (retired.length ? ` · retired settings still present: ${retired.join(", ")}` : ""),
     "Parser Status"
   );
+}
+
+/* -------------------- DAILY AUTOMATIC IMPORT (2026.10.03.1) -------------------- */
+
+function dailyImportTriggers_() {
+  return ScriptApp.getProjectTriggers().filter(
+    (t) => t.getHandlerFunction() === PARSER_SETTINGS.AUTO_IMPORT_HANDLER
+  );
+}
+
+/** Production only. Replaces any existing daily-import trigger with exactly one. */
+function turnOnDailyAutomaticImport() {
+  const env = parserEnv_();
+  if (env.name !== "PRODUCTION") {
+    throw new Error("The daily automatic import is only for the production tracker.");
+  }
+  dailyImportTriggers_().forEach((t) => ScriptApp.deleteTrigger(t));
+  ScriptApp.newTrigger(PARSER_SETTINGS.AUTO_IMPORT_HANDLER)
+    .timeBased()
+    .inTimezone(PARSER_SETTINGS.AUTO_IMPORT_TIMEZONE)
+    .atHour(PARSER_SETTINGS.AUTO_IMPORT_HOUR)
+    .nearMinute(PARSER_SETTINGS.AUTO_IMPORT_MINUTE)
+    .everyDays(1)
+    .create();
+  return notify_("Daily automatic import is ON. It runs once a day at about 5:45 am and imports any new Badger invoice PDFs. Results appear in Parser State and Import Errors.", "Automatic Import");
+}
+
+function turnOffAutomaticImport() {
+  const removed = dailyImportTriggers_();
+  removed.forEach((t) => ScriptApp.deleteTrigger(t));
+  return notify_(removed.length ? "Daily automatic import is OFF." : "Daily automatic import was already off.", "Automatic Import");
+}
+
+/**
+ * Called by the daily trigger. Same import as the menu item. Errors are re-thrown so
+ * Google sends the owner its standard trigger-failure email.
+ */
+function scheduledInvoiceImport() {
+  const env = parserEnv_(Object.keys(PARSER_ENVIRONMENTS).find((id) => PARSER_ENVIRONMENTS[id].name === "PRODUCTION"));
+  if (env.name !== "PRODUCTION") {
+    throw new Error("Scheduled import refused: this is not the production tracker. Turn the trigger off here.");
+  }
+  const result = importInvoicePdfs();
+  console.log(`Scheduled import result: ${JSON.stringify(result)}`);
+  return result;
 }
 
 /* -------------------- MAIN IMPORT -------------------- */
