@@ -1,148 +1,251 @@
 /**
- * STURGEON SPIRITS — INTEGRATED MASTER SCRIPT
+ * STURGEON SPIRITS — BADGER INVOICE PARSER
  *
- * VERSION: 2026.09.15.5-TEST
+ * VERSION: 2026.10.02.1
  *
- * CHANGES IN THIS VERSION
- * - Bound this test build to the staging Badger Tracker spreadsheet.
- * - Bound PDF discovery to the private staging fixture folder.
- * - Isolated all parser output in TEST-prefixed sheet tabs.
- * - Disabled Supabase and retail-map writes in the test build.
- * - Added runtime checks that stop execution outside the staging spreadsheet.
+ * CHANGES IN THIS VERSION (from 2026.09.15.5-TEST)
+ * - One file for both trackers. The parser looks at which spreadsheet it is
+ *   running in: the production Badger Invoice Tracker uses the live Badger
+ *   invoice folder and the real tabs; the staging tracker uses the private
+ *   fixture folder and the TEST - tabs; any other spreadsheet stops.
+ * - Removed the Supabase retail-map sync (masterSyncDistilleryMap) and every
+ *   Supabase setting. The Distribution Hub does not use Supabase.
+ * - Saves in an order that survives a failure part-way through: invoice lines
+ *   first, then the invoice row, then the Parser State row. A retry never
+ *   loses an invoice and never doubles its lines.
+ * - Reads only PDFs directly inside the Badger folder (subfolders are not
+ *   scanned) and reports any non-PDF files it ignored, such as a saved .html
+ *   page, so a wrongly saved invoice is visible instead of silently skipped.
+ * - Stops cleanly when the daily OCR limit is reached or the run nears the
+ *   Apps Script time limit, instead of logging an error for every file left.
+ * - Production never rewrites header rows: a renamed or moved column stops
+ *   the import with a message. Checkboxes and the Yes/No/N/A list are applied
+ *   only to newly added invoice rows, never to rows staff have edited.
+ * - New "Move old parser settings" utility: copies every legacy
+ *   processed_pdf_ marker into Parser State, then deletes the processed_pdf_,
+ *   ocr_count_, SUPABASE_URL and SUPABASE_KEY Script Properties.
+ * - No pop-up dialogs anywhere (toasts and the execution log only), so every
+ *   function is safe to run from the menu or from the Apps Script editor.
+ * - The staging reset is two-step (run twice within 2 minutes) and is refused
+ *   in production. The one-off January 2026 diagnostic was removed.
  *
  * PASTE INSTRUCTIONS
- * - This is the complete Invoice Parser.gs source, not a partial snippet.
- * - Replace Invoice Parser.gs only in the STAGING Badger Tracker.
- * - Keep credentials in Script Properties; do not paste supakeys.gs here.
- *
- * Features
- * - Recursive PDF import from Drive with OCR fallback and daily limits
- * - Robust invoice parsing and customer-name extraction
- * - Invoice lines using layout: C=Qty, D=Vol, E=Product
-
-
- * - Monthly summary by Product and Spirit Category
- * - Previous month summary by Product and Category
- * - Supabase retail map sync
- * - Diagnostics and data repair utilities
- *
- * Notes
- * - Repository reference copy: Supabase credential redacted.
- * - Store live credentials in Script Properties.
+ * - This is the complete parser file, not a snippet. Replace the whole
+ *   contents of the parser file (Invoice Parser.gs) with this file.
+ * - The Apps Script project should contain only this file and appsscript.json.
+ *   Delete supakeys.gs. Another file defining onOpen or the same function
+ *   names would silently override these.
+ * - Requires the Drive advanced service (v3), as before.
  */
 
-const BADGER_PARSER_VERSION = "2026.09.15.5-TEST";
+const BADGER_PARSER_VERSION = "2026.10.02.1";
 
-const CONFIG = Object.freeze({
-  ENVIRONMENT: "STAGING_TEST",
-  EXPECTED_SPREADSHEET_ID: "10KM-L-iAXJ4WQ1HfLWWoGkINsi9tEvVs6J5XiHBsMIQ",
-  FOLDER_ID: "1_F2aeV7p3FvxPKtY8sONJyUKJoRK4foq",
-  BLOCKED_PRODUCTION_FOLDER_ID: "1ccOfQpk69SLyMYskD2srlNqHCGm1VBJ5",
-  ALLOW_EXTERNAL_WRITES: false,
+const PARSER_PRODUCTION_FOLDER_ID = "1ccOfQpk69SLyMYskD2srlNqHCGm1VBJ5";
 
-  // Only actual PDF file IDs belong here.
-  EXTRA_FILE_IDS: [],
+const PARSER_ENVIRONMENTS = Object.freeze({
+  // Distribution Hub - Badger Invoice Tracker (live)
+  "1nmHzrZLB2Kv-bLf3z0GBXbkO0XqUL-ETCxUlOlidSEk": Object.freeze({
+    name: "PRODUCTION",
+    label: "Distribution Hub - Badger Invoice Tracker",
+    folderId: PARSER_PRODUCTION_FOLDER_ID,
+    folderLabel: "Badger invoice folder (Invoices)",
+    menuTitle: "Sturgeon Invoice Parser",
+    overwriteHeaders: false,
+    allowReset: false,
+    sheets: Object.freeze({
+      invoices: "Invoices",
+      lines: "Invoice Lines",
+      summary: "Monthly Summary",
+      errors: "Import Errors",
+      previousMonth: "Previous Month",
+      state: "Parser State"
+    })
+  }),
+  // STAGING - Badger Invoice Tracker - 2026-09-15
+  "10KM-L-iAXJ4WQ1HfLWWoGkINsi9tEvVs6J5XiHBsMIQ": Object.freeze({
+    name: "STAGING",
+    label: "STAGING - Badger Invoice Tracker",
+    folderId: "1_F2aeV7p3FvxPKtY8sONJyUKJoRK4foq",
+    folderLabel: "private test fixture folder",
+    menuTitle: "Sturgeon TEST Invoice Parser",
+    overwriteHeaders: true,
+    allowReset: true,
+    sheets: Object.freeze({
+      invoices: "TEST - Invoices",
+      lines: "TEST - Invoice Lines",
+      summary: "TEST - Monthly Summary",
+      errors: "TEST - Import Errors",
+      previousMonth: "TEST - Previous Month",
+      state: "TEST - Parser State"
+    })
+  })
+});
 
-  INVOICES_SHEET: "TEST - Invoices",
-  LINES_SHEET: "TEST - Invoice Lines",
-  SUMMARY_SHEET: "TEST - Monthly Summary",
-  ERRORS_SHEET: "TEST - Import Errors",
-  PREVIOUS_MONTH_SHEET: "TEST - Previous Month",
-  DIAGNOSTICS_SHEET: "TEST - Diagnostics",
-  LOCATION_DIRECTORY_SHEET: "Location_Directory",
-  STATE_SHEET: "TEST - Parser State",
-
-  SUPABASE_URL_PROPERTY: "SUPABASE_URL",
-  SUPABASE_KEY_PROPERTY: "SUPABASE_KEY",
-  OCR_DAILY_STATE_PROPERTY: "ocr_daily_state",
-
+const PARSER_SETTINGS = Object.freeze({
   OCR_LANGUAGE: "en",
   TRASH_TEMP_DOC: true,
   MAX_FILES_PER_RUN: 25,
+  MAX_RUN_MS: 4.5 * 60 * 1000, // stop starting new files before Apps Script's 6-minute limit
   OCR_MAX_RETRIES: 6,
   OCR_INITIAL_BACKOFF_MS: 1500,
   OCR_DAILY_LIMIT: 60,
-
+  OCR_DAILY_STATE_PROPERTY: "ocr_daily_state",
+  RESET_ARMED_PROPERTY: "parser_reset_armed_at",
+  RESET_CONFIRM_WINDOW_MS: 2 * 60 * 1000,
+  LEGACY_PROPERTY_PREFIXES: ["processed_pdf_", "ocr_count_"],
+  RETIRED_PROPERTY_KEYS: ["SUPABASE_URL", "SUPABASE_KEY"],
   PRODUCT_SIMILARITY_THRESHOLD: 0.92
 });
+
+const PARSER_INVOICE_HEADERS = Object.freeze([
+  "Processed At", "PDF File Id", "PDF File Name", "Invoice #", "Invoice Date",
+  "Customer Name", "Customer Address", "Customer City/State/Zip", "Reseller #",
+  "Winery Name", "Phone", "Order #", "Amount Due", "Terms", "Delivered",
+  "Paid to Me", "Submitted"
+]);
+const PARSER_LINE_HEADERS = Object.freeze([
+  "Invoice #", "Customer Name", "Qty", "Volume", "Description",
+  "Beverage Class", "Unit Price", "Line Total"
+]);
+const PARSER_ERROR_HEADERS = Object.freeze(["Timestamp", "File Id", "File Name", "Stage", "Error", "Text Snippet"]);
+const PARSER_STATE_HEADERS = Object.freeze(["Updated At", "File Id", "File Name", "Status", "Invoice #", "Detail"]);
+
+// Parser State statuses that mean "do not read this file again".
+// To re-read a file, change its latest Status cell to RETRY.
+const PARSER_TERMINAL_STATUSES = Object.freeze(["IMPORTED", "DUPLICATE", "REVIEW", "IGNORED", "LEGACY_PROCESSED"]);
+
+let PARSER_ENV_CACHE_ = null;
+
+/* -------------------- ENVIRONMENT -------------------- */
+
+function parserEnv_() {
+  if (PARSER_ENV_CACHE_) return PARSER_ENV_CACHE_;
+
+  const ss = SpreadsheetApp.getActive();
+  if (!ss) throw new Error("Run the parser from the Badger Invoice Tracker spreadsheet.");
+
+  const id = ss.getId();
+  const env = PARSER_ENVIRONMENTS[id];
+  if (!env) {
+    throw new Error(`Safety stop: spreadsheet ${id} is not a known Badger Invoice Tracker. This parser runs only in the production or staging tracker.`);
+  }
+  if (env.name !== "PRODUCTION" && env.folderId === PARSER_PRODUCTION_FOLDER_ID) {
+    throw new Error("Safety stop: the staging tracker cannot read the production Badger folder.");
+  }
+
+  PARSER_ENV_CACHE_ = Object.freeze(Object.assign({ spreadsheetId: id, ss: ss }, env));
+  return PARSER_ENV_CACHE_;
+}
+
+function notify_(message, title) {
+  console.log(`[${title || "Invoice Parser"}] ${message}`);
+  try {
+    SpreadsheetApp.getActive().toast(String(message), title || "Invoice Parser", 10);
+  } catch (e) {
+    // No open spreadsheet UI (for example a time-driven run); the log line is enough.
+  }
+  return message;
+}
 
 /* -------------------- MENU -------------------- */
 
 function onOpen() {
-  SpreadsheetApp.getUi()
-    .createMenu("Sturgeon TEST Operations")
-    .addItem("Verify Test Configuration", "showTestConfiguration")
-    .addItem("1. Import Test PDF Batch", "importNextBatch_")
-    .addItem("2. Rebuild Test Monthly Summary", "rebuildMonthlySummary_")
-    .addItem("3. Rebuild Test Previous Month", "rebuildPreviousMonthSummary_")
-    .addSeparator()
-    .addItem("Repair Test Missing Names", "repairMissingCustomerNames")
-    .addItem("RESET TEST OUTPUT", "resetEverything_")
-    .addToUi();
+  let env = null;
+  try {
+    env = parserEnv_();
+  } catch (e) {
+    // Unknown spreadsheet: show only the status item so the reason is visible.
+  }
+
+  const menu = SpreadsheetApp.getUi().createMenu(env ? env.menuTitle : "Invoice Parser (not configured)");
+  if (env) {
+    menu
+      .addItem("1. Import New Invoice PDFs", "importInvoicePdfs")
+      .addItem("2. Rebuild Monthly Summary", "rebuildMonthlySummary")
+      .addItem("3. Rebuild Previous Month", "rebuildPreviousMonthSummary")
+      .addSeparator()
+      .addItem("Repair Missing Customer Names", "repairMissingCustomerNames")
+      .addItem("Parser Status", "showParserStatus")
+      .addItem("One-time: Move Old Parser Settings", "migrateLegacyParserSettings");
+    if (env.allowReset) {
+      menu.addSeparator().addItem("RESET TEST OUTPUT (run twice)", "resetTestOutput");
+    }
+  } else {
+    menu.addItem("Parser Status", "showParserStatus");
+  }
+  menu.addToUi();
 }
 
-function showTestConfiguration() {
-  assertStagingEnvironment_();
-  SpreadsheetApp.getUi().alert(
-    "Staging configuration verified",
-    `Version: ${BADGER_PARSER_VERSION}\nSpreadsheet: STAGING Badger Invoice Tracker\nPDF source: private fixture folder\nOutput: TEST-prefixed tabs\nExternal writes: disabled`,
-    SpreadsheetApp.getUi().ButtonSet.OK
+function showParserStatus() {
+  let env;
+  try {
+    env = parserEnv_();
+  } catch (e) {
+    return notify_(`${String(e.message || e)} Version ${BADGER_PARSER_VERSION}.`, "Parser Status");
+  }
+
+  const props = PropertiesService.getScriptProperties().getProperties();
+  const legacyCount = Object.keys(props).filter(isLegacyParserProperty_).length;
+  const retired = PARSER_SETTINGS.RETIRED_PROPERTY_KEYS.filter((k) => k in props);
+  const ocr = readDailyOcrState_(PropertiesService.getScriptProperties());
+  const stateSheet = env.ss.getSheetByName(env.sheets.state);
+  const stateRows = stateSheet ? Math.max(stateSheet.getLastRow() - 1, 0) : 0;
+
+  return notify_(
+    `Version ${BADGER_PARSER_VERSION} · ${env.name} (${env.label}) · reads the ${env.folderLabel} · ` +
+    `writes "${env.sheets.invoices}" and "${env.sheets.lines}" · Parser State rows: ${stateRows} · ` +
+    `OCR today: ${ocr.count}/${PARSER_SETTINGS.OCR_DAILY_LIMIT} · old processed_pdf_/ocr_count_ settings left: ${legacyCount}` +
+    (retired.length ? ` · retired settings still present: ${retired.join(", ")}` : ""),
+    "Parser Status"
   );
-}
-
-function assertStagingEnvironment_() {
-  const ss = SpreadsheetApp.getActive();
-
-  if (CONFIG.ENVIRONMENT !== "STAGING_TEST") {
-    throw new Error("This build is not configured as STAGING_TEST.");
-  }
-
-  if (ss.getId() !== CONFIG.EXPECTED_SPREADSHEET_ID) {
-    throw new Error(
-      `Safety stop: this test build may run only in spreadsheet ${CONFIG.EXPECTED_SPREADSHEET_ID}.`
-    );
-  }
-
-  if (!CONFIG.FOLDER_ID || CONFIG.FOLDER_ID === CONFIG.BLOCKED_PRODUCTION_FOLDER_ID) {
-    throw new Error("Safety stop: the test build cannot read the production PDF folder.");
-  }
-
-  return ss;
 }
 
 /* -------------------- MAIN IMPORT -------------------- */
 
+/** Kept so any old menu or trigger that still calls the previous name keeps working. */
 function importNextBatch_() {
+  return importInvoicePdfs();
+}
+
+function importInvoicePdfs() {
   return withScriptLock_(function () {
-    assertStagingEnvironment_();
+    const env = parserEnv_();
+    const startedAt = Date.now();
     ensureSheetsAndHeaders_();
 
-    if (!CONFIG.FOLDER_ID || String(CONFIG.FOLDER_ID).indexOf("PASTE_REAL") >= 0) {
-      throw new Error("Set CONFIG.FOLDER_ID to your real Drive folder ID.");
-    }
-
-    const candidates = getAllPdfCandidatesRecursive_(CONFIG.FOLDER_ID, CONFIG.EXTRA_FILE_IDS);
+    const scan = listFolderCandidates_(env.folderId);
     const existingInvoiceNos = buildExistingInvoiceIndex_();
     const processedFileIds = buildProcessedFileIndex_();
+    const invoicesWithLines = buildInvoicesWithLinesIndex_();
 
     let imported = 0;
     let attempted = 0;
     let skippedProcessed = 0;
     let skippedDuplicateInvoice = 0;
+    let review = 0;
+    let retryable = 0;
+    let linesAlreadyPresent = 0;
+    let stoppedReason = "";
 
     const invoiceRows = [];
     const lineRows = [];
     const parserStateRows = [];
 
-    for (const f of candidates) {
-      if (attempted >= CONFIG.MAX_FILES_PER_RUN) break;
-
+    for (const f of scan.pdfs) {
       const fileId = f.id;
       const fileName = f.name || getDriveFileName_(fileId);
 
       if (processedFileIds.has(fileId)) {
         skippedProcessed++;
         continue;
+      }
+      if (attempted >= PARSER_SETTINGS.MAX_FILES_PER_RUN) {
+        stoppedReason = `Stopped after ${PARSER_SETTINGS.MAX_FILES_PER_RUN} files; run again for the rest.`;
+        break;
+      }
+      if (Date.now() - startedAt > PARSER_SETTINGS.MAX_RUN_MS) {
+        stoppedReason = "Stopped before the Apps Script time limit; run again for the rest.";
+        break;
       }
 
       attempted++;
@@ -157,67 +260,93 @@ function importNextBatch_() {
 
         if (!parsed.invoiceNumber) {
           logError_(fileId, fileName, "parse", "Invoice number (SS####) not found", text);
-          parserStateRows.push(
-            buildParserStateRow_(fileId, fileName, "REVIEW", "", "Invoice number (SS####) not found")
-          );
+          parserStateRows.push(buildParserStateRow_(fileId, fileName, "REVIEW", "", "Invoice number (SS####) not found. Not a Badger invoice? Move it out of the folder, or set Status to RETRY to read it again."));
           processedFileIds.add(fileId);
+          review++;
           continue;
         }
 
         const invNoNorm = normalizeInvoiceNo_(parsed.invoiceNumber);
         if (existingInvoiceNos.has(invNoNorm)) {
-          skippedDuplicateInvoice++;
-          parserStateRows.push(
-            buildParserStateRow_(fileId, fileName, "DUPLICATE", invNoNorm, "Invoice number already imported")
-          );
+          parserStateRows.push(buildParserStateRow_(fileId, fileName, "DUPLICATE", invNoNorm, "Invoice number already imported"));
           processedFileIds.add(fileId);
+          skippedDuplicateInvoice++;
           continue;
         }
 
         const rows = buildInvoiceWriteRows_({ id: fileId, name: fileName }, parsed);
         invoiceRows.push(rows.invoiceRow);
-        if (rows.lineRows.length) {
+        if (invoicesWithLines.has(invNoNorm)) {
+          // A previous run saved this invoice's lines but stopped before saving the
+          // invoice row. Keep those lines; do not add them a second time.
+          linesAlreadyPresent++;
+        } else if (rows.lineRows.length) {
           Array.prototype.push.apply(lineRows, rows.lineRows);
+          invoicesWithLines.add(invNoNorm);
         }
 
         existingInvoiceNos.add(invNoNorm);
-        parserStateRows.push(
-          buildParserStateRow_(fileId, fileName, "IMPORTED", invNoNorm, "")
-        );
+        parserStateRows.push(buildParserStateRow_(fileId, fileName, "IMPORTED", invNoNorm, `${rows.lineRows.length} line(s)`));
         processedFileIds.add(fileId);
         imported++;
       } catch (err) {
         const errorMessage = String(err && err.message ? err.message : err);
-        logError_(
-          fileId,
-          fileName,
-          "import",
-          errorMessage,
-          ""
-        );
-        parserStateRows.push(
-          buildParserStateRow_(fileId, fileName, "RETRYABLE_ERROR", "", errorMessage)
-        );
+        if (errorMessage.indexOf("Daily OCR limit reached") === 0) {
+          attempted--;
+          stoppedReason = `${errorMessage} The remaining files will be read on a later run.`;
+          break;
+        }
+        logError_(fileId, fileName, "import", errorMessage, "");
+        parserStateRows.push(buildParserStateRow_(fileId, fileName, "RETRYABLE_ERROR", "", errorMessage));
+        retryable++;
       }
     }
 
-    const ss = SpreadsheetApp.getActive();
-    const inv = ss.getSheetByName(CONFIG.INVOICES_SHEET);
-    const lines = ss.getSheetByName(CONFIG.LINES_SHEET);
-    const parserState = ss.getSheetByName(CONFIG.STATE_SHEET);
+    // Save order matters: lines, then invoices, then Parser State.
+    // - If the line write fails, nothing was saved and the next run starts clean.
+    // - If the invoice write fails, the next run re-reads the PDF, finds its lines
+    //   already present, and adds only the invoice row.
+    // - If the Parser State write fails, the invoice's PDF File Id in the Invoices tab
+    //   still marks the file as done.
+    const lines = env.ss.getSheetByName(env.sheets.lines);
+    const inv = env.ss.getSheetByName(env.sheets.invoices);
+    const parserState = env.ss.getSheetByName(env.sheets.state);
 
-    appendRows_(inv, invoiceRows);
     appendRows_(lines, lineRows);
+    const firstNewInvoiceRow = inv.getLastRow() + 1;
+    appendRows_(inv, invoiceRows);
+    applyInvoiceStatusValidations_(firstNewInvoiceRow, invoiceRows.length);
     appendRows_(parserState, parserStateRows);
 
-    applyInvoiceStatusValidations_();
-    rebuildMonthlySummary_();
+    if (imported) rebuildMonthlySummaryCore_();
 
-    SpreadsheetApp.getActive().toast(
-      `Imported ${imported}. Attempted ${attempted}. Skipped processed ${skippedProcessed}. Skipped duplicate invoice# ${skippedDuplicateInvoice}.`,
-      "Invoice Import",
-      10
-    );
+    const parts = [
+      `Imported ${imported}.`,
+      review ? `${review} need review (no SS invoice number).` : "",
+      retryable ? `${retryable} failed and will be retried next run (see ${env.sheets.errors}).` : "",
+      skippedDuplicateInvoice ? `${skippedDuplicateInvoice} duplicate invoice number(s) skipped.` : "",
+      `${skippedProcessed} already done.`,
+      linesAlreadyPresent ? `${linesAlreadyPresent} invoice(s) completed from an earlier interrupted run.` : "",
+      scan.ignored.length ? `Ignored ${scan.ignored.length} non-PDF file(s): ${scan.ignored.slice(0, 5).join(", ")}${scan.ignored.length > 5 ? ", …" : ""}. Save invoices as PDF.` : "",
+      scan.subfolders.length ? `${scan.subfolders.length} subfolder(s) not scanned: ${scan.subfolders.slice(0, 3).join(", ")}.` : "",
+      stoppedReason
+    ].filter(Boolean);
+
+    notify_(parts.join(" "), env.name === "PRODUCTION" ? "Invoice Import" : "TEST Invoice Import");
+
+    return {
+      environment: env.name,
+      imported: imported,
+      attempted: attempted,
+      review: review,
+      retryable: retryable,
+      skippedProcessed: skippedProcessed,
+      skippedDuplicateInvoice: skippedDuplicateInvoice,
+      linesAlreadyPresent: linesAlreadyPresent,
+      ignoredNonPdf: scan.ignored,
+      subfolders: scan.subfolders,
+      stoppedReason: stoppedReason
+    };
   });
 }
 
@@ -257,115 +386,6 @@ function buildInvoiceWriteRows_(fileMeta, parsed) {
   ]);
 
   return { invoiceRow, lineRows };
-}
-
-/* -------------------- SUPABASE MAP SYNC -------------------- */
-
-function masterSyncDistilleryMap() {
-  assertStagingEnvironment_();
-  if (!CONFIG.ALLOW_EXTERNAL_WRITES) {
-    throw new Error("External Supabase and retail-map writes are disabled in the staging test build.");
-  }
-
-  return withScriptLock_(function () {
-    const ss = SpreadsheetApp.getActive();
-    const ui = SpreadsheetApp.getUi();
-
-    const dirSheet = ss.getSheetByName(CONFIG.LOCATION_DIRECTORY_SHEET);
-    if (!dirSheet) return ui.alert(`Error: '${CONFIG.LOCATION_DIRECTORY_SHEET}' tab not found.`);
-
-    const invoiceSheet = ss.getSheetByName(CONFIG.LINES_SHEET);
-    if (!invoiceSheet) return ui.alert(`Error: '${CONFIG.LINES_SHEET}' tab not found.`);
-
-    const dirData = dirSheet.getDataRange().getValues();
-    const invoiceData = invoiceSheet.getDataRange().getValues();
-
-    const spiritsMap = {};
-
-    for (let i = 1; i < invoiceData.length; i++) {
-      const customer = String(invoiceData[i][1] || "").trim();
-      const rawProduct = String(invoiceData[i][4] || "").trim();
-      if (!customer || !rawProduct) continue;
-
-      let product = rawProduct
-        .split(" - ")[0]
-        .replace(/\d+(\.\d+)?\s*(ml|l|oz|cs|case)\b/gi, "")
-        .replace(/\s+/g, " ")
-        .trim();
-
-      product = titleCase_(product.toLowerCase());
-      if (!product) continue;
-
-      if (!spiritsMap[customer]) spiritsMap[customer] = new Set();
-      spiritsMap[customer].add(product);
-    }
-
-    const payload = [];
-
-    for (let j = 1; j < dirData.length; j++) {
-      const invoiceName = String(dirData[j][0] || "").trim();
-      const publicName = String(dirData[j][1] || "").trim();
-      const showOnMap = normalizeBool_(dirData[j][6]);
-
-      if (!showOnMap) continue;
-
-      let matchedSpirits = [];
-
-      if (
-        invoiceName === "Sturgeon Spirits" ||
-        publicName === "Sturgeon Spirits Tasting Room"
-      ) {
-        matchedSpirits = ["Full Product Lineup", "Tasting Room Exclusives"];
-      } else if (spiritsMap[invoiceName]) {
-        matchedSpirits = Array.from(spiritsMap[invoiceName]).sort();
-      } else if (spiritsMap[publicName]) {
-        matchedSpirits = Array.from(spiritsMap[publicName]).sort();
-      }
-
-      payload.push({
-        client_name: invoiceName,
-        public_name: publicName,
-        address: dirData[j][2] || "",
-        city: dirData[j][3] || "",
-        category: dirData[j][4] || "",
-        hours: dirData[j][5] || "",
-        show_on_map: true,
-        latitude: dirData[j][7] || null,
-        longitude: dirData[j][8] || null,
-        spirits_available: matchedSpirits.join(", ")
-      });
-    }
-
-    if (!payload.length) {
-      ui.alert("Nothing to sync. No rows marked show_on_map.");
-      return;
-    }
-
-    const supabaseUrl = getRequiredScriptProperty_(CONFIG.SUPABASE_URL_PROPERTY);
-    const supabaseKey = getRequiredScriptProperty_(CONFIG.SUPABASE_KEY_PROPERTY);
-
-    const response = UrlFetchApp.fetch(
-      `${supabaseUrl}/rest/v1/retail_locations?on_conflict=client_name`,
-      {
-        method: "post",
-        contentType: "application/json",
-        headers: {
-          apikey: supabaseKey,
-          Authorization: "Bearer " + supabaseKey,
-          Prefer: "resolution=merge-duplicates"
-        },
-        payload: JSON.stringify(payload),
-        muteHttpExceptions: true
-      }
-    );
-
-    const code = response.getResponseCode();
-    if (code >= 200 && code < 300) {
-      ui.alert(`Success! Synced ${payload.length} locations.`);
-    } else {
-      ui.alert(`Sync Error (${code}): ${response.getContentText()}`);
-    }
-  });
 }
 
 /* -------------------- PARSING -------------------- */
@@ -490,19 +510,27 @@ function categorizeProduct_(rawName) {
 
 /* -------------------- MONTHLY SUMMARY -------------------- */
 
-function rebuildMonthlySummary_() {
-  assertStagingEnvironment_();
-  const ss = SpreadsheetApp.getActive();
-  const inv = ss.getSheetByName(CONFIG.INVOICES_SHEET);
-  const lines = ss.getSheetByName(CONFIG.LINES_SHEET);
-  let sum = ss.getSheetByName(CONFIG.SUMMARY_SHEET);
-  if (!sum) sum = ss.insertSheet(CONFIG.SUMMARY_SHEET);
+function rebuildMonthlySummary() {
+  return withScriptLock_(function () {
+    const result = rebuildMonthlySummaryCore_();
+    notify_(result, "Monthly Summary");
+    return result;
+  });
+}
+
+function rebuildMonthlySummaryCore_() {
+  const env = parserEnv_();
+  const ss = env.ss;
+  const inv = ss.getSheetByName(env.sheets.invoices);
+  const lines = ss.getSheetByName(env.sheets.lines);
+  let sum = ss.getSheetByName(env.sheets.summary);
+  if (!sum) sum = ss.insertSheet(env.sheets.summary);
 
   fullClearSheet_(sum);
 
   if (!inv || !lines) {
     sum.getRange(1, 1).setValue("Required source sheets not found.");
-    return;
+    return "Required source sheets not found.";
   }
 
   const invLast = inv.getLastRow();
@@ -510,7 +538,7 @@ function rebuildMonthlySummary_() {
 
   if (invLast < 2 || lineLast < 2) {
     sum.getRange(1, 1).setValue("No data to summarize yet (Invoices or Invoice Lines is empty).");
-    return;
+    return "No data to summarize yet.";
   }
 
   const invData = inv.getRange(2, 1, invLast - 1, inv.getLastColumn()).getValues();
@@ -531,7 +559,7 @@ function rebuildMonthlySummary_() {
 
   if (monthsSet.size === 0) {
     sum.getRange(1, 1).setValue("No usable Invoice Dates found in Invoices column E (Invoice Date).");
-    return;
+    return "No usable invoice dates found.";
   }
 
   const monthsAll = Array.from(monthsSet).sort();
@@ -573,7 +601,7 @@ function rebuildMonthlySummary_() {
     const rawProduct = String(r[4] || "").replace(/\s+/g, " ").trim();
     if (!rawProduct) continue;
 
-    const productKey = resolveProductGroup_(rawProduct, productsKeySet, CONFIG.PRODUCT_SIMILARITY_THRESHOLD);
+    const productKey = resolveProductGroup_(rawProduct, productsKeySet, PARSER_SETTINGS.PRODUCT_SIMILARITY_THRESHOLD);
     if (!productKey) continue;
 
     productsKeySet.add(productKey);
@@ -769,19 +797,26 @@ function rebuildMonthlySummary_() {
       sum.getRange(3, c + 1, numRows, 1).setNumberFormat("$#,##0.00");
     }
   }
+
+  return `Monthly Summary rebuilt: ${productKeys.length} products across ${monthsAll.length} months.`;
 }
 
 /* -------------------- PREVIOUS MONTH SUMMARY -------------------- */
 
-function rebuildPreviousMonthSummary_() {
-  assertStagingEnvironment_();
-  const ss = SpreadsheetApp.getActive();
-  const inv = ss.getSheetByName(CONFIG.INVOICES_SHEET);
-  const lines = ss.getSheetByName(CONFIG.LINES_SHEET);
+function rebuildPreviousMonthSummary() {
+  return withScriptLock_(function () {
+    return rebuildPreviousMonthSummaryCore_();
+  });
+}
+
+function rebuildPreviousMonthSummaryCore_() {
+  const env = parserEnv_();
+  const ss = env.ss;
+  const inv = ss.getSheetByName(env.sheets.invoices);
+  const lines = ss.getSheetByName(env.sheets.lines);
 
   if (!inv || !lines) {
-    SpreadsheetApp.getUi().alert("Invoices or Invoice Lines sheet not found.");
-    return;
+    return notify_("Invoices or Invoice Lines sheet not found.", "Previous Month Summary");
   }
 
   const now = new Date();
@@ -801,8 +836,7 @@ function rebuildPreviousMonthSummary_() {
   const lineLast = lines.getLastRow();
 
   if (invLast < 2 || lineLast < 2) {
-    SpreadsheetApp.getUi().alert("No invoice data to summarize.");
-    return;
+    return notify_("No invoice data to summarize.", "Previous Month Summary");
   }
 
   const invData = inv.getRange(2, 1, invLast - 1, inv.getLastColumn()).getValues();
@@ -819,8 +853,7 @@ function rebuildPreviousMonthSummary_() {
   }
 
   if (targetInvoices.size === 0) {
-    SpreadsheetApp.getUi().alert(`No invoices found for ${sheetTitle}.`);
-    return;
+    return notify_(`No invoices found for ${sheetTitle}.`, "Previous Month Summary");
   }
 
   const lineData = lines.getRange(2, 1, lineLast - 1, lines.getLastColumn()).getValues();
@@ -854,14 +887,14 @@ function rebuildPreviousMonthSummary_() {
   const sortedProducts = Array.from(productMap.entries()).sort((a, b) => b[1].sales - a[1].sales);
   const sortedCats = Array.from(catMap.entries()).sort((a, b) => b[1].sales - a[1].sales);
 
-  let sh = ss.getSheetByName(CONFIG.PREVIOUS_MONTH_SHEET);
+  let sh = ss.getSheetByName(env.sheets.previousMonth);
   if (sh) {
     try {
       sh.getRange(1, 1, sh.getMaxRows(), sh.getMaxColumns()).breakApart();
     } catch (e) {}
     sh.clear();
   } else {
-    sh = ss.insertSheet(CONFIG.PREVIOUS_MONTH_SHEET);
+    sh = ss.insertSheet(env.sheets.previousMonth);
   }
 
   const out = [];
@@ -905,352 +938,203 @@ function rebuildPreviousMonthSummary_() {
   sh.autoResizeColumns(1, 4);
   ss.setActiveSheet(sh);
 
-  SpreadsheetApp.getActive().toast(
+  return notify_(
     `${sheetTitle}: ${sortedProducts.length} products, ${totalBottles} bottles, $${totalSales.toFixed(2)}`,
-    "Previous Month Summary",
-    8
+    "Previous Month Summary"
   );
 }
 
-/* -------------------- DIAGNOSTICS & REPAIRS -------------------- */
-
-function diagnoseJan2026_() {
-  assertStagingEnvironment_();
-  const ss = SpreadsheetApp.getActive();
-  const inv = ss.getSheetByName(CONFIG.INVOICES_SHEET);
-  const lines = ss.getSheetByName(CONFIG.LINES_SHEET);
-
-  if (!inv || !lines) {
-    SpreadsheetApp.getUi().alert("Invoices or Invoice Lines sheet not found.");
-    return;
-  }
-
-  let diag = ss.getSheetByName(CONFIG.DIAGNOSTICS_SHEET);
-  if (diag) {
-    try {
-      diag.getRange(1, 1, diag.getMaxRows(), diag.getMaxColumns()).breakApart();
-    } catch (e) {}
-    diag.clear();
-  } else {
-    diag = ss.insertSheet(CONFIG.DIAGNOSTICS_SHEET);
-  }
-
-  const out = [];
-  out.push(["═══ SECTION A: Invoices with Invoice Date → 2026-01 ═══"]);
-  out.push(["Invoice #", "Invoice Date (raw)", "Parsed Month Key", "Customer Name", "Amount Due"]);
-
-  const invLast = inv.getLastRow();
-  const invoiceToMonth = new Map();
-  const janInvoiceNos = new Set();
-
-  if (invLast >= 2) {
-    const invData = inv.getRange(2, 1, invLast - 1, inv.getLastColumn()).getValues();
-    for (const r of invData) {
-      const invNo = normalizeInvoiceNo_(r[3]);
-      const invDate = r[4];
-      if (!invNo) continue;
-
-      const ym = toMonthKeyFlexible_(invDate);
-      invoiceToMonth.set(invNo, ym);
-
-      if (ym === "2026-01") {
-        janInvoiceNos.add(invNo);
-        out.push([invNo, String(invDate), ym, String(r[5] || ""), String(r[12] || "")]);
-      }
-    }
-  }
-
-  out.push([""]);
-  out.push([`Found ${janInvoiceNos.size} invoices mapping to 2026-01`]);
-  out.push([""]);
-
-  out.push(["═══ SECTION B: Invoice Lines rows for January 2026 invoices ═══"]);
-  out.push(["Invoice #", "Qty", "Volume", "Description", "Bev Class", "Unit Price", "Line Total", "Mapped Month"]);
-
-  const lineLast = lines.getLastRow();
-  let janLineCount = 0;
-  let janBottleTotal = 0;
-  let janSalesTotal = 0;
-
-  if (lineLast >= 2) {
-    const lineData = lines.getRange(2, 1, lineLast - 1, lines.getLastColumn()).getValues();
-    for (const r of lineData) {
-      const invNo = normalizeInvoiceNo_(r[0]);
-      if (!invNo) continue;
-
-      const ym = invoiceToMonth.get(invNo) || "(NO MATCH)";
-      if (ym === "2026-01") {
-        janLineCount++;
-        const qty = asNumberFlexible_(r[2]);
-        const sales = asNumberFlexible_(r[7]);
-        const rawProduct = String(r[4] || "").replace(/\s+/g, " ").trim();
-
-        janBottleTotal += qty;
-        janSalesTotal += sales;
-
-        out.push([
-          invNo,
-          qty,
-          String(r[3] || ""),
-          rawProduct,
-          String(r[5] || ""),
-          asNumberFlexible_(r[6]),
-          sales,
-          ym
-        ]);
-      }
-    }
-  }
-
-  out.push([""]);
-  out.push([`January 2026 line items: ${janLineCount} rows, ${janBottleTotal} bottles, $${janSalesTotal.toFixed(2)} sales`]);
-  out.push([""]);
-
-  const maxCols = Math.max.apply(null, out.map((r) => r.length));
-  for (const row of out) {
-    while (row.length < maxCols) row.push("");
-  }
-
-  diag.getRange(1, 1, out.length, maxCols).setValues(out);
-
-  for (let i = 0; i < out.length; i++) {
-    if (String(out[i][0]).startsWith("═══")) {
-      diag.getRange(i + 1, 1, 1, maxCols).setFontWeight("bold");
-    }
-  }
-
-  diag.autoResizeColumns(1, Math.min(maxCols, 10));
-  ss.setActiveSheet(diag);
-}
+/* -------------------- REPAIRS -------------------- */
 
 function repairMissingCustomerNames() {
-  assertStagingEnvironment_();
-  const ss = SpreadsheetApp.getActive();
-  const invSheet = ss.getSheetByName(CONFIG.INVOICES_SHEET);
-  const lineSheet = ss.getSheetByName(CONFIG.LINES_SHEET);
+  return withScriptLock_(function () {
+    const env = parserEnv_();
+    const invSheet = env.ss.getSheetByName(env.sheets.invoices);
+    const lineSheet = env.ss.getSheetByName(env.sheets.lines);
 
-  if (!invSheet || !lineSheet) {
-    SpreadsheetApp.getUi().alert("Invoices or Invoice Lines sheet not found.");
-    return;
-  }
+    if (!invSheet || !lineSheet) {
+      return notify_("Invoices or Invoice Lines sheet not found.", "Repair Names");
+    }
 
-  const invData = invSheet.getDataRange().getValues();
-  const lineData = lineSheet.getDataRange().getValues();
+    const invData = invSheet.getDataRange().getValues();
+    const lineData = lineSheet.getDataRange().getValues();
 
-  const nameMap = new Map();
-  for (let i = 1; i < invData.length; i++) {
-    const invNo = normalizeInvoiceNo_(invData[i][3]);
-    const custName = String(invData[i][5] || "").trim();
-    if (invNo && custName) nameMap.set(invNo, custName);
-  }
+    const nameMap = new Map();
+    for (let i = 1; i < invData.length; i++) {
+      const invNo = normalizeInvoiceNo_(invData[i][3]);
+      const custName = String(invData[i][5] || "").trim();
+      if (invNo && custName) nameMap.set(invNo, custName);
+    }
 
-  const output = [];
-  let changed = 0;
+    const output = [];
+    let changed = 0;
 
-  for (let j = 1; j < lineData.length; j++) {
-    const lineInvNo = normalizeInvoiceNo_(lineData[j][0]);
-    const existingName = String(lineData[j][1] || "").trim();
-    const correctName = nameMap.get(lineInvNo) || existingName || "Unknown Customer";
+    for (let j = 1; j < lineData.length; j++) {
+      const lineInvNo = normalizeInvoiceNo_(lineData[j][0]);
+      const existingName = String(lineData[j][1] || "").trim();
+      const correctName = nameMap.get(lineInvNo) || existingName || "Unknown Customer";
 
-    if (correctName !== existingName) changed++;
-    output.push([correctName]);
-  }
+      if (correctName !== existingName) changed++;
+      output.push([correctName]);
+    }
 
-  if (output.length > 0) {
-    lineSheet.getRange(2, 2, output.length, 1).setValues(output);
-  }
+    if (changed > 0) {
+      lineSheet.getRange(2, 2, output.length, 1).setValues(output);
+    }
 
-  SpreadsheetApp.getUi().alert(`Repair complete. Changed ${changed} line items.`);
+    return notify_(`Repair complete. Changed ${changed} line item(s).`, "Repair Names");
+  });
 }
 
-/* -------------------- SHEETS, RESET, VALIDATION -------------------- */
+/* -------------------- LEGACY SETTINGS MIGRATION -------------------- */
 
-function resetEverything_() {
-  assertStagingEnvironment_();
-
-  const ui = SpreadsheetApp.getUi();
-  const response = ui.alert(
-    "Reset test output?",
-    "This clears only TEST-prefixed parser tabs and test parser state.",
-    ui.ButtonSet.YES_NO
-  );
-  if (response !== ui.Button.YES) return;
-
-  clearImportState_();
-  ensureSheetsAndHeaders_();
-  clearDataBelowHeaders_();
-  SpreadsheetApp.getActive().toast("Test reset complete.", "TEST Operations", 8);
+function isLegacyParserProperty_(key) {
+  return PARSER_SETTINGS.LEGACY_PROPERTY_PREFIXES.some((prefix) => String(key).indexOf(prefix) === 0);
 }
 
-function clearImportState_() {
-  const props = PropertiesService.getScriptProperties();
-  props.deleteProperty(CONFIG.OCR_DAILY_STATE_PROPERTY);
-  deleteLegacyParserProperties_(props);
+/**
+ * One-time cleanup when switching from the old parser.
+ * 1. Copies every processed_pdf_<file id> marker into Parser State as LEGACY_PROCESSED
+ *    (skipping files Parser State or the Invoices tab already know about).
+ * 2. Only after that write succeeds, deletes processed_pdf_*, ocr_count_*,
+ *    SUPABASE_URL and SUPABASE_KEY. Every other Script Property is kept.
+ * Safe to run more than once.
+ */
+function migrateLegacyParserSettings() {
+  return withScriptLock_(function () {
+    const env = parserEnv_();
+    ensureSheetsAndHeaders_();
 
-  const stateSheet = SpreadsheetApp.getActive().getSheetByName(CONFIG.STATE_SHEET);
-  if (stateSheet && stateSheet.getLastRow() > 1) {
-    stateSheet.getRange(2, 1, stateSheet.getLastRow() - 1, stateSheet.getLastColumn()).clearContent();
-  }
-}
+    const props = PropertiesService.getScriptProperties();
+    const all = props.getProperties();
+    const alreadyRecorded = buildProcessedFileIndex_();
+    const migratedRows = [];
 
-function cleanupLegacyParserProperties() {
-  assertStagingEnvironment_();
-  ensureSheetsAndHeaders_();
+    Object.keys(all).forEach((key) => {
+      if (key.indexOf("processed_pdf_") !== 0) return;
 
-  const props = PropertiesService.getScriptProperties();
-  const all = props.getProperties();
-  const alreadyRecorded = buildProcessedFileIndex_();
-  const migratedRows = [];
+      const fileId = key.slice("processed_pdf_".length).trim();
+      if (!fileId || alreadyRecorded.has(fileId)) return;
 
-  Object.keys(all).forEach((key) => {
-    if (key.indexOf("processed_pdf_") !== 0 || all[key] !== "1") return;
+      migratedRows.push(
+        buildParserStateRow_(fileId, "", "LEGACY_PROCESSED", "", "Migrated from a legacy processed_pdf_ Script Property")
+      );
+      alreadyRecorded.add(fileId);
+    });
 
-    const fileId = key.slice("processed_pdf_".length).trim();
-    if (!fileId || alreadyRecorded.has(fileId)) return;
+    appendRows_(env.ss.getSheetByName(env.sheets.state), migratedRows);
 
-    migratedRows.push(
-      buildParserStateRow_(
-        fileId,
-        "",
-        "LEGACY_PROCESSED",
-        "",
-        "Migrated from a legacy processed_pdf_ Script Property"
-      )
+    let deleted = 0;
+    Object.keys(all).forEach((key) => {
+      if (isLegacyParserProperty_(key) || PARSER_SETTINGS.RETIRED_PROPERTY_KEYS.indexOf(key) >= 0) {
+        props.deleteProperty(key);
+        deleted++;
+      }
+    });
+
+    notify_(
+      `Moved ${migratedRows.length} old file marker(s) into ${env.sheets.state} and removed ${deleted} old setting(s), including any Supabase settings. Other settings were kept.`,
+      "Parser Cleanup"
     );
-    alreadyRecorded.add(fileId);
+    return { migrated: migratedRows.length, deleted: deleted };
   });
-
-  appendRows_(SpreadsheetApp.getActive().getSheetByName(CONFIG.STATE_SHEET), migratedRows);
-  const deleted = deleteLegacyParserProperties_(props);
-  SpreadsheetApp.getActive().toast(
-    `Migrated ${migratedRows.length} file markers and removed ${deleted} legacy parser properties. Credentials and unrelated properties were preserved.`,
-    "Parser Cleanup",
-    10
-  );
-  return { migrated: migratedRows.length, deleted: deleted };
 }
 
-function deleteLegacyParserProperties_(props) {
-  const all = props.getProperties();
-  let deleted = 0;
+/* -------------------- STAGING RESET -------------------- */
 
-  Object.keys(all).forEach((key) => {
-    if (key.indexOf("processed_pdf_") === 0 || key.indexOf("ocr_count_") === 0) {
-      props.deleteProperty(key);
-      deleted++;
-    }
+/** Staging only. Run twice within 2 minutes: the first run arms it, the second clears TEST output. */
+function resetTestOutput() {
+  const env = parserEnv_();
+  if (!env.allowReset) {
+    throw new Error("Reset is not available in the production tracker.");
+  }
+
+  const props = PropertiesService.getScriptProperties();
+  const armedAt = Number(props.getProperty(PARSER_SETTINGS.RESET_ARMED_PROPERTY) || 0);
+  if (!armedAt || Date.now() - armedAt > PARSER_SETTINGS.RESET_CONFIRM_WINDOW_MS) {
+    props.setProperty(PARSER_SETTINGS.RESET_ARMED_PROPERTY, String(Date.now()));
+    return notify_("Reset armed. Run RESET TEST OUTPUT again within 2 minutes to clear the TEST tabs and test parser state.", "TEST Reset");
+  }
+  props.deleteProperty(PARSER_SETTINGS.RESET_ARMED_PROPERTY);
+
+  return withScriptLock_(function () {
+    props.deleteProperty(PARSER_SETTINGS.OCR_DAILY_STATE_PROPERTY);
+    ensureSheetsAndHeaders_();
+
+    [env.sheets.invoices, env.sheets.lines, env.sheets.errors, env.sheets.state].forEach((name) => {
+      const sh = env.ss.getSheetByName(name);
+      if (sh && sh.getLastRow() > 1 && sh.getLastColumn() > 0) {
+        sh.getRange(2, 1, sh.getLastRow() - 1, sh.getLastColumn()).clearContent();
+      }
+    });
+    [env.sheets.summary, env.sheets.previousMonth].forEach((name) => {
+      const sh = env.ss.getSheetByName(name);
+      if (sh) fullClearSheet_(sh);
+    });
+
+    return notify_("TEST output cleared.", "TEST Reset");
   });
-
-  return deleted;
 }
 
-function clearDataBelowHeaders_() {
-  const ss = SpreadsheetApp.getActive();
-
-  [CONFIG.INVOICES_SHEET, CONFIG.LINES_SHEET, CONFIG.ERRORS_SHEET].forEach((name) => {
-    const sh = ss.getSheetByName(name);
-    if (!sh) return;
-
-    const lastRow = sh.getLastRow();
-    const lastCol = sh.getLastColumn();
-    if (lastRow > 1 && lastCol > 0) {
-      sh.getRange(2, 1, lastRow - 1, lastCol).clearContent();
-    }
-  });
-
-  const sumSh = ss.getSheetByName(CONFIG.SUMMARY_SHEET);
-  if (sumSh) fullClearSheet_(sumSh);
-
-  const prevSh = ss.getSheetByName(CONFIG.PREVIOUS_MONTH_SHEET);
-  if (prevSh) fullClearSheet_(prevSh);
-
-  const diagSh = ss.getSheetByName(CONFIG.DIAGNOSTICS_SHEET);
-  if (diagSh) fullClearSheet_(diagSh);
-}
+/* -------------------- SHEETS & VALIDATION -------------------- */
 
 function ensureSheetsAndHeaders_() {
-  const ss = SpreadsheetApp.getActive();
-
-  ensureSheet_(ss, CONFIG.INVOICES_SHEET, [
-    "Processed At",
-    "PDF File Id",
-    "PDF File Name",
-    "Invoice #",
-    "Invoice Date",
-    "Customer Name",
-    "Customer Address",
-    "Customer City/State/Zip",
-    "Reseller #",
-    "Winery Name",
-    "Phone",
-    "Order #",
-    "Amount Due",
-    "Terms",
-    "Delivered",
-    "Paid to Me",
-    "Submitted"
-  ]);
-
-  ensureSheet_(ss, CONFIG.LINES_SHEET, [
-    "Invoice #",
-    "Customer Name",
-    "Qty",
-    "Volume",
-    "Description",
-    "Beverage Class",
-    "Unit Price",
-    "Line Total"
-  ]);
-
-  ensureSheet_(ss, CONFIG.SUMMARY_SHEET, ["(Generated)"]);
-  ensureSheet_(ss, CONFIG.ERRORS_SHEET, ["Timestamp", "File Id", "File Name", "Stage", "Error", "Text Snippet"]);
-  ensureSheet_(ss, CONFIG.STATE_SHEET, [
-    "Updated At",
-    "File Id",
-    "File Name",
-    "Status",
-    "Invoice #",
-    "Detail"
-  ]);
-
-  applyInvoiceStatusValidations_();
+  const env = parserEnv_();
+  ensureSheet_(env.ss, env.sheets.invoices, PARSER_INVOICE_HEADERS, env.overwriteHeaders);
+  ensureSheet_(env.ss, env.sheets.lines, PARSER_LINE_HEADERS, env.overwriteHeaders);
+  ensureSheet_(env.ss, env.sheets.errors, PARSER_ERROR_HEADERS, env.overwriteHeaders);
+  ensureSheet_(env.ss, env.sheets.state, PARSER_STATE_HEADERS, env.overwriteHeaders);
 }
 
-function ensureSheet_(ss, name, headers) {
+/**
+ * Creates a missing tab with its headers. On an existing tab, a header mismatch
+ * either rewrites the header row (staging) or stops with a clear message
+ * (production), because the Distribution Hub reads these tabs by column.
+ */
+function ensureSheet_(ss, name, headers, overwriteHeaders) {
   let sh = ss.getSheetByName(name);
-  if (!sh) sh = ss.insertSheet(name);
+  if (!sh) {
+    sh = ss.insertSheet(name);
+    sh.getRange(1, 1, 1, headers.length).setValues([headers.slice()]);
+    sh.setFrozenRows(1);
+    return sh;
+  }
 
   const currentHeaders =
-    sh.getLastRow() >= 1
+    sh.getLastRow() >= 1 && sh.getLastColumn() >= 1
       ? sh.getRange(1, 1, 1, headers.length).getValues()[0]
       : [];
 
-  const needsHeaderWrite =
-    currentHeaders.length < headers.length ||
-    headers.some((h, i) => String(currentHeaders[i] || "") !== String(h));
+  const mismatchIndex = headers.findIndex((h, i) => String(currentHeaders[i] || "").trim() !== String(h));
+  if (mismatchIndex < 0) return sh;
 
-  if (needsHeaderWrite) {
-    sh.getRange(1, 1, 1, headers.length).setValues([headers]);
+  if (!overwriteHeaders && sh.getLastRow() >= 1) {
+    throw new Error(
+      `Safety stop: the "${name}" tab's column ${mismatchIndex + 1} is "${String(currentHeaders[mismatchIndex] || "")}" but should be "${headers[mismatchIndex]}". ` +
+      "Restore the header row (the Distribution Hub reads these columns), then run the import again."
+    );
   }
 
+  sh.getRange(1, 1, 1, headers.length).setValues([headers.slice()]);
   sh.setFrozenRows(1);
+  return sh;
 }
 
-function applyInvoiceStatusValidations_() {
-  const sh = SpreadsheetApp.getActive().getSheetByName(CONFIG.INVOICES_SHEET);
+/** Checkboxes for Delivered / Paid to Me and the Yes/No/N/A list for Submitted, on new rows only. */
+function applyInvoiceStatusValidations_(startRow, rowCount) {
+  if (!rowCount || rowCount < 1) return;
+  const env = parserEnv_();
+  const sh = env.ss.getSheetByName(env.sheets.invoices);
   if (!sh) return;
 
-  const lastRow = sh.getLastRow();
-  if (lastRow < 2) return;
-
-  sh.getRange(2, 15, lastRow - 1, 2).insertCheckboxes();
+  sh.getRange(startRow, 15, rowCount, 2).insertCheckboxes();
 
   const rule = SpreadsheetApp.newDataValidation()
     .requireValueInList(["Yes", "No", "N/A"], true)
     .setAllowInvalid(false)
     .build();
 
-  sh.getRange(2, 17, lastRow - 1, 1).setDataValidation(rule);
+  sh.getRange(startRow, 17, rowCount, 1).setDataValidation(rule);
 }
 
 function fullClearSheet_(sh) {
@@ -1263,8 +1147,8 @@ function fullClearSheet_(sh) {
 }
 
 function logError_(fileId, fileName, stage, errorMsg, text) {
-  const ss = SpreadsheetApp.getActive();
-  const sh = ss.getSheetByName(CONFIG.ERRORS_SHEET);
+  const env = parserEnv_();
+  const sh = env.ss.getSheetByName(env.sheets.errors);
   if (!sh) return;
 
   sh.appendRow([
@@ -1279,47 +1163,32 @@ function logError_(fileId, fileName, stage, errorMsg, text) {
 
 /* -------------------- FILE DISCOVERY -------------------- */
 
-function getAllPdfCandidatesRecursive_(rootFolderId, extraFileIds) {
-  const results = [];
-  const seenFolders = new Set();
-  const seenFiles = new Set();
-  const queue = [rootFolderId];
+/**
+ * Lists the PDFs directly inside the Badger folder. Subfolders are not read, so
+ * templates, branded copies and other projects can never be imported by accident.
+ * Non-PDF files and subfolders are returned by name so the import can report them.
+ */
+function listFolderCandidates_(folderId) {
+  const pdfs = listFilesByQuery_(
+    `'${folderId}' in parents and mimeType='application/pdf' and trashed=false`
+  ).filter((f) => f && f.id);
 
-  seenFolders.add(rootFolderId);
+  const others = listFilesByQuery_(
+    `'${folderId}' in parents and mimeType!='application/pdf' and trashed=false`
+  );
 
-  while (queue.length) {
-    const folderId = queue.shift();
-
-    const pdfs = listFilesByQuery_(
-      `'${folderId}' in parents and mimeType='application/pdf' and trashed=false`
-    );
-    for (const f of pdfs) {
-      if (f && f.id && !seenFiles.has(f.id)) {
-        seenFiles.add(f.id);
-        results.push(f);
-      }
-    }
-
-    const subs = listFilesByQuery_(
-      `'${folderId}' in parents and mimeType='application/vnd.google-apps.folder' and trashed=false`
-    );
-    for (const sf of subs) {
-      if (sf && sf.id && !seenFolders.has(sf.id)) {
-        seenFolders.add(sf.id);
-        queue.push(sf.id);
-      }
-    }
-  }
-
-  (extraFileIds || []).forEach((id) => {
-    const fid = String(id || "").trim();
-    if (!fid || seenFiles.has(fid)) return;
-    seenFiles.add(fid);
-    results.push({ id: fid, name: "", mimeType: "application/pdf" });
+  const ignored = [];
+  const subfolders = [];
+  others.forEach((f) => {
+    if (!f) return;
+    if (f.mimeType === "application/vnd.google-apps.folder") subfolders.push(f.name || f.id);
+    else ignored.push(f.name || f.id);
   });
 
-  results.sort((a, b) => String(a.name || "").localeCompare(String(b.name || "")));
-  return results;
+  pdfs.sort((a, b) => String(a.name || "").localeCompare(String(b.name || "")));
+  ignored.sort();
+  subfolders.sort();
+  return { pdfs: pdfs, ignored: ignored, subfolders: subfolders };
 }
 
 function listFilesByQuery_(q) {
@@ -1395,9 +1264,11 @@ function extractTextNoOcr_(pdfFileId) {
     docId = inserted.id;
   }
 
-  const text = DocumentApp.openById(docId).getBody().getText();
-  if (CONFIG.TRASH_TEMP_DOC) trashDoc_(docId);
-  return normalizeText_(text);
+  try {
+    return normalizeText_(DocumentApp.openById(docId).getBody().getText());
+  } finally {
+    if (PARSER_SETTINGS.TRASH_TEMP_DOC) trashDoc_(docId);
+  }
 }
 
 function looksLikeInvoiceText_(text) {
@@ -1415,9 +1286,9 @@ function ocrPdfFileIdToText_WithBackoff_(pdfFileId, pdfName) {
   enforceDailyOcrLimit_();
 
   let attempt = 0;
-  let backoff = CONFIG.OCR_INITIAL_BACKOFF_MS;
+  let backoff = PARSER_SETTINGS.OCR_INITIAL_BACKOFF_MS;
 
-  while (attempt < CONFIG.OCR_MAX_RETRIES) {
+  while (attempt < PARSER_SETTINGS.OCR_MAX_RETRIES) {
     try {
       const text = ocrPdfFileIdToText_(pdfFileId, pdfName);
       incrementDailyOcrCount_();
@@ -1433,7 +1304,7 @@ function ocrPdfFileIdToText_WithBackoff_(pdfFileId, pdfName) {
       if (!isRateLimit) throw err;
 
       attempt++;
-      if (attempt >= CONFIG.OCR_MAX_RETRIES) {
+      if (attempt >= PARSER_SETTINGS.OCR_MAX_RETRIES) {
         throw new Error(`OCR throttled. Try again later. Last error: ${msg}`);
       }
 
@@ -1458,7 +1329,7 @@ function ocrPdfFileIdToText_(pdfFileId, pdfName) {
       blob,
       {
         ocr: true,
-        ocrLanguage: CONFIG.OCR_LANGUAGE,
+        ocrLanguage: PARSER_SETTINGS.OCR_LANGUAGE,
         fields: "id"
       }
     );
@@ -1472,23 +1343,29 @@ function ocrPdfFileIdToText_(pdfFileId, pdfName) {
       blob,
       {
         ocr: true,
-        ocrLanguage: CONFIG.OCR_LANGUAGE,
+        ocrLanguage: PARSER_SETTINGS.OCR_LANGUAGE,
         convert: true
       }
     );
     docId = inserted.id;
   }
 
-  const text = DocumentApp.openById(docId).getBody().getText();
-  if (CONFIG.TRASH_TEMP_DOC) trashDoc_(docId);
-  return normalizeText_(text);
+  try {
+    return normalizeText_(DocumentApp.openById(docId).getBody().getText());
+  } finally {
+    if (PARSER_SETTINGS.TRASH_TEMP_DOC) trashDoc_(docId);
+  }
 }
 
 function trashDoc_(docId) {
-  if (Drive.Files.update) {
-    Drive.Files.update({ trashed: true }, docId);
-  } else if (Drive.Files.trash) {
-    Drive.Files.trash(docId);
+  try {
+    if (Drive.Files.update) {
+      Drive.Files.update({ trashed: true }, docId);
+    } else if (Drive.Files.trash) {
+      Drive.Files.trash(docId);
+    }
+  } catch (e) {
+    console.warn(`Could not trash temporary document ${docId}: ${e && e.message ? e.message : e}`);
   }
 }
 
@@ -1587,15 +1464,11 @@ function resolveProductGroup_(rawName, knownKeysSet, threshold) {
 
 /* -------------------- GENERIC HELPERS -------------------- */
 
-function getRequiredScriptProperty_(name) {
-  const value = PropertiesService.getScriptProperties().getProperty(name);
-  if (!value) throw new Error(`Missing Apps Script property: ${name}`);
-  return value;
-}
-
 function withScriptLock_(fn, timeoutMs) {
   const lock = LockService.getScriptLock();
-  lock.waitLock(timeoutMs || 30000);
+  if (!lock.tryLock(timeoutMs || 30000)) {
+    throw new Error("Another parser run is in progress. Try again in a minute.");
+  }
   try {
     return fn();
   } finally {
@@ -1606,18 +1479,6 @@ function withScriptLock_(fn, timeoutMs) {
 function appendRows_(sheet, rows) {
   if (!sheet || !rows || !rows.length) return;
   sheet.getRange(sheet.getLastRow() + 1, 1, rows.length, rows[0].length).setValues(rows);
-}
-
-function normalizeBool_(v) {
-  return v === true || String(v).toUpperCase() === "TRUE";
-}
-
-function titleCase_(s) {
-  return String(s || "")
-    .split(" ")
-    .map((w) => (w ? w.charAt(0).toUpperCase() + w.slice(1) : ""))
-    .join(" ")
-    .trim();
 }
 
 function normalizeInvoiceNo_(v) {
@@ -1691,11 +1552,16 @@ function buildParserStateRow_(fileId, fileName, status, invoiceNumber, detail) {
   ];
 }
 
+/**
+ * Files that must not be read again: every PDF File Id in the Invoices tab, plus
+ * files whose latest Parser State row has a terminal status. A later RETRY or
+ * RETRYABLE_ERROR row re-opens a file that was never imported.
+ */
 function buildProcessedFileIndex_() {
-  const ss = SpreadsheetApp.getActive();
+  const env = parserEnv_();
   const importedFileIds = new Set();
   const processedFileIds = new Set();
-  const invoices = ss.getSheetByName(CONFIG.INVOICES_SHEET);
+  const invoices = env.ss.getSheetByName(env.sheets.invoices);
 
   if (invoices && invoices.getLastRow() > 1) {
     invoices.getRange(2, 2, invoices.getLastRow() - 1, 1).getValues().forEach((row) => {
@@ -1707,16 +1573,10 @@ function buildProcessedFileIndex_() {
     });
   }
 
-  const stateSheet = ss.getSheetByName(CONFIG.STATE_SHEET);
+  const stateSheet = env.ss.getSheetByName(env.sheets.state);
   if (!stateSheet || stateSheet.getLastRow() < 2) return processedFileIds;
 
-  const terminalStatuses = new Set([
-    "IMPORTED",
-    "DUPLICATE",
-    "REVIEW",
-    "IGNORED",
-    "LEGACY_PROCESSED"
-  ]);
+  const terminalStatuses = new Set(PARSER_TERMINAL_STATUSES);
   stateSheet.getRange(2, 1, stateSheet.getLastRow() - 1, 6).getValues().forEach((row) => {
     const fileId = String(row[1] || "").trim();
     const status = String(row[3] || "").trim().toUpperCase();
@@ -1732,47 +1592,9 @@ function buildProcessedFileIndex_() {
   return processedFileIds;
 }
 
-function todayKey_() {
-  return Utilities.formatDate(
-    new Date(),
-    Session.getScriptTimeZone() || "America/Chicago",
-    "yyyyMMdd"
-  );
-}
-
-function enforceDailyOcrLimit_() {
-  const props = PropertiesService.getScriptProperties();
-  const state = readDailyOcrState_(props);
-
-  if (state.count >= CONFIG.OCR_DAILY_LIMIT) {
-    throw new Error(`Daily OCR limit reached (${CONFIG.OCR_DAILY_LIMIT}). Run again later.`);
-  }
-}
-
-function incrementDailyOcrCount_() {
-  const props = PropertiesService.getScriptProperties();
-  const state = readDailyOcrState_(props);
-  state.count++;
-  props.setProperty(CONFIG.OCR_DAILY_STATE_PROPERTY, JSON.stringify(state));
-}
-
-function readDailyOcrState_(props) {
-  const today = todayKey_();
-  let state = null;
-
-  try {
-    state = JSON.parse(props.getProperty(CONFIG.OCR_DAILY_STATE_PROPERTY) || "null");
-  } catch (e) {}
-
-  if (!state || state.date !== today || !isFinite(Number(state.count))) {
-    return { date: today, count: 0 };
-  }
-
-  return { date: today, count: Number(state.count) };
-}
-
 function buildExistingInvoiceIndex_() {
-  const sh = SpreadsheetApp.getActive().getSheetByName(CONFIG.INVOICES_SHEET);
+  const env = parserEnv_();
+  const sh = env.ss.getSheetByName(env.sheets.invoices);
   const set = new Set();
   if (!sh) return set;
 
@@ -1785,4 +1607,61 @@ function buildExistingInvoiceIndex_() {
   }
 
   return set;
+}
+
+/** Invoice numbers that already have at least one row in Invoice Lines. */
+function buildInvoicesWithLinesIndex_() {
+  const env = parserEnv_();
+  const sh = env.ss.getSheetByName(env.sheets.lines);
+  const set = new Set();
+  if (!sh) return set;
+
+  const lastRow = sh.getLastRow();
+  if (lastRow > 1) {
+    sh.getRange(2, 1, lastRow - 1, 1).getValues().forEach((r) => {
+      const inv = normalizeInvoiceNo_(r[0]);
+      if (inv) set.add(inv);
+    });
+  }
+
+  return set;
+}
+
+function todayKey_() {
+  return Utilities.formatDate(
+    new Date(),
+    Session.getScriptTimeZone() || "America/Chicago",
+    "yyyyMMdd"
+  );
+}
+
+function enforceDailyOcrLimit_() {
+  const props = PropertiesService.getScriptProperties();
+  const state = readDailyOcrState_(props);
+
+  if (state.count >= PARSER_SETTINGS.OCR_DAILY_LIMIT) {
+    throw new Error(`Daily OCR limit reached (${PARSER_SETTINGS.OCR_DAILY_LIMIT}). Run again later.`);
+  }
+}
+
+function incrementDailyOcrCount_() {
+  const props = PropertiesService.getScriptProperties();
+  const state = readDailyOcrState_(props);
+  state.count++;
+  props.setProperty(PARSER_SETTINGS.OCR_DAILY_STATE_PROPERTY, JSON.stringify(state));
+}
+
+function readDailyOcrState_(props) {
+  const today = todayKey_();
+  let state = null;
+
+  try {
+    state = JSON.parse(props.getProperty(PARSER_SETTINGS.OCR_DAILY_STATE_PROPERTY) || "null");
+  } catch (e) {}
+
+  if (!state || state.date !== today || !isFinite(Number(state.count))) {
+    return { date: today, count: 0 };
+  }
+
+  return { date: today, count: Number(state.count) };
 }
