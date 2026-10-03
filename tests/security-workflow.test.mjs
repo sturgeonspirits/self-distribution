@@ -116,7 +116,8 @@ test("inventory staff can see the read-only product and location summary", async
   assert.match(html, /id="inventorySummaryViewBtn"/);
   assert.match(html, /id="inventorySummaryView"/);
   assert.match(html, /function inventorySummaryRows\(\)/);
-  assert.match(html, /All locations<\/div><div class="storeMeta">Product totals/);
+  assert.match(html, /inventorySummaryRows\(\)\.filter\(row => row\.onHand > 0\)/);
+  assert.match(html, /All products<\/div><div class="storeMeta">Store totals/);
   assert.match(proxy, /\["managerGrid", "inventory"\]/);
   assert.doesNotMatch(proxy.match(/const ADMIN_ACTIONS = new Set\(\[([\s\S]*?)\]\);/)[1], /managerGrid/);
 });

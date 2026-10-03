@@ -1,10 +1,10 @@
 <!doctype html>
-<!-- App version: 2026.10.03.14-WEB -->
+<!-- App version: 2026.10.03.15-WEB -->
 <html>
 <head>
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover"/>
-  <meta name="app-version" content="2026.10.03.14-WEB" />
+  <meta name="app-version" content="2026.10.03.15-WEB" />
   <meta name="theme-color" content="#536f77" />
   <link rel="icon" href="/assets/distribution-hub-icon.svg" type="image/svg+xml" />
   <link rel="manifest" href="/site.webmanifest" />
@@ -1981,7 +1981,7 @@
       <div class="summaryGrid">
         <div class="summaryBox"><div class="num" id="inventorySummaryLocations">0</div><div class="lbl">Count locations</div></div>
         <div class="summaryBox"><div class="num" id="inventorySummaryProducts">0</div><div class="lbl">Products</div></div>
-        <div class="summaryBox"><div class="num" id="inventorySummaryOnHand">0</div><div class="lbl">Bottles on hand</div></div>
+        <div class="summaryBox"><div class="num" id="inventorySummaryOnHand">0</div><div class="lbl">Units on hand</div></div>
         <div class="summaryBox"><div class="num" id="inventorySummaryAttention">0</div><div class="lbl">Locations needing attention</div></div>
       </div>
       <label for="inventorySummarySearch" style="margin-top:14px">Find a product</label>
@@ -1993,8 +1993,8 @@
           <thead></thead><tbody></tbody>
         </table>
       </div>
-      <h3 style="margin:18px 0 0">Inventory by location</h3>
-      <p class="smallMuted">Each cell is the current on-hand bottle count. The total row adds every location for each product.</p>
+      <h3 style="margin:18px 0 0">Inventory by product and store</h3>
+      <p class="smallMuted">Stores are across the top. Empty cells mean that location has no inventory recorded for the product.</p>
       <div class="managerGridWrap">
         <table class="managerGrid" id="inventoryLocationSummaryGrid"><thead></thead><tbody></tbody><tfoot></tfoot></table>
       </div>
@@ -2638,7 +2638,7 @@
 
   <footer style="max-width:1200px;margin:18px auto 120px;padding:0 12px;text-align:center;color:#6b7280;font-size:12px;">
     Designed by <a href="https://scriptspirit.dev" target="_blank" rel="noopener noreferrer" style="color:#1d4ed8;text-decoration:none;font-weight:700;">Script Spirit</a>
-<span id="appVersionFooter"> • Version 2026.10.03.14-WEB</span>
+<span id="appVersionFooter"> • Version 2026.10.03.15-WEB</span>
   </footer>
 
 
@@ -2661,7 +2661,7 @@
   window.addEventListener("unhandledrejection", e => console.error("Unhandled promise rejection:", e.reason));
   window.addEventListener("error", e => console.error("Unhandled error:", e.error || e.message));
   const $ = (id) => document.getElementById(id);
-  const APP_VERSION = "2026.10.03.14-WEB";
+  const APP_VERSION = "2026.10.03.15-WEB";
   $("appVersionFooter").textContent = ` • Version ${APP_VERSION}`;
   function screenCacheKey(screen){ return `distribution_hub:${APP_VERSION}:${staffSession?.email || "unknown"}:${screen}`; }
   function readScreenCache(screen){
@@ -6479,11 +6479,11 @@
       const cells = stores.map(store => store.cells?.[index] || {});
       const onHand = cells.reduce((total, cell) => total + Math.max(0, Number(cell.on_hand_units || 0)), 0);
       const par = cells.reduce((total, cell) => total + Math.max(0, Number(cell.par_level_units || 0)), 0);
-      const trackedLocations = cells.filter(cell =>
-        Number(cell.on_hand_units || 0) !== 0 || Number(cell.par_level_units || 0) !== 0 || Number(cell.reorder_point_units || 0) !== 0
+      const stockLocations = cells.filter(cell => Number(cell.on_hand_units || 0) > 0).length;
+      const attentionLocations = cells.filter(cell =>
+        (Number(cell.on_hand_units || 0) !== 0 || Number(cell.par_level_units || 0) !== 0 || Number(cell.reorder_point_units || 0) !== 0) && !!cell.needs_attention
       ).length;
-      const attentionLocations = cells.filter(cell => !!cell.needs_attention).length;
-      return { sku, index, onHand, par, trackedLocations, attentionLocations };
+      return { sku, index, cells, onHand, par, stockLocations, attentionLocations };
     });
   }
 
@@ -6497,7 +6497,10 @@
     const locationFoot = locationTable.querySelector("tfoot");
     const stores = managerGridData.stores || [];
     const search = ($("inventorySummarySearch")?.value || "").trim().toLowerCase();
-    const allRows = inventorySummaryRows();
+    // A missing store/SKU row is represented by a zero-value grid cell. Do not
+    // present those absent products as stock: only products with inventory at
+    // one or more locations belong in this summary.
+    const allRows = inventorySummaryRows().filter(row => row.onHand > 0);
     const rows = allRows.filter(({ sku }) => !search || [sku.sku_name, sku.sku_id, sku.size]
       .map(value => String(value || "").toLowerCase()).join(" | ").includes(search));
 
@@ -6506,12 +6509,12 @@
     $("inventorySummaryOnHand").textContent = allRows.reduce((total, row) => total + row.onHand, 0);
     $("inventorySummaryAttention").textContent = allRows.reduce((total, row) => total + row.attentionLocations, 0);
 
-    productHead.innerHTML = `<tr><th>Product</th><th class="num">Locations carrying</th><th class="num">On hand</th><th class="num">Total PAR</th><th class="num">Need attention</th></tr>`;
+    productHead.innerHTML = `<tr><th>Product</th><th class="num">Locations with stock</th><th class="num">Units on hand</th><th class="num">Total PAR</th><th class="num">Need attention</th></tr>`;
     productBody.innerHTML = rows.length
-      ? rows.map(({ sku, onHand, par, trackedLocations, attentionLocations }) => `
+      ? rows.map(({ sku, onHand, par, stockLocations, attentionLocations }) => `
           <tr>
             <td><div class="inventorySummaryProduct">${escapeHtml(sku.sku_name || sku.sku_id)}</div><div class="inventorySummaryMeta">${escapeHtml(sku.sku_id || "")}${sku.size ? ` • ${escapeHtml(sku.size)}` : ""}</div></td>
-            <td class="num">${trackedLocations}</td><td class="num">${onHand}</td><td class="num">${par}</td>
+            <td class="num">${stockLocations}</td><td class="num">${onHand}</td><td class="num">${par}</td>
             <td class="num">${attentionLocations ? `<span class="gridBadge red">${attentionLocations}</span>` : "0"}</td>
           </tr>`).join("")
       : `<tr><td colspan="5" class="inventorySummaryEmpty">${allRows.length ? "No products match that search." : "Loading inventory summary…"}</td></tr>`;
@@ -6524,42 +6527,60 @@
     const header = document.createElement("tr");
     const locationLabel = document.createElement("th");
     locationLabel.className = "stickyLeft";
-    locationLabel.textContent = "Count location";
+    locationLabel.textContent = "Product";
     header.appendChild(locationLabel);
-    rows.forEach(({ sku }) => {
+    stores.forEach(store => {
       const th = document.createElement("th");
-      th.innerHTML = `<div style="font-weight:1000">${escapeHtml(sku.sku_name || sku.sku_id)}</div><div class="smallMuted" style="margin-top:4px">${escapeHtml(sku.size || "")}</div>`;
+      th.innerHTML = `<div style="font-weight:1000">${escapeHtml(store.store_name || store.store_id)}</div><div class="smallMuted" style="margin-top:4px">${escapeHtml(store.route || store.store_id || "")}</div>`;
       header.appendChild(th);
     });
+    const totalHeading = document.createElement("th");
+    totalHeading.textContent = "Total";
+    header.appendChild(totalHeading);
     locationHead.appendChild(header);
 
-    stores.forEach(store => {
+    rows.forEach(({ sku, cells, onHand }) => {
       const tr = document.createElement("tr");
-      const storeCell = document.createElement("td");
-      storeCell.className = "stickyLeft";
-      storeCell.innerHTML = `<div class="storeName">${escapeHtml(store.store_name || store.store_id)}</div><div class="storeMeta">${escapeHtml(store.store_id || "")}${store.route ? ` • ${escapeHtml(store.route)}` : ""}</div>`;
-      tr.appendChild(storeCell);
-      rows.forEach(({ index }) => {
-        const cell = store.cells?.[index] || {};
+      const productCell = document.createElement("td");
+      productCell.className = "stickyLeft";
+      productCell.innerHTML = `<div class="storeName">${escapeHtml(sku.sku_name || sku.sku_id)}</div><div class="storeMeta">${escapeHtml(sku.sku_id || "")}${sku.size ? ` • ${escapeHtml(sku.size)}` : ""}</div>`;
+      tr.appendChild(productCell);
+      cells.forEach(cell => {
+        const onHand = Math.max(0, Number(cell.on_hand_units || 0));
         const td = document.createElement("td");
-        td.className = "invCell " + (cell.needs_attention ? "needs" : cell.below_par ? "low" : "ok");
-        td.innerHTML = `<div class="main">${Math.max(0, Number(cell.on_hand_units || 0))}</div><div class="sub">PAR ${Math.max(0, Number(cell.par_level_units || 0))}</div>`;
+        if (onHand > 0) {
+          td.className = "invCell " + (cell.needs_attention ? "needs" : cell.below_par ? "low" : "ok");
+          td.innerHTML = `<div class="main">${onHand}</div><div class="sub">PAR ${Math.max(0, Number(cell.par_level_units || 0))}</div>`;
+        } else {
+          td.className = "invCell ok";
+          td.setAttribute("aria-label", "No inventory recorded");
+        }
         tr.appendChild(td);
       });
+      const totalCell = document.createElement("td");
+      totalCell.className = "invCell ok";
+      totalCell.innerHTML = `<div class="main">${onHand}</div>`;
+      tr.appendChild(totalCell);
       locationBody.appendChild(tr);
     });
 
     const totalRow = document.createElement("tr");
     const totalLabel = document.createElement("td");
     totalLabel.className = "stickyLeft";
-    totalLabel.innerHTML = `<div class="storeName">All locations</div><div class="storeMeta">Product totals</div>`;
+    totalLabel.innerHTML = `<div class="storeName">All products</div><div class="storeMeta">Store totals</div>`;
     totalRow.appendChild(totalLabel);
-    rows.forEach(({ onHand, par }) => {
+    stores.forEach((_store, storeIndex) => {
+      const storeTotal = rows.reduce((total, row) => total + Math.max(0, Number(row.cells[storeIndex]?.on_hand_units || 0)), 0);
       const td = document.createElement("td");
       td.className = "invCell ok";
-      td.innerHTML = `<div class="main">${onHand}</div><div class="sub">PAR ${par}</div>`;
+      td.innerHTML = `<div class="main">${storeTotal}</div>`;
       totalRow.appendChild(td);
     });
+    const grandTotal = rows.reduce((total, row) => total + row.onHand, 0);
+    const grandTotalCell = document.createElement("td");
+    grandTotalCell.className = "invCell ok";
+    grandTotalCell.innerHTML = `<div class="main">${grandTotal}</div>`;
+    totalRow.appendChild(grandTotalCell);
     locationFoot.appendChild(totalRow);
   }
 
