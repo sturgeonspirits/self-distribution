@@ -1,6 +1,6 @@
 # Badger Invoice Parser
 
-Current complete version: `2026.10.02.1` (2026-10-02)
+Current complete version: `2026.10.03.1` (2026-10-03)
 
 `Code.gs` in this directory is the complete, paste-ready parser. The same file
 runs in both trackers; it decides what to do from the spreadsheet it is in:
@@ -13,7 +13,17 @@ runs in both trackers; it decides what to do from the spreadsheet it is in:
 
 - Test it in staging first: `TEST-SETUP.md`.
 - Switch the live tracker over: `INSTALL-PRODUCTION.md`.
-- Automated checks: `node tests/badger-parser.test.cjs` (14 tests with fake Google services).
+- Automated checks: `node tests/badger-parser.test.cjs` (17 tests with fake Google services).
+
+## Daily automatic import (production only)
+
+**Sturgeon Invoice Parser → Turn On Daily Automatic Import** adds one time-driven trigger
+that runs `scheduledInvoiceImport()` once a day at about 5:45 am Central (Google runs it
+within ±15 minutes), before the Hub's 6:10 am Badger status sync. It does exactly what
+the menu import does. Results go to `Parser State` and `Import Errors`; if a run fails,
+Google emails the script owner its standard trigger-failure notice. **Turn Off Automatic
+Import** removes it. **Parser Status** shows whether it is on. The menu import still
+works any time.
 
 ## How it decides what to read
 
@@ -35,4 +45,4 @@ that is not a Badger invoice out of the folder anyway.
   `2026.10.02.1`).
 - No pop-up dialogs: every function is safe to run from the menu or the editor.
 
-Previous version: `2026.09.15.5-TEST` (staging-only test build), in git history.
+Previous versions: `2026.10.02.1` (no schedule), `2026.09.15.5-TEST` (staging-only test build), in git history.
