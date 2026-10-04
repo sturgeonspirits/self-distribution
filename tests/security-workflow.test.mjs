@@ -846,7 +846,7 @@ test("Cocktail list review fixes memoize cooldowns, suppress opt-outs, validate 
     { intended_recipient:"day-eight@example.test", message_stage:"Initial", result:"APP SENT", timestamp:"2026-09-27T12:00:00Z" },
   ];
   let activityReads = 0;
-  const recent = new Function("getOutreachSheet_", "getAllRowsAsObjects_", "outreachValue_", "outreachDate_", "OUTREACH_ACTIVITY_SHEET_NAME", "OUTREACH_COCKTAIL_LIST_STAGE", "OUTREACH_CROSS_SEND_COOLDOWN_DAYS", `let __OUTREACH_RECENT_SEND_INDEX = null; ${recentSource}; return { outreachRecentSendToEmail_, outreachCrossSendCooldownReason_ };`)(
+  const recent = new Function("getOutreachSheet_", "getAllRowsAsObjects_", "outreachValue_", "outreachDate_", "OUTREACH_ACTIVITY_SHEET_NAME", "OUTREACH_COCKTAIL_LIST_STAGE", "OUTREACH_CROSS_SEND_COOLDOWN_DAYS", `let __OUTREACH_RECENT_SEND_INDEX = null; ${recentSource}; return { outreachRecentSendToEmail_, outreachCrossSendCooldownReason_, outreachNoteRecentSend_ };`)(
     () => ({ getLastRow:() => rows.length + 1 }),
     () => { activityReads += 1; return rows; },
     (row, keys) => keys.map(key => row[key]).find(value => value !== undefined && value !== ""),
@@ -858,6 +858,8 @@ test("Cocktail list review fixes memoize cooldowns, suppress opt-outs, validate 
   assert.equal(recent.outreachRecentSendToEmail_("cocktail-to-sales@example.test", stage => stage === "Cocktail list", 7, now), false, "an eight-day Cocktail list message permits sales outreach");
   assert.equal(recent.outreachRecentSendToEmail_("day-eight@example.test", stage => stage !== "Cocktail list", 7, now), false, "day eight is outside the cooldown");
   assert.equal(activityReads, 1, "all cooldown checks share one Activity Log read per execution");
+  recent.outreachNoteRecentSend_("same-scheduler@example.test", "sales", now);
+  assert.equal(recent.outreachRecentSendToEmail_("same-scheduler@example.test", stage => stage !== "Cocktail list", 7, now), true, "a sales send recorded during this execution blocks a later Cocktail list campaign");
 
   const eligibilitySource = backend.slice(backend.indexOf("function newsletterCocktailListEligibility_"), backend.indexOf("function cocktailListContactIndex_"));
   const eligibility = new Function("outreachCrossSendCooldownReason_", `${eligibilitySource}; return newsletterCocktailListEligibility_;`)(() => "");
@@ -900,6 +902,9 @@ test("Cocktail list review fixes memoize cooldowns, suppress opt-outs, validate 
   assert.throws(() => validateNewsletter({ ...payload, recipient:"changed@example.test" }, false), /changed/);
   assert.match(mailer, /action === 'sendNewsletterEmail'/);
   assert.match(mailer, /sendNewsletterEmailRequest_\(body\)/);
+  const batchSource = backend.slice(backend.indexOf("function apiSendOutreachCampaignBatch_"), backend.indexOf("const CAMPAIGN_SCHEDULE_HANDLER"));
+  assert.match(batchSource, /outreachNoteRecentSend_\(record\.email, "cocktail", acceptedAt\)/);
+  assert.match(batchSource, /outreachNoteRecentSend_\(record\.email, "sales", acceptedAt\)/);
 });
 
 test("source contains formula protection, global error listeners, and recoverable action state", async () => {

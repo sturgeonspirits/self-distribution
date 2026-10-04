@@ -1,8 +1,12 @@
 /*********************************
  * Inventory API (JSON) for Netlify
- * App version: 2026.10.04.25-APP
+ * App version: 2026.10.04.26-APP
  *
  * CHANGES IN THIS VERSION
+ * - Updates the per-execution cross-send cooldown index immediately after every accepted sales or Cocktail list
+ *   delivery, so two due campaigns in one scheduler execution cannot send both message types to one recipient.
+ *
+ * CHANGES IN 2026.10.04.25-APP
  * - Makes Cocktail list delivery use the mailer's newsletter-contact action, which validates the subscribed contact
  *   and records one authoritative Activity Log row with the real subject. It never treats a newsletter as sales outreach.
  * - Builds one per-execution Activity Log cooldown index and one newsletter/directory/program index, preventing
@@ -286,7 +290,7 @@
  * - Use only in the staging inventory backend until testing is complete.
  *********************************/
 
-const APP_VERSION = "2026.10.04.25-APP";
+const APP_VERSION = "2026.10.04.26-APP";
 
 const SHEET_NAMES = {
   STORES: "Stores",
@@ -2884,6 +2888,18 @@ function outreachRecentSendIndex_() {
   return (__OUTREACH_RECENT_SEND_INDEX = index);
 }
 
+function outreachNoteRecentSend_(email, kind, sentAt) {
+  // Do not create a partial index: when no cooldown check has needed it, a later lookup must still read Activity Log.
+  if (!__OUTREACH_RECENT_SEND_INDEX) return;
+  const recipient = String(email || "").trim().toLowerCase();
+  const normalizedKind = kind === "cocktail" ? "cocktail" : "sales";
+  const date = outreachDate_(sentAt) || new Date();
+  if (!recipient) return;
+  const entry = __OUTREACH_RECENT_SEND_INDEX.get(recipient) || { sales_sent_at:"", cocktail_sent_at:"", sales_undated:false, cocktail_undated:false };
+  if (!entry[`${normalizedKind}_sent_at`] || date.getTime() > entry[`${normalizedKind}_sent_at`].getTime()) entry[`${normalizedKind}_sent_at`] = date;
+  __OUTREACH_RECENT_SEND_INDEX.set(recipient, entry);
+}
+
 function outreachRecentSendToEmail_(email, stagePredicate, days, now) {
   const target = String(email || "").trim().toLowerCase();
   if (!target) return false;
@@ -4559,8 +4575,10 @@ function apiSendOutreachCampaignBatch_(p) {
             subject:String(item.values[rh.subject] || ""), html:String(item.values[rh.html] || ""), requested_by:staffName });
           if (!result.accepted || !String(result.message_id || "").trim()) throw new Error("Zoho did not return a verified message ID.");
           const sentAt = result.sent_at ? new Date(result.sent_at) : new Date();
+          const acceptedAt = isNaN(sentAt.getTime()) ? new Date() : sentAt;
+          outreachNoteRecentSend_(record.email, "cocktail", acceptedAt);
           item.values[rh.status] = "Sent"; item.values[rh.result_detail] = result.idempotent ? "Previously accepted and recovered." : "Zoho accepted delivery.";
-          item.values[rh.zoho_message_id] = String(result.message_id); item.values[rh.sent_at] = isNaN(sentAt.getTime()) ? new Date() : sentAt; item.values[rh.app_version] = APP_VERSION;
+          item.values[rh.zoho_message_id] = String(result.message_id); item.values[rh.sent_at] = acceptedAt; item.values[rh.app_version] = APP_VERSION;
           sheets.recipients.getRange(item.row, 1, 1, item.values.length).setValues([item.values]);
           sent += 1; results.push({ source_row:sourceRow, business:record.business, status:"Sent", message_id:String(result.message_id) });
           continue;
@@ -4599,10 +4617,12 @@ function apiSendOutreachCampaignBatch_(p) {
         timing.mailer_ms = Date.now() - recipientStartedAt - timing.row_read_ms;
         if (!result.accepted || !String(result.message_id || "").trim()) throw new Error("Zoho did not return a verified message ID.");
         const sentAt = result.sent_at ? new Date(result.sent_at) : new Date();
-        finalizeOutreachSend_(leadSheet, sourceRow, record, campaignStage, String(result.message_id), isNaN(sentAt.getTime()) ? new Date() : sentAt, staffName, token, raw);
+        const acceptedAt = isNaN(sentAt.getTime()) ? new Date() : sentAt;
+        outreachNoteRecentSend_(record.email, "sales", acceptedAt);
+        finalizeOutreachSend_(leadSheet, sourceRow, record, campaignStage, String(result.message_id), acceptedAt, staffName, token, raw);
         timing.finalize_ms = Date.now() - recipientStartedAt - timing.row_read_ms - timing.mailer_ms;
         item.values[rh.status] = "Sent"; item.values[rh.result_detail] = result.idempotent ? "Previously accepted and recovered." : "Zoho accepted delivery.";
-        item.values[rh.zoho_message_id] = String(result.message_id); item.values[rh.sent_at] = isNaN(sentAt.getTime()) ? new Date() : sentAt; item.values[rh.app_version] = APP_VERSION;
+        item.values[rh.zoho_message_id] = String(result.message_id); item.values[rh.sent_at] = acceptedAt; item.values[rh.app_version] = APP_VERSION;
         sheets.recipients.getRange(item.row, 1, 1, item.values.length).setValues([item.values]);
         sent += 1; results.push({ source_row:sourceRow, business:record.business, status:"Sent", message_id:String(result.message_id) });
       } catch (error) {
