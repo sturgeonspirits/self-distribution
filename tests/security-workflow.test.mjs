@@ -897,7 +897,8 @@ test("campaign reconciliation uses targeted accepted Activity Log records withou
   assert.match(backend, /case "reconcileCampaignSends": res = apiReconcileCampaignSends_\(body\);/);
   assert.match(reconciliationSource, /outreachRowsMatchingCell_\(sheet, \["idempotency_token", "Idempotency Token"\], recipientToken\)/);
   assert.match(reconciliationSource, /result\.includes\("APP SENT"\)/);
-  assert.match(reconciliationSource, /advanceOutreachSend_\(leadSheet, directory\.row, record, "Initial", activity\.message_id, activity\.sent_at, settings\)/);
+  assert.match(reconciliationSource, /const campaignStage = String\(campaignStoredCriteria_\(campaign\.values\[campaign\.headers\.criteria\]\)\?\.stage \|\| "Initial"\)/);
+  assert.match(reconciliationSource, /advanceOutreachSend_\(leadSheet, directory\.row, record, campaignStage, activity\.message_id, activity\.sent_at, settings\)/);
   assert.match(reconciliationSource, /Reconciled from Activity Log: Zoho accepted\./);
   assert.doesNotMatch(reconciliationSource, /callOutreachMailer_|appendOutreachActivity_/);
   assert.match(backend, /function reconcileBlockedCampaignSends\(\)/);
@@ -1053,13 +1054,16 @@ test("outreach nurture lifecycle handles cocktail replies, tasting visits, and d
   const statusForOutcome = new Function(`${functionSource("outreachStatusForOutcome_", "appendOutreachActivity_")}; return outreachStatusForOutcome_;`)();
   const nextStage = new Function(`${functionSource("outreachNextStage_", "outreachAddDays_")}; return outreachNextStage_;`)();
   const eligibility = new Function(
-    "outreachStatusLower_", "outreachIsCocktailListOutcome_", "outreachDate_", "legacyPilotSent_",
+    "outreachStatusLower_", "outreachIsCocktailListOutcome_", "outreachDate_", "legacyPilotSent_", "outreachStageIsDue_", "outreachRecentStageSend_", "NURTURE_CHECK_IN_DUPLICATE_COOLDOWN_DAYS",
     `${functionSource("outreachSendEligibility_", "outreachNextStage_")}; return outreachSendEligibility_;`
   )(
     record => String(record.status || "").trim().toLowerCase(),
     outcome => String(outcome || "").trim().toLowerCase() === "wants cocktail list",
     value => { const date = value instanceof Date ? value : new Date(value); return Number.isNaN(date.getTime()) ? "" : date; },
     () => false,
+    record => !!record.next_follow_up && new Date(record.next_follow_up).getTime() <= Date.now() + 86400000,
+    (record, stage, cooldownDays) => (record.activity || []).some(item => String(item.stage || "").toLowerCase() === String(stage).toLowerCase() && new Date(item.timestamp).getTime() >= Date.now() - cooldownDays * 86400000),
+    60,
   );
 
   assert.equal(statusForOutcome("Wants cocktail list"), "Nurture");
@@ -1067,6 +1071,7 @@ test("outreach nurture lifecycle handles cocktail replies, tasting visits, and d
   assert.equal(nextStage("Follow-up 2"), "Nurture check-in");
   assert.ok(eligibility({ email:"cocktails@example.test", next_email:"Follow-up 1", status:"Nurture", outcome:"Wants cocktail list", activity:[] }).includes("Recipient receives the cocktail list instead of sales outreach"));
   assert.deepEqual(eligibility({ email:"nurture@example.test", next_email:"Nurture check-in", status:"Nurture", next_follow_up:new Date(Date.now() - 86400000), activity:[] }), []);
+  assert.ok(eligibility({ email:"tomorrow@example.test", next_email:"Follow-up 1", status:"Sent", next_follow_up:new Date(Date.now() + 2 * 86400000), activity:[] }).includes("Follow-up date has not arrived"));
 
   const upsertSource = functionSource("upsertNewsletterFromCocktailReply_", "appendOutreachActivity_");
   const headers = ["contact_id", "account_id", "name", "email", "organization", "relationship_type", "status", "consent_source", "consent_date", "source_row", "source_business", "topics", "notes", "updated_at", "updated_by", "app_version"];
@@ -1123,6 +1128,35 @@ test("campaign builder freezes and delivers the requested outreach stage", async
   assert.match(index, /id="outreachCampaignCriteriaSourceCampaign"/);
   assert.match(index, /source_campaign_id:\$\("outreachCampaignCriteriaSourceCampaign"\)\.value/);
   assert.match(index, /campaign\.criteria\?\.stage \|\| "Initial"/);
+});
+
+test("Deploy A review corrections repair validations and retain a campaign's stage", async () => {
+  const [backend, mailer, status] = await Promise.all([
+    readFile(new URL("apps-script/Code.gs", root), "utf8"),
+    readFile(new URL("docs/reference/distribution-outreach/Code.gs", root), "utf8"),
+    readFile(new URL("PROJECT_STATUS.md", root), "utf8"),
+  ]);
+  const repairSource = backend.slice(backend.indexOf("function setOutreachDirectoryValidation_"), backend.indexOf("function repairHubStructure_"));
+  const rebuildSource = backend.slice(backend.indexOf("function apiRebuildCampaignRecipients_"), backend.indexOf("function rebuildUnsentCampaignEmails"));
+  const reconcileSource = backend.slice(backend.indexOf("function reconcileBlockedCampaignSends_"), backend.indexOf("function apiReconcileCampaignSends_"));
+  assert.match(repairSource, /OUTREACH_DIRECTORY_STAGE_VALUES/);
+  assert.match(repairSource, /OUTREACH_DIRECTORY_STATUS_VALUES/);
+  assert.match(repairSource, /OUTREACH_OUTCOME_VALUES/);
+  assert.match(backend, /const OUTREACH_DIRECTORY_STAGE_VALUES = \["Initial", "Follow-up 1", "Follow-up 2", "Nurture check-in", "Reactivation", "Complete"\]/);
+  assert.match(backend, /"Use reactivation", "Nurture"/);
+  assert.match(backend, /function outreachStageIsDue_\(/);
+  assert.match(backend, /Follow-up date has not arrived/);
+  assert.match(rebuildSource, /const campaignStage = String\(campaignStoredCriteria_\(campaign\.values\[ch\.criteria\]\)\?\.stage \|\| "Initial"\)/);
+  assert.match(rebuildSource, /next_email:campaignStage, stage:campaignStage/);
+  assert.match(rebuildSource, /Skipped — outreach stage changed/);
+  assert.match(reconcileSource, /const campaignStage = String\(campaignStoredCriteria_\(campaign\.values\[campaign\.headers\.criteria\]\)\?\.stage \|\| "Initial"\)/);
+  assert.match(reconcileSource, /advanceOutreachSend_\(leadSheet, directory\.row, record, campaignStage/);
+  assert.match(backend, /NURTURE_CHECK_IN_DUPLICATE_COOLDOWN_DAYS = 60/);
+  assert.match(mailer, /VERSION: 2026\.10\.03\.15-APP/);
+  assert.match(mailer, /function appStageWasRecentlySent_\(/);
+  assert.match(mailer, /stage === 'Nurture check-in'/);
+  assert.match(status, /Inventory API Apps Script \| `2026\.10\.03\.18-APP`/);
+  assert.match(status, /Distribution Outreach Apps Script \| `2026\.10\.03\.15-APP`/);
 });
 
 test("campaign rebuild UI and first-draft save gate preserve review-before-send", async () => {

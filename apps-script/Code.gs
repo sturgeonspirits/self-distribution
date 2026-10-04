@@ -1,10 +1,11 @@
 /*********************************
  * Inventory API (JSON) for Netlify
- * App version: 2026.10.03.17-APP
+ * App version: 2026.10.03.18-APP
  *
  * CHANGES IN THIS VERSION
- * - Adds cocktail-list and tasting-visit outreach outcomes, enrolling "cocktails" replies in the existing Newsletter Contacts tab without duplicate email rows.
- * - Moves unreplied Follow-up 2 recipients into a 90-day configurable Nurture check-in lifecycle and prevents cocktail-list contacts from receiving sales follow-ups.
+ * - Repairs strict Directory validations for every stage, status, and outcome this project writes, so lifecycle advances and new outcomes cannot fail after Zoho acceptance.
+ * - Requires Follow-up 1 and 2 due dates before preview, freeze, or send; preserves a campaign's stored stage when rebuilding or reconciling a delivery.
+ * - Allows recurring Nurture check-ins only after a 60-day duplicate-send cooldown.
  *
  * CHANGES IN 2026.10.01.3
  * - Exposes the permanent Online-request-to-Badger-invoice link and current Badger payment state in both staff invoice and Online-request views.
@@ -240,7 +241,7 @@
  * - Use only in the staging inventory backend until testing is complete.
  *********************************/
 
-const APP_VERSION = "2026.10.03.17-APP";
+const APP_VERSION = "2026.10.03.18-APP";
 
 const SHEET_NAMES = {
   STORES: "Stores",
@@ -740,6 +741,26 @@ function apiGetHubSystemStatus_() {
   };
 }
 
+function setOutreachDirectoryValidation_(sheet, headerKey, values) {
+  const headers = getHeaderMap_(sheet);
+  if (headers[headerKey] === undefined) return false;
+  const rows = Math.max(1, sheet.getMaxRows() - 1);
+  const validation = SpreadsheetApp.newDataValidation()
+    .requireValueInList(values, true)
+    .setAllowInvalid(false)
+    .build();
+  sheet.getRange(2, headers[headerKey] + 1, rows, 1).setDataValidation(validation);
+  return true;
+}
+
+function repairOutreachDirectoryValidations_(directory) {
+  return {
+    next_email:setOutreachDirectoryValidation_(directory, "next_email", OUTREACH_DIRECTORY_STAGE_VALUES),
+    status:setOutreachDirectoryValidation_(directory, "status", OUTREACH_DIRECTORY_STATUS_VALUES),
+    outcome:setOutreachDirectoryValidation_(directory, "outcome", OUTREACH_OUTCOME_VALUES),
+  };
+}
+
 function repairHubStructure_() {
   ensureFoundationalSheets_();
   const engagement = getOutreachSs_().getSheetByName(OUTREACH_ENGAGEMENT_SHEET_NAME);
@@ -747,6 +768,7 @@ function repairHubStructure_() {
   const identity = ensureAccountIdentityModel_(true);
   const directory = getOutreachSheet_(OUTREACH_SHEET_NAME);
   const headers = getHeaderMap_(directory);
+  const directoryValidations = repairOutreachDirectoryValidations_(directory);
   if (headers.priority !== undefined && directory.getLastRow() > 1) {
     const priorityRange = directory.getRange(2, headers.priority + 1, directory.getLastRow() - 1, 1);
     const priorityValues = priorityRange.getValues();
@@ -759,6 +781,7 @@ function repairHubStructure_() {
     });
     if (changed) priorityRange.setValues(priorityValues);
   }
+  identity.directory_validations = directoryValidations;
   return identity;
 }
 
@@ -777,6 +800,7 @@ function apiRepairHubStructure_(p) {
       repaired_at:new Date().toISOString(),
       accounts:identity.rows.length,
       backfill_results:identity.backfill_results || [],
+      directory_validations:identity.directory_validations || {},
     };
   } finally {
     lock.releaseLock();
@@ -3536,6 +3560,7 @@ function reconcileBlockedCampaignSends_(sheets, campaign, recipients, staffName,
   const leadSheet = getOutreachSheet_(OUTREACH_SHEET_NAME);
   const leadHeaders = getHeaderMap_(leadSheet);
   const settings = getOutreachCampaignSettings_();
+  const campaignStage = String(campaignStoredCriteria_(campaign.values[campaign.headers.criteria])?.stage || "Initial");
   const changed = [];
   let reconciled = 0;
   let unmatched = 0;
@@ -3556,7 +3581,7 @@ function reconcileBlockedCampaignSends_(sheets, campaign, recipients, staffName,
       business:String(outreachValue_(directory.values, ["business", "business_name"]) || item.values[rh.business_name] || ""),
       email:String(outreachValue_(directory.values, ["email", "email_address"]) || item.values[rh.recipient_email] || ""),
     };
-    advanceOutreachSend_(leadSheet, directory.row, record, "Initial", activity.message_id, activity.sent_at, settings);
+    advanceOutreachSend_(leadSheet, directory.row, record, campaignStage, activity.message_id, activity.sent_at, settings);
     item.values[rh.status] = "Sent";
     item.values[rh.result_detail] = "Reconciled from Activity Log: Zoho accepted.";
     item.values[rh.zoho_message_id] = activity.message_id;
@@ -3660,6 +3685,7 @@ function apiRebuildCampaignRecipients_(p) {
     const directory = campaignDirectoryRows_(leadSheet);
     const settings = getOutreachCampaignSettings_();
     const draftMap = outreachDraftMap_();
+    const campaignStage = String(campaignStoredCriteria_(campaign.values[ch.criteria])?.stage || "Initial");
     const changed = [];
     let rebuilt = 0;
     let rebuiltWithEditsKept = 0;
@@ -3678,8 +3704,16 @@ function apiRebuildCampaignRecipients_(p) {
         skipped += 1;
         return;
       }
-      const source = Object.assign({}, current.values, { next_email:"Initial", stage:"Initial" });
-      const draft = draftMap.get(outreachDraftKey_(accountId || current.row, "Initial")) || draftMap.get(outreachDraftKey_(current.row, "Initial"));
+      const currentStage = String(outreachValue_(current.values, ["next_email", "stage"]) || "Initial").trim();
+      if (currentStage.toLowerCase() !== campaignStage.toLowerCase()) {
+        item.values[rh.result_detail] = "Skipped — outreach stage changed.";
+        item.values[rh.app_version] = APP_VERSION;
+        changed.push(item);
+        skipped += 1;
+        return;
+      }
+      const source = Object.assign({}, current.values, { next_email:campaignStage, stage:campaignStage });
+      const draft = draftMap.get(outreachDraftKey_(accountId || current.row, campaignStage)) || draftMap.get(outreachDraftKey_(current.row, campaignStage));
       const message = outreachMessage_(source, settings, draft, false);
       if (campaignRecipientWasEdited_(String(item.values[rh.idempotency_token] || ""))) {
         item.values[rh.html] = outreachPlainTextToHtml_(String(item.values[rh.body_text] || "")) + String(message.footer_html || "");
@@ -3693,6 +3727,7 @@ function apiRebuildCampaignRecipients_(p) {
         rebuilt += 1;
       }
       item.values[rh.content_checksum] = campaignRecipientChecksum_(item);
+      if (rh.message_stage !== undefined) item.values[rh.message_stage] = campaignStage;
       item.values[rh.result_detail] = "Rebuilt with current template.";
       item.values[rh.app_version] = APP_VERSION;
       changed.push(item);
@@ -4138,7 +4173,14 @@ const OUTREACH_OUTCOME_VALUES = [
   "Interested", "Schedule tasting", "Tasting visit", "Wants cocktail list", "Follow up later", "Visit in person",
   "Wrong contact", "Bad address", "Not interested", "Unsubscribed",
 ];
+const OUTREACH_DIRECTORY_STAGE_VALUES = ["Initial", "Follow-up 1", "Follow-up 2", "Nurture check-in", "Reactivation", "Complete"];
+const OUTREACH_DIRECTORY_STATUS_VALUES = [
+  "Not contacted", "Sent", "Follow-up due", "Follow-up sent", "Replied", "Interested", "Not interested", "Bad address",
+  "Do not contact", "Needs email", "Verify email", "Send error", "Existing customer", "Reactivation due", "Reactivation sent",
+  "Use reactivation", "Nurture",
+];
 const OUTREACH_FOLLOW_UP_OUTCOMES = new Set(["Interested", "Schedule tasting", "Follow up later", "Visit in person"]);
+const NURTURE_CHECK_IN_DUPLICATE_COOLDOWN_DAYS = 60;
 
 function outreachIsCocktailListOutcome_(outcome) {
   return String(outcome || "").trim().toLowerCase() === "wants cocktail list";
@@ -4435,6 +4477,25 @@ function initialSentDirectoryEmailElsewhere_(email, sourceRow) {
     .some(row => Number(row.__source_row) !== Number(sourceRow) && !!outreachValue_(row, ["last_emailed", "last_email"]));
 }
 
+function outreachStageIsDue_(record, now) {
+  const dueAt = outreachDate_(record.next_follow_up);
+  const endOfToday = new Date(now || new Date());
+  endOfToday.setHours(23, 59, 59, 999);
+  return !!dueAt && dueAt.getTime() <= endOfToday.getTime();
+}
+
+function outreachRecentStageSend_(record, stage, cooldownDays, now) {
+  const cutoff = new Date(now || new Date());
+  cutoff.setDate(cutoff.getDate() - Number(cooldownDays || 0));
+  return (record.activity || []).some(item => {
+    const result = String(item.result || "").toUpperCase();
+    if (String(item.stage || "").trim().toLowerCase() !== String(stage || "").trim().toLowerCase() || result.indexOf("SENT") < 0 || result.indexOf("TEST") >= 0) return false;
+    const sentAt = outreachDate_(item.timestamp);
+    // An undated activity row is unsafe to repeat; retain the previous fail-closed behavior.
+    return !sentAt || sentAt.getTime() >= cutoff.getTime();
+  });
+}
+
 function outreachSendEligibility_(record, options) {
   const reasons = [];
   const email = String(record.email || "").trim().toLowerCase();
@@ -4450,19 +4511,19 @@ function outreachSendEligibility_(record, options) {
     const result = String(item.result || "").toUpperCase();
     return String(item.stage || "").trim().toLowerCase() === stage.toLowerCase() && result.indexOf("SENT") >= 0 && result.indexOf("TEST") < 0;
   });
-  if (sentForStage) reasons.push(`${stage} was already sent`);
+  if (stage === "Nurture check-in") {
+    if (outreachRecentStageSend_(record, stage, NURTURE_CHECK_IN_DUPLICATE_COOLDOWN_DAYS)) reasons.push(`${stage} was sent within the last ${NURTURE_CHECK_IN_DUPLICATE_COOLDOWN_DAYS} days`);
+  } else if (sentForStage) reasons.push(`${stage} was already sent`);
   if (stage === "Initial") {
     if (options?.initial_sent_emails?.has(email)) reasons.push("An initial email was already sent to this address");
     if (record.last_emailed || record.message_id || (!options?.skip_legacy_pilot && legacyPilotSent_(record))) reasons.push("An initial email was already sent");
     if (!["not contacted", "review", "approved"].includes(status)) reasons.push("Business is not eligible for initial outreach");
   } else if (stage === "Follow-up 1" || stage === "Follow-up 2") {
     if (!["follow-up due", "sent", "follow-up sent"].includes(status)) reasons.push("Follow-up is not due");
+    if (!outreachStageIsDue_(record)) reasons.push("Follow-up date has not arrived");
   } else if (stage === "Nurture check-in") {
     if (status !== "nurture") reasons.push("Nurture check-in is not due");
-    const dueAt = outreachDate_(record.next_follow_up);
-    const today = new Date();
-    today.setHours(23, 59, 59, 999);
-    if (!dueAt || dueAt.getTime() > today.getTime()) reasons.push("Nurture check-in date has not arrived");
+    if (!outreachStageIsDue_(record)) reasons.push("Nurture check-in date has not arrived");
   } else if (stage === "Reactivation") {
     if (!["reactivation due", "use reactivation"].includes(status)) reasons.push("Reactivation is not due");
   } else {

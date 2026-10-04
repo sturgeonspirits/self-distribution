@@ -1,12 +1,11 @@
 /**
  * Sturgeon Spirits Distribution Outreach
  *
- * VERSION: 2026.09.24.14-APP
+ * VERSION: 2026.10.03.15-APP
  *
  * CHANGES IN THIS VERSION
- * - Adds a dedicated, authenticated payment-reminder endpoint for reviewed, one-at-a-time Hub sends.
- * - Requires a confirmed Zoho message ID, idempotency token, and both Payment Reminder Log and Activity Log records before reporting a reminder as sent.
- * - Keeps marketing-lead validation and automated or bulk delivery out of the payment-reminder path.
+ * - Allows a recurring Nurture check-in only when the prior check-in is more than 60 days old; all other stages retain permanent duplicate-send protection.
+ * - Keeps message-stage identity, recipient validation, and every non-nurture delivery guard unchanged.
  *
  * CHANGES IN 2026.09.24.13-APP
  * - Uses Reactivation-specific online-ordering wording for the wholesale application link in every renderer.
@@ -62,7 +61,8 @@
  * Sends through the authenticated Zoho Mail API account.
  */
 
-const OUTREACH_VERSION = '2026.09.24.14-APP';
+const OUTREACH_VERSION = '2026.10.03.15-APP';
+const NURTURE_CHECK_IN_DUPLICATE_COOLDOWN_DAYS = 60;
 
 const OUTREACH = Object.freeze({
   ENVIRONMENT: 'STAGING_PILOT',
@@ -317,6 +317,19 @@ function legacyPilotSentFor_(business, email) {
   });
 }
 
+function appStageWasRecentlySent_(email, stage, cooldownDays) {
+  const cutoff = new Date();
+  cutoff.setDate(cutoff.getDate() - Number(cooldownDays || 0));
+  return appSentHistory_().some(function (item) {
+    const result = String(item.result || '').toUpperCase();
+    const intended = String(item.intended_recipient || item.email || '').trim().toLowerCase();
+    if (result.indexOf('SENT') < 0 || result.indexOf('TEST') >= 0 || intended !== email || String(item.message_stage || item.stage || '').trim().toLowerCase() !== stage.toLowerCase()) return false;
+    const sentAt = item.timestamp instanceof Date ? item.timestamp : new Date(item.timestamp);
+    // A row without a valid timestamp is unsafe to repeat, so keep it blocked.
+    return isNaN(sentAt.getTime()) || sentAt.getTime() >= cutoff.getTime();
+  });
+}
+
 function validateAppLead_(body, testMode) {
   const sheet = assertStagingEnvironment_().getSheetByName(OUTREACH.LEADS_SHEET);
   const rowNumber = Number(body.source_row);
@@ -339,7 +352,10 @@ function validateAppLead_(body, testMode) {
     const intended = String(item.intended_recipient || item.email || '').trim().toLowerCase();
     return sent && intended === email && String(item.message_stage || item.stage || '').trim().toLowerCase() === stage.toLowerCase();
   });
-  if (!testMode && (duplicate || (stage === 'Initial' && (row[OUTREACH.COL.LAST_EMAILED - 1] || legacyPilotSentFor_(business, email))))) {
+  const duplicateBlocked = stage === 'Nurture check-in'
+    ? appStageWasRecentlySent_(email, stage, NURTURE_CHECK_IN_DUPLICATE_COOLDOWN_DAYS)
+    : duplicate;
+  if (!testMode && (duplicateBlocked || (stage === 'Initial' && (row[OUTREACH.COL.LAST_EMAILED - 1] || legacyPilotSentFor_(business, email))))) {
     throw new Error('This email stage has already been sent to the recipient.');
   }
   return { sheet:sheet, row:row, rowNumber:rowNumber, business:business, email:email, stage:stage };
