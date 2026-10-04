@@ -1,5 +1,5 @@
 <!doctype html>
-<!-- App version: 2026.10.03.17-WEB -->
+<!-- App version: 2026.10.03.18-WEB -->
 <html>
 <head>
   <meta charset="utf-8" />
@@ -2469,6 +2469,8 @@
       <div class="dlgActions"><button id="rebuildCampaignRecipientsBtn" type="button">Rebuild unsent emails with current template</button></div>
       <div class="status" id="outreachCampaignStatus" role="status" aria-live="polite"></div>
       <div class="dlgActions"><button id="reopenOutreachCampaignBtn" type="button">Reopen unsent for edits</button><label class="checkLabel" id="campaignSegmentConfirmRow"><input id="campaignSegmentConfirm" type="checkbox" /><span id="campaignSegmentConfirmLabel"></span></label><button id="approveOutreachCampaignBtn" type="button">Approve campaign</button><span class="smallMuted" id="campaignSegmentConfirmHint">Review the fallback message to enable approval.</span><button id="sendOutreachCampaignBatchBtn" type="button">Send next 10</button><button class="primary" id="sendRemainingCampaignBtn" type="button">Send remaining</button></div>
+      <div class="dlgActions" id="campaignScheduleRow" hidden><label for="campaignScheduleAt" style="margin:0;align-self:center">Send at</label><input id="campaignScheduleAt" type="datetime-local" style="width:auto;min-width:220px" /><button id="scheduleCampaignBtn" type="button">Schedule send</button><button id="cancelCampaignScheduleBtn" type="button" hidden>Cancel schedule</button></div>
+      <div class="smallMuted" id="campaignScheduleInfo"></div>
     </div>
   </dialog>
 
@@ -2687,7 +2689,7 @@
   window.addEventListener("unhandledrejection", e => console.error("Unhandled promise rejection:", e.reason));
   window.addEventListener("error", e => console.error("Unhandled error:", e.error || e.message));
   const $ = (id) => document.getElementById(id);
-  const APP_VERSION = "2026.10.03.17-WEB";
+  const APP_VERSION = "2026.10.03.18-WEB";
   $("appVersionFooter").textContent = ` • Version ${APP_VERSION}`;
   function screenCacheKey(screen){ return `distribution_hub:${APP_VERSION}:${staffSession?.email || "unknown"}:${screen}`; }
   function readScreenCache(screen){
@@ -4086,7 +4088,7 @@
       ${campaigns.map(campaign => `
         <article class="outreachCard" data-campaign-id="${escapeHtml(campaign.campaign_id)}">
           <div class="outreachCardTop"><div><div class="businessName">${escapeHtml(campaign.name)}</div><div class="contactLine">${escapeHtml(campaign.audience)} • ${escapeHtml(campaign.created_by || "Staff")}</div></div><span class="badge ${campaign.status === "Complete" ? "green" : campaign.status === "Approved" ? "blue" : "amber"}">${escapeHtml(campaign.status)}</span></div>
-          <div class="outreachMeta"><span class="badge">${escapeHtml(campaign.criteria?.stage || "Initial")}</span><span class="badge">${Number(campaign.recipient_count || 0)} recipients</span><span class="badge blue">${Number(campaign.sent_count || 0)} sent</span>${Number(campaign.unsegmented_count || 0) ? `<span class="badge amber">${Number(campaign.unsegmented_count)} unsegmented</span>` : ""}${Number(campaign.blocked_count || 0) ? `<span class="badge red">${Number(campaign.blocked_count)} blocked</span>` : ""}</div>
+          <div class="outreachMeta"><span class="badge">${escapeHtml(campaign.criteria?.stage || "Initial")}</span>${campaignScheduleBadge(campaign)}<span class="badge">${Number(campaign.recipient_count || 0)} recipients</span><span class="badge blue">${Number(campaign.sent_count || 0)} sent</span>${Number(campaign.unsegmented_count || 0) ? `<span class="badge amber">${Number(campaign.unsegmented_count)} unsegmented</span>` : ""}${Number(campaign.blocked_count || 0) ? `<span class="badge red">${Number(campaign.blocked_count)} blocked</span>` : ""}</div>
           <div class="outreachActions"><button class="actionBtn primary" type="button" data-campaign-action="review"><i data-lucide="clipboard-check"></i><span>Review campaign</span></button></div>
         </article>`).join("")}`;
     refreshIcons();
@@ -4327,7 +4329,7 @@
     $("outreachCampaignSubtitle").textContent = `${campaign.recipient_count} frozen recipients${excludedCount ? ` • ${excludedCount} excluded` : ""} • ${criteriaSummary}${areaWarningCount ? ` • ${areaWarningCount} need area review` : ""} • ${campaign.status}`;
     $("outreachCampaignNotice").textContent = campaign.status === "Review"
       ? "Open any recipient to edit it or exclude it from this campaign. Approval freezes the exact saved audience and messages; it still does not send email."
-      : campaign.status === "Approved" ? "This audience is approved. “Send remaining” sends one verified recipient at a time, skips delivery-unknown records without retrying them, and sends no further email if the connection outcome is unknown."
+      : campaign.status === "Approved" ? "This audience is approved. “Send remaining” sends one verified recipient at a time, skips delivery-unknown records without retrying them, and sends no further email if the connection outcome is unknown. Or choose a send time below and the Hub sends it for you with the same checks."
       : "This campaign is closed; delivery history remains available below.";
     const unsegmentedCount = Number(campaign.unsegmented_count || 0);
     const requiresSegmentConfirmation = campaign.status === "Review" && unsegmentedCount > 0;
@@ -4345,6 +4347,7 @@
     $("sendOutreachCampaignBatchBtn").hidden = campaign.status !== "Approved";
     $("sendRemainingCampaignBtn").hidden = campaign.status !== "Approved";
     refreshCampaignSendControls();
+    refreshCampaignScheduleControls();
     const editable = campaign.status === "Review";
     const recipients = campaign.recipients || [];
     const statusFilters = [
@@ -4593,6 +4596,83 @@
       }
     }
     return { sent, blocked, remaining, attempts, last_business:lastBusiness };
+  }
+
+  function campaignScheduleTimeLabel(value){
+    const date = value ? new Date(value) : null;
+    return date && !Number.isNaN(date.getTime())
+      ? date.toLocaleString([], { weekday:"short", month:"short", day:"numeric", hour:"numeric", minute:"2-digit" })
+      : "";
+  }
+
+  function campaignScheduleBadge(campaign){
+    const status = String(campaign?.schedule_status || "");
+    if (status === "Scheduled") return `<span class="badge blue">Scheduled ${escapeHtml(campaignScheduleTimeLabel(campaign.scheduled_send_at))}</span>`;
+    if (status === "Sending") return `<span class="badge blue">Sending on schedule</span>`;
+    if (status === "Paused") return `<span class="badge red">Schedule paused</span>`;
+    return "";
+  }
+
+  function campaignScheduleInputValue(date){
+    const pad = value => String(value).padStart(2, "0");
+    return `${date.getFullYear()}-${pad(date.getMonth() + 1)}-${pad(date.getDate())}T${pad(date.getHours())}:${pad(date.getMinutes())}`;
+  }
+
+  function refreshCampaignScheduleControls(){
+    const campaign = selectedOutreachCampaign;
+    const approved = campaign?.status === "Approved";
+    const status = String(campaign?.schedule_status || "");
+    $("campaignScheduleRow").hidden = !approved;
+    $("cancelCampaignScheduleBtn").hidden = !["Scheduled", "Sending", "Paused"].includes(status);
+    $("scheduleCampaignBtn").disabled = !approved || campaignSendInProgress || status === "Sending";
+    $("scheduleCampaignBtn").textContent = status === "Scheduled" ? "Change schedule" : status === "Paused" ? "Reschedule" : "Schedule send";
+    const input = $("campaignScheduleAt");
+    if (campaign && input.dataset.campaignId !== campaign.campaign_id) {
+      input.dataset.campaignId = campaign.campaign_id;
+      const scheduled = status === "Scheduled" && campaign.scheduled_send_at ? new Date(campaign.scheduled_send_at) : null;
+      const fallback = new Date();
+      fallback.setDate(fallback.getDate() + 1);
+      fallback.setHours(10, 0, 0, 0);
+      input.value = campaignScheduleInputValue(scheduled && !Number.isNaN(scheduled.getTime()) ? scheduled : fallback);
+    }
+    $("campaignScheduleInfo").textContent = status ? `${status}: ${campaign.schedule_detail || ""}` : (approved ? "No send time set. The Hub checks for scheduled campaigns every five minutes." : "");
+  }
+
+  async function scheduleOutreachCampaign(){
+    const campaign = selectedOutreachCampaign;
+    const staffName = $("outreachStaffName").value.trim();
+    const ready = Number(campaign?.counts?.["Ready to send"] || 0);
+    if (!campaign || !staffName) return setCampaignStatus("Enter your staff name before scheduling.", true);
+    if (!selectedCampaignApprovalToken) return setCampaignStatus("Refresh and re-open this campaign before scheduling.", true);
+    const local = $("campaignScheduleAt").value;
+    const sendAt = local ? new Date(local) : null;
+    if (!sendAt || Number.isNaN(sendAt.getTime())) return setCampaignStatus("Choose a send date and time.", true);
+    if (!confirm(`Schedule ${ready} approved email${ready === 1 ? "" : "s"} from “${campaign.name}” to start sending ${campaignScheduleTimeLabel(sendAt)}? The Hub sends them in small batches with the same checks as Send remaining, skips anyone who has replied or opted out since approval, and pauses if a send fails.`)) return;
+    const button = $("scheduleCampaignBtn");
+    button.disabled = true;
+    try {
+      const res = await staffApiPost({ action:"scheduleOutreachCampaign", campaign_id:campaign.campaign_id, approval_token:selectedCampaignApprovalToken, send_at:sendAt.toISOString(), staff_name:staffName });
+      if (!res.ok) throw new Error(res.error || "Campaign could not be scheduled.");
+      $("campaignScheduleAt").dataset.campaignId = "";
+      await loadOutreachCampaigns(); await openOutreachCampaign(campaign.campaign_id);
+      setCampaignStatus(res.message || "Campaign scheduled.", res.scheduler_installed === false);
+    } catch (error) {
+      setCampaignStatus(error.message || String(error), true);
+    } finally { refreshCampaignScheduleControls(); }
+  }
+
+  async function cancelOutreachCampaignSchedule(){
+    const campaign = selectedOutreachCampaign;
+    const staffName = $("outreachStaffName").value.trim();
+    if (!campaign || !staffName) return setCampaignStatus("Enter your staff name before cancelling the schedule.", true);
+    if (!confirm(`Cancel the schedule for “${campaign.name}”? Emails already sent stay sent; the rest stay approved and can be sent manually or rescheduled.`)) return;
+    try {
+      const res = await staffApiPost({ action:"cancelOutreachCampaignSchedule", campaign_id:campaign.campaign_id, staff_name:staffName });
+      if (!res.ok) throw new Error(res.error || "Schedule could not be cancelled.");
+      $("campaignScheduleAt").dataset.campaignId = "";
+      await loadOutreachCampaigns(); await openOutreachCampaign(campaign.campaign_id);
+      setCampaignStatus(res.message || "Schedule cancelled.");
+    } catch (error) { setCampaignStatus(error.message || String(error), true); }
   }
 
   async function sendOutreachCampaignBatch(){
@@ -7431,6 +7511,8 @@
   $("reopenOutreachCampaignBtn").addEventListener("click", () => reopenOutreachCampaign());
   $("sendOutreachCampaignBatchBtn").addEventListener("click", sendOutreachCampaignBatch);
   $("sendRemainingCampaignBtn").addEventListener("click", sendRemainingCampaign);
+  $("scheduleCampaignBtn").addEventListener("click", scheduleOutreachCampaign);
+  $("cancelCampaignScheduleBtn").addEventListener("click", cancelOutreachCampaignSchedule);
   $("closeBusinessDetailBtn").addEventListener("click", () => $("businessDetailDialog").close());
   $("businessDetailDialog").addEventListener("close", () => { outreachDetailOpenRequest += 1; });
   $("closeNewsletterContactBtn").addEventListener("click", () => $("newsletterContactDialog").close());

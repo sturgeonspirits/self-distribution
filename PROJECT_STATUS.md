@@ -1,6 +1,6 @@
 # Sturgeon Distribution Hub — Project Status
 
-Last updated: 2026-10-03
+Last updated: 2026-10-04
 
 Read this file before inspecting the repository or changing the application. Update it whenever a deployment, version, service URL, known issue, or required setup step changes. Never put secret values in this file.
 
@@ -8,8 +8,8 @@ Read this file before inspecting the repository or changing the application. Upd
 
 | Component | Source version | Deployment state |
 | --- | --- | --- |
-| Netlify web app and staff proxy | `2026.10.03.17-WEB` on `codex/work` / `.14` pushed to `codex/distribution-system-foundation` | Repo only for `.17`; no Netlify deployment was made. `.14` was sent to Netlify for the Inventory Summary; deployment status has not been verified. |
-| Inventory API Apps Script | `2026.10.03.18-APP` on `codex/work` | Repo only for `.18`; no Apps Script deployment was made. `2026.10.01.5` remains the staging deployment Karl made on 2026-10-01. |
+| Netlify web app and staff proxy | `2026.10.03.18-WEB` on `codex/work`; `.17-WEB` (c7b1812) live on `codex/distribution-system-foundation` | `.17` (nurture outcomes + stage campaigns) went live 2026-10-03. `.18` adds the campaign Send-at scheduler controls and the two proxy actions; repo only until promoted. |
+| Inventory API Apps Script | `2026.10.03.19-APP` on `codex/work`; `2026.10.03.18-APP` live | `.18` was deployed by Karl on 2026-10-03 and `repairHubStructure()` was run (Directory validations repaired). `.19` adds scheduled campaign sends; after deploying it, run `installOutreachCampaignScheduler()` once. |
 | Distribution Outreach Apps Script | `2026.10.03.15-APP` in `docs/reference/distribution-outreach/Code.gs` on `codex/work` | Repo only for `.15`; no mailer deployment was made. The prior tracked `2026.09.24.14-APP` deployment remains unverified. |
 | Public customer Netlify proxy | `2026.09.18.3-WEB` | Deployed with Netlify; unchanged by the latest staff-app UI work |
 
@@ -24,6 +24,8 @@ Badger tracker safety answer (Karl, 2026-09-30): the PDF importer never writes t
 Phase 5 deployment state: staging Inventory API `2026.10.01.5` and Netlify `2026.10.01.8-WEB` are live. Next, run `seedCurrentPricesTab()` once in staging and review/activate the tracker prices with Claude before any Badger invoice creation. Never create a test invoice in Badger.
 
 Latest completed changes:
+
+- Scheduled campaign sends (`2026.10.03.19-APP` Inventory API, `2026.10.03.18-WEB`, repo only, 2026-10-04, written by Claude while chat was out of tokens): an **Approved** campaign's review dialog has a **Send at** date/time, **Schedule send** / **Change schedule** / **Reschedule**, and **Cancel schedule**. New staff-proxy actions `scheduleOutreachCampaign` (requires the current approval token; send time 1 minute to 30 days ahead; refuses while the schedule is already sending) and `cancelOutreachCampaignSchedule` (outreach area). Campaign tab columns appended: `Scheduled Send At`, `Scheduled By`, `Schedule Status` (Scheduled, Sending, Paused, Done, Cancelled), `Schedule Detail`. A five-minute time trigger, `runScheduledOutreachCampaigns`, picks up due Approved campaigns and sends through `apiSendOutreachCampaignBatch_` in locked batches of 5 with a 4-minute run budget (`deadline_at` stops a batch before starting a recipient past the budget), so every manual-send guard still applies per recipient. A recipient blocked before the mailer is called (reply, opt-out, stage change, due date) is skipped and the run continues; a block after a mailer attempt (`mailer_attempted:true`) or any other error pauses the schedule with the reason. A busy lock leaves it Sending for the next run. Approval clears any schedule; reopening cancels an active one; finishing the last recipient (manually or scheduled) marks the schedule Done. The campaign list shows a Scheduled / Sending / Paused badge. **Setup after deploying the Inventory API: run `installOutreachCampaignScheduler()` once in the Apps Script editor and approve the trigger permission.** Then promote the web app. Tests: `node --test tests/security-workflow.test.mjs` (60 passing). **Awaiting chat review; no deployment was made.**
 
 - Outreach Deploy A review corrections (`2026.10.03.18-APP` Inventory API; `2026.10.03.15-APP` Distribution Outreach mailer; repo only, 2026-10-03): `repairHubStructure()` now repairs strict Directory dropdown validation through the sheet's existing rows for every supported Next Email, Status, and Outcome value; run it once immediately after deploying the Inventory API and before any outreach send. Follow-up 1/2 require a populated due date no later than today at preview, freeze, and send. Campaign rebuild and timeout reconciliation use the frozen Criteria stage instead of `Initial`, and rebuild skips a recipient whose live stage changed. Nurture check-ins keep a 60-day duplicate-send cooldown in both Apps Script projects, permitting the planned 90-day cadence while retaining fail-closed protection for missing timestamps. Tests: `node --test tests/security-workflow.test.mjs` (59 passing). **No deployment was made.**
 

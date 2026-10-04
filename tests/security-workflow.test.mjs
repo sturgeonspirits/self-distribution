@@ -1547,3 +1547,114 @@ test("roster errors are retryable server errors, not browser sign-outs", async (
   assert.match(index, /res\.status === 401 \|\| json\.code === "STAFF_AUTH_REQUIRED"/);
   assert.doesNotMatch(index, /STAFF_ROSTER_UNAVAILABLE[\s\S]{0,80}staffAuth/);
 });
+
+test("scheduled campaign sends validate times, run due campaigns, skip guarded recipients, and pause on mailer failures", async () => {
+  const backend = await readFile(new URL("apps-script/Code.gs", root), "utf8");
+  const functionSource = (name, nextName) => backend.slice(backend.indexOf(`function ${name}`), backend.indexOf(`function ${nextName}`));
+  const ACTIVE = ["Scheduled", "Sending"];
+  const validate = new Function("CAMPAIGN_SCHEDULE_MAX_DAYS_AHEAD", `${functionSource("campaignScheduleValidation_", "campaignScheduleIsDue_")}; return campaignScheduleValidation_;`)(30);
+  const isDue = new Function("CAMPAIGN_SCHEDULE_ACTIVE_STATUSES", `${functionSource("campaignScheduleIsDue_", "campaignScheduleUnsafeBlocks_")}; return campaignScheduleIsDue_;`)(ACTIVE);
+  const unsafeBlocks = new Function(`${functionSource("campaignScheduleUnsafeBlocks_", "campaignScheduleTimeLabel_")}; return campaignScheduleUnsafeBlocks_;`)();
+  const now = new Date("2026-10-04T15:00:00Z");
+
+  assert.match(validate("", now).error, /valid send date/);
+  assert.match(validate("2026-10-04T15:00:30Z", now).error, /at least one minute/);
+  assert.match(validate("2026-11-10T15:00:00Z", now).error, /within 30 days/);
+  assert.equal(validate("2026-10-06T15:00:00Z", now).send_at.toISOString(), "2026-10-06T15:00:00.000Z");
+
+  assert.equal(isDue({ status:"Approved", schedule_status:"Scheduled", scheduled_send_at:new Date("2026-10-04T14:59:00Z") }, now), true);
+  assert.equal(isDue({ status:"Approved", schedule_status:"Sending", scheduled_send_at:"2026-10-04T14:00:00Z" }, now), true);
+  assert.equal(isDue({ status:"Approved", schedule_status:"Scheduled", scheduled_send_at:"2026-10-04T15:05:00Z" }, now), false);
+  assert.equal(isDue({ status:"Approved", schedule_status:"Paused", scheduled_send_at:"2026-10-04T14:00:00Z" }, now), false);
+  assert.equal(isDue({ status:"Approved", schedule_status:"Cancelled", scheduled_send_at:"2026-10-04T14:00:00Z" }, now), false);
+  assert.equal(isDue({ status:"Review", schedule_status:"Scheduled", scheduled_send_at:"2026-10-04T14:00:00Z" }, now), false);
+
+  assert.equal(unsafeBlocks([{ status:"Blocked", mailer_attempted:false }, { status:"Sent" }]).length, 0);
+  assert.equal(unsafeBlocks([{ status:"Blocked", mailer_attempted:true, business:"Bar" }]).length, 1);
+
+  // Run one campaign against an in-memory sheet and a scripted batch sender.
+  const runCampaign = (batches, { cancelAfterFirst = false } = {}) => {
+    const headers = { campaign_id:0, status:1, approval_token:2, scheduled_send_at:3, scheduled_by:4, schedule_status:5, schedule_detail:6, app_version:7 };
+    const campaign = { row:2, headers, values:["CMP-1", "Approved", "tok", new Date(Date.now() - 3600000), "Karl", "Scheduled", "", ""] };
+    const calls = [];
+    const audits = [];
+    const sender = p => {
+      calls.push(p);
+      if (cancelAfterFirst && calls.length === 1) campaign.values[headers.schedule_status] = "Cancelled";
+      const next = batches.shift();
+      if (next instanceof Error) throw next;
+      return next;
+    };
+    const run = new Function(
+      "updateCampaignSchedule_", "outreachCampaignSheets_", "outreachCampaignRow_", "campaignScheduleState_", "apiSendOutreachCampaignBatch_",
+      "campaignScheduleTimeLabel_", "clearCampaignSchedule_", "appendAudit_", "CAMPAIGN_SCHEDULE_ACTIVE_STATUSES", "CAMPAIGN_SCHEDULE_BATCH_SIZE",
+      "campaignScheduleIsDue_", "campaignScheduleUnsafeBlocks_", "OUTREACH_CAMPAIGNS_SHEET_NAME", "console",
+      `${functionSource("runScheduledCampaign_", "outreachStatusForOutcome_")}; return runScheduledCampaign_;`
+    )(
+      (id, mutate) => mutate(campaign),
+      () => ({ campaigns:{} }),
+      () => campaign,
+      new Function(`${functionSource("campaignScheduleState_", "updateCampaignSchedule_")}; return campaignScheduleState_;`)(),
+      sender,
+      () => "Sun Oct 4, 10:00 AM CT",
+      new Function(`${functionSource("clearCampaignSchedule_", "campaignScheduleState_")}; return clearCampaignSchedule_;`)(),
+      (...args) => audits.push(args),
+      ACTIVE, 5, isDue, unsafeBlocks, "Outreach Campaigns", { warn() {}, log() {} },
+    );
+    const result = run("CMP-1", Date.now() + 60000);
+    return { result, campaign, calls, audits };
+  };
+
+  const done = runCampaign([
+    { sent:4, blocked:1, remaining:3, results:[{ status:"Sent" }, { status:"Sent" }, { status:"Blocked", mailer_attempted:false, business:"Replied Bar" }, { status:"Sent" }, { status:"Sent" }] },
+    { sent:3, blocked:0, remaining:0, results:[{ status:"Sent" }, { status:"Sent" }, { status:"Sent" }] },
+  ]);
+  assert.equal(done.result.state, "Done");
+  assert.equal(done.result.sent, 7);
+  assert.equal(done.result.skipped, 1);
+  assert.equal(done.campaign.values[5], "Done");
+  assert.equal(done.calls[0].approval_token, "tok");
+  assert.equal(done.calls[0].continue_after_block, true);
+  assert.equal(done.calls[0].batch_size, 5);
+  assert.ok(done.calls[0].deadline_at > Date.now());
+
+  const paused = runCampaign([
+    { sent:1, blocked:1, remaining:5, results:[{ status:"Sent" }, { status:"Blocked", mailer_attempted:true, business:"Uncertain Bar", detail:"Zoho did not return a verified message ID." }] },
+  ]);
+  assert.equal(paused.result.state, "Paused");
+  assert.equal(paused.calls.length, 1);
+  assert.match(paused.campaign.values[6], /Uncertain Bar/);
+
+  const lockBusy = runCampaign([new Error("Another outreach send is in progress. Wait a moment and try again.")]);
+  assert.equal(lockBusy.result.state, "Sending");
+  assert.equal(lockBusy.campaign.values[5], "Sending");
+
+  const failed = runCampaign([new Error("Campaign approval is not valid. Refresh and review again.")]);
+  assert.equal(failed.result.state, "Paused");
+
+  const cancelled = runCampaign([{ sent:2, blocked:0, remaining:4, results:[{ status:"Sent" }, { status:"Sent" }] }, { sent:4, blocked:0, remaining:0, results:[] }], { cancelAfterFirst:true });
+  assert.equal(cancelled.result.state, "Stopped");
+  assert.equal(cancelled.calls.length, 1);
+  assert.equal(cancelled.campaign.values[5], "Cancelled");
+
+  // The manual batch path marks whether the mailer was attempted, honors the deadline, and approval/reopen reset schedules.
+  const batch = functionSource("apiSendOutreachCampaignBatch_", "campaignScheduleTimeLabel_");
+  assert.match(batch, /if \(deadlineAt && Date\.now\(\) > deadlineAt\) break;/);
+  assert.match(batch, /mailerAttempted = !prior;\s*\n\s*result = prior \|\| callOutreachMailer_/);
+  assert.match(batch, /mailer_attempted:mailerAttempted/);
+  assert.match(functionSource("apiApproveOutreachCampaign_", "apiReopenOutreachCampaign_"), /clearCampaignSchedule_\(campaign, ""\)/);
+  assert.match(functionSource("apiReopenOutreachCampaign_", "apiSendOutreachCampaignBatch_"), /clearCampaignSchedule_\(campaign, "Cancelled"/);
+  assert.match(backend, /case "scheduleOutreachCampaign": res = apiScheduleOutreachCampaign_\(body\); break;/);
+  assert.match(backend, /case "cancelOutreachCampaignSchedule": res = apiCancelOutreachCampaignSchedule_\(body\); break;/);
+  assert.match(backend, /ScriptApp\.newTrigger\(CAMPAIGN_SCHEDULE_HANDLER\)\.timeBased\(\)\.everyMinutes\(5\)\.create\(\);/);
+  assert.ok(!/READ_ACTIONS = new Set\([^)]*scheduleOutreachCampaign/.test(backend));
+
+  const proxy = await readFile(new URL("netlify/functions/inventory.js", root), "utf8");
+  assert.match(proxy, /"scheduleOutreachCampaign",\n  "cancelOutreachCampaignSchedule",/);
+  assert.match(proxy, /\["scheduleOutreachCampaign", "outreach"\], \["cancelOutreachCampaignSchedule", "outreach"\]/);
+
+  const index = await readFile(new URL("index.html", root), "utf8");
+  assert.match(index, /id="campaignScheduleAt" type="datetime-local"/);
+  assert.match(index, /action:"scheduleOutreachCampaign", campaign_id:campaign\.campaign_id, approval_token:selectedCampaignApprovalToken, send_at:sendAt\.toISOString\(\)/);
+  assert.match(index, /action:"cancelOutreachCampaignSchedule"/);
+});

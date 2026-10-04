@@ -1,8 +1,13 @@
 /*********************************
  * Inventory API (JSON) for Netlify
- * App version: 2026.10.03.18-APP
+ * App version: 2026.10.03.19-APP
  *
  * CHANGES IN THIS VERSION
+ * - Adds scheduled campaign sends: an approved campaign can be given a send time; a five-minute trigger
+ *   (installOutreachCampaignScheduler) sends it in small locked batches with every manual-send guard, skips
+ *   recipients a guard blocks, and pauses the schedule if a mailer attempt fails or is uncertain.
+ *
+ * CHANGES IN 2026.10.03.18-APP
  * - Repairs strict Directory validations for every stage, status, and outcome this project writes, so lifecycle advances and new outcomes cannot fail after Zoho acceptance.
  * - Requires Follow-up 1 and 2 due dates before preview, freeze, or send; preserves a campaign's stored stage when rebuilding or reconciling a delivery.
  * - Allows recurring Nurture check-ins only after a 60-day duplicate-send cooldown.
@@ -241,7 +246,7 @@
  * - Use only in the staging inventory backend until testing is complete.
  *********************************/
 
-const APP_VERSION = "2026.10.03.18-APP";
+const APP_VERSION = "2026.10.03.19-APP";
 
 const SHEET_NAMES = {
   STORES: "Stores",
@@ -952,7 +957,7 @@ function handle_(e, body) {
   try {
     assertAuthorized_(e, body);
     if (!action) {
-      return json_({ ok:true, service:"sturgeon-distribution-hub", version:APP_VERSION, actions:["initData","listSkus","addSkuToStore","upsertProduct","submitCounts","createReorder","managerGrid","salesSinceCount","updateStoreContacts","outreachDashboard","outreachRecord","outreachSendStatus","outreachNewsletterContacts","outreachCampaigns","outreachCampaign","previewOutreachCampaign","createOutreachCampaign","updateOutreachCampaignRecipient","setOutreachCampaignRecipientExclusion","setOutreachCampaignRecipientExclusions","approveOutreachCampaign","reopenOutreachCampaign","reconcileCampaignSends","rebuildCampaignRecipients","sendOutreachCampaignBatch","saveOutreachDraft","sendOutreachEmail","sendOutreachTestEmail","updateOutreachOutcome","logOutreachContact","updateOutreachBusiness","updateOutreachPrograms","createOutreachBusiness","importOutreachBusinesses","recalculateOutreachMiles","backfillEngagementDetails","upsertNewsletterContact","submitCustomerApplication","submitOnlineOrderRequest","customerWorkQueue","customerAccountIndex","linkBadgerInvoice","syncBadgerStatus","markBadgerInvoicePayment","recordBadgerCheck","resolvePaymentReminder","badgerReconcilePreview","applyBadgerReconcile","previewBadgerPaymentReminder","sendBadgerPaymentReminder","previewBadgerInvoice","createBadgerInvoice","adoptBadgerInvoice","failBadgerInvoiceCreation","updateCustomerApplication","updateOnlineOrderRequest","hubSystemStatus","initializeHardenedHub","repairHubStructure","reconcileIntegrations"] });
+      return json_({ ok:true, service:"sturgeon-distribution-hub", version:APP_VERSION, actions:["initData","listSkus","addSkuToStore","upsertProduct","submitCounts","createReorder","managerGrid","salesSinceCount","updateStoreContacts","outreachDashboard","outreachRecord","outreachSendStatus","outreachNewsletterContacts","outreachCampaigns","outreachCampaign","previewOutreachCampaign","createOutreachCampaign","updateOutreachCampaignRecipient","setOutreachCampaignRecipientExclusion","setOutreachCampaignRecipientExclusions","approveOutreachCampaign","reopenOutreachCampaign","reconcileCampaignSends","rebuildCampaignRecipients","sendOutreachCampaignBatch","scheduleOutreachCampaign","cancelOutreachCampaignSchedule","saveOutreachDraft","sendOutreachEmail","sendOutreachTestEmail","updateOutreachOutcome","logOutreachContact","updateOutreachBusiness","updateOutreachPrograms","createOutreachBusiness","importOutreachBusinesses","recalculateOutreachMiles","backfillEngagementDetails","upsertNewsletterContact","submitCustomerApplication","submitOnlineOrderRequest","customerWorkQueue","customerAccountIndex","linkBadgerInvoice","syncBadgerStatus","markBadgerInvoicePayment","recordBadgerCheck","resolvePaymentReminder","badgerReconcilePreview","applyBadgerReconcile","previewBadgerPaymentReminder","sendBadgerPaymentReminder","previewBadgerInvoice","createBadgerInvoice","adoptBadgerInvoice","failBadgerInvoiceCreation","updateCustomerApplication","updateOnlineOrderRequest","hubSystemStatus","initializeHardenedHub","repairHubStructure","reconcileIntegrations"] });
     }
 
     invalidateReadCache = !READ_ACTIONS.has(action);
@@ -984,6 +989,8 @@ function handle_(e, body) {
       case "reconcileCampaignSends": res = apiReconcileCampaignSends_(body); break;
       case "rebuildCampaignRecipients": res = apiRebuildCampaignRecipients_(body); break;
       case "sendOutreachCampaignBatch": res = apiSendOutreachCampaignBatch_(body); break;
+      case "scheduleOutreachCampaign": res = apiScheduleOutreachCampaign_(body); break;
+      case "cancelOutreachCampaignSchedule": res = apiCancelOutreachCampaignSchedule_(body); break;
       case "saveOutreachDraft": res = apiSaveOutreachDraft_(body); break;
       case "sendOutreachEmail": res = apiSendOutreachEmail_(body, false); break;
       case "sendOutreachTestEmail": res = apiSendOutreachEmail_(body, true); break;
@@ -3125,7 +3132,8 @@ function outreachCampaignSheets_() {
     campaigns: ensureSheet_(ss, OUTREACH_CAMPAIGNS_SHEET_NAME, [
       "Campaign ID", "Campaign Name", "Audience", "Status", "Recipient Count", "Audience Checksum",
       "Unsegmented Count", "Created At", "Created By", "Approved At", "Approved By", "Approval Token",
-      "Last Batch At", "Sent Count", "Blocked Count", "App Version", "Criteria"
+      "Last Batch At", "Sent Count", "Blocked Count", "App Version", "Criteria",
+      "Scheduled Send At", "Scheduled By", "Schedule Status", "Schedule Detail"
     ]),
     recipients: ensureSheet_(ss, OUTREACH_CAMPAIGN_RECIPIENTS_SHEET_NAME, [
       "Campaign ID", "Source Row", "Account ID", "Business Name", "Recipient Email", "Contact", "City", "ZIP", "Miles", "Priority",
@@ -3462,6 +3470,8 @@ function campaignObject_(campaign, recipients, includeRecipients) {
     approved_by:String(value("approved_by") || ""), sent_count:Number(value("sent_count") || 0), blocked_count:Number(value("blocked_count") || 0),
     counts:counts,
     criteria:campaignStoredCriteria_(value("criteria")),
+    scheduled_send_at:value("scheduled_send_at") || "", scheduled_by:String(value("scheduled_by") || ""),
+    schedule_status:String(value("schedule_status") || ""), schedule_detail:String(value("schedule_detail") || ""),
   };
   if (includeRecipients) {
     result.recipients = recipientObjects;
@@ -3964,6 +3974,7 @@ function apiApproveOutreachCampaign_(p) {
     const token = Utilities.getUuid().replace(/-/g, "");
     const now = new Date();
     campaign.values[h.status] = "Approved"; campaign.values[h.approved_at] = now; campaign.values[h.approved_by] = authenticatedActor_(p, "Sturgeon Distribution Hub"); campaign.values[h.approval_token] = token;
+    clearCampaignSchedule_(campaign, "");
     campaign.values[h.app_version] = APP_VERSION;
     sheets.campaigns.getRange(campaign.row, 1, 1, campaign.values.length).setValues([campaign.values]);
     recipients.filter(item => String(item.values[item.headers.status] || "") === "Ready for review").forEach(item => {
@@ -4038,6 +4049,7 @@ function apiReopenOutreachCampaign_(p) {
     campaign.values[ch.approved_at] = "";
     campaign.values[ch.approved_by] = "";
     campaign.values[ch.approval_token] = "";
+    if (CAMPAIGN_SCHEDULE_ACTIVE_STATUSES.includes(String(campaign.values[ch.schedule_status] || ""))) clearCampaignSchedule_(campaign, "Cancelled", "Cancelled because the campaign was reopened for edits.");
     campaign.values[ch.app_version] = APP_VERSION;
     sheets.campaigns.getRange(campaign.row, 1, 1, campaign.values.length).setValues([campaign.values]);
     appendAudit_("REOPEN_OUTREACH_CAMPAIGN", "Campaign", p.campaign_id, "", authenticatedActor_(p, "Sturgeon Distribution Hub"), OUTREACH_CAMPAIGNS_SHEET_NAME, OUTREACH_CAMPAIGN_RECIPIENTS_SHEET_NAME, "Review", `${reopenable.length} recipients reopened (${reopenedBlocked} previously blocked); ${correctedSubjects} non-Oshkosh subjects corrected; sent and excluded recipients were unchanged.`);
@@ -4049,6 +4061,8 @@ function apiSendOutreachCampaignBatch_(p) {
   requireFields_(p || {}, ["campaign_id", "approval_token", "staff_name"]);
   const requestedSize = Number(p.batch_size || 10);
   if (!Number.isInteger(requestedSize) || requestedSize < 1 || requestedSize > 20) throw new Error("Batch size must be between 1 and 20.");
+  // Optional wall-clock stop used by the scheduler so a trigger run never starts a recipient near Apps Script's 6-minute limit.
+  const deadlineAt = Number(p.deadline_at || 0);
   const startedAt = Date.now();
   const lock = LockService.getScriptLock();
   if (!lock.tryLock(20000)) throw new Error("Another outreach send is in progress. Wait a moment and try again.");
@@ -4070,9 +4084,11 @@ function apiSendOutreachCampaignBatch_(p) {
     const staffName = authenticatedActor_(p, "Sturgeon Distribution Hub");
     const results = []; let sent = 0; let blocked = 0;
     for (const item of recipients) {
+      if (deadlineAt && Date.now() > deadlineAt) break;
       const rh = item.headers;
       const sourceRow = Number(item.values[rh.source_row] || 0);
       let result = null;
+      let mailerAttempted = false;
       const recipientStartedAt = Date.now();
       const timing = { lock_ms:lockMs };
       const recipientName = String(item.values[rh.business_name] || "");
@@ -4104,6 +4120,7 @@ function apiSendOutreachCampaignBatch_(p) {
         }
         const reasons = outreachSendEligibility_(record, { skip_legacy_pilot:true });
         if (reasons.length) throw new Error(reasons.join("; "));
+        mailerAttempted = !prior;
         result = prior || callOutreachMailer_({ action:"sendAppEmail", idempotency_token:token, account_id:record.account_id,
           source_row:sourceRow, business:record.business, recipient:record.email, message_stage:campaignStage,
           subject:String(item.values[rh.subject] || ""), html:String(item.values[rh.html] || ""), requested_by:staffName });
@@ -4131,7 +4148,7 @@ function apiSendOutreachCampaignBatch_(p) {
         }
         item.values[rh.status] = "Blocked"; item.values[rh.result_detail] = String(error.message || error).slice(0, 2000); item.values[rh.app_version] = APP_VERSION;
         sheets.recipients.getRange(item.row, 1, 1, item.values.length).setValues([item.values]);
-        blocked += 1; results.push({ source_row:sourceRow, business:String(item.values[rh.business_name] || ""), status:"Blocked", detail:String(error.message || error) });
+        blocked += 1; results.push({ source_row:sourceRow, business:String(item.values[rh.business_name] || ""), status:"Blocked", detail:String(error.message || error), mailer_attempted:mailerAttempted });
         if (p.continue_after_block !== true) break; // Manual batches pause for review; the explicit continue run skips uncertain recipients without retrying them.
       } finally {
         timing.total_ms = Date.now() - recipientStartedAt;
@@ -4146,11 +4163,226 @@ function apiSendOutreachCampaignBatch_(p) {
     const blockedTotal = allRecipientStatuses.filter(item => item.status === "Blocked").length;
     campaign.values[ch.last_batch_at] = new Date(); campaign.values[ch.sent_count] = sentTotal;
     campaign.values[ch.blocked_count] = blockedTotal; campaign.values[ch.app_version] = APP_VERSION;
-    if (!remaining) campaign.values[ch.status] = needsRecording ? "Complete with recording warnings" : blockedTotal ? "Complete with blocks" : "Complete";
+    if (!remaining) {
+      campaign.values[ch.status] = needsRecording ? "Complete with recording warnings" : blockedTotal ? "Complete with blocks" : "Complete";
+      if (CAMPAIGN_SCHEDULE_ACTIVE_STATUSES.includes(String(campaign.values[ch.schedule_status] || ""))) {
+        clearCampaignSchedule_(campaign, "Done", `Finished ${campaignScheduleTimeLabel_(new Date())}: every approved recipient has been sent or skipped.`);
+      }
+    }
     sheets.campaigns.getRange(campaign.row, 1, 1, campaign.values.length).setValues([campaign.values]);
     appendAudit_("SEND_OUTREACH_CAMPAIGN_BATCH", "Campaign", p.campaign_id, "", staffName, OUTREACH_CAMPAIGN_RECIPIENTS_SHEET_NAME, OUTREACH_ACTIVITY_SHEET_NAME, blocked ? "Stopped for review" : "Completed", `${sent} sent; ${blocked} blocked; ${remaining} remaining.`);
     return { message:blocked && p.continue_after_block !== true ? "Batch stopped for review after a blocked recipient." : `Batch complete: ${sent} sent; ${blocked} blocked; ${needsRecording} need recording.`, sent:sent, blocked:blocked, needs_recording:needsRecording, remaining:remaining, results:results };
   } finally { lock.releaseLock(); }
+}
+
+// ---------- Scheduled campaign sends (2026.10.03.19-APP) ----------
+// An approved campaign can carry a send time. A five-minute trigger sends due campaigns in small locked
+// batches through apiSendOutreachCampaignBatch_, so every manual-send guard (approval token, frozen stage,
+// live eligibility, replies, opt-outs, duplicate tokens) still applies to each recipient.
+const CAMPAIGN_SCHEDULE_HANDLER = "runScheduledOutreachCampaigns";
+const CAMPAIGN_SCHEDULE_ACTIVE_STATUSES = ["Scheduled", "Sending"];
+const CAMPAIGN_SCHEDULE_BATCH_SIZE = 5;
+const CAMPAIGN_SCHEDULE_RUN_BUDGET_MS = 4 * 60 * 1000;
+const CAMPAIGN_SCHEDULE_MAX_DAYS_AHEAD = 30;
+
+function installOutreachCampaignScheduler() {
+  ScriptApp.getProjectTriggers()
+    .filter(trigger => trigger.getHandlerFunction() === CAMPAIGN_SCHEDULE_HANDLER)
+    .forEach(trigger => ScriptApp.deleteTrigger(trigger));
+  ScriptApp.newTrigger(CAMPAIGN_SCHEDULE_HANDLER).timeBased().everyMinutes(5).create();
+  return { message:"Scheduled campaign sender installed. It checks for due campaigns every five minutes." };
+}
+
+function campaignSchedulerInstalled_() {
+  try {
+    return ScriptApp.getProjectTriggers().some(trigger => trigger.getHandlerFunction() === CAMPAIGN_SCHEDULE_HANDLER);
+  } catch (error) {
+    return null; // Unknown (for example, missing trigger scope); the UI shows no warning rather than a false one.
+  }
+}
+
+function campaignScheduleValidation_(value, now) {
+  const reference = now instanceof Date ? now : new Date();
+  const sendAt = value instanceof Date ? value : new Date(String(value || ""));
+  if (!String(value || "").trim() || isNaN(sendAt.getTime())) return { error:"Choose a valid send date and time." };
+  if (sendAt.getTime() < reference.getTime() + 60 * 1000) return { error:"Choose a send time at least one minute from now. To send right away, use Send remaining." };
+  if (sendAt.getTime() > reference.getTime() + CAMPAIGN_SCHEDULE_MAX_DAYS_AHEAD * 86400000) return { error:`Choose a send time within ${CAMPAIGN_SCHEDULE_MAX_DAYS_AHEAD} days.` };
+  return { send_at:sendAt };
+}
+
+function campaignScheduleIsDue_(campaign, now) {
+  if (String(campaign?.status || "") !== "Approved") return false;
+  if (!CAMPAIGN_SCHEDULE_ACTIVE_STATUSES.includes(String(campaign?.schedule_status || ""))) return false;
+  const sendAt = campaign.scheduled_send_at instanceof Date ? campaign.scheduled_send_at : new Date(String(campaign?.scheduled_send_at || ""));
+  return !isNaN(sendAt.getTime()) && sendAt.getTime() <= (now instanceof Date ? now : new Date()).getTime();
+}
+
+// A recipient blocked before the mailer was called (a logged reply, opt-out, stage change, and so on) is a
+// normal skip. A block after a mailer attempt means delivery failed or is uncertain, so the schedule pauses.
+function campaignScheduleUnsafeBlocks_(results) {
+  return (results || []).filter(item => item && item.status === "Blocked" && item.mailer_attempted === true);
+}
+
+function campaignScheduleTimeLabel_(date) {
+  return Utilities.formatDate(date, "America/Chicago", "EEE MMM d, h:mm a") + " CT";
+}
+
+function clearCampaignSchedule_(campaign, status, detail) {
+  const h = campaign.headers;
+  if (h.schedule_status === undefined) return;
+  campaign.values[h.schedule_status] = status || "";
+  if (h.schedule_detail !== undefined) campaign.values[h.schedule_detail] = detail || "";
+  if (!status) {
+    if (h.scheduled_send_at !== undefined) campaign.values[h.scheduled_send_at] = "";
+    if (h.scheduled_by !== undefined) campaign.values[h.scheduled_by] = "";
+  }
+}
+
+function campaignScheduleState_(campaign) {
+  const h = campaign.headers;
+  const value = key => (h[key] === undefined ? "" : campaign.values[h[key]]);
+  return {
+    campaign_id:String(value("campaign_id") || ""), status:String(value("status") || ""),
+    approval_token:String(value("approval_token") || ""), scheduled_send_at:value("scheduled_send_at") || "",
+    scheduled_by:String(value("scheduled_by") || ""), schedule_status:String(value("schedule_status") || ""),
+  };
+}
+
+function updateCampaignSchedule_(campaignId, mutate) {
+  const lock = LockService.getScriptLock();
+  if (!lock.tryLock(20000)) throw new Error("Another campaign update is in progress. Try again in a moment.");
+  try {
+    const sheets = outreachCampaignSheets_();
+    const campaign = outreachCampaignRow_(sheets.campaigns, campaignId);
+    if (!campaign) throw new Error("Campaign not found.");
+    const outcome = mutate(campaign);
+    campaign.values[campaign.headers.app_version] = APP_VERSION;
+    sheets.campaigns.getRange(campaign.row, 1, 1, campaign.values.length).setValues([campaign.values]);
+    return outcome;
+  } finally { lock.releaseLock(); }
+}
+
+function apiScheduleOutreachCampaign_(p) {
+  requireFields_(p || {}, ["campaign_id", "approval_token", "send_at", "staff_name"]);
+  const check = campaignScheduleValidation_(p.send_at, new Date());
+  if (check.error) throw new Error(check.error);
+  const staffName = authenticatedActor_(p, "Sturgeon Distribution Hub");
+  const label = campaignScheduleTimeLabel_(check.send_at);
+  updateCampaignSchedule_(p.campaign_id, campaign => {
+    const h = campaign.headers;
+    if (String(campaign.values[h.status] || "") !== "Approved") throw new Error("Approve the campaign before scheduling it.");
+    if (String(campaign.values[h.approval_token] || "") !== String(p.approval_token || "")) throw new Error("Campaign approval is not valid. Refresh and review again.");
+    if (String(campaign.values[h.schedule_status] || "") === "Sending") throw new Error("This campaign is sending on its schedule now. Cancel the schedule first to change it.");
+    const ready = campaignRecipientRows_(outreachCampaignSheets_().recipients, p.campaign_id)
+      .filter(item => String(item.values[item.headers.status] || "") === "Ready to send").length;
+    if (!ready) throw new Error("No approved recipients are waiting to send.");
+    campaign.values[h.scheduled_send_at] = check.send_at;
+    campaign.values[h.scheduled_by] = staffName;
+    campaign.values[h.schedule_status] = "Scheduled";
+    campaign.values[h.schedule_detail] = `Scheduled by ${staffName} for ${label}; ${ready} recipient${ready === 1 ? "" : "s"} waiting.`;
+  });
+  appendAudit_("SCHEDULE_OUTREACH_CAMPAIGN", "Campaign", p.campaign_id, "", staffName, OUTREACH_CAMPAIGNS_SHEET_NAME, OUTREACH_CAMPAIGNS_SHEET_NAME, "Scheduled", label);
+  const installed = campaignSchedulerInstalled_();
+  return {
+    message:`Scheduled for ${label}. No email was sent now.${installed === false ? " Warning: the scheduled sender is not installed; run installOutreachCampaignScheduler() in Apps Script or this will not send." : ""}`,
+    scheduled_send_at:check.send_at.toISOString(), scheduler_installed:installed,
+  };
+}
+
+function apiCancelOutreachCampaignSchedule_(p) {
+  requireFields_(p || {}, ["campaign_id", "staff_name"]);
+  const staffName = authenticatedActor_(p, "Sturgeon Distribution Hub");
+  updateCampaignSchedule_(p.campaign_id, campaign => {
+    const status = String(campaign.values[campaign.headers.schedule_status] || "");
+    if (![...CAMPAIGN_SCHEDULE_ACTIVE_STATUSES, "Paused"].includes(status)) throw new Error("This campaign has no active schedule.");
+    clearCampaignSchedule_(campaign, "Cancelled", `Cancelled by ${staffName} at ${campaignScheduleTimeLabel_(new Date())}. Remaining recipients stay approved and can be sent manually or rescheduled.`);
+  });
+  appendAudit_("CANCEL_OUTREACH_CAMPAIGN_SCHEDULE", "Campaign", p.campaign_id, "", staffName, OUTREACH_CAMPAIGNS_SHEET_NAME, OUTREACH_CAMPAIGNS_SHEET_NAME, "Cancelled", "");
+  return { message:"Schedule cancelled. No further scheduled email will be sent for this campaign." };
+}
+
+function runScheduledOutreachCampaigns() {
+  const startedAt = Date.now();
+  const deadlineAt = startedAt + CAMPAIGN_SCHEDULE_RUN_BUDGET_MS;
+  const sheets = outreachCampaignSheets_();
+  const h = getHeaderMap_(sheets.campaigns);
+  if (sheets.campaigns.getLastRow() < 2 || h.schedule_status === undefined) return { runs:[] };
+  const now = new Date();
+  const due = sheets.campaigns.getRange(2, 1, sheets.campaigns.getLastRow() - 1, sheets.campaigns.getLastColumn()).getValues()
+    .map((values, index) => campaignScheduleState_({ row:index + 2, values:values, headers:h }))
+    .filter(state => campaignScheduleIsDue_(state, now))
+    .sort((a, b) => new Date(a.scheduled_send_at).getTime() - new Date(b.scheduled_send_at).getTime());
+  const runs = [];
+  for (const state of due) {
+    if (Date.now() > deadlineAt) break;
+    runs.push(runScheduledCampaign_(state.campaign_id, deadlineAt));
+  }
+  if (runs.some(run => run.sent || run.skipped || run.state !== "Sending")) bumpReadCacheVersion_();
+  console.log(JSON.stringify({ event:"outreach_campaign_schedule_run", due:due.length, runs:runs, total_ms:Date.now() - startedAt }));
+  return { runs:runs };
+}
+
+function runScheduledCampaign_(campaignId, deadlineAt) {
+  let sent = 0;
+  let skipped = 0;
+  const finish = (state, detail) => {
+    try {
+      updateCampaignSchedule_(campaignId, campaign => {
+        // Never overwrite a cancellation or reopen that landed while this run was sending.
+        if (!CAMPAIGN_SCHEDULE_ACTIVE_STATUSES.includes(String(campaign.values[campaign.headers.schedule_status] || ""))) return;
+        clearCampaignSchedule_(campaign, state, detail);
+      });
+    } catch (error) {
+      console.warn(`Campaign schedule state could not be saved for ${campaignId}: ${String(error.message || error)}`);
+    }
+    if (state !== "Sending") appendAudit_("SCHEDULED_OUTREACH_CAMPAIGN_" + state.toUpperCase(), "Campaign", campaignId, "", "Scheduled sender", OUTREACH_CAMPAIGNS_SHEET_NAME, OUTREACH_CAMPAIGNS_SHEET_NAME, state, detail);
+    return { campaign_id:campaignId, state:state, sent:sent, skipped:skipped, detail:detail };
+  };
+  let state;
+  try {
+    state = updateCampaignSchedule_(campaignId, campaign => {
+      const current = campaignScheduleState_(campaign);
+      if (!campaignScheduleIsDue_(current, new Date())) return null;
+      if (current.schedule_status === "Scheduled") {
+        campaign.values[campaign.headers.schedule_status] = "Sending";
+        campaign.values[campaign.headers.schedule_detail] = `Started ${campaignScheduleTimeLabel_(new Date())}.`;
+      }
+      return current;
+    });
+  } catch (error) {
+    return { campaign_id:campaignId, state:"Waiting", sent:0, skipped:0, detail:String(error.message || error) };
+  }
+  if (!state) return { campaign_id:campaignId, state:"Not due", sent:0, skipped:0, detail:"" };
+  const actor = `Scheduled send (${state.scheduled_by || "staff"})`;
+  while (Date.now() < deadlineAt) {
+    const sheets = outreachCampaignSheets_();
+    const campaign = outreachCampaignRow_(sheets.campaigns, campaignId);
+    const current = campaign ? campaignScheduleState_(campaign) : null;
+    if (!current || current.status !== "Approved" || current.schedule_status !== "Sending") {
+      return { campaign_id:campaignId, state:"Stopped", sent:sent, skipped:skipped, detail:"Schedule cancelled, reopened, or completed during the run." };
+    }
+    let res;
+    try {
+      res = apiSendOutreachCampaignBatch_({ campaign_id:campaignId, approval_token:current.approval_token, batch_size:CAMPAIGN_SCHEDULE_BATCH_SIZE,
+        continue_after_block:true, staff_name:actor, deadline_at:deadlineAt });
+    } catch (error) {
+      const message = String(error.message || error);
+      // A busy lock is not a failure: a staff action or manual send holds it. The next run continues.
+      if (/in progress/i.test(message)) return finish("Sending", `Waiting for another send to finish; ${sent} sent this run. Continues on the next run.`);
+      return finish("Paused", `Paused at ${campaignScheduleTimeLabel_(new Date())}: ${message.slice(0, 500)}`);
+    }
+    const unsafe = campaignScheduleUnsafeBlocks_(res.results);
+    sent += Number(res.sent || 0);
+    skipped += Math.max(0, Number(res.blocked || 0) - unsafe.length);
+    if (unsafe.length) {
+      return finish("Paused", `Paused at ${campaignScheduleTimeLabel_(new Date())} after ${unsafe[0].business}: ${String(unsafe[0].detail || "").slice(0, 300)}. Delivery may be uncertain; open the campaign and check before resuming. ${sent} sent, ${skipped} skipped this run.`);
+    }
+    if (!Number(res.remaining || 0)) {
+      return finish("Done", `Finished ${campaignScheduleTimeLabel_(new Date())}. ${sent} sent and ${skipped} skipped in the final run; see the recipient list for the full result.`);
+    }
+    if (!(res.results || []).length) break; // Deadline reached before another recipient started.
+  }
+  return finish("Sending", `Sending: ${sent} sent and ${skipped} skipped in the latest run; continues automatically every five minutes.`);
 }
 
 function outreachStatusForOutcome_(outcome) {
