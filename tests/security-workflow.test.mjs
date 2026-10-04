@@ -1155,7 +1155,9 @@ test("Deploy A review corrections repair validations and retain a campaign's sta
   assert.match(mailer, /VERSION: 2026\.10\.03\.15-APP/);
   assert.match(mailer, /function appStageWasRecentlySent_\(/);
   assert.match(mailer, /stage === 'Nurture check-in'/);
-  assert.match(status, /Inventory API Apps Script \| `2026\.10\.03\.18-APP`/);
+  // The status table must name the Inventory API version currently in Code.gs (it moves with every release).
+  const backendVersion = backend.match(/const APP_VERSION = "([^"]+)";/)[1];
+  assert.ok(status.includes(`| Inventory API Apps Script | \`${backendVersion}\``), `PROJECT_STATUS.md lists Inventory API ${backendVersion}`);
   assert.match(status, /Distribution Outreach Apps Script \| `2026\.10\.03\.15-APP`/);
 });
 
@@ -1247,10 +1249,10 @@ test("Badger Phase 5 invoice creation is review-gated and uses a narrow API boun
   assert.match(creationSource, /badgerValidateInvoiceNumber_\(draft\.invoice_number, draft\.date\)/);
   assert.match(creationSource, /Invoice may have been created — check before retrying/);
   assert.match(creationSource, /badgerRemoteInvoiceDetails_/);
-  assert.match(backend, /function seedCurrentPricesTab\(\)/);
-  assert.match(backend, /Current Prices already exists; no rows were changed/);
-  assert.match(backend, /"Unit Price"/);
-  assert.match(backend, /filter\(row => toBool_\(row\.active\)\)/);
+  assert.doesNotMatch(backend, /function seedCurrentPricesTab\(\)|BADGER_CURRENT_PRICES_SHEET_NAME/, "Current Prices tab is retired; prices live on SKUs");
+  const tierPriceSource = backend.slice(backend.indexOf("function priceTierCents_"), backend.indexOf("function badgerPriceForOrderLine_"));
+  assert.match(tierPriceSource, /getSs_\(\)\.getSheetByName\(PRICE_TIERS_SHEET_NAME\)/);
+  assert.match(tierPriceSource, /getSs_\(\)\.getSheetByName\(CUSTOMER_PRICES_SHEET_NAME\)/);
   assert.match(backend, /parameters:\{ value:String\(invoiceNumber \|\| ""\) \}/);
   assert.match(backend, /Utilities\.formatDate\(new Date\(`\$\{draft\.date\}T00:00:00`\), "America\/Chicago", "yyyy-MM-dd'T'HH:mm:ssXXX"\)/);
   assert.match(proxy, /"createBadgerInvoice"/);
@@ -1277,10 +1279,10 @@ test("Badger Phase 5 invoice creation is review-gated and uses a narrow API boun
   }));
 
   const moneySource = backend.slice(backend.indexOf("function badgerMoneyToCents_"), backend.indexOf("function badgerMoneyLabel_"));
-  const priceSource = backend.slice(backend.indexOf("function badgerCurrentPriceCents_"), backend.indexOf("function badgerCurrentPrices_"));
-  const currentPriceCents = vm.runInNewContext(`${moneySource}\n${priceSource}; badgerCurrentPriceCents_`);
-  assert.equal(currentPriceCents({ unit_price:"12.50" }), 1250);
-  assert.equal(currentPriceCents({ "unit_price_(per_bottle)":"9.25" }), 925);
+  const priceSource = backend.slice(backend.indexOf("function skuWholesaleCents_"), backend.indexOf("function skuPriceRow_"));
+  const wholesaleCents = vm.runInNewContext(`${moneySource}\n${priceSource}; skuWholesaleCents_`);
+  assert.equal(wholesaleCents({ wholesale_price:"12.50", price_tier:"Standard" }, new Map([["standard", 2200]])), 1250);
+  assert.equal(wholesaleCents({ wholesale_price:"", price_tier:"Standard" }, new Map([["standard", 2200]])), 2200);
 
   const refreshSource = backend.slice(backend.indexOf("function badgerResponseNeedsSessionRefresh_"), backend.indexOf("function badgerRequest_"));
   const needsRefresh = vm.runInNewContext(`${refreshSource}; badgerResponseNeedsSessionRefresh_`);
@@ -1657,4 +1659,108 @@ test("scheduled campaign sends validate times, run due campaigns, skip guarded r
   assert.match(index, /id="campaignScheduleAt" type="datetime-local"/);
   assert.match(index, /action:"scheduleOutreachCampaign", campaign_id:campaign\.campaign_id, approval_token:selectedCampaignApprovalToken, send_at:sendAt\.toISOString\(\)/);
   assert.match(index, /action:"cancelOutreachCampaignSchedule"/);
+});
+
+test("wholesale prices come from SKU tiers or overrides, customer deals, and Toast stock sets availability", async () => {
+  const backend = await readFile(new URL("apps-script/Code.gs", root), "utf8");
+  const functionSource = (name, nextName) => backend.slice(backend.indexOf(`function ${name}`), backend.indexOf(`function ${nextName}`));
+  const toBool = value => value === true || /^(true|yes|1|y)$/i.test(String(value || "").trim());
+  const money = new Function(`${functionSource("badgerMoneyToCents_", "badgerMoneyLabel_")}; return badgerMoneyToCents_;`)();
+  const uom = new Function(`${functionSource("badgerVolumeUnitOfMeasureId_", "priceTierCents_")}; return badgerVolumeUnitOfMeasureId_;`)();
+  const firstPresent = (row, keys) => { for (const key of keys) if (row[key] !== undefined && row[key] !== "") return row[key]; return ""; };
+  const build = new Function("badgerMoneyToCents_", "badgerVolumeUnitOfMeasureId_", "toBool_", "firstPresent_",
+    `${functionSource("skuWholesaleCents_", "badgerCurrentPrices_")}; return { wholesalePriceRows_, skuWholesaleCents_ };`)(money, uom, toBool, firstPresent);
+  const tiers = new Map([["standard", 2200], ["premium", 3000], ["b-17", 3500], ["half", 1200]]);
+  const skus = [
+    { sku_id:"STUR-VOD-CRAN-750", sku_name:"Cranberry Vodka", size:"750ml", active:true, price_tier:"Standard", wholesale_price:"", proof:70 },
+    { sku_id:"STUR-BRB-STR-750", sku_name:"Straight Bourbon", size:"750ml", active:"TRUE", price_tier:"Premium", wholesale_price:"", proof:90 },
+    { sku_id:"STUR-BRB-B17-750", sku_name:"Flying Fortress Bourbon", size:"750ml", active:true, price_tier:"Premium", wholesale_price:"$35", proof:100 },
+    { sku_id:"STUR-LIQ-LIMO-375", sku_name:"Limoncello", size:"375ml", active:true, price_tier:"half", proof:60 },
+    { sku_id:"STUR-VOD-OFF-750", sku_name:"Inactive Vodka", size:"750ml", active:false, price_tier:"Standard", proof:70 },
+    { sku_id:"STUR-VOD-NONE-750", sku_name:"Unpriced Vodka", size:"750ml", active:true, price_tier:"", proof:70 },
+  ];
+  const customers = [
+    { sku_id:"STUR-VOD-CRAN-750", account_id:"ACC-FESTIVAL", price:20, active:true },
+    { sku_id:"STUR-VOD-OFF-750", account_id:"ACC-FESTIVAL", price:18, active:true },
+    { sku_id:"STUR-VOD-CRAN-750", account_id:"ACC-OLD", price:15, active:false },
+  ];
+  const rows = build.wholesalePriceRows_(skus, tiers, customers);
+  const find = (id, account = "") => rows.find(row => row.sku_id === id && row.account_id === account);
+  assert.equal(find("STUR-VOD-CRAN-750").unit_price_cents, 2200, "tier price");
+  assert.equal(find("STUR-BRB-STR-750").unit_price_cents, 3000);
+  assert.equal(find("STUR-BRB-B17-750").unit_price_cents, 3500, "a typed wholesale price overrides the tier");
+  assert.equal(find("STUR-LIQ-LIMO-375").unit_of_measure_id, 5);
+  assert.equal(find("STUR-VOD-CRAN-750").unit_of_measure_id, 3);
+  assert.equal(find("STUR-VOD-CRAN-750").proof, 70);
+  assert.equal(find("STUR-VOD-CRAN-750", "ACC-FESTIVAL").unit_price_cents, 2000, "customer deal");
+  assert.equal(find("STUR-VOD-OFF-750"), undefined, "inactive SKUs are never priced");
+  assert.equal(find("STUR-VOD-OFF-750", "ACC-FESTIVAL"), undefined, "customer rows need an active SKU");
+  assert.equal(find("STUR-VOD-CRAN-750", "ACC-OLD"), undefined, "inactive customer rows are ignored");
+  assert.equal(find("STUR-VOD-NONE-750"), undefined, "no tier and no override means no price");
+
+  const listSkus = functionSource("apiListSkus_", "apiAddSkuToStoreUnlocked_");
+  assert.match(listSkus, /\(hasStock && stock <= 0\)/);
+  assert.match(listSkus, /hasStock \? "In stock" : "Staff will confirm availability"/);
+  assert.doesNotMatch(listSkus, /toast_stock:/, "bottle counts are not sent to the public order page");
+});
+
+test("Toast 86 Report import maps stock by exact Toast item name and reports gaps; catalog check finds unpriced products", async () => {
+  const backend = await readFile(new URL("apps-script/Code.gs", root), "utf8");
+  const functionSource = (name, nextName) => backend.slice(backend.indexOf(`function ${name}`), backend.indexOf(`function ${nextName}`));
+  const parseCsv = text => text.trim().split(/\r?\n/).map(line => {
+    const cells = []; let cell = "", quoted = false;
+    for (let i = 0; i < line.length; i++) {
+      const c = line[i];
+      if (quoted) { if (c === '"' && line[i + 1] === '"') { cell += '"'; i++; } else if (c === '"') quoted = false; else cell += c; }
+      else if (c === '"') quoted = true; else if (c === ",") { cells.push(cell); cell = ""; } else cell += c;
+    }
+    cells.push(cell); return cells;
+  });
+  const lib = new Function("Utilities", "TOAST_STOCK_GROUPS",
+    `${functionSource("toastItemKey_", "importLatestToastStockReport")}; return { parseToast86Report_, toastStockUpdates_ };`)({ parseCsv }, ["750 ml", "375 ml", "box sets"]);
+  const csv = [
+    "Location,Menu Name,Group Name,Subgroup(s),Item Name,Quantity Remaining,SKU,PLU",
+    ',"Bottles, Cans, Boxes",750 ml,,Cranberry Vodka 750 ml,117.0,,',
+    ',"Bottles, Cans, Boxes",750 ml,,Peach Vodka  750 ml,0.0,,',
+    ',"Bottles, Cans, Boxes",750 ml,,Brand New Vodka 750 ml,9.0,,',
+    ',"Bottles, Cans, Boxes",Box Sets,,Gin 5 pack,2.0,,',
+    ",Distribution,Bottles,,Cranberry Vodka 750 ml,117.0,,",
+    ",Merchandise,Sturgeon Spirits Merchandise,,Black hoodie,9.0,,",
+  ].join("\n");
+  const report = lib.parseToast86Report_(csv);
+  assert.equal(report.length, 6);
+  const skus = [
+    { sku_id:"STUR-VOD-CRAN-750", toast_item_name:"Cranberry Vodka 750 ml" },
+    { sku_id:"STUR-VOD-PEAC-750", toast_item_name:"peach vodka 750 ml" },
+    { sku_id:"STUR-BOX-GIN-5X100", toast_item_name:"Gin 5 pack" },
+    { sku_id:"STUR-VOD-GONE-750", toast_item_name:"Retired Vodka 750 ml" },
+    { sku_id:"STUR-ANY-750", toast_item_name:"" },
+  ];
+  const result = lib.toastStockUpdates_(skus, report);
+  assert.deepEqual(result.updates.map(u => [u.sku_id, u.stock]), [["STUR-VOD-CRAN-750", 117], ["STUR-VOD-PEAC-750", 0], ["STUR-BOX-GIN-5X100", 2]]);
+  assert.deepEqual(result.missing_in_report, ["STUR-VOD-GONE-750"]);
+  assert.deepEqual(result.unmapped_toast_items, ["Brand New Vodka 750 ml"], "new bottles without a SKU are reported; merchandise is ignored");
+  assert.throws(() => lib.parseToast86Report_("a,b\n1,2"), /does not look like a Toast 86 Report/);
+
+  const toBool = value => value === true || /^(true|yes|1|y)$/i.test(String(value || "").trim());
+  const money = new Function(`${functionSource("badgerMoneyToCents_", "badgerMoneyLabel_")}; return badgerMoneyToCents_;`)();
+  const wholesaleCents = new Function("badgerMoneyToCents_", `${functionSource("skuWholesaleCents_", "skuPriceRow_")}; return skuWholesaleCents_;`)(money);
+  const uomFor = new Function(`${functionSource("badgerVolumeUnitOfMeasureId_", "toastItemKey_")}; return badgerVolumeUnitOfMeasureId_;`)();
+  const invoiceVolume = new Function(`${functionSource("skuInvoiceVolume_", "skuPriceRow_")}; return skuInvoiceVolume_;`)();
+  const problemsFor = new Function("badgerMoneyToCents_", "toBool_", "skuWholesaleCents_", "badgerVolumeUnitOfMeasureId_", "skuInvoiceVolume_",
+    `${functionSource("wholesaleCatalogProblems_", "checkWholesaleCatalog")}; return wholesaleCatalogProblems_;`)(money, toBool, wholesaleCents, uomFor, invoiceVolume);
+  assert.equal(invoiceVolume({ size:"5 x 100ml", invoice_volume:"500ml" }), "500ml");
+  assert.equal(invoiceVolume({ size:"750ml", invoice_volume:"" }), "750ml");
+  const tiers = new Map([["standard", 2200], ["squadron", 0]].filter(([, cents]) => cents > 0));
+  const problems = problemsFor([
+    { sku_id:"A", active:true, price_tier:"Standard", proof:70, size:"750ml", toast_item_name:"A 750 ml" },
+    { sku_id:"B", active:true, price_tier:"Squadron", proof:80, size:"750ml", toast_item_name:"B 750 ml" },
+    { sku_id:"C", active:true, price_tier:"Standard", proof:"", size:"5 x 100ml", invoice_volume:"9000ml", toast_item_name:"" },
+    { sku_id:"D", active:false, price_tier:"Old Name", proof:"", toast_item_name:"" },
+  ], tiers);
+  assert.deepEqual(problems.unknown_tier, ["B (Squadron)", "D (Old Name)"]);
+  assert.deepEqual(problems.no_price, ["B"]);
+  assert.deepEqual(problems.no_proof, ["C"]);
+  assert.deepEqual(problems.no_toast_item, ["C"]);
+  assert.deepEqual(problems.no_invoice_unit, ["C (9000ml)"]);
 });

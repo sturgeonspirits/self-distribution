@@ -1,8 +1,15 @@
 /*********************************
  * Inventory API (JSON) for Netlify
- * App version: 2026.10.03.19-APP
+ * App version: 2026.10.04.20-APP
  *
  * CHANGES IN THIS VERSION
+ * - Wholesale prices come from the SKUs tab: price_tier (amounts on the Price Tiers tab) or a wholesale_price override,
+ *   plus account-specific rows on Customer Prices. Replaces the Current Prices tab and seedCurrentPricesTab().
+ * - SKUs toast_stock (weekly Toast bottle count) marks products In stock / Out of stock on the order page.
+ * - importLatestToastStockReport() (hourly via installToastStockImport) reads the newest Toast 86 Report CSV from the
+ *   "Toast 86 Reports" Drive folder and updates toast_stock / toast_stock_date by each SKU's toast_item_name.
+ *
+ * CHANGES IN 2026.10.03.19-APP
  * - Adds scheduled campaign sends: an approved campaign can be given a send time; a five-minute trigger
  *   (installOutreachCampaignScheduler) sends it in small locked batches with every manual-send guard, skips
  *   recipients a guard blocks, and pauses the schedule if a mailer attempt fails or is uncertain.
@@ -246,7 +253,7 @@
  * - Use only in the staging inventory backend until testing is complete.
  *********************************/
 
-const APP_VERSION = "2026.10.03.19-APP";
+const APP_VERSION = "2026.10.04.20-APP";
 
 const SHEET_NAMES = {
   STORES: "Stores",
@@ -268,7 +275,8 @@ const BADGER_STATUS_SHEET_NAME = "Badger Invoice Status";
 const BADGER_SYNC_LOG_SHEET_NAME = "Badger Sync Log";
 const BADGER_SYNC_MAX_AGE_MS = 48 * 60 * 60 * 1000;
 const BADGER_PAYMENT_LOG_SHEET_NAME = "Badger Invoice Payment Log";
-const BADGER_CURRENT_PRICES_SHEET_NAME = "Current Prices";
+const PRICE_TIERS_SHEET_NAME = "Price Tiers"; // inventory workbook: Tier, Price
+const CUSTOMER_PRICES_SHEET_NAME = "Customer Prices"; // inventory workbook: SKU ID, Account ID, Price, Active, Notes
 const BADGER_INVOICE_CREATIONS_SHEET_NAME = "Badger Invoice Creations";
 const OUTREACH_SHEET_NAME = "Distribution Directory and Leads";
 const OUTREACH_ACTIVITY_SHEET_NAME = "Activity Log";
@@ -1115,8 +1123,12 @@ function apiListSkus_() {
     const id = String(s.sku_id||"").trim();
     if (!id) return;
     const toast = toastMap.get(id) || {};
-    // Optional "Out of Stock" checkbox column in SKUs. Staff tick it when a product runs out.
-    const outOfStock = toBool_(firstPresent_(s, ["out_of_stock", "out_of_stock?"]));
+    // Toast Stock (bottles, from the weekly Toast count) marks a product out of stock at zero; the optional
+    // "Out of Stock" checkbox still forces it out. The count itself is never sent to the public order page.
+    const stockText = String(s.toast_stock ?? "").trim();
+    const stock = stockText === "" ? null : Number(stockText);
+    const hasStock = stock !== null && Number.isFinite(stock);
+    const outOfStock = toBool_(firstPresent_(s, ["out_of_stock", "out_of_stock?"])) || (hasStock && stock <= 0);
     map.set(id,{
       sku_id:id,
       sku_name:s.sku_name,
@@ -1124,7 +1136,7 @@ function apiListSkus_() {
       size:s.size,
       units_per_case:Number(s.units_per_case||12),
       catalog_source:ORDER_CATALOG_SOURCE,
-      availability_status:outOfStock ? "Out of stock" : "Staff will confirm availability",
+      availability_status:outOfStock ? "Out of stock" : hasStock ? "In stock" : "Staff will confirm availability",
       out_of_stock:outOfStock,
       external_item_id:String(toast.external_item_id || ""),
       toast_mapping_status:toast.external_item_id ? "Mapped; adapter disabled" : "Not mapped",
@@ -1132,7 +1144,7 @@ function apiListSkus_() {
   });
   return {
     catalog_source:ORDER_CATALOG_SOURCE,
-    availability_source:"Out of Stock checkboxes in SKUs; staff confirms availability",
+    availability_source:"Toast Stock column in SKUs (weekly Toast count) and Out of Stock checkboxes; staff confirms availability",
     skus:Array.from(map.values()).sort((a,b)=>String(a.sku_name||"").localeCompare(String(b.sku_name||""))),
   };
 }
@@ -6214,30 +6226,188 @@ function badgerVolumeUnitOfMeasureId_(volume) {
   return ({ "750ml":3, "375ml":5, "1.75l":20, "1750ml":20, "1500ml":2, "200ml":25, "100ml":26, "50ml":19 })[normalized] || "";
 }
 
-function seedCurrentPricesTab() {
-  const tracker = SpreadsheetApp.openById(BADGER_TRACKER_SPREADSHEET_ID);
-  if (tracker.getSheetByName(BADGER_CURRENT_PRICES_SHEET_NAME)) return { message:"Current Prices already exists; no rows were changed." };
-  const sheet = tracker.insertSheet(BADGER_CURRENT_PRICES_SHEET_NAME);
-  const headers = ["SKU ID", "Badger Description", "Unit Price", "Volume", "Unit of Measure ID", "Proof", "Beverage Class", "Active", "Account ID", "Updated At", "Notes"];
-  sheet.getRange(1, 1, 1, headers.length).setValues([headers]).setFontWeight("bold");
-  const lineSheet = tracker.getSheetByName("Invoice Lines");
-  const lineRows = lineSheet && lineSheet.getLastRow() >= 2 ? getAllRowsAsObjects_(lineSheet) : [];
-  const catalog = apiListSkus_().skus || [];
-  const rows = catalog.map(sku => {
-    const descriptionKey = normalizeCustomerMatchKey_(sku.sku_name);
-    const match = lineRows.slice().reverse().find(line => normalizeCustomerMatchKey_(firstPresent_(line, ["description", "badger_description", "sku_name", "item"])) === descriptionKey) || {};
-    const description = String(firstPresent_(match, ["description", "badger_description", "sku_name", "item"]) || sku.sku_name || "");
-    const volume = String(firstPresent_(match, ["volume", "size", "unit_volume"]) || sku.size || "");
-    const unitPrice = firstPresent_(match, ["unit_price", "unit price", "price"]) || "";
-    return [sku.sku_id, description, unitPrice, volume, badgerVolumeUnitOfMeasureId_(volume), "", "Spirit", false, "", new Date(), "check price"];
-  });
-  if (rows.length) sheet.getRange(2, 1, rows.length, headers.length).setValues(rows);
-  sheet.setFrozenRows(1);
-  return { message:`Created Current Prices with ${rows.length} inactive rows for review.`, count:rows.length };
+// ---------- Toast stock import (2026.10.04.20-APP) ----------
+// Save Toast's 86 Report CSV (Reports > Menus > 86 Report, threshold 9999) into the "Toast 86 Reports" Drive folder.
+// An hourly trigger (installToastStockImport) reads the newest unread report and writes each SKU's toast_stock and
+// toast_stock_date, matching the SKU's toast_item_name exactly (case and spacing ignored). Nothing else in SKUs changes.
+const TOAST_REPORT_FOLDER_ID = "1kwjhWWg4KONWlcl-FmQ8oXeR9De6e5d_";
+const TOAST_STOCK_LAST_FILE_PROPERTY = "TOAST_STOCK_LAST_FILE";
+const TOAST_STOCK_GROUPS = ["750 ml", "375 ml", "box sets"]; // Toast 86 Report "Group Name" values that are wholesale products
+
+function installToastStockImport() {
+  ScriptApp.getProjectTriggers()
+    .filter(trigger => trigger.getHandlerFunction() === "importLatestToastStockReport")
+    .forEach(trigger => ScriptApp.deleteTrigger(trigger));
+  ScriptApp.newTrigger("importLatestToastStockReport").timeBased().everyHours(1).create();
+  return { message:"Toast stock import installed. It checks the Toast 86 Reports folder every hour." };
 }
 
-function badgerCurrentPriceCents_(row) {
-  return badgerMoneyToCents_(row.unit_price ?? row["unit_price_(per_bottle)"]);
+function toastItemKey_(value) {
+  return String(value || "").replace(/\s+/g, " ").trim().toLowerCase();
+}
+
+function parseToast86Report_(csvText) {
+  const rows = Utilities.parseCsv(String(csvText || "").replace(/^﻿/, ""));
+  if (!rows.length) throw new Error("The Toast report is empty.");
+  const header = rows[0].map(cell => String(cell || "").trim().toLowerCase());
+  const col = name => header.indexOf(name);
+  const itemCol = col("item name"); const qtyCol = col("quantity remaining"); const groupCol = col("group name"); const menuCol = col("menu name");
+  if (itemCol < 0 || qtyCol < 0) throw new Error("This does not look like a Toast 86 Report (missing Item Name or Quantity Remaining).");
+  return rows.slice(1).filter(row => String(row[itemCol] || "").trim()).map(row => ({
+    menu:menuCol < 0 ? "" : String(row[menuCol] || "").trim(),
+    group:groupCol < 0 ? "" : String(row[groupCol] || "").trim(),
+    item:String(row[itemCol] || "").trim(),
+    quantity:Number(row[qtyCol]),
+  }));
+}
+
+// Pure: decides the new stock for each SKU row. skuRows are objects from SKUs; reportRows from parseToast86Report_.
+function toastStockUpdates_(skuRows, reportRows) {
+  const stock = new Map();
+  (reportRows || []).forEach(row => {
+    const key = toastItemKey_(row.item);
+    if (key && Number.isFinite(row.quantity) && !stock.has(key)) stock.set(key, row.quantity);
+  });
+  const mapped = new Set();
+  const updates = [];
+  const missing = [];
+  (skuRows || []).forEach((sku, index) => {
+    const key = toastItemKey_(sku.toast_item_name);
+    if (!key) return;
+    mapped.add(key);
+    if (stock.has(key)) updates.push({ index:index, sku_id:String(sku.sku_id || ""), stock:stock.get(key) });
+    else missing.push(String(sku.sku_id || ""));
+  });
+  const groups = new Set(TOAST_STOCK_GROUPS);
+  const unmapped = Array.from(new Set((reportRows || [])
+    .filter(row => groups.has(String(row.group || "").trim().toLowerCase()) && !mapped.has(toastItemKey_(row.item)))
+    .map(row => row.item)));
+  return { updates:updates, missing_in_report:missing, unmapped_toast_items:unmapped };
+}
+
+function importLatestToastStockReport() {
+  const lock = LockService.getScriptLock();
+  if (!lock.tryLock(20000)) return { message:"Another update is running; the Toast import will try again next hour." };
+  try {
+    const files = [];
+    const iterator = DriveApp.getFolderById(TOAST_REPORT_FOLDER_ID).getFiles();
+    while (iterator.hasNext()) {
+      const file = iterator.next();
+      if (/\.csv$/i.test(file.getName()) || /csv/i.test(file.getMimeType())) files.push(file);
+    }
+    if (!files.length) return { message:"No Toast 86 Report CSV is in the folder yet." };
+    files.sort((a, b) => b.getDateCreated().getTime() - a.getDateCreated().getTime());
+    const latest = files[0];
+    const props = PropertiesService.getScriptProperties();
+    const marker = `${latest.getId()}:${latest.getLastUpdated().getTime()}`;
+    if (props.getProperty(TOAST_STOCK_LAST_FILE_PROPERTY) === marker) return { message:`Already imported ${latest.getName()}.` };
+
+    const report = parseToast86Report_(latest.getBlob().getDataAsString("ISO-8859-1"));
+    const nameDate = latest.getName().match(/(\d{4})[_-](\d{2})[_-](\d{2})/);
+    const reportDate = nameDate ? `${nameDate[1]}-${nameDate[2]}-${nameDate[3]}` : Utilities.formatDate(latest.getDateCreated(), "America/Chicago", "yyyy-MM-dd");
+
+    const sheet = getSheet_(SHEET_NAMES.SKUS);
+    const h = getHeaderMap_(sheet);
+    ["toast_item_name", "toast_stock", "toast_stock_date"].forEach(key => {
+      if (h[key] === undefined) throw new Error(`SKUs is missing the ${key} column.`);
+    });
+    const skuRows = getAllRowsAsObjects_(sheet);
+    const result = toastStockUpdates_(skuRows, report);
+    if (skuRows.length) {
+      const stockRange = sheet.getRange(2, h.toast_stock + 1, skuRows.length, 1);
+      const dateRange = sheet.getRange(2, h.toast_stock_date + 1, skuRows.length, 1);
+      const stockValues = stockRange.getValues();
+      const dateValues = dateRange.getValues();
+      result.updates.forEach(update => { stockValues[update.index][0] = update.stock; dateValues[update.index][0] = reportDate; });
+      stockRange.setValues(stockValues);
+      dateRange.setValues(dateValues);
+    }
+    props.setProperty(TOAST_STOCK_LAST_FILE_PROPERTY, marker);
+    bumpReadCacheVersion_();
+    const detail = `${latest.getName()}: ${result.updates.length} SKUs updated; ${result.missing_in_report.length} mapped SKUs not in the report (${result.missing_in_report.slice(0, 20).join(", ")}); ${result.unmapped_toast_items.length} Toast bottles with no SKU (${result.unmapped_toast_items.slice(0, 20).join(", ")}).`;
+    appendAudit_("IMPORT_TOAST_STOCK", "SKUs", latest.getId(), "", "Toast stock import", "Toast 86 Report", SHEET_NAMES.SKUS, "Completed", detail);
+    console.log(JSON.stringify({ event:"toast_stock_import", file:latest.getName(), updated:result.updates.length, missing:result.missing_in_report, unmapped:result.unmapped_toast_items }));
+    return { message:detail, updated:result.updates.length, missing_in_report:result.missing_in_report, unmapped_toast_items:result.unmapped_toast_items };
+  } finally { lock.releaseLock(); }
+}
+
+// Wholesale pricing lives with the products (2026.10.04.20-APP). Each active SKU row has a price_tier and an
+// optional wholesale_price override; the tier amounts are one row each on the Price Tiers tab, and account-specific
+// deals are rows on the Customer Prices tab. All three are in the operational inventory workbook beside SKUs.
+function priceTierCents_() {
+  const sheet = getSs_().getSheetByName(PRICE_TIERS_SHEET_NAME);
+  const tiers = new Map();
+  if (!sheet || sheet.getLastRow() < 2) return tiers;
+  getAllRowsAsObjects_(sheet).forEach(row => {
+    const tier = String(row.tier || "").trim().toLowerCase();
+    const cents = badgerMoneyToCents_(firstPresent_(row, ["price", "wholesale_price", "unit_price"]));
+    if (tier && cents > 0) tiers.set(tier, cents);
+  });
+  return tiers;
+}
+
+function skuWholesaleCents_(sku, tiers) {
+  const override = badgerMoneyToCents_(sku.wholesale_price);
+  if (override > 0) return override;
+  return tiers.get(String(sku.price_tier || "").trim().toLowerCase()) || 0;
+}
+
+function skuInvoiceVolume_(sku) {
+  // invoice_volume lets a product invoice at a different Badger size than it is sold as (gift boxes: 5 x 100 mL sold, 500 mL invoiced).
+  return String(sku.invoice_volume || sku.size || "").trim();
+}
+
+function skuPriceRow_(sku, cents, accountId) {
+  const size = skuInvoiceVolume_(sku);
+  return {
+    sku_id:String(sku.sku_id || "").trim(), description:String(sku.sku_name || "").trim(), unit_price_cents:cents,
+    volume:size, unit_of_measure_id:Number(badgerVolumeUnitOfMeasureId_(size) || 0), proof:Number(sku.proof || 0),
+    beverage_class:"Spirit", account_id:String(accountId || "").trim(), updated_at:"",
+  };
+}
+
+function wholesalePriceRows_(skuRows, tierCents, customerRows) {
+  const activeSkus = new Map();
+  const rows = [];
+  (skuRows || []).forEach(sku => {
+    const skuId = String(sku.sku_id || "").trim();
+    if (!skuId || !toBool_(sku.active)) return;
+    activeSkus.set(skuId, sku);
+    const cents = skuWholesaleCents_(sku, tierCents);
+    if (cents > 0) rows.push(skuPriceRow_(sku, cents, ""));
+  });
+  (customerRows || []).forEach(row => {
+    if (!toBool_(row.active)) return;
+    const sku = activeSkus.get(String(row.sku_id || "").trim());
+    const accountId = String(row.account_id || "").trim();
+    const cents = badgerMoneyToCents_(firstPresent_(row, ["price", "unit_price", "wholesale_price"]));
+    if (sku && accountId && cents > 0) rows.push(skuPriceRow_(sku, cents, accountId));
+  });
+  return rows;
+}
+
+// Lists catalog problems a person must fix: active products that cannot be priced or invoiced, and SKU tiers that
+// are not on the Price Tiers tab (for example after a tier is renamed there). Run from the Apps Script editor.
+function wholesaleCatalogProblems_(skuRows, tierCents) {
+  const problems = { unknown_tier:[], no_price:[], no_proof:[], no_invoice_unit:[], no_toast_item:[] };
+  (skuRows || []).forEach(sku => {
+    const id = String(sku.sku_id || "").trim();
+    if (!id) return;
+    const tier = String(sku.price_tier || "").trim();
+    if (tier && !tierCents.has(tier.toLowerCase()) && !(badgerMoneyToCents_(sku.wholesale_price) > 0)) problems.unknown_tier.push(`${id} (${tier})`);
+    if (!toBool_(sku.active)) return;
+    if (!(skuWholesaleCents_(sku, tierCents) > 0)) problems.no_price.push(id);
+    if (!(Number(sku.proof) > 0)) problems.no_proof.push(id);
+    if (!badgerVolumeUnitOfMeasureId_(skuInvoiceVolume_(sku))) problems.no_invoice_unit.push(`${id} (${skuInvoiceVolume_(sku) || "no size"})`);
+    if (!String(sku.toast_item_name || "").trim()) problems.no_toast_item.push(id);
+  });
+  return problems;
+}
+
+function checkWholesaleCatalog() {
+  const problems = wholesaleCatalogProblems_(getAllRowsAsObjects_(getSheet_(SHEET_NAMES.SKUS)), priceTierCents_());
+  console.log(JSON.stringify(problems, null, 2));
+  return problems;
 }
 
 function badgerCurrentPrices_(bypassCache) {
@@ -6245,10 +6415,9 @@ function badgerCurrentPrices_(bypassCache) {
   if (!bypassCache) {
     try { const cached = JSON.parse(cache.get(cacheKey) || "null"); if (Array.isArray(cached)) return cached; } catch (_) {}
   }
-  const sheet = SpreadsheetApp.openById(BADGER_TRACKER_SPREADSHEET_ID).getSheetByName(BADGER_CURRENT_PRICES_SHEET_NAME);
-  const rows = !sheet || sheet.getLastRow() < 2 ? [] : getAllRowsAsObjects_(sheet).filter(row => toBool_(row.active)).map(row => ({
-    sku_id:String(row.sku_id || "").trim(), description:String(row.badger_description || "").trim(), unit_price_cents:badgerCurrentPriceCents_(row), volume:String(row.volume || "").trim(), unit_of_measure_id:Number(row.unit_of_measure_id || 0), proof:Number(row.proof || 0), beverage_class:String(row.beverage_class || "Spirit").trim() || "Spirit", account_id:String(row.account_id || "").trim(), updated_at:row.updated_at || "",
-  })).filter(row => row.sku_id && row.unit_price_cents > 0);
+  const customerSheet = getSs_().getSheetByName(CUSTOMER_PRICES_SHEET_NAME);
+  const customerRows = customerSheet && customerSheet.getLastRow() >= 2 ? getAllRowsAsObjects_(customerSheet) : [];
+  const rows = wholesalePriceRows_(getAllRowsAsObjects_(getSheet_(SHEET_NAMES.SKUS)), priceTierCents_(), customerRows);
   try { cache.put(cacheKey, JSON.stringify(rows), BADGER_INVOICE_CACHE_TTL_SECONDS); } catch (_) {}
   return rows;
 }
@@ -6367,7 +6536,7 @@ function badgerInvoiceDraft_(requestId, p, skipValidation, accountSnapshot) {
     if (!(bottles > 0) || !(cents > 0) || !(price.unit_of_measure_id > 0) || !(price.proof > 0)) { blocked.push(String(line.sku_name || line.sku_id || "product")); return null; }
     return { sku_id:String(line.sku_id || ""), quantity:bottles, description:price.description, unit_price_cents:cents, unitPrice:cents / 100, unitOfMeasureId:price.unit_of_measure_id, beverageClass:price.beverage_class, alcoholProof:price.proof };
   }).filter(Boolean);
-  if (blocked.length) throw new Error(`Active Current Prices with unit, price, and proof are required for: ${blocked.join(", ")}.`);
+  if (blocked.length) throw new Error(`Each product needs an active SKU row with a size, a price (price tier or wholesale price), and proof before invoicing: ${blocked.join(", ")}.`);
   const number = String((skipValidation && p?.invoice_number) || badgerNextInvoiceNumber_()).trim();
   if (!skipValidation) badgerValidateInvoiceNumber_(number, date);
   const total_cents = lines.reduce((sum, line) => sum + Math.round(line.quantity * line.unit_price_cents), 0);
