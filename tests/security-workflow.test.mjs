@@ -671,7 +671,7 @@ test("Karl-only test rendering supplies non-empty HTML with an unsigned x=test m
   const backend = await readFile(new URL("apps-script/Code.gs", root), "utf8");
   const rendererSource = backend.slice(backend.indexOf("function outreachPlainTextToHtml_"), backend.indexOf("function outreachFieldLabel_"));
   const renderMessage = new Function(
-    "Utilities", "PropertiesService", "outreachValue_", "outreachSegmentTemplateKey_", "outreachDisplayBusinessName_", "escapeOutreachHtml_", "outreachTemplateParts_", "renderOutreachTemplate_",
+    "Utilities", "PropertiesService", "outreachValue_", "outreachSegmentTemplateKey_", "outreachDisplayBusinessName_", "escapeOutreachHtml_", "outreachTemplateParts_", "renderOutreachTemplate_", "outreachMonthlyContentValues_", "outreachHasRecentBadgerInvoice_",
     `${rendererSource}\nreturn outreachMessage_;`
   )(
     {
@@ -684,7 +684,9 @@ test("Karl-only test rendering supplies non-empty HTML with an unsigned x=test m
     value => String(value || ""),
     value => String(value || "").replace(/&/g, "&amp;").replace(/"/g, "&quot;"),
     template => ({ body:String(template || ""), footer:"{{Sell Sheet Link}}" }),
-    (template, values) => String(template || "").replace(/{{([^}]+)}}/g, (_, key) => values[key.trim()] || "")
+    (template, values) => String(template || "").replace(/{{([^}]+)}}/g, (_, key) => values[key.trim()] || ""),
+    () => ({}),
+    () => false
   );
   const message = renderMessage(
     { account_id:"ACC-1", next_email:"Initial", business:"Example Bar", email:"orders@example.test", contact:"Alex" },
@@ -697,6 +699,35 @@ test("Karl-only test rendering supplies non-empty HTML with an unsigned x=test m
   const sendSource = backend.slice(backend.indexOf("function apiSendOutreachEmail_"), backend.indexOf("function apiUpdateOutreachOutcome_"));
   assert.match(sendSource, /testMode \? outreachMessage_\(current, settings, testDraft, true\)\.html : record\.preview_html/);
   assert.match(sendSource, /html:html/);
+});
+
+test("monthly outreach content escapes merge fields and gates the tasting offer per recipient", async () => {
+  const backend = await readFile(new URL("apps-script/Code.gs", root), "utf8");
+  const monthlySource = backend.slice(backend.indexOf("function outreachMonthlyContentValues_"), backend.indexOf("function outreachRecentBadgerInvoiceAccountIds_"));
+  const rendererSource = backend.slice(backend.indexOf("function escapeOutreachHtml_"), backend.indexOf("function outreachTemplateParts_"));
+  const monthlyValues = new Function("outreachValue_", `${monthlySource}\nreturn outreachMonthlyContentValues_;`)(
+    (row, keys) => keys.map(key => row[key]).find(value => value !== undefined && value !== null && value !== "")
+  );
+  const render = new Function(`${rendererSource}\nreturn renderOutreachTemplate_;`)();
+  const settings = {
+    "Monthly content month":"<October>",
+    "Monthly content featured cocktail":"Featured <Old Fashioned>",
+    "Monthly content second cocktail":"Second Espresso Martini",
+    "Monthly content tasting offer":"Book a <tasting>",
+    "Monthly content cocktail-list offer":"Get cocktail ideas",
+  };
+  const prospect = monthlyValues({ next_email:"Initial", relationship:"Prospect" }, settings, false);
+  assert.equal(render("{{Month}} / {{Featured Cocktail}} / {{Tasting Offer}}", prospect, true), "&lt;October&gt; / Featured &lt;Old Fashioned&gt; / Book a &lt;tasting&gt;");
+  assert.equal(render("{{Second Cocktail}}", monthlyValues({ next_email:"Follow-up 1", relationship:"Prospect" }, settings, false), true), "Second Espresso Martini");
+  assert.equal(monthlyValues({ next_email:"Initial", relationship:"Customer" }, settings, false)["Tasting Offer"], "");
+  assert.equal(monthlyValues({ next_email:"Initial", relationship:"Prospect" }, settings, true)["Tasting Offer"], "");
+  assert.equal(monthlyValues({ next_email:"Reactivation", relationship:"Prospect" }, settings, false)["Tasting Offer"], "");
+  assert.equal(render("Before {{Month}}{{Featured Cocktail}}{{Second Cocktail}}{{Tasting Offer}}{{Cocktail List Offer}} after", monthlyValues({ next_email:"Initial", relationship:"Prospect" }, {}, false), true), "Before  after");
+  const repairSource = backend.slice(backend.indexOf("function ensureOutreachMonthlyContent_"), backend.indexOf("function apiRepairHubStructure_"));
+  assert.match(repairSource, /OUTREACH_MONTHLY_CONTENT_SECTION/);
+  assert.match(backend, /Monthly content featured cocktail/);
+  assert.match(repairSource, /='Email Editor'!B\$\{rowsByLabel\.get\(item\.label\)\}/);
+  assert.match(repairSource, /identity\.monthly_content = ensureOutreachMonthlyContent_\(\)/);
 });
 
 test("source contains formula protection, global error listeners, and recoverable action state", async () => {

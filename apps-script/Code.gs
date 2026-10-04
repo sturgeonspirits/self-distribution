@@ -1,8 +1,13 @@
 /*********************************
  * Inventory API (JSON) for Netlify
- * App version: 2026.10.04.21-APP
+ * App version: 2026.10.04.22-APP
  *
  * CHANGES IN THIS VERSION
+ * - Adds one shared, append-only MONTHLY CONTENT section for outreach templates and a per-recipient tasting-offer
+ *   gate: only Prospects without a matched Badger invoice in the prior 12 months can render that optional offer.
+ *   Campaign previews freeze the rendered content, so the reviewed offer is what is sent.
+ *
+ * CHANGES IN 2026.10.04.21-APP
  * - Badger invoice preview and create always read SKUs, Price Tiers and Customer Prices fresh, so a fixed price or proof
  *   is used at once; installHubReadCacheWarmer() also adds a change trigger on the inventory workbook.
  * - Duplicate Price Tiers rows, or duplicate active Customer Prices rows for one SKU and account, with different prices
@@ -262,7 +267,7 @@
  * - Use only in the staging inventory backend until testing is complete.
  *********************************/
 
-const APP_VERSION = "2026.10.04.21-APP";
+const APP_VERSION = "2026.10.04.22-APP";
 
 const SHEET_NAMES = {
   STORES: "Stores",
@@ -332,6 +337,7 @@ let __OPERATIONAL_SS = null;
 let __OUTREACH_SS = null;
 let __HUB_INVENTORY_ACTIVE = null;
 let __OUTREACH_CAMPAIGN_SETTINGS = null;
+let __OUTREACH_RECENT_BADGER_INVOICE_ACCOUNT_IDS = null;
 let __ZIP_CENTROID_MAP = null;
 let __LEGACY_PILOT_SENT_BY_EMAIL = null;
 
@@ -787,6 +793,65 @@ function repairOutreachDirectoryValidations_(directory) {
   };
 }
 
+const OUTREACH_MONTHLY_CONTENT_SECTION = "MONTHLY CONTENT";
+const OUTREACH_MONTHLY_CONTENT_ROWS = [
+  { label:"Month label", note:"Example: October 2026" },
+  { label:"Featured cocktail", note:"Cocktail name and one recipe sentence." },
+  { label:"Second cocktail", note:"Cocktail name and one recipe sentence." },
+  { label:"Tasting offer sentence", note:"Optional; leave blank to omit." },
+  { label:"Cocktail-list sentence", note:"Optional invitation to receive cocktail ideas." },
+];
+const OUTREACH_MONTHLY_CONTENT_SETTINGS = [
+  { key:"Monthly content month", label:"Month label" },
+  { key:"Monthly content featured cocktail", label:"Featured cocktail" },
+  { key:"Monthly content second cocktail", label:"Second cocktail" },
+  { key:"Monthly content tasting offer", label:"Tasting offer sentence" },
+  { key:"Monthly content cocktail-list offer", label:"Cocktail-list sentence" },
+];
+
+function ensureOutreachMonthlyContent_() {
+  const hub = getOutreachSs_();
+  const editor = hub.getSheetByName("Email Editor");
+  const settings = hub.getSheetByName("Campaign Settings");
+  if (!editor || !settings) throw new Error("Email Editor and Campaign Settings are required for monthly outreach content.");
+
+  const editorValues = editor.getRange(1, 1, Math.max(1, editor.getLastRow()), 1).getDisplayValues().map(row => String(row[0] || "").trim());
+  let sectionRow = editorValues.findIndex(value => value === OUTREACH_MONTHLY_CONTENT_SECTION) + 1;
+  const rowsByLabel = new Map();
+  if (!sectionRow) {
+    sectionRow = editor.getLastRow() + 1;
+    const values = [[OUTREACH_MONTHLY_CONTENT_SECTION, "", "Shared monthly content for outreach templates."]]
+      .concat(OUTREACH_MONTHLY_CONTENT_ROWS.map(item => [item.label, "", item.note]));
+    editor.getRange(sectionRow, 1, values.length, values[0].length).setValues(values);
+    editor.getRange(sectionRow, 1, 1, values[0].length).setFontWeight("bold").setBackground("#44656b").setFontColor("#ffffff");
+    OUTREACH_MONTHLY_CONTENT_ROWS.forEach((item, index) => rowsByLabel.set(item.label, sectionRow + index + 1));
+  } else {
+    OUTREACH_MONTHLY_CONTENT_ROWS.forEach(item => {
+      const row = editorValues.findIndex((value, index) => index + 1 > sectionRow && value === item.label) + 1;
+      if (row) rowsByLabel.set(item.label, row);
+    });
+    const missing = OUTREACH_MONTHLY_CONTENT_ROWS.filter(item => !rowsByLabel.has(item.label));
+    if (missing.length) {
+      const start = editor.getLastRow() + 1;
+      const values = missing.map(item => [item.label, "", item.note]);
+      editor.getRange(start, 1, values.length, values[0].length).setValues(values);
+      missing.forEach((item, index) => rowsByLabel.set(item.label, start + index));
+    }
+  }
+
+  const settingKeys = settings.getRange(2, 1, Math.max(1, settings.getLastRow() - 1), 1).getDisplayValues().map(row => String(row[0] || "").trim());
+  const missingSettings = OUTREACH_MONTHLY_CONTENT_SETTINGS.filter(item => !settingKeys.includes(item.key));
+  if (missingSettings.length) {
+    const values = missingSettings.map(item => [item.key, `='Email Editor'!B${rowsByLabel.get(item.label)}`]);
+    settings.getRange(settings.getLastRow() + 1, 1, values.length, values[0].length).setValues(values);
+  }
+  return {
+    section_row:sectionRow,
+    editor_rows:Object.fromEntries(rowsByLabel),
+    added_settings:missingSettings.map(item => item.key),
+  };
+}
+
 function repairHubStructure_() {
   ensureFoundationalSheets_();
   const engagement = getOutreachSs_().getSheetByName(OUTREACH_ENGAGEMENT_SHEET_NAME);
@@ -808,6 +873,7 @@ function repairHubStructure_() {
     if (changed) priorityRange.setValues(priorityValues);
   }
   identity.directory_validations = directoryValidations;
+  identity.monthly_content = ensureOutreachMonthlyContent_();
   return identity;
 }
 
@@ -2197,6 +2263,99 @@ function getOutreachCampaignSettings_() {
   return __OUTREACH_CAMPAIGN_SETTINGS;
 }
 
+function outreachMonthlyContentValues_(row, settings, hasRecentBadgerInvoice) {
+  const stage = String(outreachValue_(row, ["next_email", "stage"]) || "Initial").trim();
+  const relationship = String(outreachValue_(row, ["relationship"]) || "").trim().toLowerCase();
+  const tastingOffer = stage === "Reactivation" || relationship !== "prospect" || hasRecentBadgerInvoice
+    ? ""
+    : String(settings["Monthly content tasting offer"] || "");
+  return {
+    "Month": String(settings["Monthly content month"] || ""),
+    "Featured Cocktail": String(settings["Monthly content featured cocktail"] || ""),
+    "Second Cocktail": String(settings["Monthly content second cocktail"] || ""),
+    "Tasting Offer": tastingOffer,
+    "Cocktail List Offer": String(settings["Monthly content cocktail-list offer"] || ""),
+  };
+}
+
+function outreachRecentBadgerInvoiceAccountIds_() {
+  if (__OUTREACH_RECENT_BADGER_INVOICE_ACCOUNT_IDS) return __OUTREACH_RECENT_BADGER_INVOICE_ACCOUNT_IDS;
+  const cutoff = new Date();
+  cutoff.setFullYear(cutoff.getFullYear() - 1);
+  const directoryRows = getAllRowsAsObjects_(getOutreachSheet_(OUTREACH_SHEET_NAME));
+  const accountIds = new Set(directoryRows.map(row => String(row.account_id || "").trim()).filter(Boolean));
+  const accountsByBusiness = new Map();
+  directoryRows.forEach(row => {
+    const key = normalizeCustomerMatchKey_(outreachValue_(row, ["business", "business_name"]));
+    const accountId = String(row.account_id || "").trim();
+    if (!key || !accountId) return;
+    if (!accountsByBusiness.has(key)) accountsByBusiness.set(key, new Set());
+    accountsByBusiness.get(key).add(accountId);
+  });
+  const orderAccountsByInvoice = new Map();
+  const ordersSheet = getOutreachSs_().getSheetByName(ONLINE_ORDER_REQUESTS_SHEET_NAME);
+  if (ordersSheet && ordersSheet.getLastRow() > 1) {
+    getAllRowsAsObjects_(ordersSheet).forEach(order => {
+      const invoiceKey = normalizeBadgerInvoiceNumber_(order.badger_invoice_number);
+      const accountId = String(order.account_id || "").trim();
+      if (!invoiceKey || !accountId) return;
+      if (!orderAccountsByInvoice.has(invoiceKey)) orderAccountsByInvoice.set(invoiceKey, new Set());
+      orderAccountsByInvoice.get(invoiceKey).add(accountId);
+    });
+  }
+  const aliases = readBadgerCustomerAliases_();
+  const locationsByInvoiceName = new Map();
+  try {
+    cachedBadgerLocationNames_(false).forEach(item => {
+      const invoiceKey = normalizeCustomerMatchKey_(item.invoice_name);
+      const publicKey = normalizeCustomerMatchKey_(item.public_name);
+      if (!invoiceKey || !publicKey) return;
+      if (!locationsByInvoiceName.has(invoiceKey)) locationsByInvoiceName.set(invoiceKey, new Set());
+      locationsByInvoiceName.get(invoiceKey).add(publicKey);
+    });
+  } catch (error) {
+    console.warn("Badger location names were unavailable for outreach tasting eligibility: " + String(error && error.message || error));
+  }
+  const links = readBadgerInvoiceLinks_();
+  const recent = new Set();
+  cachedBadgerInvoices_(false).forEach(invoice => {
+    const invoiceDate = outreachDate_(invoice.invoice_date);
+    if (!invoiceDate || invoiceDate.getTime() < cutoff.getTime() || invoice.is_void) return;
+    const invoiceKey = normalizeBadgerInvoiceNumber_(invoice.invoice_number);
+    const explicit = links.get(invoiceKey);
+    if (["void", "ignored"].includes(String(explicit?.match_method || "").trim().toLowerCase())) return;
+    let accountId = String(explicit?.account_id || "").trim();
+    const ordered = orderAccountsByInvoice.get(invoiceKey) || new Set();
+    if (!accountId && ordered.size === 1) accountId = Array.from(ordered)[0];
+    const customerKey = normalizeCustomerMatchKey_(invoice.customer_name);
+    if (!accountId && customerKey) {
+      const exactAlias = aliases.by_name.get(canonicalBadgerAliasName_(invoice.customer_name));
+      const looseAliasAccounts = Array.from(aliases.by_key.get(customerKey) || []);
+      if (exactAlias && !exactAlias.ambiguous) accountId = String(exactAlias.account_id || "").trim();
+      else if (looseAliasAccounts.length === 1) accountId = String(looseAliasAccounts[0] || "").trim();
+    }
+    if (!accountId && customerKey) {
+      const locationKeys = locationsByInvoiceName.get(customerKey) || new Set();
+      if (locationKeys.size === 1) {
+        const candidates = Array.from(accountsByBusiness.get(Array.from(locationKeys)[0]) || []);
+        if (candidates.length === 1) accountId = candidates[0];
+      }
+    }
+    if (!accountId && customerKey) {
+      const candidates = Array.from(accountsByBusiness.get(customerKey) || []);
+      if (candidates.length === 1) accountId = candidates[0];
+    }
+    if (accountId && accountIds.has(accountId)) recent.add(accountId);
+  });
+  __OUTREACH_RECENT_BADGER_INVOICE_ACCOUNT_IDS = recent;
+  return recent;
+}
+
+function outreachHasRecentBadgerInvoice_(accountId) {
+  const id = String(accountId || "").trim();
+  return !!id && outreachRecentBadgerInvoiceAccountIds_().has(id);
+}
+
 function outreachRowsMatchingCell_(sheet, headerNames, value) {
   const target = String(value || "").trim();
   if (!sheet || !target || sheet.getLastRow() < 2) return [];
@@ -2753,7 +2912,7 @@ function outreachMessage_(row, settings, draft, testMode) {
   const applicationLink = (trackedApplication || directApplication)
     ? `<p>${applicationSentence}</p>`
     : "";
-  const values = {
+  const values = Object.assign({
     "First Name": contact ? contact.split(/\s+/)[0] : "there",
     "Business Name": outreachDisplayBusinessName_(outreachValue_(row, ["business", "business_name"]) || "your business"),
     "City": String(outreachValue_(row, ["city"]) || ""),
@@ -2766,7 +2925,7 @@ function outreachMessage_(row, settings, draft, testMode) {
       ? `<a href="${escapeOutreachHtml_(website)}"><img src="${escapeOutreachHtml_(logo)}" alt="Sturgeon Spirits"></a>`
       : "",
     "Sell Sheet Link": (sellSheet ? `<p><a href="${escapeOutreachHtml_(trackedSellSheet || sellSheet)}">View our current wholesale sell sheet</a></p>` : "") + applicationLink,
-  };
+  }, outreachMonthlyContentValues_(row, settings, outreachHasRecentBadgerInvoice_(accountId)));
   const template = String(settings[keys[1]] || "");
   const parts = outreachTemplateParts_(template);
   const templateSubject = renderOutreachTemplate_(settings[keys[0]], values, false);
