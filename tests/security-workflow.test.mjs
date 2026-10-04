@@ -730,6 +730,76 @@ test("monthly outreach content escapes merge fields and gates the tasting offer 
   assert.match(repairSource, /identity\.monthly_content = ensureOutreachMonthlyContent_\(\)/);
 });
 
+test("monthly tasting lookup matches recent Badger invoices conservatively and fails closed", async () => {
+  const backend = await readFile(new URL("apps-script/Code.gs", root), "utf8");
+  const lookupSource = backend.slice(backend.indexOf("function outreachRecentBadgerInvoiceAccountIds_"), backend.indexOf("function outreachRowsMatchingCell_"));
+  const monthsAgo = count => {
+    const date = new Date();
+    date.setMonth(date.getMonth() - count);
+    return date.toISOString();
+  };
+  const lookup = ({ directory, orders = [], invoices = [], links = new Map(), aliases = { by_name:new Map(), by_key:new Map() }, locations = [], throwReader = false } = {}) => {
+    const directorySheet = { kind:"directory" };
+    const ordersSheet = { kind:"orders", getLastRow:() => orders.length + 1 };
+    let warnings = 0;
+    const result = new Function(
+      "getAllRowsAsObjects_", "getOutreachSheet_", "OUTREACH_SHEET_NAME", "normalizeCustomerMatchKey_", "outreachValue_", "getOutreachSs_", "ONLINE_ORDER_REQUESTS_SHEET_NAME", "normalizeBadgerInvoiceNumber_", "readBadgerCustomerAliases_", "cachedBadgerLocationNames_", "readBadgerInvoiceLinks_", "cachedBadgerInvoices_", "outreachDate_", "canonicalBadgerAliasName_", "console",
+      `let __OUTREACH_RECENT_BADGER_INVOICE_ACCOUNT_IDS = null; let __OUTREACH_RECENT_BADGER_INVOICE_LOOKUP_FAILED = false; ${lookupSource}\nreturn { recent:outreachRecentBadgerInvoiceAccountIds_, has:outreachHasRecentBadgerInvoice_, failed:() => __OUTREACH_RECENT_BADGER_INVOICE_LOOKUP_FAILED };`
+    )(
+      sheet => sheet === directorySheet ? directory : orders,
+      () => directorySheet,
+      "Directory",
+      value => String(value || "").toLowerCase().replace(/[^a-z0-9]/g, ""),
+      (row, keys) => keys.map(key => row[key]).find(value => value !== undefined && value !== null && value !== ""),
+      () => ({ getSheetByName:name => name === "Orders" ? ordersSheet : null }),
+      "Orders",
+      value => String(value || "").toUpperCase().replace(/[^A-Z0-9]/g, ""),
+      () => { if (throwReader) throw new Error("aliases unavailable"); return aliases; },
+      () => locations,
+      () => links,
+      () => invoices,
+      value => value ? new Date(value) : "",
+      value => String(value || "").toLowerCase().replace(/[^a-z0-9]/g, " ").trim(),
+      { warn:() => { warnings += 1; } }
+    );
+    return { result, warnings:() => warnings };
+  };
+  const directory = [
+    { account_id:"ACC-NAME", business:"Name Bar" }, { account_id:"ACC-EXPLICIT", business:"Explicit Bar" },
+    { account_id:"ACC-AMB-1", business:"Same Bar" }, { account_id:"ACC-AMB-2", business:"Same Bar" },
+    { account_id:"ACC-ORDER-1", business:"Order Bar" }, { account_id:"ACC-ORDER-2", business:"Other Order Bar" },
+    { account_id:"ACC-VOID", business:"Void Bar" }, { account_id:"ACC-IGNORED", business:"Ignored Bar" }, { account_id:"ACC-LINK-VOID", business:"Link Void Bar" },
+  ];
+  const links = new Map([
+    ["RECENT", { account_id:"ACC-EXPLICIT", match_method:"Manual link" }],
+    ["IGNORED", { account_id:"ACC-IGNORED", match_method:"Ignored" }],
+    ["LINKVOID", { account_id:"ACC-LINK-VOID", match_method:"Void" }],
+  ]);
+  const { result } = lookup({
+    directory,
+    orders:[{ badger_invoice_number:"CONFLICT", account_id:"ACC-ORDER-1" }, { badger_invoice_number:"CONFLICT", account_id:"ACC-ORDER-2" }],
+    links,
+    invoices:[
+      { invoice_number:"RECENT", invoice_date:monthsAgo(11), customer_name:"Name Bar" },
+      { invoice_number:"OLD", invoice_date:monthsAgo(13), customer_name:"Name Bar" },
+      { invoice_number:"VOID", invoice_date:monthsAgo(11), customer_name:"Void Bar", is_void:true },
+      { invoice_number:"IGNORED", invoice_date:monthsAgo(11), customer_name:"Ignored Bar" },
+      { invoice_number:"LINKVOID", invoice_date:monthsAgo(11), customer_name:"Link Void Bar" },
+      { invoice_number:"AMBIGUOUS", invoice_date:monthsAgo(11), customer_name:"Same Bar" },
+      { invoice_number:"CONFLICT", invoice_date:monthsAgo(11), customer_name:"Order Bar" },
+    ],
+  });
+  assert.deepEqual([...result.recent()], ["ACC-EXPLICIT"], "only the explicit link on the 11-month invoice qualifies");
+  assert.equal(result.has("ACC-NAME"), false, "the explicit link wins over the matching name");
+  assert.equal(result.has("ACC-AMB-1"), false, "ambiguous business names match nobody");
+  assert.equal(result.has("ACC-ORDER-1"), false, "conflicting order links do not fall through to a name match");
+  const failed = lookup({ directory, throwReader:true });
+  assert.equal(failed.result.has("ACC-NAME"), true, "a failed reader suppresses tasting offers for every account");
+  assert.equal(failed.result.has("ACC-EXPLICIT"), true, "the failed result is memoized for the execution");
+  assert.equal(failed.result.failed(), true);
+  assert.equal(failed.warnings(), 1, "the reader failure is logged once");
+});
+
 test("source contains formula protection, global error listeners, and recoverable action state", async () => {
   const [backend, index, signup, order, mailer] = await Promise.all([
     readFile(new URL("apps-script/Code.gs", root), "utf8"),

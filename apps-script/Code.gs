@@ -1,8 +1,13 @@
 /*********************************
  * Inventory API (JSON) for Netlify
- * App version: 2026.10.04.22-APP
+ * App version: 2026.10.04.23-APP
  *
  * CHANGES IN THIS VERSION
+ * - Makes the monthly tasting-offer Badger lookup fail closed: any source-read error suppresses the offer for every
+ *   recipient for that execution. It also preserves the account matcher’s explicit-link precedence and conflicting-order
+ *   safety rule.
+ *
+ * CHANGES IN 2026.10.04.22-APP
  * - Adds one shared, append-only MONTHLY CONTENT section for outreach templates and a per-recipient tasting-offer
  *   gate: only Prospects without a matched Badger invoice in the prior 12 months can render that optional offer.
  *   Campaign previews freeze the rendered content, so the reviewed offer is what is sent.
@@ -267,7 +272,7 @@
  * - Use only in the staging inventory backend until testing is complete.
  *********************************/
 
-const APP_VERSION = "2026.10.04.22-APP";
+const APP_VERSION = "2026.10.04.23-APP";
 
 const SHEET_NAMES = {
   STORES: "Stores",
@@ -338,6 +343,7 @@ let __OUTREACH_SS = null;
 let __HUB_INVENTORY_ACTIVE = null;
 let __OUTREACH_CAMPAIGN_SETTINGS = null;
 let __OUTREACH_RECENT_BADGER_INVOICE_ACCOUNT_IDS = null;
+let __OUTREACH_RECENT_BADGER_INVOICE_LOOKUP_FAILED = false;
 let __ZIP_CENTROID_MAP = null;
 let __LEGACY_PILOT_SENT_BY_EMAIL = null;
 
@@ -2280,32 +2286,32 @@ function outreachMonthlyContentValues_(row, settings, hasRecentBadgerInvoice) {
 
 function outreachRecentBadgerInvoiceAccountIds_() {
   if (__OUTREACH_RECENT_BADGER_INVOICE_ACCOUNT_IDS) return __OUTREACH_RECENT_BADGER_INVOICE_ACCOUNT_IDS;
-  const cutoff = new Date();
-  cutoff.setFullYear(cutoff.getFullYear() - 1);
-  const directoryRows = getAllRowsAsObjects_(getOutreachSheet_(OUTREACH_SHEET_NAME));
-  const accountIds = new Set(directoryRows.map(row => String(row.account_id || "").trim()).filter(Boolean));
-  const accountsByBusiness = new Map();
-  directoryRows.forEach(row => {
-    const key = normalizeCustomerMatchKey_(outreachValue_(row, ["business", "business_name"]));
-    const accountId = String(row.account_id || "").trim();
-    if (!key || !accountId) return;
-    if (!accountsByBusiness.has(key)) accountsByBusiness.set(key, new Set());
-    accountsByBusiness.get(key).add(accountId);
-  });
-  const orderAccountsByInvoice = new Map();
-  const ordersSheet = getOutreachSs_().getSheetByName(ONLINE_ORDER_REQUESTS_SHEET_NAME);
-  if (ordersSheet && ordersSheet.getLastRow() > 1) {
-    getAllRowsAsObjects_(ordersSheet).forEach(order => {
-      const invoiceKey = normalizeBadgerInvoiceNumber_(order.badger_invoice_number);
-      const accountId = String(order.account_id || "").trim();
-      if (!invoiceKey || !accountId) return;
-      if (!orderAccountsByInvoice.has(invoiceKey)) orderAccountsByInvoice.set(invoiceKey, new Set());
-      orderAccountsByInvoice.get(invoiceKey).add(accountId);
-    });
-  }
-  const aliases = readBadgerCustomerAliases_();
-  const locationsByInvoiceName = new Map();
   try {
+    const cutoff = new Date();
+    cutoff.setFullYear(cutoff.getFullYear() - 1);
+    const directoryRows = getAllRowsAsObjects_(getOutreachSheet_(OUTREACH_SHEET_NAME));
+    const accountIds = new Set(directoryRows.map(row => String(row.account_id || "").trim()).filter(Boolean));
+    const accountsByBusiness = new Map();
+    directoryRows.forEach(row => {
+      const key = normalizeCustomerMatchKey_(outreachValue_(row, ["business", "business_name"]));
+      const accountId = String(row.account_id || "").trim();
+      if (!key || !accountId) return;
+      if (!accountsByBusiness.has(key)) accountsByBusiness.set(key, new Set());
+      accountsByBusiness.get(key).add(accountId);
+    });
+    const orderAccountsByInvoice = new Map();
+    const ordersSheet = getOutreachSs_().getSheetByName(ONLINE_ORDER_REQUESTS_SHEET_NAME);
+    if (ordersSheet && ordersSheet.getLastRow() > 1) {
+      getAllRowsAsObjects_(ordersSheet).forEach(order => {
+        const invoiceKey = normalizeBadgerInvoiceNumber_(order.badger_invoice_number);
+        const accountId = String(order.account_id || "").trim();
+        if (!invoiceKey || !accountId) return;
+        if (!orderAccountsByInvoice.has(invoiceKey)) orderAccountsByInvoice.set(invoiceKey, new Set());
+        orderAccountsByInvoice.get(invoiceKey).add(accountId);
+      });
+    }
+    const aliases = readBadgerCustomerAliases_();
+    const locationsByInvoiceName = new Map();
     cachedBadgerLocationNames_(false).forEach(item => {
       const invoiceKey = normalizeCustomerMatchKey_(item.invoice_name);
       const publicKey = normalizeCustomerMatchKey_(item.public_name);
@@ -2313,47 +2319,52 @@ function outreachRecentBadgerInvoiceAccountIds_() {
       if (!locationsByInvoiceName.has(invoiceKey)) locationsByInvoiceName.set(invoiceKey, new Set());
       locationsByInvoiceName.get(invoiceKey).add(publicKey);
     });
-  } catch (error) {
-    console.warn("Badger location names were unavailable for outreach tasting eligibility: " + String(error && error.message || error));
-  }
-  const links = readBadgerInvoiceLinks_();
-  const recent = new Set();
-  cachedBadgerInvoices_(false).forEach(invoice => {
-    const invoiceDate = outreachDate_(invoice.invoice_date);
-    if (!invoiceDate || invoiceDate.getTime() < cutoff.getTime() || invoice.is_void) return;
-    const invoiceKey = normalizeBadgerInvoiceNumber_(invoice.invoice_number);
-    const explicit = links.get(invoiceKey);
-    if (["void", "ignored"].includes(String(explicit?.match_method || "").trim().toLowerCase())) return;
-    let accountId = String(explicit?.account_id || "").trim();
-    const ordered = orderAccountsByInvoice.get(invoiceKey) || new Set();
-    if (!accountId && ordered.size === 1) accountId = Array.from(ordered)[0];
-    const customerKey = normalizeCustomerMatchKey_(invoice.customer_name);
-    if (!accountId && customerKey) {
-      const exactAlias = aliases.by_name.get(canonicalBadgerAliasName_(invoice.customer_name));
-      const looseAliasAccounts = Array.from(aliases.by_key.get(customerKey) || []);
-      if (exactAlias && !exactAlias.ambiguous) accountId = String(exactAlias.account_id || "").trim();
-      else if (looseAliasAccounts.length === 1) accountId = String(looseAliasAccounts[0] || "").trim();
-    }
-    if (!accountId && customerKey) {
-      const locationKeys = locationsByInvoiceName.get(customerKey) || new Set();
-      if (locationKeys.size === 1) {
-        const candidates = Array.from(accountsByBusiness.get(Array.from(locationKeys)[0]) || []);
+    const links = readBadgerInvoiceLinks_();
+    const recent = new Set();
+    cachedBadgerInvoices_(false).forEach(invoice => {
+      const invoiceDate = outreachDate_(invoice.invoice_date);
+      if (!invoiceDate || invoiceDate.getTime() < cutoff.getTime() || invoice.is_void) return;
+      const invoiceKey = normalizeBadgerInvoiceNumber_(invoice.invoice_number);
+      const explicit = links.get(invoiceKey);
+      if (["void", "ignored"].includes(String(explicit?.match_method || "").trim().toLowerCase())) return;
+      let accountId = String(explicit?.account_id || "").trim();
+      const ordered = orderAccountsByInvoice.get(invoiceKey) || new Set();
+      if (!accountId && ordered.size > 1) return;
+      if (!accountId && ordered.size === 1) accountId = Array.from(ordered)[0];
+      const customerKey = normalizeCustomerMatchKey_(invoice.customer_name);
+      if (!accountId && customerKey) {
+        const exactAlias = aliases.by_name.get(canonicalBadgerAliasName_(invoice.customer_name));
+        const looseAliasAccounts = Array.from(aliases.by_key.get(customerKey) || []);
+        if (exactAlias && !exactAlias.ambiguous) accountId = String(exactAlias.account_id || "").trim();
+        else if (looseAliasAccounts.length === 1) accountId = String(looseAliasAccounts[0] || "").trim();
+      }
+      if (!accountId && customerKey) {
+        const locationKeys = locationsByInvoiceName.get(customerKey) || new Set();
+        if (locationKeys.size === 1) {
+          const candidates = Array.from(accountsByBusiness.get(Array.from(locationKeys)[0]) || []);
+          if (candidates.length === 1) accountId = candidates[0];
+        }
+      }
+      if (!accountId && customerKey) {
+        const candidates = Array.from(accountsByBusiness.get(customerKey) || []);
         if (candidates.length === 1) accountId = candidates[0];
       }
-    }
-    if (!accountId && customerKey) {
-      const candidates = Array.from(accountsByBusiness.get(customerKey) || []);
-      if (candidates.length === 1) accountId = candidates[0];
-    }
-    if (accountId && accountIds.has(accountId)) recent.add(accountId);
-  });
-  __OUTREACH_RECENT_BADGER_INVOICE_ACCOUNT_IDS = recent;
-  return recent;
+      if (accountId && accountIds.has(accountId)) recent.add(accountId);
+    });
+    __OUTREACH_RECENT_BADGER_INVOICE_ACCOUNT_IDS = recent;
+    return recent;
+  } catch (error) {
+    console.warn("Badger invoice lookup failed for outreach tasting eligibility; suppressing tasting offers: " + String(error && error.message || error));
+    __OUTREACH_RECENT_BADGER_INVOICE_LOOKUP_FAILED = true;
+    __OUTREACH_RECENT_BADGER_INVOICE_ACCOUNT_IDS = new Set();
+    return __OUTREACH_RECENT_BADGER_INVOICE_ACCOUNT_IDS;
+  }
 }
 
 function outreachHasRecentBadgerInvoice_(accountId) {
   const id = String(accountId || "").trim();
-  return !!id && outreachRecentBadgerInvoiceAccountIds_().has(id);
+  const recent = outreachRecentBadgerInvoiceAccountIds_();
+  return __OUTREACH_RECENT_BADGER_INVOICE_LOOKUP_FAILED || (!!id && recent.has(id));
 }
 
 function outreachRowsMatchingCell_(sheet, headerNames, value) {
