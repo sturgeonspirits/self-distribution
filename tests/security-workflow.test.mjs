@@ -586,7 +586,7 @@ test("core Hub read paths use versioned cache fallbacks and timing metadata", as
   assert.match(script, /const READ_CACHE_TTL_SECONDS = 900/);
   assert.match(script, /const READ_CACHE_CHUNK_SIZE = 45000/);
   assert.match(script, /function onHubReadCacheSpreadsheetChange/);
-  assert.match(script, /\[getOutreachSs_\(\), SpreadsheetApp\.openById\(BADGER_TRACKER_SPREADSHEET_ID\)\]/);
+  assert.match(script, /\[getOutreachSs_\(\), SpreadsheetApp\.openById\(BADGER_TRACKER_SPREADSHEET_ID\), getSs_\(\)\]/);
   assert.match(script, /forSpreadsheet\(spreadsheet\)\.onChange\(\)\.create\(\)/);
   assert.match(script, /finally \{\s+if \(invalidateReadCache\)/);
   assert.match(script, /String\(p\?\.refresh \|\| ""\) === "1"/);
@@ -1661,6 +1661,13 @@ test("scheduled campaign sends validate times, run due campaigns, skip guarded r
   assert.match(index, /action:"cancelOutreachCampaignSchedule"/);
 });
 
+test("Code.gs header names the current APP_VERSION and keeps the prior version's changes", async () => {
+  const backend = await readFile(new URL("apps-script/Code.gs", root), "utf8");
+  const version = backend.match(/const APP_VERSION = "([^"]+)";/)[1];
+  assert.match(backend.slice(0, 400), new RegExp(`App version: ${version.replace(/\./g, "\\.")}\\n`));
+  assert.doesNotMatch(backend.slice(0, 4000), new RegExp(`CHANGES IN ${version.replace(/\./g, "\\.")}\\n`), "the current version's changes sit under CHANGES IN THIS VERSION");
+});
+
 test("wholesale prices come from SKU tiers or overrides, customer deals, and Toast stock sets availability", async () => {
   const backend = await readFile(new URL("apps-script/Code.gs", root), "utf8");
   const functionSource = (name, nextName) => backend.slice(backend.indexOf(`function ${name}`), backend.indexOf(`function ${nextName}`));
@@ -1697,6 +1704,29 @@ test("wholesale prices come from SKU tiers or overrides, customer deals, and Toa
   assert.equal(find("STUR-VOD-OFF-750", "ACC-FESTIVAL"), undefined, "customer rows need an active SKU");
   assert.equal(find("STUR-VOD-CRAN-750", "ACC-OLD"), undefined, "inactive customer rows are ignored");
   assert.equal(find("STUR-VOD-NONE-750"), undefined, "no tier and no override means no price");
+
+  // Duplicate Customer Prices rows: same price collapses to one row; different prices block that account (zero price).
+  const dupRows = build.wholesalePriceRows_(skus, tiers, [
+    { sku_id:"STUR-VOD-CRAN-750", account_id:"ACC-A", price:20, active:true },
+    { sku_id:"STUR-VOD-CRAN-750", account_id:"ACC-A", price:20, active:true },
+    { sku_id:"STUR-VOD-CRAN-750", account_id:"ACC-B", price:20, active:true },
+    { sku_id:"STUR-VOD-CRAN-750", account_id:"ACC-B", price:19, active:true },
+  ]);
+  assert.deepEqual(dupRows.filter(row => row.account_id === "ACC-A").map(row => row.unit_price_cents), [2000]);
+  assert.deepEqual(dupRows.filter(row => row.account_id === "ACC-B").map(row => row.unit_price_cents), [0], "conflicting deals block instead of picking one");
+
+  // Duplicate Price Tiers rows with different prices remove the tier, so its products are unpriced (invoice blocks).
+  const sheetRows = [{ tier:"Standard", price:22 }, { tier:"standard ", price:24 }, { tier:"Premium", price:30 }, { tier:"Premium", price:30 }];
+  const tierLib = new Function("getSs_", "PRICE_TIERS_SHEET_NAME", "getAllRowsAsObjects_", "badgerMoneyToCents_", "firstPresent_",
+    `${functionSource("priceTierCents_", "skuWholesaleCents_")}; return priceTierCents_;`)(
+    () => ({ getSheetByName:() => ({ getLastRow:() => sheetRows.length + 1 }) }), "Price Tiers", () => sheetRows, money, firstPresent);
+  const liveTiers = tierLib();
+  assert.equal(liveTiers.has("standard"), false);
+  assert.equal(liveTiers.get("premium"), 3000, "an exact duplicate is harmless");
+  assert.deepEqual(liveTiers.conflicts, ["standard"]);
+
+  assert.match(backend, /const prices = badgerCurrentPrices_\(true\);/, "invoice drafts always read the catalog fresh");
+  assert.match(functionSource("installHubReadCacheWarmer", "installBadgerStatusSyncTrigger"), /SpreadsheetApp\.openById\(BADGER_TRACKER_SPREADSHEET_ID\), getSs_\(\)\]/, "inventory workbook edits invalidate caches");
 
   const listSkus = functionSource("apiListSkus_", "apiAddSkuToStoreUnlocked_");
   assert.match(listSkus, /\(hasStock && stock <= 0\)/);
@@ -1739,6 +1769,9 @@ test("Toast 86 Report import maps stock by exact Toast item name and reports gap
   const result = lib.toastStockUpdates_(skus, report);
   assert.deepEqual(result.updates.map(u => [u.sku_id, u.stock]), [["STUR-VOD-CRAN-750", 117], ["STUR-VOD-PEAC-750", 0], ["STUR-BOX-GIN-5X100", 2]]);
   assert.deepEqual(result.missing_in_report, ["STUR-VOD-GONE-750"]);
+  assert.deepEqual(result.cleared, [{ index:3, sku_id:"STUR-VOD-GONE-750" }], "stock for a SKU missing from the report is cleared, not kept");
+  const importSource = functionSource("importLatestToastStockReport", "priceTierCents_");
+  assert.match(importSource, /result\.cleared\.forEach\(item => \{ stockValues\[item\.index\]\[0\] = ""; dateValues\[item\.index\]\[0\] = ""; \}\)/);
   assert.deepEqual(result.unmapped_toast_items, ["Brand New Vodka 750 ml"], "new bottles without a SKU are reported; merchandise is ignored");
   assert.throws(() => lib.parseToast86Report_("a,b\n1,2"), /does not look like a Toast 86 Report/);
 
@@ -1747,20 +1780,32 @@ test("Toast 86 Report import maps stock by exact Toast item name and reports gap
   const wholesaleCents = new Function("badgerMoneyToCents_", `${functionSource("skuWholesaleCents_", "skuPriceRow_")}; return skuWholesaleCents_;`)(money);
   const uomFor = new Function(`${functionSource("badgerVolumeUnitOfMeasureId_", "toastItemKey_")}; return badgerVolumeUnitOfMeasureId_;`)();
   const invoiceVolume = new Function(`${functionSource("skuInvoiceVolume_", "skuPriceRow_")}; return skuInvoiceVolume_;`)();
-  const problemsFor = new Function("badgerMoneyToCents_", "toBool_", "skuWholesaleCents_", "badgerVolumeUnitOfMeasureId_", "skuInvoiceVolume_",
-    `${functionSource("wholesaleCatalogProblems_", "checkWholesaleCatalog")}; return wholesaleCatalogProblems_;`)(money, toBool, wholesaleCents, uomFor, invoiceVolume);
+  const firstPresent = (row, keys) => { for (const key of keys) if (row[key] !== undefined && row[key] !== "") return row[key]; return ""; };
+  const customerConflicts = new Function("badgerMoneyToCents_", "toBool_", "firstPresent_",
+    `${functionSource("customerPriceConflicts_", "wholesalePriceRows_")}; return customerPriceConflicts_;`)(money, toBool, firstPresent);
+  const problemsFor = new Function("badgerMoneyToCents_", "toBool_", "skuWholesaleCents_", "badgerVolumeUnitOfMeasureId_", "skuInvoiceVolume_", "customerPriceConflicts_",
+    `${functionSource("wholesaleCatalogProblems_", "checkWholesaleCatalog")}; return wholesaleCatalogProblems_;`)(money, toBool, wholesaleCents, uomFor, invoiceVolume, customerConflicts);
   assert.equal(invoiceVolume({ size:"5 x 100ml", invoice_volume:"500ml" }), "500ml");
   assert.equal(invoiceVolume({ size:"750ml", invoice_volume:"" }), "750ml");
   const tiers = new Map([["standard", 2200], ["squadron", 0]].filter(([, cents]) => cents > 0));
+  tiers.conflicts = ["premium"];
   const problems = problemsFor([
     { sku_id:"A", active:true, price_tier:"Standard", proof:70, size:"750ml", toast_item_name:"A 750 ml" },
     { sku_id:"B", active:true, price_tier:"Squadron", proof:80, size:"750ml", toast_item_name:"B 750 ml" },
     { sku_id:"C", active:true, price_tier:"Standard", proof:"", size:"5 x 100ml", invoice_volume:"9000ml", toast_item_name:"" },
     { sku_id:"D", active:false, price_tier:"Old Name", proof:"", toast_item_name:"" },
-  ], tiers);
-  assert.deepEqual(problems.unknown_tier, ["B (Squadron)", "D (Old Name)"]);
-  assert.deepEqual(problems.no_price, ["B"]);
+    { sku_id:"E", active:true, price_tier:"Premium", proof:90, size:"750ml", toast_item_name:"E 750 ml" },
+    { sku_id:"F", active:true, price_tier:"Bitters", wholesale_price:"7", proof:180, size:"50ml", toast_item_name:"" },
+  ], tiers, [
+    { sku_id:"A", account_id:"ACC-1", price:20, active:true },
+    { sku_id:"A", account_id:"ACC-1", price:21, active:true },
+  ]);
+  assert.deepEqual(problems.unknown_tier, ["B (Squadron)", "D (Old Name)"], "a conflicting tier is reported as a conflict, not unknown");
+  assert.deepEqual(problems.no_price, ["B", "E"]);
   assert.deepEqual(problems.no_proof, ["C"]);
-  assert.deepEqual(problems.no_toast_item, ["C"]);
+  assert.deepEqual(problems.tier_conflicts, ["premium"]);
+  assert.deepEqual(problems.customer_price_conflicts, ["A|ACC-1"]);
+  assert.deepEqual(problems.not_stock_tracked, ["C", "F"], "products with no Toast item are listed as information, not problems");
+  assert.equal(problems.no_toast_item, undefined);
   assert.deepEqual(problems.no_invoice_unit, ["C (9000ml)"]);
 });

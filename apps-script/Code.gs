@@ -1,8 +1,17 @@
 /*********************************
  * Inventory API (JSON) for Netlify
- * App version: 2026.10.04.20-APP
+ * App version: 2026.10.04.21-APP
  *
  * CHANGES IN THIS VERSION
+ * - Badger invoice preview and create always read SKUs, Price Tiers and Customer Prices fresh, so a fixed price or proof
+ *   is used at once; installHubReadCacheWarmer() also adds a change trigger on the inventory workbook.
+ * - Duplicate Price Tiers rows, or duplicate active Customer Prices rows for one SKU and account, with different prices
+ *   block invoicing instead of picking one; checkWholesaleCatalog() reports them as tier_conflicts and
+ *   customer_price_conflicts, and lists products with no Toast item as not_stock_tracked (information).
+ * - The Toast stock import clears toast_stock / toast_stock_date for a mapped SKU missing from the newest report, so the
+ *   order page shows "Staff will confirm availability" instead of an old "In stock".
+ *
+ * CHANGES IN 2026.10.04.20-APP
  * - Wholesale prices come from the SKUs tab: price_tier (amounts on the Price Tiers tab) or a wholesale_price override,
  *   plus account-specific rows on Customer Prices. Replaces the Current Prices tab and seedCurrentPricesTab().
  * - SKUs toast_stock (weekly Toast bottle count) marks products In stock / Out of stock on the order page.
@@ -253,7 +262,7 @@
  * - Use only in the staging inventory backend until testing is complete.
  *********************************/
 
-const APP_VERSION = "2026.10.04.20-APP";
+const APP_VERSION = "2026.10.04.21-APP";
 
 const SHEET_NAMES = {
   STORES: "Stores",
@@ -410,10 +419,14 @@ function installHubReadCacheWarmer() {
     .filter(trigger => [warmerHandler, changeHandler].includes(trigger.getHandlerFunction()))
     .forEach(trigger => ScriptApp.deleteTrigger(trigger));
   ScriptApp.newTrigger(warmerHandler).timeBased().everyMinutes(10).create();
-  [getOutreachSs_(), SpreadsheetApp.openById(BADGER_TRACKER_SPREADSHEET_ID)].forEach(spreadsheet => {
+  // getSs_() is the inventory workbook (SKUs, Price Tiers, Customer Prices): the legacy Inventory Backend before the hub
+  // migration, the Outreach workbook after it. Re-run this installer after switching migration state.
+  const workbooks = new Map();
+  [getOutreachSs_(), SpreadsheetApp.openById(BADGER_TRACKER_SPREADSHEET_ID), getSs_()].forEach(spreadsheet => workbooks.set(spreadsheet.getId(), spreadsheet));
+  workbooks.forEach(spreadsheet => {
     ScriptApp.newTrigger(changeHandler).forSpreadsheet(spreadsheet).onChange().create();
   });
-  return { message:"Ten-minute Hub read-cache warmer and spreadsheet-change invalidation triggers installed." };
+  return { message:"Ten-minute Hub read-cache warmer and change triggers installed for the Outreach, Badger Tracker and inventory workbooks." };
 }
 
 function installBadgerStatusSyncTrigger() {
@@ -6271,18 +6284,19 @@ function toastStockUpdates_(skuRows, reportRows) {
   const mapped = new Set();
   const updates = [];
   const missing = [];
+  const cleared = [];
   (skuRows || []).forEach((sku, index) => {
     const key = toastItemKey_(sku.toast_item_name);
     if (!key) return;
     mapped.add(key);
     if (stock.has(key)) updates.push({ index:index, sku_id:String(sku.sku_id || ""), stock:stock.get(key) });
-    else missing.push(String(sku.sku_id || ""));
+    else { missing.push(String(sku.sku_id || "")); cleared.push({ index:index, sku_id:String(sku.sku_id || "") }); }
   });
   const groups = new Set(TOAST_STOCK_GROUPS);
   const unmapped = Array.from(new Set((reportRows || [])
     .filter(row => groups.has(String(row.group || "").trim().toLowerCase()) && !mapped.has(toastItemKey_(row.item)))
     .map(row => row.item)));
-  return { updates:updates, missing_in_report:missing, unmapped_toast_items:unmapped };
+  return { updates:updates, cleared:cleared, missing_in_report:missing, unmapped_toast_items:unmapped };
 }
 
 function importLatestToastStockReport() {
@@ -6319,12 +6333,15 @@ function importLatestToastStockReport() {
       const stockValues = stockRange.getValues();
       const dateValues = dateRange.getValues();
       result.updates.forEach(update => { stockValues[update.index][0] = update.stock; dateValues[update.index][0] = reportDate; });
+      // A mapped SKU missing from the newest report has unknown stock: clear it (never assume zero) so the order page
+      // shows "Staff will confirm availability" instead of an old "In stock".
+      result.cleared.forEach(item => { stockValues[item.index][0] = ""; dateValues[item.index][0] = ""; });
       stockRange.setValues(stockValues);
       dateRange.setValues(dateValues);
     }
     props.setProperty(TOAST_STOCK_LAST_FILE_PROPERTY, marker);
     bumpReadCacheVersion_();
-    const detail = `${latest.getName()}: ${result.updates.length} SKUs updated; ${result.missing_in_report.length} mapped SKUs not in the report (${result.missing_in_report.slice(0, 20).join(", ")}); ${result.unmapped_toast_items.length} Toast bottles with no SKU (${result.unmapped_toast_items.slice(0, 20).join(", ")}).`;
+    const detail = `${latest.getName()}: ${result.updates.length} SKUs updated; ${result.missing_in_report.length} mapped SKUs not in the report, stock cleared (${result.missing_in_report.slice(0, 20).join(", ")}); ${result.unmapped_toast_items.length} Toast bottles with no SKU (${result.unmapped_toast_items.slice(0, 20).join(", ")}).`;
     appendAudit_("IMPORT_TOAST_STOCK", "SKUs", latest.getId(), "", "Toast stock import", "Toast 86 Report", SHEET_NAMES.SKUS, "Completed", detail);
     console.log(JSON.stringify({ event:"toast_stock_import", file:latest.getName(), updated:result.updates.length, missing:result.missing_in_report, unmapped:result.unmapped_toast_items }));
     return { message:detail, updated:result.updates.length, missing_in_report:result.missing_in_report, unmapped_toast_items:result.unmapped_toast_items };
@@ -6337,12 +6354,18 @@ function importLatestToastStockReport() {
 function priceTierCents_() {
   const sheet = getSs_().getSheetByName(PRICE_TIERS_SHEET_NAME);
   const tiers = new Map();
+  tiers.conflicts = [];
   if (!sheet || sheet.getLastRow() < 2) return tiers;
+  const conflicts = new Set();
   getAllRowsAsObjects_(sheet).forEach(row => {
     const tier = String(row.tier || "").trim().toLowerCase();
     const cents = badgerMoneyToCents_(firstPresent_(row, ["price", "wholesale_price", "unit_price"]));
-    if (tier && cents > 0) tiers.set(tier, cents);
+    if (!tier || !(cents > 0)) return;
+    if (tiers.has(tier) && tiers.get(tier) !== cents) conflicts.add(tier); else tiers.set(tier, cents);
   });
+  // Two rows for one tier with different prices: price nothing in that tier, so invoices block until the tab is fixed.
+  conflicts.forEach(tier => tiers.delete(tier));
+  tiers.conflicts = Array.from(conflicts);
   return tiers;
 }
 
@@ -6366,6 +6389,18 @@ function skuPriceRow_(sku, cents, accountId) {
   };
 }
 
+// Active Customer Prices rows that repeat one SKU + account with different prices. Keys are "sku_id|account_id".
+function customerPriceConflicts_(customerRows) {
+  const seen = new Map(); const conflicts = new Set();
+  (customerRows || []).forEach(row => {
+    if (!toBool_(row.active)) return;
+    const key = `${String(row.sku_id || "").trim()}|${String(row.account_id || "").trim()}`;
+    const cents = badgerMoneyToCents_(firstPresent_(row, ["price", "unit_price", "wholesale_price"]));
+    if (seen.has(key) && seen.get(key) !== cents) conflicts.add(key); else seen.set(key, cents);
+  });
+  return conflicts;
+}
+
 function wholesalePriceRows_(skuRows, tierCents, customerRows) {
   const activeSkus = new Map();
   const rows = [];
@@ -6376,36 +6411,46 @@ function wholesalePriceRows_(skuRows, tierCents, customerRows) {
     const cents = skuWholesaleCents_(sku, tierCents);
     if (cents > 0) rows.push(skuPriceRow_(sku, cents, ""));
   });
+  const conflicts = customerPriceConflicts_(customerRows);
+  const added = new Set();
   (customerRows || []).forEach(row => {
     if (!toBool_(row.active)) return;
     const sku = activeSkus.get(String(row.sku_id || "").trim());
     const accountId = String(row.account_id || "").trim();
-    const cents = badgerMoneyToCents_(firstPresent_(row, ["price", "unit_price", "wholesale_price"]));
-    if (sku && accountId && cents > 0) rows.push(skuPriceRow_(sku, cents, accountId));
+    const key = `${String(row.sku_id || "").trim()}|${accountId}`;
+    if (!sku || !accountId || added.has(key)) return;
+    // A conflicting deal gets a zero price so this account's invoice blocks instead of silently using one row or the tier.
+    const cents = conflicts.has(key) ? 0 : badgerMoneyToCents_(firstPresent_(row, ["price", "unit_price", "wholesale_price"]));
+    if (cents > 0 || conflicts.has(key)) { rows.push(skuPriceRow_(sku, cents, accountId)); added.add(key); }
   });
   return rows;
 }
 
-// Lists catalog problems a person must fix: active products that cannot be priced or invoiced, and SKU tiers that
-// are not on the Price Tiers tab (for example after a tier is renamed there). Run from the Apps Script editor.
-function wholesaleCatalogProblems_(skuRows, tierCents) {
-  const problems = { unknown_tier:[], no_price:[], no_proof:[], no_invoice_unit:[], no_toast_item:[] };
+// Lists catalog problems a person must fix: active products that cannot be priced or invoiced, SKU tiers that are not
+// on the Price Tiers tab (for example after a tier is renamed there), and duplicate Price Tiers or Customer Prices rows
+// with different prices. not_stock_tracked is information, not a problem: active products with no Toast item (bitters
+// are Toast modifiers) show "Staff will confirm availability". Run checkWholesaleCatalog() from the Apps Script editor.
+function wholesaleCatalogProblems_(skuRows, tierCents, customerRows) {
+  const problems = { unknown_tier:[], no_price:[], no_proof:[], no_invoice_unit:[],
+    tier_conflicts:(tierCents.conflicts || []).slice(), customer_price_conflicts:Array.from(customerPriceConflicts_(customerRows)), not_stock_tracked:[] };
   (skuRows || []).forEach(sku => {
     const id = String(sku.sku_id || "").trim();
     if (!id) return;
     const tier = String(sku.price_tier || "").trim();
-    if (tier && !tierCents.has(tier.toLowerCase()) && !(badgerMoneyToCents_(sku.wholesale_price) > 0)) problems.unknown_tier.push(`${id} (${tier})`);
+    if (tier && !tierCents.has(tier.toLowerCase()) && !(tierCents.conflicts || []).includes(tier.toLowerCase()) && !(badgerMoneyToCents_(sku.wholesale_price) > 0)) problems.unknown_tier.push(`${id} (${tier})`);
     if (!toBool_(sku.active)) return;
     if (!(skuWholesaleCents_(sku, tierCents) > 0)) problems.no_price.push(id);
     if (!(Number(sku.proof) > 0)) problems.no_proof.push(id);
     if (!badgerVolumeUnitOfMeasureId_(skuInvoiceVolume_(sku))) problems.no_invoice_unit.push(`${id} (${skuInvoiceVolume_(sku) || "no size"})`);
-    if (!String(sku.toast_item_name || "").trim()) problems.no_toast_item.push(id);
+    if (!String(sku.toast_item_name || "").trim()) problems.not_stock_tracked.push(id);
   });
   return problems;
 }
 
 function checkWholesaleCatalog() {
-  const problems = wholesaleCatalogProblems_(getAllRowsAsObjects_(getSheet_(SHEET_NAMES.SKUS)), priceTierCents_());
+  const customerSheet = getSs_().getSheetByName(CUSTOMER_PRICES_SHEET_NAME);
+  const customerRows = customerSheet && customerSheet.getLastRow() >= 2 ? getAllRowsAsObjects_(customerSheet) : [];
+  const problems = wholesaleCatalogProblems_(getAllRowsAsObjects_(getSheet_(SHEET_NAMES.SKUS)), priceTierCents_(), customerRows);
   console.log(JSON.stringify(problems, null, 2));
   return problems;
 }
@@ -6526,7 +6571,8 @@ function badgerInvoiceDraft_(requestId, p, skipValidation, accountSnapshot) {
   const today = Utilities.formatDate(new Date(), Session.getScriptTimeZone(), "yyyy-MM-dd");
   const date = String(p?.date || today).trim();
   if (!/^\d{4}-\d{2}-\d{2}$/.test(date)) throw new Error("Invoice date must use YYYY-MM-DD.");
-  const prices = badgerCurrentPrices_(false); const overrides = new Map((Array.isArray(p?.lines) ? p.lines : []).map(line => [String(line.sku_id || ""), line]));
+  // Always a fresh catalog read: a price, tier or proof fixed in the inventory workbook must reach preview and create at once.
+  const prices = badgerCurrentPrices_(true); const overrides = new Map((Array.isArray(p?.lines) ? p.lines : []).map(line => [String(line.sku_id || ""), line]));
   const blocked = [];
   const lines = (order.lines || []).map(line => {
     const price = badgerPriceForOrderLine_(prices, order.account_id, line); const override = overrides.get(String(line.sku_id || "")) || {};
@@ -6536,7 +6582,7 @@ function badgerInvoiceDraft_(requestId, p, skipValidation, accountSnapshot) {
     if (!(bottles > 0) || !(cents > 0) || !(price.unit_of_measure_id > 0) || !(price.proof > 0)) { blocked.push(String(line.sku_name || line.sku_id || "product")); return null; }
     return { sku_id:String(line.sku_id || ""), quantity:bottles, description:price.description, unit_price_cents:cents, unitPrice:cents / 100, unitOfMeasureId:price.unit_of_measure_id, beverageClass:price.beverage_class, alcoholProof:price.proof };
   }).filter(Boolean);
-  if (blocked.length) throw new Error(`Each product needs an active SKU row with a size, a price (price tier or wholesale price), and proof before invoicing: ${blocked.join(", ")}.`);
+  if (blocked.length) throw new Error(`Each product needs an active SKU row with a size, a price (price tier or wholesale price, with no conflicting duplicate Price Tiers or Customer Prices rows), and proof before invoicing: ${blocked.join(", ")}.`);
   const number = String((skipValidation && p?.invoice_number) || badgerNextInvoiceNumber_()).trim();
   if (!skipValidation) badgerValidateInvoiceNumber_(number, date);
   const total_cents = lines.reduce((sum, line) => sum + Math.round(line.quantity * line.unit_price_cents), 0);
