@@ -834,6 +834,74 @@ test("Cocktail list campaigns keep newsletter eligibility, cross-send guards, an
   assert.match(batchSource, /continue_after_block !== true/);
 });
 
+test("Cocktail list review fixes memoize cooldowns, suppress opt-outs, validate mailer contacts, and unsubscribe duplicates", async () => {
+  const [backend, mailer] = await Promise.all([
+    readFile(new URL("apps-script/Code.gs", root), "utf8"),
+    readFile(new URL("docs/reference/distribution-outreach/Code.gs", root), "utf8"),
+  ]);
+  const recentSource = backend.slice(backend.indexOf("function outreachRecentSendIndex_"), backend.indexOf("function cocktailListMessage_"));
+  const rows = [
+    { intended_recipient:"sales-to-cocktail@example.test", message_stage:"Initial", result:"APP SENT", timestamp:"2026-10-04T12:00:00Z" },
+    { intended_recipient:"cocktail-to-sales@example.test", message_stage:"Cocktail list", result:"APP SENT", timestamp:"2026-10-02T12:00:00Z" },
+    { intended_recipient:"day-eight@example.test", message_stage:"Initial", result:"APP SENT", timestamp:"2026-09-27T12:00:00Z" },
+  ];
+  let activityReads = 0;
+  const recent = new Function("getOutreachSheet_", "getAllRowsAsObjects_", "outreachValue_", "outreachDate_", "OUTREACH_ACTIVITY_SHEET_NAME", "OUTREACH_COCKTAIL_LIST_STAGE", "OUTREACH_CROSS_SEND_COOLDOWN_DAYS", `let __OUTREACH_RECENT_SEND_INDEX = null; ${recentSource}; return { outreachRecentSendToEmail_, outreachCrossSendCooldownReason_ };`)(
+    () => ({ getLastRow:() => rows.length + 1 }),
+    () => { activityReads += 1; return rows; },
+    (row, keys) => keys.map(key => row[key]).find(value => value !== undefined && value !== ""),
+    value => { const date = value ? new Date(value) : null; return date && !Number.isNaN(date.getTime()) ? date : ""; },
+    "Activity Log", "Cocktail list", 7,
+  );
+  const now = new Date("2026-10-10T12:00:00Z");
+  assert.equal(recent.outreachRecentSendToEmail_("sales-to-cocktail@example.test", stage => stage !== "Cocktail list", 7, now), true, "a six-day sales message blocks Cocktail list");
+  assert.equal(recent.outreachRecentSendToEmail_("cocktail-to-sales@example.test", stage => stage === "Cocktail list", 7, now), false, "an eight-day Cocktail list message permits sales outreach");
+  assert.equal(recent.outreachRecentSendToEmail_("day-eight@example.test", stage => stage !== "Cocktail list", 7, now), false, "day eight is outside the cooldown");
+  assert.equal(activityReads, 1, "all cooldown checks share one Activity Log read per execution");
+
+  const eligibilitySource = backend.slice(backend.indexOf("function newsletterCocktailListEligibility_"), backend.indexOf("function cocktailListContactIndex_"));
+  const eligibility = new Function("outreachCrossSendCooldownReason_", `${eligibilitySource}; return newsletterCocktailListEligibility_;`)(() => "");
+  assert.match(eligibility({ email:"x@example.test", newsletter_status:"Subscribed", directory_outcome:"Unsubscribed" }).join("; "), /excluded/);
+  assert.match(eligibility({ email:"x@example.test", newsletter_status:"Subscribed", program_newsletter_status:"Declined" }).join("; "), /program excludes/);
+
+  const unsubscribeSource = backend.slice(backend.indexOf("function unsubscribeNewsletterContactByEmail_"), backend.indexOf("function appendOutreachActivity_"));
+  const contactRows = [["one@example.test", "Subscribed", ""], ["ONE@example.test", "Subscribed", ""], ["other@example.test", "Subscribed", ""]];
+  const writes = [];
+  const contactSheet = {
+    getLastRow:() => 4,
+    getLastColumn:() => 3,
+    getRange:(row) => ({ getValues:() => contactRows, setValues:values => writes.push({ row, values }) }),
+  };
+  const unsubscribe = new Function("getOutreachSs_", "getHeaderMap_", "NEWSLETTER_CONTACTS_SHEET_NAME", "APP_VERSION", `${unsubscribeSource}; return unsubscribeNewsletterContactByEmail_;`)(
+    () => ({ getSheetByName:() => contactSheet }), () => ({ email:0, status:1, app_version:2 }), "Newsletter Contacts", "test-version",
+  );
+  assert.equal(unsubscribe("one@example.test", "Test"), true);
+  assert.equal(writes.length, 2, "every duplicate address is updated");
+  assert.equal(writes[0].values[0][1], "Unsubscribed");
+  assert.equal(writes[1].values[0][1], "Unsubscribed");
+
+  const validatorSource = mailer.slice(mailer.indexOf("function validateNewsletterContact_"), mailer.indexOf("function appendAppLog_"));
+  const newsletterRows = [["contact-1", "ACC-1", "Alex", "cocktails@example.test", "Example Bar", "Subscribed"]];
+  const newsletterSheet = {
+    getLastRow:() => 2,
+    getLastColumn:() => 6,
+    getRange:(row) => ({ getValues:() => [row === 1 ? ["Contact ID", "Account ID", "Name", "Email", "Organization", "Status"] : newsletterRows[0]] }),
+  };
+  const validateNewsletter = new Function("assertStagingEnvironment_", "OUTREACH", "appHeaderKey_", "isValidEmail_", `${validatorSource}; return validateNewsletterContact_;`)(
+    () => ({ getSheetByName:() => newsletterSheet }),
+    { NEWSLETTER_CONTACTS_SHEET:"Newsletter Contacts", COCKTAIL_LIST_STAGE:"Cocktail list" },
+    value => String(value).trim().toLowerCase().replace(/[^a-z0-9]+/g, "_").replace(/^_+|_+$/g, ""),
+    value => /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(value),
+  );
+  const payload = { action:"sendNewsletterEmail", idempotency_token:"campaign-contact-1-token", account_id:"ACC-1", newsletter_contact_id:"contact-1", business:"Example Bar", recipient:"cocktails@example.test", message_stage:"Cocktail list", subject:"October ideas", html:"<p>Hello</p>" };
+  const lead = validateNewsletter(payload, false);
+  assert.equal(lead.stage, "Cocktail list");
+  assert.equal(lead.business, "Example Bar");
+  assert.throws(() => validateNewsletter({ ...payload, recipient:"changed@example.test" }, false), /changed/);
+  assert.match(mailer, /action === 'sendNewsletterEmail'/);
+  assert.match(mailer, /sendNewsletterEmailRequest_\(body\)/);
+});
+
 test("source contains formula protection, global error listeners, and recoverable action state", async () => {
   const [backend, index, signup, order, mailer] = await Promise.all([
     readFile(new URL("apps-script/Code.gs", root), "utf8"),
@@ -1288,13 +1356,14 @@ test("Deploy A review corrections repair validations and retain a campaign's sta
   assert.match(reconcileSource, /const campaignStage = String\(campaignStoredCriteria_\(campaign\.values\[campaign\.headers\.criteria\]\)\?\.stage \|\| "Initial"\)/);
   assert.match(reconcileSource, /advanceOutreachSend_\(leadSheet, directory\.row, record, campaignStage/);
   assert.match(backend, /NURTURE_CHECK_IN_DUPLICATE_COOLDOWN_DAYS = 60/);
-  assert.match(mailer, /VERSION: 2026\.10\.03\.15-APP/);
+  const mailerVersion = mailer.match(/VERSION: ([^\s]+)/)[1];
+  assert.match(mailer, new RegExp(`const OUTREACH_VERSION = '${mailerVersion.replace(/\./g, "\\.")}';`));
   assert.match(mailer, /function appStageWasRecentlySent_\(/);
   assert.match(mailer, /stage === 'Nurture check-in'/);
   // The status table must name the Inventory API version currently in Code.gs (it moves with every release).
   const backendVersion = backend.match(/const APP_VERSION = "([^"]+)";/)[1];
   assert.ok(status.includes(`| Inventory API Apps Script | \`${backendVersion}\``), `PROJECT_STATUS.md lists Inventory API ${backendVersion}`);
-  assert.match(status, /Distribution Outreach Apps Script \| `2026\.10\.03\.15-APP`/);
+  assert.ok(status.includes(`| Distribution Outreach Apps Script | \`${mailerVersion}\``), `PROJECT_STATUS.md lists Distribution Outreach ${mailerVersion}`);
 });
 
 test("campaign rebuild UI and first-draft save gate preserve review-before-send", async () => {

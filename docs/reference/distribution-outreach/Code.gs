@@ -1,9 +1,14 @@
 /**
  * Sturgeon Spirits Distribution Outreach
  *
- * VERSION: 2026.10.03.15-APP
+ * VERSION: 2026.10.04.25-APP
  *
  * CHANGES IN THIS VERSION
+ * - Adds the Hub-only sendNewsletterEmail action for Cocktail list campaigns. It validates a subscribed Newsletter
+ *   Contacts record by contact ID and email, preserves lock/idempotency/Zoho recovery, and writes one Activity Log row
+ *   with its true Cocktail list stage and saved subject without changing Directory outreach state.
+ *
+ * CHANGES IN 2026.10.03.15-APP
  * - Allows a recurring Nurture check-in only when the prior check-in is more than 60 days old; all other stages retain permanent duplicate-send protection.
  * - Keeps message-stage identity, recipient validation, and every non-nurture delivery guard unchanged.
  *
@@ -61,7 +66,7 @@
  * Sends through the authenticated Zoho Mail API account.
  */
 
-const OUTREACH_VERSION = '2026.10.03.15-APP';
+const OUTREACH_VERSION = '2026.10.04.25-APP';
 const NURTURE_CHECK_IN_DUPLICATE_COOLDOWN_DAYS = 60;
 
 const OUTREACH = Object.freeze({
@@ -76,6 +81,8 @@ const OUTREACH = Object.freeze({
   PILOT_SHEET: 'Pilot Review',
   SETTINGS_SHEET: 'Campaign Settings',
   LOG_SHEET: 'Activity Log',
+  NEWSLETTER_CONTACTS_SHEET: 'Newsletter Contacts',
+  COCKTAIL_LIST_STAGE: 'Cocktail list',
   PAYMENT_REMINDER_LOG_SHEET: 'Payment Reminder Log',
   DRAFTS_SHEET: 'Outreach Drafts',
   FIRST_DATA_ROW: 2,
@@ -198,6 +205,7 @@ function doPost(e) {
     const action = String(body.action || '');
     if (action === 'appMailerStatus') return appJson_(Object.assign({ ok:true, version:OUTREACH_VERSION }, appMailerStatus_()));
     if (action === 'sendAppEmail') return appJson_(Object.assign({ ok:true, version:OUTREACH_VERSION }, sendAppEmailRequest_(body, false)));
+    if (action === 'sendNewsletterEmail') return appJson_(Object.assign({ ok:true, version:OUTREACH_VERSION }, sendNewsletterEmailRequest_(body)));
     if (action === 'sendAppTestEmail') return appJson_(Object.assign({ ok:true, version:OUTREACH_VERSION }, sendAppEmailRequest_(body, true)));
     if (action === 'sendPaymentReminder') return appJson_(Object.assign({ ok:true, version:OUTREACH_VERSION }, sendPaymentReminderRequest_(body)));
     throw new Error('Unsupported app mailer action.');
@@ -361,6 +369,35 @@ function validateAppLead_(body, testMode) {
   return { sheet:sheet, row:row, rowNumber:rowNumber, business:business, email:email, stage:stage };
 }
 
+function validateNewsletterContact_(body, testMode) {
+  const contactId = String(body.newsletter_contact_id || '').trim();
+  const expectedEmail = String(body.recipient || '').trim().toLowerCase();
+  if (!contactId || !expectedEmail) throw new Error('Newsletter contact was not found.');
+  if (String(body.message_stage || '').trim() !== OUTREACH.COCKTAIL_LIST_STAGE) throw new Error('Newsletter messages must use the Cocktail list stage.');
+  const sheet = assertStagingEnvironment_().getSheetByName(OUTREACH.NEWSLETTER_CONTACTS_SHEET);
+  if (!sheet || sheet.getLastRow() < 2) throw new Error('Newsletter Contacts sheet is missing.');
+  const keys = sheet.getRange(1, 1, 1, sheet.getLastColumn()).getValues()[0].map(appHeaderKey_);
+  const contactIndex = keys.indexOf('contact_id');
+  const emailIndex = keys.indexOf('email');
+  const statusIndex = keys.indexOf('status');
+  const accountIndex = keys.indexOf('account_id');
+  const nameIndex = keys.indexOf('name');
+  const organizationIndex = keys.indexOf('organization');
+  const sourceBusinessIndex = keys.indexOf('source_business');
+  if (contactIndex < 0 || emailIndex < 0 || statusIndex < 0) throw new Error('Newsletter Contacts is missing Contact ID, Email, or Status.');
+  const rows = sheet.getRange(2, 1, sheet.getLastRow() - 1, sheet.getLastColumn()).getValues();
+  const rowIndex = rows.findIndex(function (row) { return String(row[contactIndex] || '').trim() === contactId; });
+  if (rowIndex < 0) throw new Error('Newsletter contact was not found.');
+  const row = rows[rowIndex];
+  const email = String(row[emailIndex] || '').trim().toLowerCase();
+  const status = String(row[statusIndex] || '').trim();
+  if (email !== expectedEmail) throw new Error('Newsletter contact changed. Refresh the Hub before sending.');
+  if (!testMode && !isValidEmail_(email)) throw new Error('Recipient email is invalid.');
+  if (!testMode && status !== 'Subscribed') throw new Error('Newsletter contact is not subscribed.');
+  const business = String((organizationIndex >= 0 && row[organizationIndex]) || (sourceBusinessIndex >= 0 && row[sourceBusinessIndex]) || (nameIndex >= 0 && row[nameIndex]) || email).trim();
+  return { sheet:sheet, row:row, rowNumber:rowIndex + 2, business:business, email:email, stage:OUTREACH.COCKTAIL_LIST_STAGE, account_id:accountIndex >= 0 ? String(row[accountIndex] || '').trim() : '' };
+}
+
 function appendAppLog_(lead, body, deliveredTo, result, messageId, errorDetail) {
   const sheet = assertStagingEnvironment_().getSheetByName(OUTREACH.LOG_SHEET);
   if (!sheet) throw new Error('Activity Log sheet is missing.');
@@ -371,7 +408,7 @@ function appendAppLog_(lead, body, deliveredTo, result, messageId, errorDetail) 
     if (index >= 0) values[index] = value;
   };
   set(['timestamp'], new Date());
-  set(['account_id'], String(body.account_id || lead.row[OUTREACH.COL.ACCOUNT_ID - 1] || ''));
+  set(['account_id'], String(body.account_id || lead.account_id || lead.row[OUTREACH.COL.ACCOUNT_ID - 1] || ''));
   set(['business'], lead.business);
   set(['intended_recipient', 'email'], lead.email);
   set(['message_stage', 'stage'], lead.stage);
@@ -385,7 +422,8 @@ function appendAppLog_(lead, body, deliveredTo, result, messageId, errorDetail) 
   sheet.appendRow(values);
 }
 
-function sendAppEmailRequest_(body, testMode) {
+function sendAppEmailRequest_(body, testMode, validateLead) {
+  validateLead = validateLead || validateAppLead_;
   const token = String(body.idempotency_token || '').trim();
   if (!/^[A-Za-z0-9_-]{20,160}$/.test(token)) throw new Error('A valid idempotency token is required.');
   const prior = priorAcceptedAppSend_(token);
@@ -402,7 +440,7 @@ function sendAppEmailRequest_(body, testMode) {
   try {
     const replay = priorAcceptedAppSend_(token);
     if (replay) return Object.assign({}, replay, { idempotent:true });
-    const lead = validateAppLead_(body, testMode);
+    const lead = validateLead(body, testMode);
     const settings = getSettings_();
     const deliveredTo = testMode ? String(settings['Test recipient'] || '').trim().toLowerCase() : lead.email;
     const zoho = sendZohoEmail_(deliveredTo, subject, testMode ? markTestTrackingLinks_(html) : html, settings, testMode ? 'APP_TEST' : 'APP');
@@ -418,7 +456,7 @@ function sendAppEmailRequest_(body, testMode) {
   } catch (error) {
     if (!accepted) {
       try {
-        const lead = validateAppLead_(body, true);
+        const lead = validateLead(body, true);
         appendAppLog_(lead, body, '', testMode ? 'APP TEST ERROR' : 'APP SEND ERROR', '', String(error.message || error));
       } catch (ignored) {}
     }
@@ -426,6 +464,10 @@ function sendAppEmailRequest_(body, testMode) {
   } finally {
     lock.releaseLock();
   }
+}
+
+function sendNewsletterEmailRequest_(body) {
+  return sendAppEmailRequest_(body, false, validateNewsletterContact_);
 }
 
 function paymentReminderHeaders_() {
