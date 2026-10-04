@@ -55,7 +55,7 @@
 
       <fieldset>
         <legend>Products</legend>
-        <p class="sectionHelp">Request by case or bottle. The team will confirm the final quantity.</p>
+        <p class="sectionHelp">Request by bottle or case. The team will confirm the final quantity.</p>
         <div class="loading" id="productLoading">Loading current products...</div>
         <div class="orderLines" id="orderLines"></div>
         <div class="actions" style="margin-top:12px"><button id="addLineBtn" type="button">Add product</button></div>
@@ -83,7 +83,6 @@
       <div class="formActions">
         <div class="actions">
           <button class="primary" id="submitOrderBtn" type="submit">Send order request</button>
-          <a class="button" href="mailto:sales@sturgeonspirits.com">Email the team</a>
         </div>
         <div class="status" id="orderStatus" role="status" aria-live="polite"></div>
       </div>
@@ -108,7 +107,7 @@
         <input class="quantityInput" type="number" min="1" max="999" step="1" value="1" required inputmode="numeric" />
       </label>
       <label>Unit
-        <select class="unitSelect"><option>Cases</option><option>Bottles</option></select>
+        <select class="unitSelect"><option>Bottles</option><option>Cases</option></select>
       </label>
       <button class="iconButton removeLineBtn" type="button" aria-label="Remove product" title="Remove product">×</button>
     </div>
@@ -119,7 +118,7 @@
     "use strict";
     window.addEventListener("unhandledrejection", e => console.error("Unhandled promise rejection:", e.reason));
     window.addEventListener("error", e => console.error("Unhandled error:", e.error || e.message));
-    const APP_VERSION = "2026.09.25.1";
+    const APP_VERSION = "2026.10.04.1";
     const form = document.getElementById("orderForm");
     const linesEl = document.getElementById("orderLines");
     const loadingEl = document.getElementById("productLoading");
