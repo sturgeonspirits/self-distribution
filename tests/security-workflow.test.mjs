@@ -800,6 +800,40 @@ test("monthly tasting lookup matches recent Badger invoices conservatively and f
   assert.equal(failed.warnings(), 1, "the reader failure is logged once");
 });
 
+test("Cocktail list campaigns keep newsletter eligibility, cross-send guards, and the non-sales template", async () => {
+  const [backend, index, proxy] = await Promise.all([
+    readFile(new URL("apps-script/Code.gs", root), "utf8"),
+    readFile(new URL("index.html", root), "utf8"),
+    readFile(new URL("netlify/functions/inventory.js", root), "utf8"),
+  ]);
+  const eligibilitySource = backend.slice(backend.indexOf("function newsletterCocktailListEligibility_"), backend.indexOf("function campaignCocktailListRecords_"));
+  const eligibility = new Function("outreachCrossSendCooldownReason_", `${eligibilitySource}\nreturn newsletterCocktailListEligibility_;`)(
+    (email, cocktail) => email === "recent@example.test" && cocktail ? "Another sales outreach email was sent within the last 7 days" : ""
+  );
+  assert.deepEqual(eligibility({ email:"subscribed@example.test", newsletter_status:"Subscribed", do_not_email:false }), []);
+  assert.match(eligibility({ email:"unsubscribed@example.test", newsletter_status:"Unsubscribed", do_not_email:false }).join("; "), /not subscribed/);
+  assert.match(eligibility({ email:"subscribed@example.test", newsletter_status:"Subscribed", do_not_email:true }).join("; "), /excluded/);
+  assert.match(eligibility({ email:"recent@example.test", newsletter_status:"Subscribed", do_not_email:false }).join("; "), /last 7 days/);
+  assert.match(backend, /campaign_type === "cocktail_list"/);
+  assert.match(backend, /stage:OUTREACH_COCKTAIL_LIST_STAGE/);
+  assert.match(backend, /liveCocktailListRecipient_/);
+  assert.match(backend, /newsletterCocktailListEligibility_\(record\)/);
+  assert.match(backend, /outreachCrossSendCooldownReason_\(email, false\)/, "sales eligibility checks the opposite direction");
+  assert.match(backend, /Reply stop to unsubscribe\./);
+  assert.match(backend, /values\["Tasting Offer"\] = ""/);
+  assert.doesNotMatch(backend.slice(backend.indexOf("function cocktailListMessage_"), backend.indexOf("function outreachSegmentTemplateKey_")), /Customer application|Wholesale sell-sheet/);
+  assert.match(backend, /unsubscribeNewsletterContactByEmail_/);
+  assert.match(backend, /if \(outcome === "Unsubscribed"\) unsubscribeNewsletterContactByEmail_/);
+  assert.match(index, /id="outreachCampaignCriteriaType"/);
+  assert.match(index, /value="cocktail_list">Cocktail list/);
+  assert.match(index, /campaign_type:\$\("outreachCampaignCriteriaType"\)\.value/);
+  assert.match(proxy, /"createOutreachCampaign"/);
+  const batchSource = backend.slice(backend.indexOf("function apiSendOutreachCampaignBatch_"), backend.indexOf("const CAMPAIGN_SCHEDULE_HANDLER"));
+  assert.match(batchSource, /approval_token/);
+  assert.match(batchSource, /campaignCriteria\?\.campaign_type === "cocktail_list"/);
+  assert.match(batchSource, /continue_after_block !== true/);
+});
+
 test("source contains formula protection, global error listeners, and recoverable action state", async () => {
   const [backend, index, signup, order, mailer] = await Promise.all([
     readFile(new URL("apps-script/Code.gs", root), "utf8"),
@@ -1155,7 +1189,7 @@ test("outreach nurture lifecycle handles cocktail replies, tasting visits, and d
   const statusForOutcome = new Function(`${functionSource("outreachStatusForOutcome_", "appendOutreachActivity_")}; return outreachStatusForOutcome_;`)();
   const nextStage = new Function(`${functionSource("outreachNextStage_", "outreachAddDays_")}; return outreachNextStage_;`)();
   const eligibility = new Function(
-    "outreachStatusLower_", "outreachIsCocktailListOutcome_", "outreachDate_", "legacyPilotSent_", "outreachStageIsDue_", "outreachRecentStageSend_", "NURTURE_CHECK_IN_DUPLICATE_COOLDOWN_DAYS",
+    "outreachStatusLower_", "outreachIsCocktailListOutcome_", "outreachDate_", "legacyPilotSent_", "outreachStageIsDue_", "outreachRecentStageSend_", "outreachCrossSendCooldownReason_", "NURTURE_CHECK_IN_DUPLICATE_COOLDOWN_DAYS",
     `${functionSource("outreachSendEligibility_", "outreachNextStage_")}; return outreachSendEligibility_;`
   )(
     record => String(record.status || "").trim().toLowerCase(),
@@ -1164,6 +1198,7 @@ test("outreach nurture lifecycle handles cocktail replies, tasting visits, and d
     () => false,
     record => !!record.next_follow_up && new Date(record.next_follow_up).getTime() <= Date.now() + 86400000,
     (record, stage, cooldownDays) => (record.activity || []).some(item => String(item.stage || "").toLowerCase() === String(stage).toLowerCase() && new Date(item.timestamp).getTime() >= Date.now() - cooldownDays * 86400000),
+    () => "",
     60,
   );
 

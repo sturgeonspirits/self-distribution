@@ -1,8 +1,13 @@
 /*********************************
  * Inventory API (JSON) for Netlify
- * App version: 2026.10.04.23-APP
+ * App version: 2026.10.04.24-APP
  *
  * CHANGES IN THIS VERSION
+ * - Adds reviewed Cocktail list campaigns for subscribed newsletter contacts, using the existing campaign approval,
+ *   batch, scheduler, and mailer guards. These messages have their own append-only template and a seven-day
+ *   cross-send cooldown with sales outreach; reply-stop unsubscribes the newsletter contact.
+ *
+ * CHANGES IN 2026.10.04.23-APP
  * - Makes the monthly tasting-offer Badger lookup fail closed: any source-read error suppresses the offer for every
  *   recipient for that execution. It also preserves the account matcher’s explicit-link precedence and conflicting-order
  *   safety rule.
@@ -272,7 +277,7 @@
  * - Use only in the staging inventory backend until testing is complete.
  *********************************/
 
-const APP_VERSION = "2026.10.04.23-APP";
+const APP_VERSION = "2026.10.04.24-APP";
 
 const SHEET_NAMES = {
   STORES: "Stores",
@@ -333,6 +338,8 @@ const ACCOUNT_ID_HEADER = "Account ID";
 const HUB_MIGRATION_STATUS_KEY = "inventory_migration_status";
 const HUB_MIGRATION_ACTIVE = "ACTIVE";
 const ORDER_CATALOG_SOURCE = "SHEETS"; // Toast remains disabled until a reviewed integration is configured.
+const OUTREACH_COCKTAIL_LIST_STAGE = "Cocktail list";
+const OUTREACH_CROSS_SEND_COOLDOWN_DAYS = 7;
 const READ_CACHE_VERSION_KEY = "hub_read_cache_version";
 const READ_CACHE_TTL_SECONDS = 900;
 const READ_CACHE_CHUNK_SIZE = 45000;
@@ -814,6 +821,21 @@ const OUTREACH_MONTHLY_CONTENT_SETTINGS = [
   { key:"Monthly content tasting offer", label:"Tasting offer sentence" },
   { key:"Monthly content cocktail-list offer", label:"Cocktail-list sentence" },
 ];
+const OUTREACH_COCKTAIL_LIST_EDITOR_ROWS = [
+  { label:"COCKTAIL LIST EMAIL", note:"Monthly newsletter template; no sales offer or application link." },
+  { label:"Cocktail list subject", note:"Example: {{Month}} cocktail ideas from Sturgeon Spirits" },
+  { label:"Cocktail list intro", note:"A short non-sales introduction." },
+  { label:"Cocktail list featured cocktail", note:"Use {{Featured Cocktail}}." },
+  { label:"Cocktail list distillery line", note:"One line about the Oshkosh distillery." },
+  { label:"Cocktail list reply-to-order line", note:"Invite a reply to order; do not link to an application." },
+];
+const OUTREACH_COCKTAIL_LIST_SETTINGS = [
+  { key:"Cocktail list subject", label:"Cocktail list subject" },
+  { key:"Cocktail list intro", label:"Cocktail list intro" },
+  { key:"Cocktail list featured cocktail", label:"Cocktail list featured cocktail" },
+  { key:"Cocktail list distillery line", label:"Cocktail list distillery line" },
+  { key:"Cocktail list reply-to-order line", label:"Cocktail list reply-to-order line" },
+];
 
 function ensureOutreachMonthlyContent_() {
   const hub = getOutreachSs_();
@@ -851,10 +873,32 @@ function ensureOutreachMonthlyContent_() {
     const values = missingSettings.map(item => [item.key, `='Email Editor'!B${rowsByLabel.get(item.label)}`]);
     settings.getRange(settings.getLastRow() + 1, 1, values.length, values[0].length).setValues(values);
   }
+  const refreshedEditorValues = editor.getRange(1, 1, Math.max(1, editor.getLastRow()), 1).getDisplayValues().map(row => String(row[0] || "").trim());
+  const cocktailRowsByLabel = new Map();
+  OUTREACH_COCKTAIL_LIST_EDITOR_ROWS.forEach(item => {
+    const row = refreshedEditorValues.indexOf(item.label) + 1;
+    if (row) cocktailRowsByLabel.set(item.label, row);
+  });
+  const missingCocktailRows = OUTREACH_COCKTAIL_LIST_EDITOR_ROWS.filter(item => !cocktailRowsByLabel.has(item.label));
+  if (missingCocktailRows.length) {
+    const start = editor.getLastRow() + 1;
+    const values = missingCocktailRows.map(item => [item.label, "", item.note]);
+    editor.getRange(start, 1, values.length, values[0].length).setValues(values);
+    editor.getRange(start, 1, 1, values[0].length).setFontWeight("bold").setBackground("#44656b").setFontColor("#ffffff");
+    missingCocktailRows.forEach((item, index) => cocktailRowsByLabel.set(item.label, start + index));
+  }
+  const allSettingKeys = settings.getRange(2, 1, Math.max(1, settings.getLastRow() - 1), 1).getDisplayValues().map(row => String(row[0] || "").trim());
+  const missingCocktailSettings = OUTREACH_COCKTAIL_LIST_SETTINGS.filter(item => !allSettingKeys.includes(item.key));
+  if (missingCocktailSettings.length) {
+    const values = missingCocktailSettings.map(item => [item.key, `='Email Editor'!B${cocktailRowsByLabel.get(item.label)}`]);
+    settings.getRange(settings.getLastRow() + 1, 1, values.length, values[0].length).setValues(values);
+  }
   return {
     section_row:sectionRow,
     editor_rows:Object.fromEntries(rowsByLabel),
     added_settings:missingSettings.map(item => item.key),
+    cocktail_list_editor_rows:Object.fromEntries(cocktailRowsByLabel),
+    cocktail_list_added_settings:missingCocktailSettings.map(item => item.key),
   };
 }
 
@@ -2809,6 +2853,49 @@ function newsletterContacts_() {
   })).sort((a, b) => String(a.name || a.email).localeCompare(String(b.name || b.email)));
 }
 
+function outreachRecentSendToEmail_(email, stagePredicate, days, now) {
+  const target = String(email || "").trim().toLowerCase();
+  if (!target) return false;
+  const cutoff = new Date(now || new Date());
+  cutoff.setDate(cutoff.getDate() - Number(days || 0));
+  const sheet = getOutreachSheet_(OUTREACH_ACTIVITY_SHEET_NAME);
+  if (!sheet || sheet.getLastRow() < 2) return false;
+  return getAllRowsAsObjects_(sheet).some(row => {
+    const recipient = String(outreachValue_(row, ["intended_recipient", "delivered_to", "email", "email_address"]) || "").trim().toLowerCase();
+    const stage = String(outreachValue_(row, ["message_stage", "stage"]) || "").trim();
+    const result = String(outreachValue_(row, ["result"]) || "").toUpperCase();
+    const sentAt = outreachDate_(outreachValue_(row, ["timestamp", "sent_at"]));
+    return recipient === target && stagePredicate(stage) && result.includes("SENT") && !result.includes("TEST") && (!sentAt || sentAt.getTime() >= cutoff.getTime());
+  });
+}
+
+function outreachCrossSendCooldownReason_(email, sendingCocktailList) {
+  const recentlySent = outreachRecentSendToEmail_(email,
+    stage => sendingCocktailList ? stage !== OUTREACH_COCKTAIL_LIST_STAGE : stage === OUTREACH_COCKTAIL_LIST_STAGE,
+    OUTREACH_CROSS_SEND_COOLDOWN_DAYS);
+  return recentlySent ? `Another ${sendingCocktailList ? "sales outreach email" : "cocktail list email"} was sent within the last ${OUTREACH_CROSS_SEND_COOLDOWN_DAYS} days` : "";
+}
+
+function cocktailListMessage_(record, settings) {
+  const values = Object.assign({
+    "First Name":String(record.contact || record.name || "there").trim().split(/\s+/)[0] || "there",
+    "Business Name":outreachDisplayBusinessName_(record.business || record.organization || ""),
+    "Physical Address":String(settings["Physical mailing address"] || ""),
+  }, outreachMonthlyContentValues_({ next_email:OUTREACH_COCKTAIL_LIST_STAGE, relationship:"" }, settings, true));
+  values["Tasting Offer"] = "";
+  const rendered = key => renderOutreachTemplate_(String(settings[key] || ""), values, true);
+  const body = ["Cocktail list intro", "Cocktail list featured cocktail", "Cocktail list distillery line", "Cocktail list reply-to-order line"]
+    .map(key => rendered(key)).filter(Boolean).map(line => `<p>${line}</p>`).join("");
+  const footer = `<p>${escapeOutreachHtml_(values["Physical Address"])}</p><p>Reply stop to unsubscribe.</p>`;
+  return {
+    stage:OUTREACH_COCKTAIL_LIST_STAGE,
+    subject:renderOutreachTemplate_(String(settings["Cocktail list subject"] || ""), values, false),
+    body_text:outreachHtmlToPlainText_(body),
+    html:body + footer,
+    footer_html:footer,
+  };
+}
+
 function outreachSegmentTemplateKey_(segment) {
   const value = String(segment || "").trim().toUpperCase();
   if (value.indexOf("A ") === 0) return "A";
@@ -3333,7 +3420,7 @@ function outreachCampaignSheets_() {
     recipients: ensureSheet_(ss, OUTREACH_CAMPAIGN_RECIPIENTS_SHEET_NAME, [
       "Campaign ID", "Source Row", "Account ID", "Business Name", "Recipient Email", "Contact", "City", "ZIP", "Miles", "Priority",
       "Email Confidence", "Segment", "Wave", "Message Stage", "Subject", "Body Text", "HTML", "Content Checksum",
-      "Status", "Result Detail", "Zoho Message ID", "Sent At", "Idempotency Token", "App Version"
+      "Status", "Result Detail", "Zoho Message ID", "Sent At", "Idempotency Token", "App Version", "Newsletter Contact ID"
     ]),
   };
 }
@@ -3375,7 +3462,7 @@ function campaignRecipientSummaryRows_(sheet) {
 function campaignStoredCriteria_(value) {
   try {
     const criteria = JSON.parse(String(value || ""));
-    return criteria && typeof criteria === "object" && criteria.center && Number.isFinite(Number(criteria.radius_miles)) ? criteria : null;
+    return criteria && typeof criteria === "object" && (criteria.campaign_type === "cocktail_list" || (criteria.center && Number.isFinite(Number(criteria.radius_miles)))) ? criteria : null;
   } catch (error) {
     return null;
   }
@@ -3420,14 +3507,18 @@ function campaignCriteriaFromRequest_(p) {
   const maxRecipientsText = String(source.max_recipients ?? "").trim();
   const maxRecipients = maxRecipientsText === "" ? null : Number(maxRecipientsText);
   const stage = String(source.stage || "Initial").trim();
+  const campaignType = String(source.campaign_type || "sales_outreach").trim().toLowerCase();
   const sourceCampaignId = String(source.source_campaign_id || "").trim();
   const stages = ["Initial", "Follow-up 1", "Follow-up 2", "Nurture check-in"];
+  if (maxRecipients !== null && (!Number.isInteger(maxRecipients) || maxRecipients < 1 || maxRecipients > 5000)) throw new Error("Campaign maximum recipients must be from 1 to 5,000.");
+  if (campaignType === "cocktail_list") return { schema:3, campaign_type:"cocktail_list", stage:OUTREACH_COCKTAIL_LIST_STAGE, max_recipients:maxRecipients, filters:{} };
+  if (campaignType !== "sales_outreach") throw new Error("Campaign type must be Sales outreach or Cocktail list.");
   if (!Number.isFinite(radius) || radius < 0 || radius > 1000) throw new Error("Campaign radius must be from 0 to 1,000 miles.");
   if (!Number.isInteger(minFit) || minFit < 1 || minFit > 5) throw new Error("Campaign minimum fit must be from 1 to 5.");
-  if (maxRecipients !== null && (!Number.isInteger(maxRecipients) || maxRecipients < 1 || maxRecipients > 5000)) throw new Error("Campaign maximum recipients must be from 1 to 5,000.");
   if (!stages.includes(stage)) throw new Error("Campaign stage must be Initial, Follow-up 1, Follow-up 2, or Nurture check-in.");
   return {
-    schema:2,
+    schema:3,
+    campaign_type:"sales_outreach",
     stage:stage,
     source_campaign_id:sourceCampaignId,
     center:campaignCenterForCriteria_(centerType, centerValue),
@@ -3444,6 +3535,7 @@ function campaignCriteriaFromRequest_(p) {
 }
 
 function campaignAudienceLabel_(criteria) {
+  if (criteria?.campaign_type === "cocktail_list") return `Cocktail list · subscribed newsletter contacts${criteria?.max_recipients ? ` · first ${criteria.max_recipients}` : ""}`;
   const stage = String(criteria?.stage || "Initial");
   if (stage !== "Initial") {
     return `${stage} due${criteria?.source_campaign_id ? ` · recipients of ${criteria.source_campaign_id}` : ""}${criteria?.max_recipients ? ` · first ${criteria.max_recipients}` : ""}`;
@@ -3460,6 +3552,7 @@ function campaignDistanceForCriteria_(record, criteria) {
 
 function campaignCriteriaFailures_(record, criteria) {
   if (!criteria) return [];
+  if (criteria.campaign_type === "cocktail_list") return [];
   if (String(criteria.stage || "Initial") !== "Initial") return [];
   const failures = [];
   const miles = campaignDistanceForCriteria_(record, criteria);
@@ -3499,6 +3592,76 @@ function campaignDirectoryRecord_(row, sourceRow) {
     activity:[],
     directory_row:row,
   };
+}
+
+function newsletterCocktailListEligibility_(record) {
+  const reasons = [];
+  const email = String(record.email || "").trim().toLowerCase();
+  if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) reasons.push("Recipient email is invalid");
+  if (String(record.newsletter_status || "").trim() !== "Subscribed") reasons.push("Newsletter contact is not subscribed");
+  if (record.do_not_email) reasons.push("Business is excluded from email");
+  const cooldown = outreachCrossSendCooldownReason_(email, true);
+  if (cooldown) reasons.push(cooldown);
+  return reasons;
+}
+
+function campaignCocktailListRecords_(criteria) {
+  const directory = getAllRowsAsObjects_(getOutreachSheet_(OUTREACH_SHEET_NAME));
+  const byAccount = new Map(directory.map((row, index) => [String(row.account_id || "").trim(), Object.assign({ __source_row:index + 2 }, row)]).filter(([key]) => key));
+  const byEmail = new Map(directory.map((row, index) => [String(outreachValue_(row, ["email", "email_address"]) || "").trim().toLowerCase(), Object.assign({ __source_row:index + 2 }, row)]).filter(([key]) => key));
+  const seen = new Set();
+  const settings = getOutreachCampaignSettings_();
+  const records = newsletterContacts_().map(contact => {
+    const directoryRow = byAccount.get(contact.account_id) || byEmail.get(String(contact.email || "").trim().toLowerCase()) || {};
+    const sourceRow = Number(directoryRow.__source_row || contact.source_row || 0);
+    const record = {
+      newsletter_contact_id:contact.contact_id,
+      source_row:sourceRow,
+      account_id:contact.account_id || String(directoryRow.account_id || "").trim(),
+      business:contact.organization || contact.source_business || contact.name || contact.email,
+      contact:contact.name,
+      email:contact.email,
+      city:String(outreachValue_(directoryRow, ["city", "town"]) || ""),
+      postal_code:String(outreachValue_(directoryRow, ["zip", "zip_code", "postal_code"]) || ""),
+      priority:"", email_confidence:"", segment:"", wave:"", campaign_miles:"",
+      next_email:OUTREACH_COCKTAIL_LIST_STAGE,
+      newsletter_status:contact.status,
+      do_not_email:toBool_(outreachValue_(directoryRow, ["do_not_email", "do_not_contact"])),
+    };
+    const message = cocktailListMessage_(record, settings);
+    return Object.assign(record, { subject:message.subject, body_text:message.body_text, preview_html:message.html, footer_html:message.footer_html });
+  }).filter(record => {
+    const email = String(record.email || "").trim().toLowerCase();
+    if (seen.has(email) || newsletterCocktailListEligibility_(record).length) return false;
+    seen.add(email);
+    return true;
+  });
+  return criteria.max_recipients === null ? records : records.slice(0, criteria.max_recipients);
+}
+
+function liveCocktailListRecipient_(newsletterContactId) {
+  const contact = newsletterContacts_().find(item => String(item.contact_id || "") === String(newsletterContactId || ""));
+  if (!contact) throw new Error("Newsletter contact no longer exists.");
+  const directory = getAllRowsAsObjects_(getOutreachSheet_(OUTREACH_SHEET_NAME));
+  const directoryRow = directory.find(row => String(row.account_id || "").trim() === String(contact.account_id || "").trim())
+    || directory.find(row => String(outreachValue_(row, ["email", "email_address"]) || "").trim().toLowerCase() === String(contact.email || "").trim().toLowerCase()) || {};
+  return {
+    newsletter_contact_id:contact.contact_id, account_id:contact.account_id || String(directoryRow.account_id || ""),
+    business:contact.organization || contact.source_business || contact.name || contact.email, contact:contact.name, email:contact.email,
+    newsletter_status:contact.status, do_not_email:toBool_(outreachValue_(directoryRow, ["do_not_email", "do_not_contact"])),
+    next_email:OUTREACH_COCKTAIL_LIST_STAGE,
+  };
+}
+
+function appendCocktailListSendActivity_(record, messageId, sentAt, token, staffName) {
+  const sheet = getOutreachSheet_(OUTREACH_ACTIVITY_SHEET_NAME);
+  const h = ensureHeaderColumns_(sheet, [ACCOUNT_ID_HEADER]);
+  const values = Array(sheet.getLastColumn()).fill("");
+  const set = (key, value) => { if (h[key] !== undefined) values[h[key]] = value; };
+  set("timestamp", sentAt); set("account_id", record.account_id || ""); set("business", record.business); set("intended_recipient", record.email);
+  set("delivered_to", record.email); set("message_stage", OUTREACH_COCKTAIL_LIST_STAGE); set("subject", "Cocktail list");
+  set("result", "APP SENT"); set("message_id", messageId); set("idempotency_token", token); set("staff", staffName); set("mailer_version", APP_VERSION);
+  sheet.appendRow(values);
 }
 
 function initialSentActivityRow_(row) {
@@ -3599,13 +3762,13 @@ function campaignRecipientSnapshotValues_(sheet, campaignId, record) {
   const values = Array(sheet.getLastColumn()).fill("");
   const set = (key, value) => { if (h[key] !== undefined) values[h[key]] = value; };
   const checksum = sha256_([record.source_row, record.account_id, record.business, record.email, record.subject, record.body_text].join("|"));
-  set("campaign_id", campaignId); set("source_row", record.source_row); set("account_id", record.account_id);
+  set("campaign_id", campaignId); set("source_row", record.source_row || ""); set("account_id", record.account_id);
   set("business_name", record.business); set("recipient_email", record.email); set("contact", record.contact);
   set("city", record.city); set("zip", record.postal_code || ""); set("miles", record.campaign_miles === null || record.campaign_miles === undefined ? "" : record.campaign_miles); set("priority", record.priority);
   set("email_confidence", record.email_confidence); set("segment", record.segment); set("wave", record.wave);
-  set("message_stage", record.next_email);
+  set("message_stage", record.next_email); set("newsletter_contact_id", record.newsletter_contact_id || "");
   set("subject", record.subject); set("body_text", record.body_text); set("html", record.preview_html);
-  set("content_checksum", checksum); set("status", "Ready for review"); set("idempotency_token", `${campaignId}-${record.source_row}`); set("app_version", APP_VERSION);
+  set("content_checksum", checksum); set("status", "Ready for review"); set("idempotency_token", `${campaignId}-${record.newsletter_contact_id || record.source_row}`); set("app_version", APP_VERSION);
   return values;
 }
 
@@ -3972,6 +4135,9 @@ function campaignRecipientFooterHtml_(recipient, settings, draftMap) {
   const rh = recipient.headers;
   const stored = rh.footer_html === undefined ? "" : String(recipient.values[rh.footer_html] || "");
   if (stored) return stored;
+  if (String(recipient.values[rh.message_stage] || "") === OUTREACH_COCKTAIL_LIST_STAGE) {
+    return `<p>${escapeOutreachHtml_(String(settings["Physical mailing address"] || ""))}</p><p>Reply stop to unsubscribe.</p>`;
+  }
   const sourceRow = Number(recipient.values[rh.source_row] || 0);
   const leadSheet = getOutreachSheet_(OUTREACH_SHEET_NAME);
   if (!Number.isInteger(sourceRow) || sourceRow < 2 || sourceRow > leadSheet.getLastRow()) return "";
@@ -4093,7 +4259,7 @@ function apiUpdateOutreachCampaignRecipient_(p) {
 
 function apiPreviewOutreachCampaign_(p) {
   const criteria = campaignCriteriaFromRequest_(p);
-  const records = campaignDirectoryInitialRecords_(criteria);
+  const records = criteria.campaign_type === "cocktail_list" ? campaignCocktailListRecords_(criteria) : campaignDirectoryInitialRecords_(criteria);
   return {
     criteria:criteria,
     audience:campaignAudienceLabel_(criteria),
@@ -4104,7 +4270,7 @@ function apiPreviewOutreachCampaign_(p) {
       city:record.city,
       postal_code:record.postal_code,
       miles_from_center:record.campaign_miles,
-      craft_spirit_fit:record.craft_spirit_fit,
+      craft_spirit_fit:record.craft_spirit_fit || "",
       status:record.status,
       email:record.email,
       last_emailed:record.last_emailed,
@@ -4114,16 +4280,18 @@ function apiPreviewOutreachCampaign_(p) {
 
 function apiCreateOutreachCampaign_(p) {
   if (p?.preview_confirmed !== true) throw new Error("Preview the campaign audience and confirm it before creating a campaign.");
-  const name = publicText_(p?.campaign_name || "Initial prospect campaign", 120, "Campaign name");
   const criteria = campaignCriteriaFromRequest_(p);
+  const name = publicText_(p?.campaign_name || (criteria.campaign_type === "cocktail_list" ? "Cocktail list" : "Initial prospect campaign"), 120, "Campaign name");
   const audience = campaignAudienceLabel_(criteria);
   const lock = LockService.getScriptLock();
   if (!lock.tryLock(10000)) throw new Error("Another campaign update is in progress. Try again in a moment.");
   try {
     const sheets = outreachCampaignSheets_();
-    const eligibility = campaignEligibleInitialRecords_(criteria);
+    const eligibility = criteria.campaign_type === "cocktail_list"
+      ? { records:campaignCocktailListRecords_(criteria), preview_count:0, removed_by_duplicate_checks:0 }
+      : campaignEligibleInitialRecords_(criteria);
     const eligible = eligibility.records;
-    if (!eligible.length) throw new Error("No eligible initial prospects are available for a campaign.");
+    if (!eligible.length) throw new Error(criteria.campaign_type === "cocktail_list" ? "No subscribed newsletter contacts are eligible for a cocktail list campaign." : "No eligible initial prospects are available for a campaign.");
     const campaignId = permanentId_("CMP");
     const recipientRows = eligible.map(record => campaignRecipientSnapshotValues_(sheets.recipients, campaignId, record));
     const recipientHeaders = getHeaderMap_(sheets.recipients);
@@ -4288,6 +4456,27 @@ function apiSendOutreachCampaignBatch_(p) {
       const timing = { lock_ms:lockMs };
       const recipientName = String(item.values[rh.business_name] || "");
       try {
+        if (campaignCriteria?.campaign_type === "cocktail_list") {
+          const record = liveCocktailListRecipient_(rh.newsletter_contact_id === undefined ? "" : item.values[rh.newsletter_contact_id]);
+          if (record.business !== recipientName || record.email.toLowerCase() !== String(item.values[rh.recipient_email] || "").toLowerCase()) throw new Error("Newsletter contact or recipient changed after review.");
+          if (rh.message_stage !== undefined && String(item.values[rh.message_stage] || "") !== OUTREACH_COCKTAIL_LIST_STAGE) throw new Error("Frozen recipient type does not match this campaign.");
+          const reasons = newsletterCocktailListEligibility_(record);
+          if (reasons.length) throw new Error(reasons.join("; "));
+          const token = String(item.values[rh.idempotency_token] || "");
+          const prior = acceptedOutreachSendForToken_(token);
+          mailerAttempted = !prior;
+          result = prior || callOutreachMailer_({ action:"sendAppEmail", idempotency_token:token, account_id:record.account_id,
+            source_row:sourceRow, business:record.business, recipient:record.email, message_stage:OUTREACH_COCKTAIL_LIST_STAGE,
+            subject:String(item.values[rh.subject] || ""), html:String(item.values[rh.html] || ""), requested_by:staffName });
+          if (!result.accepted || !String(result.message_id || "").trim()) throw new Error("Zoho did not return a verified message ID.");
+          const sentAt = result.sent_at ? new Date(result.sent_at) : new Date();
+          if (!prior) appendCocktailListSendActivity_(record, String(result.message_id), isNaN(sentAt.getTime()) ? new Date() : sentAt, token, staffName);
+          item.values[rh.status] = "Sent"; item.values[rh.result_detail] = result.idempotent ? "Previously accepted and recovered." : "Zoho accepted delivery.";
+          item.values[rh.zoho_message_id] = String(result.message_id); item.values[rh.sent_at] = isNaN(sentAt.getTime()) ? new Date() : sentAt; item.values[rh.app_version] = APP_VERSION;
+          sheets.recipients.getRange(item.row, 1, 1, item.values.length).setValues([item.values]);
+          sent += 1; results.push({ source_row:sourceRow, business:record.business, status:"Sent", message_id:String(result.message_id) });
+          continue;
+        }
         if (!Number.isInteger(sourceRow) || sourceRow < 2 || sourceRow > leadSheet.getLastRow()) throw new Error("Source lead no longer exists.");
         const raw = leadSheet.getRange(sourceRow, 1, 1, leadSheet.getLastColumn()).getValues()[0];
         const current = {}; Object.keys(leadHeaders).forEach(key => current[key] = raw[leadHeaders[key]]);
@@ -4643,6 +4832,24 @@ function upsertNewsletterFromCocktailReply_(record, outcomeDate) {
   return { contact_id:String(row[h.contact_id] || ""), created:match < 0 };
 }
 
+function unsubscribeNewsletterContactByEmail_(email, actor) {
+  const target = String(email || "").trim().toLowerCase();
+  if (!target) return false;
+  const sheet = getOutreachSs_().getSheetByName(NEWSLETTER_CONTACTS_SHEET_NAME);
+  if (!sheet || sheet.getLastRow() < 2) return false;
+  const h = getHeaderMap_(sheet);
+  if (h.email === undefined || h.status === undefined) return false;
+  const values = sheet.getRange(2, 1, sheet.getLastRow() - 1, sheet.getLastColumn()).getValues();
+  const index = values.findIndex(row => String(row[h.email] || "").trim().toLowerCase() === target);
+  if (index < 0) return false;
+  values[index][h.status] = "Unsubscribed";
+  if (h.updated_at !== undefined) values[index][h.updated_at] = new Date();
+  if (h.updated_by !== undefined) values[index][h.updated_by] = actor || "Outreach outcome";
+  if (h.app_version !== undefined) values[index][h.app_version] = APP_VERSION;
+  sheet.getRange(index + 2, 1, 1, values[index].length).setValues([values[index]]);
+  return true;
+}
+
 function appendOutreachActivity_(record, outcome, notes) {
   const sheet = getOutreachSheet_(OUTREACH_ACTIVITY_SHEET_NAME);
   const h = ensureHeaderColumns_(sheet, [ACCOUNT_ID_HEADER]);
@@ -4933,6 +5140,8 @@ function outreachSendEligibility_(record, options) {
   if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) reasons.push("Recipient email is invalid");
   if (record.do_not_email || ["do not contact", "not interested", "unsubscribed"].includes(status) || ["bad address", "unsubscribed", "not interested", "do not contact"].includes(outcome)) reasons.push("Business is excluded from email");
   if (outreachIsCocktailListOutcome_(outcome)) reasons.push("Recipient receives the cocktail list instead of sales outreach");
+  const crossSendCooldown = outreachCrossSendCooldownReason_(email, false);
+  if (crossSendCooldown) reasons.push(crossSendCooldown);
   if (confidence && !["confirmed", "published", "supplied"].includes(confidence)) reasons.push("Recipient email is not verified");
   const sentForStage = (record.activity || []).some(item => {
     const result = String(item.result || "").toUpperCase();
@@ -5138,6 +5347,7 @@ function apiUpdateOutreachOutcome_(p) {
         relationship:String(outreachValue_(current, ["relationship"]) || "").trim(),
       }, new Date());
     }
+    if (outcome === "Unsubscribed") unsubscribeNewsletterContactByEmail_(currentEmail, String(p.staff_name || "Outreach outcome"));
 
     appendOutreachActivity_({ account_id:accountId, business:currentBusiness, email:currentEmail }, outcome, String(p.notes || ""));
     appendAudit_("UPDATE_OUTREACH_OUTCOME", "Account", accountId, accountId, String(p.staff_name || "Staff"), OUTREACH_SHEET_NAME, OUTREACH_SHEET_NAME, "Completed", outcome);
@@ -5216,6 +5426,7 @@ function apiLogOutreachContact_(p) {
         relationship:String(outreachValue_(current, ["relationship"]) || "").trim(),
       }, contactDate);
     }
+    if (outcome === "Unsubscribed") unsubscribeNewsletterContactByEmail_(email, String(p.staff_name || "Outreach contact log"));
     const activity = getOutreachSheet_(OUTREACH_ACTIVITY_SHEET_NAME);
     const ah = ensureHeaderColumns_(activity, [ACCOUNT_ID_HEADER]);
     const activityRow = Array(activity.getLastColumn()).fill("");
