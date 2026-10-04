@@ -1,9 +1,10 @@
 /*********************************
  * Inventory API (JSON) for Netlify
- * App version: 2026.10.01.5
+ * App version: 2026.10.03.17-APP
  *
  * CHANGES IN THIS VERSION
- * - Preserves a Badger invoice's complete prior link state when it is marked Void, so Restore reinstates the exact manual link instead of losing it.
+ * - Adds cocktail-list and tasting-visit outreach outcomes, enrolling "cocktails" replies in the existing Newsletter Contacts tab without duplicate email rows.
+ * - Moves unreplied Follow-up 2 recipients into a 90-day configurable Nurture check-in lifecycle and prevents cocktail-list contacts from receiving sales follow-ups.
  *
  * CHANGES IN 2026.10.01.3
  * - Exposes the permanent Online-request-to-Badger-invoice link and current Badger payment state in both staff invoice and Online-request views.
@@ -239,7 +240,7 @@
  * - Use only in the staging inventory backend until testing is complete.
  *********************************/
 
-const APP_VERSION = "2026.10.01.5";
+const APP_VERSION = "2026.10.03.17-APP";
 
 const SHEET_NAMES = {
   STORES: "Stores",
@@ -3104,7 +3105,7 @@ function outreachCampaignSheets_() {
     ]),
     recipients: ensureSheet_(ss, OUTREACH_CAMPAIGN_RECIPIENTS_SHEET_NAME, [
       "Campaign ID", "Source Row", "Account ID", "Business Name", "Recipient Email", "Contact", "City", "ZIP", "Miles", "Priority",
-      "Email Confidence", "Segment", "Wave", "Subject", "Body Text", "HTML", "Content Checksum",
+      "Email Confidence", "Segment", "Wave", "Message Stage", "Subject", "Body Text", "HTML", "Content Checksum",
       "Status", "Result Detail", "Zoho Message ID", "Sent At", "Idempotency Token", "App Version"
     ]),
   };
@@ -3191,11 +3192,17 @@ function campaignCriteriaFromRequest_(p) {
   const minFit = source.min_fit === undefined || String(source.min_fit).trim() === "" ? 5 : Number(source.min_fit);
   const maxRecipientsText = String(source.max_recipients ?? "").trim();
   const maxRecipients = maxRecipientsText === "" ? null : Number(maxRecipientsText);
+  const stage = String(source.stage || "Initial").trim();
+  const sourceCampaignId = String(source.source_campaign_id || "").trim();
+  const stages = ["Initial", "Follow-up 1", "Follow-up 2", "Nurture check-in"];
   if (!Number.isFinite(radius) || radius < 0 || radius > 1000) throw new Error("Campaign radius must be from 0 to 1,000 miles.");
   if (!Number.isInteger(minFit) || minFit < 1 || minFit > 5) throw new Error("Campaign minimum fit must be from 1 to 5.");
   if (maxRecipients !== null && (!Number.isInteger(maxRecipients) || maxRecipients < 1 || maxRecipients > 5000)) throw new Error("Campaign maximum recipients must be from 1 to 5,000.");
+  if (!stages.includes(stage)) throw new Error("Campaign stage must be Initial, Follow-up 1, Follow-up 2, or Nurture check-in.");
   return {
-    schema:1,
+    schema:2,
+    stage:stage,
+    source_campaign_id:sourceCampaignId,
     center:campaignCenterForCriteria_(centerType, centerValue),
     radius_miles:radius,
     min_fit:minFit,
@@ -3210,6 +3217,10 @@ function campaignCriteriaFromRequest_(p) {
 }
 
 function campaignAudienceLabel_(criteria) {
+  const stage = String(criteria?.stage || "Initial");
+  if (stage !== "Initial") {
+    return `${stage} due${criteria?.source_campaign_id ? ` · recipients of ${criteria.source_campaign_id}` : ""}${criteria?.max_recipients ? ` · first ${criteria.max_recipients}` : ""}`;
+  }
   const center = criteria?.center?.label || "selected center";
   const filters = criteria?.filters || {};
   const suffix = [filters.city && `city ${filters.city}`, filters.county && `county ${filters.county}`, filters.segment && `segment ${filters.segment}`, filters.wave && `wave ${filters.wave}`, criteria.max_recipients && `first ${criteria.max_recipients}`].filter(Boolean);
@@ -3222,6 +3233,7 @@ function campaignDistanceForCriteria_(record, criteria) {
 
 function campaignCriteriaFailures_(record, criteria) {
   if (!criteria) return [];
+  if (String(criteria.stage || "Initial") !== "Initial") return [];
   const failures = [];
   const miles = campaignDistanceForCriteria_(record, criteria);
   if (miles === null || miles > Number(criteria.radius_miles)) failures.push("distance");
@@ -3245,6 +3257,7 @@ function campaignDirectoryRecord_(row, sourceRow) {
     postal_code:String(outreachValue_(row, ["zip", "zip_code", "postal_code"]) || "").trim(),
     status:String(outreachValue_(row, ["status"]) || "Not contacted").trim(),
     next_email:String(outreachValue_(row, ["next_email", "stage"]) || "Initial").trim(),
+    next_follow_up:outreachValue_(row, ["next_follow-up", "next_follow_up"]),
     priority:String(outreachValue_(row, ["priority"]) || "").trim(),
     last_emailed:outreachValue_(row, ["last_emailed", "last_email"]),
     message_id:String(outreachValue_(row, ["message_id", "zoho_message_id"]) || "").trim(),
@@ -3284,19 +3297,37 @@ function campaignInitialSentEmailSet_(directoryRecords) {
   return sentEmails;
 }
 
-function campaignDirectoryInitialSelection_(criteria) {
+function campaignSourceRows_(campaignId) {
+  if (!campaignId) return null;
+  const sheets = outreachCampaignSheets_();
+  if (!outreachCampaignRow_(sheets.campaigns, campaignId)) throw new Error("Selected source campaign was not found.");
+  return new Set(campaignRecipientRows_(sheets.recipients, campaignId)
+    .map(item => Number(item.values[item.headers.source_row] || 0))
+    .filter(Number.isInteger));
+}
+
+function campaignDirectoryStageSelection_(criteria) {
   const leadSheet = getOutreachSheet_(OUTREACH_SHEET_NAME);
+  const stage = String(criteria.stage || "Initial");
   const directoryRecords = getAllRowsAsObjects_(leadSheet).map((row, index) => campaignDirectoryRecord_(row, index + 2));
   const initialSentEmails = campaignInitialSentEmailSet_(directoryRecords);
+  const activityMap = stage === "Initial" ? null : outreachActivityMap_();
+  const sourceRows = campaignSourceRows_(criteria.source_campaign_id);
   const candidateRows = directoryRecords
-    .filter(record => record.relationship.toLowerCase() === "prospect" && record.next_email.toLowerCase() === "initial");
+    .filter(record => record.next_email.toLowerCase() === stage.toLowerCase())
+    .filter(record => stage !== "Initial" || record.relationship.toLowerCase() === "prospect")
+    .filter(record => !sourceRows || sourceRows.has(record.source_row));
   const seenEmails = new Set();
   const eligible = candidateRows.map(record => {
+    if (activityMap) {
+      record.activity = activityMap.get(`account:${record.account_id}`) || activityMap.get(`business:${record.business.toLowerCase()}`) || [];
+    }
     record.campaign_miles = campaignDistanceForCriteria_(record, criteria);
     return record;
   }).filter(record => {
     // Preview and freeze both use directory fields only for eligibility; rendered messages are intentionally deferred to freeze.
-    if (outreachSendEligibility_(record, { skip_legacy_pilot:true, initial_sent_emails:initialSentEmails }).length || campaignCriteriaFailures_(record, criteria).length) return false;
+    const eligibilityOptions = stage === "Initial" ? { skip_legacy_pilot:true, initial_sent_emails:initialSentEmails } : { skip_legacy_pilot:true };
+    if (outreachSendEligibility_(record, eligibilityOptions).length || campaignCriteriaFailures_(record, criteria).length) return false;
     const email = String(record.email || "").trim().toLowerCase();
     if (seenEmails.has(email)) return false;
     seenEmails.add(email);
@@ -3305,12 +3336,17 @@ function campaignDirectoryInitialSelection_(criteria) {
   return { records:criteria.max_recipients === null ? eligible : eligible.slice(0, criteria.max_recipients), initial_sent_emails:initialSentEmails };
 }
 
+function campaignDirectoryInitialSelection_(criteria) {
+  return campaignDirectoryStageSelection_(Object.assign({}, criteria, { stage:String(criteria?.stage || "Initial") }));
+}
+
 function campaignDirectoryInitialRecords_(criteria) {
-  return campaignDirectoryInitialSelection_(criteria).records;
+  return campaignDirectoryStageSelection_(criteria).records;
 }
 
 function campaignEligibleInitialRecords_(criteria) {
-  const selection = campaignDirectoryInitialSelection_(criteria);
+  const stage = String(criteria.stage || "Initial");
+  const selection = campaignDirectoryStageSelection_(criteria);
   const directoryRecords = selection.records;
   if (!directoryRecords.length) return { records:[], preview_count:0, removed_by_duplicate_checks:0 };
   const activityMap = outreachActivityMap_();
@@ -3322,7 +3358,12 @@ function campaignEligibleInitialRecords_(criteria) {
     const record = outreachRecord_(directoryRecord.directory_row, directoryRecord.source_row, activityMap, settings, draftMap, programMap, engagementMap);
     record.campaign_miles = directoryRecord.campaign_miles;
     return record;
-  }).filter(record => !outreachSendEligibility_(record, { initial_sent_emails:selection.initial_sent_emails }).length);
+  }).filter(record => {
+    const reasons = stage === "Initial"
+      ? outreachSendEligibility_(record, { initial_sent_emails:selection.initial_sent_emails })
+      : outreachSendEligibility_(record, {});
+    return !reasons.length;
+  });
   return { records:records, preview_count:directoryRecords.length, removed_by_duplicate_checks:directoryRecords.length - records.length };
 }
 
@@ -3335,6 +3376,7 @@ function campaignRecipientSnapshotValues_(sheet, campaignId, record) {
   set("business_name", record.business); set("recipient_email", record.email); set("contact", record.contact);
   set("city", record.city); set("zip", record.postal_code || ""); set("miles", record.campaign_miles === null || record.campaign_miles === undefined ? "" : record.campaign_miles); set("priority", record.priority);
   set("email_confidence", record.email_confidence); set("segment", record.segment); set("wave", record.wave);
+  set("message_stage", record.next_email);
   set("subject", record.subject); set("body_text", record.body_text); set("html", record.preview_html);
   set("content_checksum", checksum); set("status", "Ready for review"); set("idempotency_token", `${campaignId}-${record.source_row}`); set("app_version", APP_VERSION);
   return values;
@@ -3984,6 +4026,7 @@ function apiSendOutreachCampaignBatch_(p) {
     if (String(campaign.values[ch.status] || "") !== "Approved") throw new Error("Campaign must be approved before delivery.");
     if (String(campaign.values[ch.approval_token] || "") !== String(p.approval_token || "")) throw new Error("Campaign approval is not valid. Refresh and review again.");
     const campaignCriteria = campaignStoredCriteria_(campaign.values[ch.criteria]);
+    const campaignStage = String(campaignCriteria?.stage || "Initial");
     const recipients = campaignRecipientRows_(sheets.recipients, p.campaign_id)
       .filter(item => String(item.values[item.headers.status] || "") === "Ready to send").slice(0, requestedSize);
     if (!recipients.length) return { message:"No campaign recipients are waiting to send.", sent:0, blocked:0, remaining:0, results:[] };
@@ -4005,6 +4048,8 @@ function apiSendOutreachCampaignBatch_(p) {
         timing.row_read_ms = Date.now() - recipientStartedAt;
         const record = campaignSendLightweightRecord_(current, sourceRow);
         if (record.business !== String(item.values[rh.business_name] || "") || record.email.toLowerCase() !== String(item.values[rh.recipient_email] || "").toLowerCase()) throw new Error("Business or recipient changed after review.");
+        if (String(record.next_email || "").trim().toLowerCase() !== campaignStage.toLowerCase()) throw new Error("Outreach stage changed after review.");
+        if (rh.message_stage !== undefined && String(item.values[rh.message_stage] || "").trim().toLowerCase() !== campaignStage.toLowerCase()) throw new Error("Frozen recipient stage does not match this campaign.");
         const criteriaFailures = campaignCriteriaFailures_(record, campaignCriteria);
         if (criteriaFailures.length) {
           const status = criteriaFailures.includes("distance") ? "Excluded — out of area"
@@ -4019,18 +4064,18 @@ function apiSendOutreachCampaignBatch_(p) {
         }
         const token = String(item.values[rh.idempotency_token] || "");
         const prior = acceptedOutreachSendForToken_(token);
-        if (!prior && (initialSentActivityForRecipient_(record.email) || initialSentDirectoryEmailElsewhere_(record.email, sourceRow))) {
+        if (campaignStage === "Initial" && !prior && (initialSentActivityForRecipient_(record.email) || initialSentDirectoryEmailElsewhere_(record.email, sourceRow))) {
           throw new Error("An initial email was already sent to this address on another directory row.");
         }
         const reasons = outreachSendEligibility_(record, { skip_legacy_pilot:true });
         if (reasons.length) throw new Error(reasons.join("; "));
         result = prior || callOutreachMailer_({ action:"sendAppEmail", idempotency_token:token, account_id:record.account_id,
-          source_row:sourceRow, business:record.business, recipient:record.email, message_stage:"Initial",
+          source_row:sourceRow, business:record.business, recipient:record.email, message_stage:campaignStage,
           subject:String(item.values[rh.subject] || ""), html:String(item.values[rh.html] || ""), requested_by:staffName });
         timing.mailer_ms = Date.now() - recipientStartedAt - timing.row_read_ms;
         if (!result.accepted || !String(result.message_id || "").trim()) throw new Error("Zoho did not return a verified message ID.");
         const sentAt = result.sent_at ? new Date(result.sent_at) : new Date();
-        finalizeOutreachSend_(leadSheet, sourceRow, record, "Initial", String(result.message_id), isNaN(sentAt.getTime()) ? new Date() : sentAt, staffName, token, raw);
+        finalizeOutreachSend_(leadSheet, sourceRow, record, campaignStage, String(result.message_id), isNaN(sentAt.getTime()) ? new Date() : sentAt, staffName, token, raw);
         timing.finalize_ms = Date.now() - recipientStartedAt - timing.row_read_ms - timing.mailer_ms;
         item.values[rh.status] = "Sent"; item.values[rh.result_detail] = result.idempotent ? "Previously accepted and recovered." : "Zoho accepted delivery.";
         item.values[rh.zoho_message_id] = String(result.message_id); item.values[rh.sent_at] = isNaN(sentAt.getTime()) ? new Date() : sentAt; item.values[rh.app_version] = APP_VERSION;
@@ -4077,6 +4122,8 @@ function outreachStatusForOutcome_(outcome) {
   const map = {
     "Interested": "Interested",
     "Schedule tasting": "Interested",
+    "Tasting visit": "Interested",
+    "Wants cocktail list": "Nurture",
     "Follow up later": "Follow-up due",
     "Visit in person": "Interested",
     "Wrong contact": "Needs email",
@@ -4088,10 +4135,44 @@ function outreachStatusForOutcome_(outcome) {
 }
 
 const OUTREACH_OUTCOME_VALUES = [
-  "Interested", "Schedule tasting", "Follow up later", "Visit in person",
+  "Interested", "Schedule tasting", "Tasting visit", "Wants cocktail list", "Follow up later", "Visit in person",
   "Wrong contact", "Bad address", "Not interested", "Unsubscribed",
 ];
 const OUTREACH_FOLLOW_UP_OUTCOMES = new Set(["Interested", "Schedule tasting", "Follow up later", "Visit in person"]);
+
+function outreachIsCocktailListOutcome_(outcome) {
+  return String(outcome || "").trim().toLowerCase() === "wants cocktail list";
+}
+
+function upsertNewsletterFromCocktailReply_(record, outcomeDate) {
+  const sheet = getNewsletterContactsSheet_(true);
+  const h = getHeaderMap_(sheet);
+  const email = String(record.email || "").trim().toLowerCase();
+  if (!email) throw new Error("A cocktail-list reply needs an email address.");
+  const values = sheet.getLastRow() < 2 ? [] : sheet.getRange(2, 1, sheet.getLastRow() - 1, sheet.getLastColumn()).getValues();
+  const match = values.findIndex(row => String(row[h.email] || "").trim().toLowerCase() === email);
+  const row = match >= 0 ? values[match].slice() : Array(sheet.getLastColumn()).fill("");
+  const set = (key, value) => { if (h[key] !== undefined) row[h[key]] = value; };
+  const relationship = String(record.relationship || "").trim().toLowerCase() === "customer" ? "Customer" : "Prospect";
+  const now = outcomeDate || new Date();
+  set("contact_id", String(row[h.contact_id] || "") || Utilities.getUuid());
+  set("account_id", String(record.account_id || "").trim());
+  set("name", String(record.contact || "").trim());
+  set("email", email);
+  set("organization", String(record.business || "").trim());
+  set("relationship_type", relationship);
+  set("status", "Subscribed");
+  set("consent_source", 'Replied "cocktails" to outreach email');
+  set("consent_date", now);
+  set("source_row", record.source_row || "");
+  set("source_business", String(record.business || "").trim());
+  set("topics", "Monthly cocktail ideas");
+  set("updated_at", now);
+  set("updated_by", "Outreach outcome");
+  set("app_version", APP_VERSION);
+  sheet.getRange(match >= 0 ? match + 2 : sheet.getLastRow() + 1, 1, 1, row.length).setValues([row]);
+  return { contact_id:String(row[h.contact_id] || ""), created:match < 0 };
+}
 
 function appendOutreachActivity_(record, outcome, notes) {
   const sheet = getOutreachSheet_(OUTREACH_ACTIVITY_SHEET_NAME);
@@ -4309,7 +4390,8 @@ function campaignSendLightweightRecord_(row, sourceRow) {
     email_confidence:String(outreachValue_(row, ["email_confidence"]) || "").trim(),
     last_emailed:outreachValue_(row, ["last_emailed", "last_email"]),
     message_id:String(outreachValue_(row, ["message_id", "zoho_message_id"]) || "").trim(),
-    next_email:"Initial",
+    next_email:String(outreachValue_(row, ["next_email", "stage"]) || "Initial").trim(),
+    next_follow_up:outreachValue_(row, ["next_follow-up", "next_follow_up"]),
     activity:[],
   };
 }
@@ -4362,6 +4444,7 @@ function outreachSendEligibility_(record, options) {
   const confidence = String(record.email_confidence || "").trim().toLowerCase();
   if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) reasons.push("Recipient email is invalid");
   if (record.do_not_email || ["do not contact", "not interested", "unsubscribed"].includes(status) || ["bad address", "unsubscribed", "not interested", "do not contact"].includes(outcome)) reasons.push("Business is excluded from email");
+  if (outreachIsCocktailListOutcome_(outcome)) reasons.push("Recipient receives the cocktail list instead of sales outreach");
   if (confidence && !["confirmed", "published", "supplied"].includes(confidence)) reasons.push("Recipient email is not verified");
   const sentForStage = (record.activity || []).some(item => {
     const result = String(item.result || "").toUpperCase();
@@ -4374,6 +4457,12 @@ function outreachSendEligibility_(record, options) {
     if (!["not contacted", "review", "approved"].includes(status)) reasons.push("Business is not eligible for initial outreach");
   } else if (stage === "Follow-up 1" || stage === "Follow-up 2") {
     if (!["follow-up due", "sent", "follow-up sent"].includes(status)) reasons.push("Follow-up is not due");
+  } else if (stage === "Nurture check-in") {
+    if (status !== "nurture") reasons.push("Nurture check-in is not due");
+    const dueAt = outreachDate_(record.next_follow_up);
+    const today = new Date();
+    today.setHours(23, 59, 59, 999);
+    if (!dueAt || dueAt.getTime() > today.getTime()) reasons.push("Nurture check-in date has not arrived");
   } else if (stage === "Reactivation") {
     if (!["reactivation due", "use reactivation"].includes(status)) reasons.push("Reactivation is not due");
   } else {
@@ -4385,6 +4474,7 @@ function outreachSendEligibility_(record, options) {
 function outreachNextStage_(stage) {
   if (stage === "Initial") return "Follow-up 1";
   if (stage === "Follow-up 1") return "Follow-up 2";
+  if (stage === "Follow-up 2" || stage === "Nurture check-in") return "Nurture check-in";
   return "Complete";
 }
 
@@ -4403,12 +4493,14 @@ function advanceOutreachSend_(sheet, rowNumber, record, stage, messageId, sentAt
   };
   settings = settings || getOutreachCampaignSettings_();
   const nextStage = outreachNextStage_(stage);
-  const followUpDays = stage === "Initial"
-    ? Number(settings["Follow-up days"] || 7)
-    : Number(settings["Second follow-up days"] || 7);
+  const followUpDays = nextStage === "Nurture check-in"
+    ? Number(settings["Nurture check-in days"] || 90)
+    : stage === "Initial"
+      ? Number(settings["Follow-up days"] || 7)
+      : Number(settings["Second follow-up days"] || 7);
   setCell(["queue", "queue?"], false);
   setCell(["next_email", "stage"], nextStage);
-  setCell(["status"], stage === "Initial" ? "Sent" : stage === "Reactivation" ? "Reactivation sent" : "Follow-up sent");
+  setCell(["status"], nextStage === "Nurture check-in" ? "Nurture" : stage === "Initial" ? "Sent" : stage === "Reactivation" ? "Reactivation sent" : "Follow-up sent");
   setCell(["last_emailed", "last_email"], sentAt);
   setCell(["next_follow-up", "next_follow_up"], nextStage === "Complete" ? "" : outreachAddDays_(sentAt, followUpDays));
   setCell(["message_id", "zoho_message_id"], messageId || "");
@@ -4548,6 +4640,17 @@ function apiUpdateOutreachOutcome_(p) {
     }
     rowRange.setValues([values]);
 
+    if (outreachIsCocktailListOutcome_(outcome)) {
+      upsertNewsletterFromCocktailReply_({
+        account_id:accountId,
+        source_row:rowNumber,
+        business:currentBusiness,
+        contact:String(outreachValue_(current, ["contact", "contact_name", "contact_person", "first_name"]) || "").trim(),
+        email:currentEmail,
+        relationship:String(outreachValue_(current, ["relationship"]) || "").trim(),
+      }, new Date());
+    }
+
     appendOutreachActivity_({ account_id:accountId, business:currentBusiness, email:currentEmail }, outcome, String(p.notes || ""));
     appendAudit_("UPDATE_OUTREACH_OUTCOME", "Account", accountId, accountId, String(p.staff_name || "Staff"), OUTREACH_SHEET_NAME, OUTREACH_SHEET_NAME, "Completed", outcome);
     return { message:"Outcome saved.", account_id:accountId, source_row:rowNumber, status:outreachStatusForOutcome_(outcome) };
@@ -4615,6 +4718,16 @@ function apiLogOutreachContact_(p) {
     set(["notes"], priorNotes ? `${priorNotes}\n${datedNote}` : datedNote);
     set(["record_updated_at"], new Date());
     range.setValues([values]);
+    if (outcome && outreachIsCocktailListOutcome_(outcome)) {
+      upsertNewsletterFromCocktailReply_({
+        account_id:accountId,
+        source_row:rowNumber,
+        business:business,
+        contact:String(outreachValue_(current, ["contact", "contact_name", "contact_person", "first_name"]) || "").trim(),
+        email:email,
+        relationship:String(outreachValue_(current, ["relationship"]) || "").trim(),
+      }, contactDate);
+    }
     const activity = getOutreachSheet_(OUTREACH_ACTIVITY_SHEET_NAME);
     const ah = ensureHeaderColumns_(activity, [ACCOUNT_ID_HEADER]);
     const activityRow = Array(activity.getLastColumn()).fill("");

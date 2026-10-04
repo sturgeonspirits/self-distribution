@@ -1,5 +1,5 @@
 <!doctype html>
-<!-- App version: 2026.10.03.16-WEB -->
+<!-- App version: 2026.10.03.17-WEB -->
 <html>
 <head>
   <meta charset="utf-8" />
@@ -2478,9 +2478,11 @@
       <button id="closeOutreachCampaignCriteriaBtn" type="button">Cancel</button>
     </div>
     <div class="dlgBody">
-      <div class="modeNotice" style="margin-top:0"><i data-lucide="map-pin"></i><span>Distance is calculated from ZIP-centroid latitude/longitude, never the directory’s stored Miles-from-Oshkosh value. Preview first; creation only happens after you confirm the preview.</span></div>
+      <div class="modeNotice" style="margin-top:0"><i data-lucide="map-pin"></i><span>Choose the email stage first. Initial campaigns use the location and fit criteria below; follow-up and nurture campaigns select only recipients already due for that stage. Preview first; creation only happens after you confirm the preview.</span></div>
       <div class="workflowEditGrid">
         <div class="full"><label>Campaign name</label><input id="outreachCampaignCriteriaName" maxlength="120" /></div>
+        <div><label>Stage</label><select id="outreachCampaignCriteriaStage"><option value="Initial" selected>Initial</option><option value="Follow-up 1">Follow-up 1 due</option><option value="Follow-up 2">Follow-up 2 due</option><option value="Nurture check-in">Nurture check-in due</option></select></div>
+        <div><label>Only recipients of campaign (optional)</label><select id="outreachCampaignCriteriaSourceCampaign"><option value="">Any eligible recipient</option></select></div>
         <div><label>Center</label><select id="outreachCampaignCriteriaCenterType"><option value="distillery">Distillery (default)</option><option value="zip">ZIP</option><option value="city">City</option></select></div>
         <div><label id="outreachCampaignCriteriaCenterLabel">Center value</label><input id="outreachCampaignCriteriaCenterValue" disabled placeholder="Distillery (54902)" /></div>
         <div><label>Radius (miles)</label><input id="outreachCampaignCriteriaRadius" type="number" min="0" max="1000" step="0.1" value="15" /></div>
@@ -2509,6 +2511,8 @@
       <div class="outcomeGrid" id="outcomeGrid">
         <button class="outcomeOption" type="button" data-outcome="Interested">Interested</button>
         <button class="outcomeOption" type="button" data-outcome="Schedule tasting">Schedule tasting</button>
+        <button class="outcomeOption" type="button" data-outcome="Tasting visit">Tasting visit</button>
+        <button class="outcomeOption" type="button" data-outcome="Wants cocktail list">Wants cocktail list</button>
         <button class="outcomeOption" type="button" data-outcome="Follow up later">Follow up later</button>
         <button class="outcomeOption" type="button" data-outcome="Visit in person">Visit in person</button>
         <button class="outcomeOption" type="button" data-outcome="Wrong contact">Wrong contact</button>
@@ -2529,7 +2533,7 @@
 
   <dialog id="contactLogDialog">
     <div class="dlgHeader"><div><div class="dlgTitle">Log contact</div><div class="smallMuted" id="contactLogBusiness"></div></div><button id="closeContactLogBtn" type="button">Close</button></div>
-    <div class="dlgBody"><div class="workflowEditGrid"><div><label for="contactLogDate">Date</label><input id="contactLogDate" type="date" /></div><div><label for="contactLogChannel">Channel</label><select id="contactLogChannel"><option>In person</option><option>Phone</option><option>Email outside app</option><option>Event/tasting</option><option>Other</option></select></div><div><label for="contactLogStaff">Staff member</label><input id="contactLogStaff" /></div><div><label for="contactLogPerson">Contact person</label><input id="contactLogPerson" /></div><div><label for="contactLogOutcome">Outcome (optional)</label><select id="contactLogOutcome"><option value="">No outcome yet</option><option>Interested</option><option>Schedule tasting</option><option>Follow up later</option><option>Visit in person</option><option>Wrong contact</option><option>Bad address</option><option>Not interested</option><option>Unsubscribed</option></select></div><div><label for="contactLogFollowUp">Next follow-up</label><input id="contactLogFollowUp" type="date" /></div><div class="full"><label for="contactLogNotes">Notes</label><textarea id="contactLogNotes" placeholder="What happened and who should follow up?"></textarea></div></div><div class="status" id="contactLogStatus"></div><div class="dlgActions"><button class="primary" id="saveContactLogBtn" type="button">Save contact</button></div></div>
+    <div class="dlgBody"><div class="workflowEditGrid"><div><label for="contactLogDate">Date</label><input id="contactLogDate" type="date" /></div><div><label for="contactLogChannel">Channel</label><select id="contactLogChannel"><option>In person</option><option>Phone</option><option>Email outside app</option><option>Event/tasting</option><option>Other</option></select></div><div><label for="contactLogStaff">Staff member</label><input id="contactLogStaff" /></div><div><label for="contactLogPerson">Contact person</label><input id="contactLogPerson" /></div><div><label for="contactLogOutcome">Outcome (optional)</label><select id="contactLogOutcome"><option value="">No outcome yet</option><option>Interested</option><option>Schedule tasting</option><option>Tasting visit</option><option>Wants cocktail list</option><option>Follow up later</option><option>Visit in person</option><option>Wrong contact</option><option>Bad address</option><option>Not interested</option><option>Unsubscribed</option></select></div><div><label for="contactLogFollowUp">Next follow-up</label><input id="contactLogFollowUp" type="date" /></div><div class="full"><label for="contactLogNotes">Notes</label><textarea id="contactLogNotes" placeholder="What happened? For a tasting, include the cocktail and who poured it."></textarea></div></div><div class="status" id="contactLogStatus"></div><div class="dlgActions"><button class="primary" id="saveContactLogBtn" type="button">Save contact</button></div></div>
   </dialog>
 
   <dialog id="businessDetailDialog">
@@ -2683,7 +2687,7 @@
   window.addEventListener("unhandledrejection", e => console.error("Unhandled promise rejection:", e.reason));
   window.addEventListener("error", e => console.error("Unhandled error:", e.error || e.message));
   const $ = (id) => document.getElementById(id);
-  const APP_VERSION = "2026.10.03.16-WEB";
+  const APP_VERSION = "2026.10.03.17-WEB";
   $("appVersionFooter").textContent = ` • Version ${APP_VERSION}`;
   function screenCacheKey(screen){ return `distribution_hub:${APP_VERSION}:${staffSession?.email || "unknown"}:${screen}`; }
   function readScreenCache(screen){
@@ -2717,6 +2721,7 @@
   if (outreachView === "leads") outreachView = "directory";
   const OUTREACH_AUDIENCE_PRESETS = ["weekly", "distance_needed", "follow_up_due", "interested", "contact_issues"];
   const OUTREACH_FOLLOW_UP_OUTCOMES = ["Interested", "Schedule tasting", "Follow up later", "Visit in person"];
+  const OUTREACH_INTERESTED_OUTCOMES = [...OUTREACH_FOLLOW_UP_OUTCOMES, "Tasting visit"];
   let outreachAudiencePreset = OUTREACH_AUDIENCE_PRESETS.includes(localStorage.getItem("outreach_audience"))
     ? localStorage.getItem("outreach_audience")
     : "all";
@@ -3937,7 +3942,7 @@
   function outreachOutcomeIsInterested(record){
     const outcome = String(record.outcome || "").trim();
     const status = String(record.status || "").trim();
-    return OUTREACH_FOLLOW_UP_OUTCOMES.includes(outcome) || ["Interested", "Follow-up due"].includes(status);
+    return OUTREACH_INTERESTED_OUTCOMES.includes(outcome) || ["Interested", "Follow-up due"].includes(status);
   }
 
   function outreachFollowUpIsDue(record){
@@ -4075,13 +4080,13 @@
     $("outreachAudienceCount").textContent = `${campaigns.length} campaign${campaigns.length === 1 ? "" : "s"}`;
     $("outreachList").innerHTML = `
       <article class="outreachCard priority">
-        <div class="outreachCardTop"><div><div class="businessName">New initial-prospect campaign</div><div class="contactLine">Choose a center ZIP, radius, and minimum fit before freezing eligible initial prospects into a reviewable audience. No email is sent when the campaign is created.</div></div><span class="badge amber">Draft</span></div>
+        <div class="outreachCardTop"><div><div class="businessName">New outreach campaign</div><div class="contactLine">Choose Initial, a due follow-up, or a due nurture check-in before freezing the eligible audience for review. No email is sent when the campaign is created.</div></div><span class="badge amber">Draft</span></div>
         <div class="outreachActions"><button class="actionBtn primary" type="button" data-campaign-action="create"><i data-lucide="send-horizontal"></i><span>Create campaign</span></button></div>
       </article>
       ${campaigns.map(campaign => `
         <article class="outreachCard" data-campaign-id="${escapeHtml(campaign.campaign_id)}">
           <div class="outreachCardTop"><div><div class="businessName">${escapeHtml(campaign.name)}</div><div class="contactLine">${escapeHtml(campaign.audience)} • ${escapeHtml(campaign.created_by || "Staff")}</div></div><span class="badge ${campaign.status === "Complete" ? "green" : campaign.status === "Approved" ? "blue" : "amber"}">${escapeHtml(campaign.status)}</span></div>
-          <div class="outreachMeta"><span class="badge">${Number(campaign.recipient_count || 0)} recipients</span><span class="badge blue">${Number(campaign.sent_count || 0)} sent</span>${Number(campaign.unsegmented_count || 0) ? `<span class="badge amber">${Number(campaign.unsegmented_count)} unsegmented</span>` : ""}${Number(campaign.blocked_count || 0) ? `<span class="badge red">${Number(campaign.blocked_count)} blocked</span>` : ""}</div>
+          <div class="outreachMeta"><span class="badge">${escapeHtml(campaign.criteria?.stage || "Initial")}</span><span class="badge">${Number(campaign.recipient_count || 0)} recipients</span><span class="badge blue">${Number(campaign.sent_count || 0)} sent</span>${Number(campaign.unsegmented_count || 0) ? `<span class="badge amber">${Number(campaign.unsegmented_count)} unsegmented</span>` : ""}${Number(campaign.blocked_count || 0) ? `<span class="badge red">${Number(campaign.blocked_count)} blocked</span>` : ""}</div>
           <div class="outreachActions"><button class="actionBtn primary" type="button" data-campaign-action="review"><i data-lucide="clipboard-check"></i><span>Review campaign</span></button></div>
         </article>`).join("")}`;
     refreshIcons();
@@ -4091,6 +4096,8 @@
     const staffName = $("outreachStaffName").value.trim();
     if (!staffName) return toast("Enter your staff name before creating a campaign.");
     $("outreachCampaignCriteriaName").value = `Initial prospect campaign — ${new Date().toLocaleDateString(undefined, { month:"short", day:"numeric", year:"numeric" })}`;
+    $("outreachCampaignCriteriaStage").value = "Initial";
+    $("outreachCampaignCriteriaSourceCampaign").value = "";
     $("outreachCampaignCriteriaCenterType").value = "distillery";
     $("outreachCampaignCriteriaCenterValue").value = "";
     $("outreachCampaignCriteriaRadius").value = "15";
@@ -4120,6 +4127,8 @@
     };
     fill("outreachCampaignCriteriaCounty", "county", "Any county");
     fill("outreachCampaignCriteriaSegment", "segment", "Any segment");
+    const campaigns = (outreachData.campaigns || []).slice().sort((a, b) => String(b.created_at || "").localeCompare(String(a.created_at || "")));
+    $("outreachCampaignCriteriaSourceCampaign").innerHTML = `<option value="">Any eligible recipient</option>${campaigns.map(campaign => `<option value="${escapeHtml(campaign.campaign_id)}">${escapeHtml(campaign.name)} (${escapeHtml(campaign.campaign_id)})</option>`).join("")}`;
   }
 
   function syncOutreachCampaignCenterInput(){
@@ -4136,6 +4145,8 @@
 
   function campaignCriteriaInput(){
     return {
+      stage:$("outreachCampaignCriteriaStage").value,
+      source_campaign_id:$("outreachCampaignCriteriaSourceCampaign").value,
       center_type:$("outreachCampaignCriteriaCenterType").value,
       center_value:$("outreachCampaignCriteriaCenterValue").value.trim(),
       radius_miles:$("outreachCampaignCriteriaRadius").value.trim(),
@@ -4168,7 +4179,8 @@
       if (!res.ok) throw new Error(res.error || "Campaign preview could not be created.");
       outreachCampaignPreview = { criteria:criteria, result:res };
       $("outreachCampaignCriteriaStatus").textContent = "Preview is ready. Confirm only if this is the intended audience.";
-      $("outreachCampaignPreviewSummary").textContent = `${Number(res.recipient_count || 0)} eligible initial prospect${Number(res.recipient_count || 0) === 1 ? "" : "s"} • ${res.audience || "Selected criteria"}`;
+      const stageLabel = criteria.stage === "Initial" ? "eligible initial prospect" : `eligible ${criteria.stage.toLowerCase()} recipient`;
+      $("outreachCampaignPreviewSummary").textContent = `${Number(res.recipient_count || 0)} ${stageLabel}${Number(res.recipient_count || 0) === 1 ? "" : "s"} • ${res.audience || "Selected criteria"}`;
       $("outreachCampaignPreviewRecipients").innerHTML = (res.recipients || []).length ? res.recipients.map(recipient => `<article class="outreachCard"><div class="outreachCardTop"><div><div class="businessName">${escapeHtml(recipient.business)}</div><div class="contactLine">${escapeHtml(recipient.city || "City missing")} ${recipient.postal_code ? `• ${escapeHtml(recipient.postal_code)}` : ""} • ${recipient.miles_from_center === null || recipient.miles_from_center === undefined ? "Miles missing" : `${escapeHtml(recipient.miles_from_center)} mi from center`} • Fit ${escapeHtml(recipient.craft_spirit_fit)} • ${escapeHtml(recipient.status || "No status")}</div><div class="smallMuted">${escapeHtml(recipient.email || "No email")} ${recipient.last_emailed ? `• Last emailed ${escapeHtml(formatOutreachDate(recipient.last_emailed))}` : "• Not previously emailed"}</div></div></div></article>`).join("") : `<div class="outreachEmpty"><strong>No eligible prospects match these criteria</strong><span>Change the center, radius, fit, or optional filters and preview again.</span></div>`;
       $("outreachCampaignPreview").hidden = false;
       $("createOutreachCampaignCriteriaBtn").disabled = !Number(res.recipient_count || 0);
@@ -4304,11 +4316,14 @@
     $("outreachCampaignTitle").textContent = campaign.name;
     const excludedCount = Number(campaign.counts?.Excluded || 0);
     const criteria = campaign.criteria || null;
+    const stage = criteria?.stage || "Initial";
     const maxMiles = Number(criteria?.radius_miles || 0);
     const centerLabel = criteria?.center?.label || "the original audience";
     const minFit = Number(criteria?.min_fit || 0);
-    const areaWarningCount = criteria ? (campaign.recipients || []).filter(recipient => recipient.miles === null || recipient.miles === undefined || Number(recipient.miles) > maxMiles).length : 0;
-    const criteriaSummary = criteria ? `fit ≥${minFit} • ≤${maxMiles} mi of ${centerLabel}` : "Legacy campaign • no stored criteria gate";
+    const areaWarningCount = criteria && stage === "Initial" ? (campaign.recipients || []).filter(recipient => recipient.miles === null || recipient.miles === undefined || Number(recipient.miles) > maxMiles).length : 0;
+    const criteriaSummary = !criteria ? "Legacy campaign • no stored criteria gate"
+      : stage === "Initial" ? `Initial • fit ≥${minFit} • ≤${maxMiles} mi of ${centerLabel}`
+        : `${stage} • due recipients${criteria.source_campaign_id ? ` • from ${criteria.source_campaign_id}` : ""}`;
     $("outreachCampaignSubtitle").textContent = `${campaign.recipient_count} frozen recipients${excludedCount ? ` • ${excludedCount} excluded` : ""} • ${criteriaSummary}${areaWarningCount ? ` • ${areaWarningCount} need area review` : ""} • ${campaign.status}`;
     $("outreachCampaignNotice").textContent = campaign.status === "Review"
       ? "Open any recipient to edit it or exclude it from this campaign. Approval freezes the exact saved audience and messages; it still does not send email."
@@ -7363,7 +7378,7 @@
   $("closeOutreachCampaignCriteriaBtn").addEventListener("click", () => $("outreachCampaignCriteriaDialog").close());
   $("cancelOutreachCampaignCriteriaBtn").addEventListener("click", () => $("outreachCampaignCriteriaDialog").close());
   $("outreachCampaignCriteriaCenterType").addEventListener("change", () => { syncOutreachCampaignCenterInput(); invalidateOutreachCampaignPreview(); });
-  ["outreachCampaignCriteriaCenterValue", "outreachCampaignCriteriaRadius", "outreachCampaignCriteriaFit", "outreachCampaignCriteriaCity", "outreachCampaignCriteriaCounty", "outreachCampaignCriteriaSegment", "outreachCampaignCriteriaWave", "outreachCampaignCriteriaMaxRecipients"].forEach(id => {
+  ["outreachCampaignCriteriaStage", "outreachCampaignCriteriaSourceCampaign", "outreachCampaignCriteriaCenterValue", "outreachCampaignCriteriaRadius", "outreachCampaignCriteriaFit", "outreachCampaignCriteriaCity", "outreachCampaignCriteriaCounty", "outreachCampaignCriteriaSegment", "outreachCampaignCriteriaWave", "outreachCampaignCriteriaMaxRecipients"].forEach(id => {
     $(id).addEventListener("input", invalidateOutreachCampaignPreview);
     $(id).addEventListener("change", invalidateOutreachCampaignPreview);
   });

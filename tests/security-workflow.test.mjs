@@ -1047,6 +1047,84 @@ test("campaign send timeouts reconcile one recipient before continuing and never
   assert.match(clientSource, /continue;/);
 });
 
+test("outreach nurture lifecycle handles cocktail replies, tasting visits, and due check-ins", async () => {
+  const backend = await readFile(new URL("apps-script/Code.gs", root), "utf8");
+  const functionSource = (name, nextName) => backend.slice(backend.indexOf(`function ${name}`), backend.indexOf(`function ${nextName}`));
+  const statusForOutcome = new Function(`${functionSource("outreachStatusForOutcome_", "appendOutreachActivity_")}; return outreachStatusForOutcome_;`)();
+  const nextStage = new Function(`${functionSource("outreachNextStage_", "outreachAddDays_")}; return outreachNextStage_;`)();
+  const eligibility = new Function(
+    "outreachStatusLower_", "outreachIsCocktailListOutcome_", "outreachDate_", "legacyPilotSent_",
+    `${functionSource("outreachSendEligibility_", "outreachNextStage_")}; return outreachSendEligibility_;`
+  )(
+    record => String(record.status || "").trim().toLowerCase(),
+    outcome => String(outcome || "").trim().toLowerCase() === "wants cocktail list",
+    value => { const date = value instanceof Date ? value : new Date(value); return Number.isNaN(date.getTime()) ? "" : date; },
+    () => false,
+  );
+
+  assert.equal(statusForOutcome("Wants cocktail list"), "Nurture");
+  assert.equal(statusForOutcome("Tasting visit"), "Interested");
+  assert.equal(nextStage("Follow-up 2"), "Nurture check-in");
+  assert.ok(eligibility({ email:"cocktails@example.test", next_email:"Follow-up 1", status:"Nurture", outcome:"Wants cocktail list", activity:[] }).includes("Recipient receives the cocktail list instead of sales outreach"));
+  assert.deepEqual(eligibility({ email:"nurture@example.test", next_email:"Nurture check-in", status:"Nurture", next_follow_up:new Date(Date.now() - 86400000), activity:[] }), []);
+
+  const upsertSource = functionSource("upsertNewsletterFromCocktailReply_", "appendOutreachActivity_");
+  const headers = ["contact_id", "account_id", "name", "email", "organization", "relationship_type", "status", "consent_source", "consent_date", "source_row", "source_business", "topics", "notes", "updated_at", "updated_by", "app_version"];
+  const headerMap = Object.fromEntries(headers.map((header, index) => [header, index]));
+  const existing = ["contact-existing", "OLD", "Old contact", "cocktails@example.test", "Old business", "Prospect", "Candidate", "", "", "", "", "", "", "", "", ""];
+  const writes = [];
+  const sheet = {
+    getLastRow:() => 2,
+    getLastColumn:() => headers.length,
+    getRange:(row) => ({
+      getValues:() => [existing],
+      setValues:values => writes.push({ row, values }),
+    }),
+  };
+  const upsertCocktailReply = new Function(
+    "getNewsletterContactsSheet_", "getHeaderMap_", "Utilities", "APP_VERSION",
+    `${upsertSource}; return upsertNewsletterFromCocktailReply_;`
+  )(() => sheet, () => headerMap, { getUuid:() => "new-contact-id" }, "test-version");
+  upsertCocktailReply({ account_id:"ACC-1", source_row:7, business:"Example Bar", contact:"Alex", email:"cocktails@example.test", relationship:"Customer" }, new Date("2026-10-03T12:00:00"));
+  assert.equal(writes.length, 1);
+  assert.equal(writes[0].row, 2, "an existing email is updated rather than appended");
+  const saved = writes[0].values[0];
+  assert.equal(saved[headerMap.status], "Subscribed");
+  assert.equal(saved[headerMap.relationship_type], "Customer");
+  assert.equal(saved[headerMap.consent_source], 'Replied "cocktails" to outreach email');
+  assert.equal(saved[headerMap.topics], "Monthly cocktail ideas");
+  assert.equal(saved[headerMap.source_row], 7);
+  assert.equal(saved[headerMap.contact_id], "contact-existing");
+
+  const index = await readFile(new URL("index.html", root), "utf8");
+  assert.match(index, /data-outcome="Wants cocktail list"/);
+  assert.match(index, /data-outcome="Tasting visit"/);
+  assert.match(index, /OUTREACH_INTERESTED_OUTCOMES = \[\.\.\.OUTREACH_FOLLOW_UP_OUTCOMES, "Tasting visit"\]/);
+});
+
+test("campaign builder freezes and delivers the requested outreach stage", async () => {
+  const [backend, index] = await Promise.all([
+    readFile(new URL("apps-script/Code.gs", root), "utf8"),
+    readFile(new URL("index.html", root), "utf8"),
+  ]);
+  const criteriaSource = backend.slice(backend.indexOf("function campaignCriteriaFromRequest_"), backend.indexOf("function campaignAudienceLabel_"));
+  const selectionSource = backend.slice(backend.indexOf("function campaignDirectoryStageSelection_"), backend.indexOf("function campaignDirectoryInitialSelection_"));
+  const sendSource = backend.slice(backend.indexOf("function apiSendOutreachCampaignBatch_"), backend.indexOf("function outreachStatusForOutcome_"));
+  assert.match(criteriaSource, /const stages = \["Initial", "Follow-up 1", "Follow-up 2", "Nurture check-in"\]/);
+  assert.match(criteriaSource, /stage:stage/);
+  assert.match(criteriaSource, /source_campaign_id:sourceCampaignId/);
+  assert.match(selectionSource, /record\.next_email\.toLowerCase\(\) === stage\.toLowerCase\(\)/);
+  assert.match(selectionSource, /campaignSourceRows_\(criteria\.source_campaign_id\)/);
+  assert.match(sendSource, /const campaignStage = String\(campaignCriteria\?\.stage \|\| "Initial"\)/);
+  assert.match(sendSource, /Outreach stage changed after review/);
+  assert.match(sendSource, /message_stage:campaignStage/);
+  assert.match(sendSource, /finalizeOutreachSend_\(leadSheet, sourceRow, record, campaignStage/);
+  assert.match(index, /id="outreachCampaignCriteriaStage"/);
+  assert.match(index, /id="outreachCampaignCriteriaSourceCampaign"/);
+  assert.match(index, /source_campaign_id:\$\("outreachCampaignCriteriaSourceCampaign"\)\.value/);
+  assert.match(index, /campaign\.criteria\?\.stage \|\| "Initial"/);
+});
+
 test("campaign rebuild UI and first-draft save gate preserve review-before-send", async () => {
   const index = await readFile(new URL("index.html", root), "utf8");
   assert.match(index, /id="rebuildCampaignRecipientsBtn"/);
