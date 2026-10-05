@@ -8,10 +8,10 @@ Read this file before inspecting the repository or changing the application. Upd
 
 | Component | Source version | Deployment state |
 | --- | --- | --- |
-| Netlify web app and staff proxy | `2026.10.05.20-WEB` on `codex/work`; awaiting Claude review | `.19-WEB` is live on `codex/distribution-system-foundation`. This batch makes `distribution.sturgeonspirits.com` canonical and adds public order-catalog recovery. |
-| Inventory API Apps Script | `2026.10.05.27-APP` on `codex/work`; awaiting Claude review | `.26` is deployed. `.27` adds the 14-day Cocktail list gap and canonical order-portal URL setting/migration. |
+| Netlify web app and staff proxy | `2026.10.05.20-WEB` live on `codex/distribution-system-foundation` | Promoted and confirmed from `distribution.sturgeonspirits.com` on 2026-10-05. This batch makes the canonical host active and adds public order-catalog recovery. |
+| Inventory API Apps Script | `2026.10.05.27-APP` on `codex/work`; reported deployed 2026-10-05 | Adds the 14-day Cocktail list gap and canonical order-portal URL setting/migration. |
 | Distribution Outreach Apps Script | `2026.10.04.25-APP` in `docs/reference/distribution-outreach/Code.gs`; reported deployed 2026-10-05 | Deployed with the paired Inventory API for Cocktail list sends. |
-| Public customer Netlify proxy | `2026.10.05.4-WEB` on `codex/work`; awaiting Claude review | Retries only a failed/non-JSON `listSkus` catalog read once; customer submissions remain single-attempt. |
+| Public customer Netlify proxy | `2026.10.05.4-WEB` live with the Netlify web release | Retries only a failed/non-JSON `listSkus` catalog read once; customer submissions remain single-attempt. |
 
 Current Git branch: `codex/work` (development). Netlify production builds `codex/distribution-system-foundation`; after Claude review, promote with `git push origin codex/work:codex/distribution-system-foundation` (fast-forward only). Never commit directly to the production branch, so the two cannot diverge again.
 
@@ -25,7 +25,7 @@ Phase 5 deployment state: staging Inventory API `2026.10.01.5` and Netlify `2026
 
 Latest completed changes:
 
-- Cocktail-list 14-day gap, resilient order catalog, and canonical public site (`2026.10.05.27-APP` Inventory API, `2026.10.05.20-WEB` web, and `2026.10.05.4-WEB` public customer proxy; repo only, 2026-10-05): Cocktail list emails are at least 14 days apart from another Cocktail list or sales outreach email in either direction; sales-to-sales stage spacing is unchanged. A sales follow-up due inside this gap is left due/blocked and can send in a later campaign after the gap. The public customer proxy retries only `listSkus` once if Google returns HTML or a non-2xx response, then returns a retryable catalog error; it never retries an application or order submission. `order.html` offers a manual retry and warns that a failed submission may not have gone through. The primary public host is `https://distribution.sturgeonspirits.com`: the production Netlify batch will redirect `distribution-hub.netlify.app` there while preserving query strings. `Public site URL` is appended blank by `repairHubStructure()`; set it to the canonical host, then run the editor-only `rewritePublicSiteUrls()` once to migrate saved Account Programs order links without changing sent records or frozen campaign HTML. **Do not deploy yet: first obtain Claude review. Then deploy Inventory API `.27`, run `repairHubStructure()`, set `Public site URL`, run `rewritePublicSiteUrls()`, and promote the web batch. Staff then sign in at the canonical host.**
+- Cocktail-list 14-day gap, resilient order catalog, and canonical public site (`2026.10.05.27-APP` Inventory API, `2026.10.05.20-WEB` web, and `2026.10.05.4-WEB` public customer proxy; deployed 2026-10-05): Cocktail list emails are at least 14 days apart from another Cocktail list or sales outreach email in either direction; sales-to-sales stage spacing is unchanged. A sales follow-up due inside this gap is left due/blocked and can send in a later campaign after the gap. The public customer proxy retries only `listSkus` once if Google returns HTML or a non-2xx response, then returns a retryable catalog error; it never retries an application or order submission. `order.html` offers a manual retry and warns that a failed submission may not have gone through. The primary public host is `https://distribution.sturgeonspirits.com`: `distribution-hub.netlify.app` now redirects there while preserving query strings. `Public site URL` is appended blank by `repairHubStructure()`; set it to the canonical host, then run the editor-only `rewritePublicSiteUrls()` once to migrate saved Account Programs order links without changing sent records or frozen campaign HTML. **Next: run `repairHubStructure()`, set `Public site URL`, run `rewritePublicSiteUrls()`, then have staff sign in at the canonical host.**
 
 - Outreach Deploy B scheduler cooldown fix (`2026.10.04.26-APP` Inventory API, `2026.10.04.25-APP` Distribution Outreach mailer, and `2026.10.04.19-WEB`; deployed 2026-10-05): after each accepted sales or Cocktail list send, the existing per-execution cooldown index records that send before the scheduler can start another due campaign. A recipient present in a sales and Cocktail list campaign due in the same scheduler execution is therefore blocked from the second message. The optional same-type Cocktail-list cadence is intentionally unchanged pending Karl's decision. **After deployment, run `repairHubStructure()` once if it has not already been run, then complete the reviewed template-content steps.**
 
@@ -128,10 +128,10 @@ Latest completed changes:
 
 ### Application
 
-- Canonical public site (after the next Netlify deploy): https://distribution.sturgeonspirits.com/
+- Canonical public site: https://distribution.sturgeonspirits.com/
 - Customer signup: https://distribution.sturgeonspirits.com/customer-signup.html
 - Customer order request: https://distribution.sturgeonspirits.com/order.html
-- Legacy staff app until that deploy: https://distribution-hub.netlify.app/
+- Legacy host (redirects to the canonical site): https://distribution-hub.netlify.app/
 - Netlify project: https://app.netlify.com/projects/distribution-hub/overview
 - GitHub review branch: https://github.com/sturgeonspirits/self-distribution/tree/codex/work
 
