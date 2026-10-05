@@ -37,6 +37,7 @@ async function loadFunction(path, suffix = Math.random(), { useRealRoster = fals
     source = source.replace('from "./auth.js";', `from "${dataUrl(await authSource())}";`);
     source = source.replace('from "../lib/drive-relay.js";', `from "${relayUrl}";`);
   }
+  if (path === "netlify/functions/sell-sheet.js") source = source.replace('from "./auth.js";', `from "${dataUrl(await authSource())}";`);
   return import(`data:text/javascript;base64,${Buffer.from(source).toString("base64")}#${suffix}`);
 }
 
@@ -667,7 +668,6 @@ function trackingSignature(target, accountId, stage) {
 test("tracking redirect allowlists destinations and ignores invalid signatures", async () => {
   const { handler } = await loadFunction("netlify/functions/go.js", "tracking-redirect");
   process.env.TRACKING_LINK_SECRET = "tracking-test-secret";
-  process.env.SELL_SHEET_URL = "https://example.test/sell-sheet";
   process.env.APPS_SCRIPT_URL = "https://example.test/exec";
   process.env.PUBLIC_SITE_URL = "https://distribution.sturgeonspirits.com";
   let fetches = 0;
@@ -676,7 +676,7 @@ test("tracking redirect allowlists destinations and ignores invalid signatures",
   assert.equal(unknown.statusCode, 404);
   const invalid = await handler(goEvent({ t:"sell_sheet", a:"ACC-1", s:"Initial", k:"bad", url:"https://attacker.test" }));
   assert.equal(invalid.statusCode, 302);
-  assert.equal(invalid.headers.Location, "https://example.test/sell-sheet");
+  assert.equal(invalid.headers.Location, "https://distribution.sturgeonspirits.com/sell-sheet.html");
   assert.equal(fetches, 0);
   const application = await handler(goEvent({ t:"application", a:"ACC-1", s:"Initial", k:"bad", business:"Example Bar", email:"orders@example.test", url:"https://attacker.test" }));
   assert.equal(application.statusCode, 302);
@@ -686,10 +686,10 @@ test("tracking redirect allowlists destinations and ignores invalid signatures",
 
   process.env.PUBLIC_SITE_URL = "http://attacker.test";
   const fallback = await handler(goEvent({ t:"application", a:"ACC-1", s:"Initial", k:"bad" }));
-  assert.match(fallback.headers.Location, /^https:\/\/distribution-hub\.netlify\.app\/customer-signup\.html\?/);
+  assert.match(fallback.headers.Location, /^https:\/\/distribution\.sturgeonspirits\.com\/customer-signup\.html\?/);
   process.env.PUBLIC_SITE_URL = "";
   const blankFallback = await handler(goEvent({ t:"application", a:"ACC-1", s:"Initial", k:"bad" }));
-  assert.match(blankFallback.headers.Location, /^https:\/\/distribution-hub\.netlify\.app\/customer-signup\.html\?/);
+  assert.match(blankFallback.headers.Location, /^https:\/\/distribution\.sturgeonspirits\.com\/customer-signup\.html\?/);
 });
 
 test("the canonical-host redirect is first and public-site URL migration is safe and idempotent", async () => {
@@ -734,28 +734,96 @@ test("the canonical-host redirect is first and public-site URL migration is safe
 test("tracking logging failure or timeout never prevents a redirect", async () => {
   const { handler } = await loadFunction("netlify/functions/go.js", "tracking-log-failure");
   process.env.TRACKING_LINK_SECRET = "tracking-test-secret";
-  process.env.SELL_SHEET_URL = "https://example.test/sell-sheet";
   process.env.APPS_SCRIPT_URL = "https://example.test/exec";
   const signature = trackingSignature("sell_sheet", "ACC-1", "Initial");
   globalThis.fetch = async () => { throw Object.assign(new Error("timed out"), { name:"AbortError" }); };
   const response = await handler(goEvent({ t:"sell_sheet", a:"ACC-1", s:"Initial", k:signature }));
   assert.equal(response.statusCode, 302);
-  assert.equal(response.headers.Location, "https://example.test/sell-sheet");
+  assert.match(response.headers.Location, /^https:\/\/distribution\.sturgeonspirits\.com\/sell-sheet\.html\?access=/);
   assert.equal(response.headers["Cache-Control"], "no-store");
 });
 
 test("valid Karl-only test tracking links redirect without recording engagement", async () => {
   const { handler } = await loadFunction("netlify/functions/go.js", "tracking-test-link");
   process.env.TRACKING_LINK_SECRET = "tracking-test-secret";
-  process.env.SELL_SHEET_URL = "https://example.test/sell-sheet";
   process.env.APPS_SCRIPT_URL = "https://example.test/exec";
   const signature = trackingSignature("sell_sheet", "ACC-1", "Initial");
   let fetches = 0;
   globalThis.fetch = async () => { fetches += 1; return new Response(JSON.stringify({ ok:true }), { status:200 }); };
   const response = await handler(goEvent({ t:"sell_sheet", a:"ACC-1", s:"Initial", k:signature, x:"test" }));
   assert.equal(response.statusCode, 302);
-  assert.equal(response.headers.Location, "https://example.test/sell-sheet");
+  assert.match(response.headers.Location, /^https:\/\/distribution\.sturgeonspirits\.com\/sell-sheet\.html\?access=/);
   assert.equal(fetches, 0);
+});
+
+function sellSheetEvent(params = {}, options = {}) {
+  const method = options.method || "GET";
+  return { httpMethod:method, rawQuery:new URLSearchParams(params).toString(), queryStringParameters:params, headers:options.session ? { cookie:options.session } : {}, body:method === "POST" ? JSON.stringify(options.body || {}) : "" };
+}
+
+function sellSheetToken(payload, secret = process.env.SELL_SHEET_ACCESS_SECRET) {
+  const encoded = Buffer.from(JSON.stringify(payload)).toString("base64url");
+  return `${encoded}.${createHmac("sha256", secret).update(encoded).digest("base64url")}`;
+}
+
+test("sell-sheet pricing is omitted without valid access and noindex is always returned", async () => {
+  const { handler } = await loadFunction("netlify/functions/sell-sheet.js", "sell-sheet-public");
+  process.env.APPS_SCRIPT_URL = "https://example.test/exec";
+  process.env.API_KEY = "backend-key";
+  process.env.SELL_SHEET_ACCESS_SECRET = "sell-sheet-test-secret";
+  let sent;
+  globalThis.fetch = async (_url, options = {}) => {
+    sent = JSON.parse(options.body);
+    return new Response(JSON.stringify({ ok:true, sections:[{ section:"Vodka", products:[{ sku_id:"V-1", price_cents:2200 }] }] }), { status:200 });
+  };
+  const response = await handler(sellSheetEvent());
+  const body = JSON.parse(response.body);
+  assert.equal(response.statusCode, 200);
+  assert.equal(response.headers["X-Robots-Tag"], "noindex, nofollow, noarchive");
+  assert.equal(sent.action, "sellSheet");
+  assert.equal(sent.include_prices, false);
+  assert.equal(body.access.prices, false);
+  assert.equal("price_cents" in body.sections[0].products[0], false);
+});
+
+test("sell-sheet accepts only unexpired signed access tokens and sends the account to pricing", async () => {
+  const { handler } = await loadFunction("netlify/functions/sell-sheet.js", "sell-sheet-access");
+  process.env.APPS_SCRIPT_URL = "https://example.test/exec";
+  process.env.API_KEY = "backend-key";
+  process.env.SELL_SHEET_ACCESS_SECRET = "sell-sheet-test-secret";
+  let sent;
+  globalThis.fetch = async (_url, options = {}) => {
+    sent = JSON.parse(options.body);
+    return new Response(JSON.stringify({ ok:true, sections:[] }), { status:200 });
+  };
+  const valid = sellSheetToken({ purpose:"sell_sheet", account_id:"ACC-1", exp:Math.floor(Date.now() / 1000) + 90 });
+  const response = await handler(sellSheetEvent({ access:valid }));
+  assert.equal(JSON.parse(response.body).access.prices, true);
+  assert.equal(sent.include_prices, true);
+  assert.equal(sent.account_id, "ACC-1");
+  const expired = sellSheetToken({ purpose:"sell_sheet", account_id:"ACC-1", exp:Math.floor(Date.now() / 1000) - 1 });
+  await handler(sellSheetEvent({ access:expired }));
+  assert.equal(sent.include_prices, false, "expired tokens fall back to the no-price view");
+});
+
+test("sell-sheet implementation keeps public catalog prices separate and installs editable structure", async () => {
+  const [backend, page, functionSource, config] = await Promise.all([
+    readFile(new URL("apps-script/Code.gs", root), "utf8"), readFile(new URL("sell-sheet.html", root), "utf8"),
+    readFile(new URL("netlify/functions/sell-sheet.js", root), "utf8"), readFile(new URL("netlify.toml", root), "utf8"),
+  ]);
+  const listSkus = backend.slice(backend.indexOf("function apiListSkus_"), backend.indexOf("function sellSheetSectionForSku_"));
+  const sellSheet = backend.slice(backend.indexOf("function apiSellSheet_"), backend.indexOf("function apiAddSkuToStoreUnlocked_"));
+  assert.doesNotMatch(listSkus, /price_cents|wholesale_price/);
+  assert.match(sellSheet, /include_prices === true/);
+  assert.match(sellSheet, /skuWholesaleCents_/);
+  assert.match(sellSheet, /sellSheetCustomerPriceMap_/);
+  assert.match(backend, /SELL_SHEET_SECTION_VALUES/);
+  assert.match(backend, /identity\.sell_sheet = ensureSellSheetStructure_\(\)/);
+  assert.match(page, /name="robots" content="noindex/);
+  assert.match(page, /Print \/ Save as PDF/);
+  assert.match(functionSource, /ACCESS_SECONDS = 90 \* 24 \* 60 \* 60/);
+  assert.doesNotMatch(functionSource, /SELL_SHEET_URL/);
+  assert.match(config, /X-Robots-Tag = "noindex, nofollow, noarchive"/);
 });
 
 test("Karl-only test rendering supplies non-empty HTML with an unsigned x=test marker", async () => {

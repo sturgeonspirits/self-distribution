@@ -1,10 +1,11 @@
-// App version: 2026.10.05.20-WEB
+// App version: 2026.10.05.21-WEB
 import { createHmac, timingSafeEqual } from "node:crypto";
 
-const APP_VERSION = "2026.10.05.20-WEB";
+const APP_VERSION = "2026.10.05.21-WEB";
 const TRACKED_TARGETS = new Set(["sell_sheet", "application"]);
 const BOT_USER_AGENT = /(bot|crawler|spider|preview|slackbot|facebookexternalhit|linkedinbot|twitterbot|discordbot|whatsapp|googleimageproxy|proofpoint|mimecast|barracuda|urlscan|virustotal|safelinks|security|scanner|curl|wget)/i;
-const PUBLIC_SITE_URL_FALLBACK = "https://distribution-hub.netlify.app";
+const PUBLIC_SITE_URL_FALLBACK = "https://distribution.sturgeonspirits.com";
+const SELL_SHEET_ACCESS_SECONDS = 90 * 24 * 60 * 60;
 
 function redirect(location) {
   return {
@@ -36,8 +37,21 @@ function publicSiteUrl() {
   }
 }
 
-function destinationFor(target, params) {
-  if (target === "sell_sheet") return String(process.env.SELL_SHEET_URL || "").trim();
+function sellSheetAccessToken(accountId) {
+  const secret = String(process.env.SELL_SHEET_ACCESS_SECRET || process.env.TRACKING_LINK_SECRET || "");
+  if (!secret || !accountId) return "";
+  const payload = Buffer.from(JSON.stringify({ purpose:"sell_sheet", account_id:String(accountId), exp:Math.floor(Date.now() / 1000) + SELL_SHEET_ACCESS_SECONDS })).toString("base64url");
+  const signature = createHmac("sha256", secret).update(payload).digest("base64url");
+  return `${payload}.${signature}`;
+}
+
+function destinationFor(target, params, allowSellSheetAccess) {
+  if (target === "sell_sheet") {
+    const destination = new URL("/sell-sheet.html", publicSiteUrl());
+    const token = allowSellSheetAccess ? sellSheetAccessToken(params.get("a") || "") : "";
+    if (token) destination.searchParams.set("access", token);
+    return destination.toString();
+  }
   const destination = new URL("/customer-signup.html", publicSiteUrl());
   destination.searchParams.set("account_id", params.get("a") || "");
   destination.searchParams.set("business", params.get("business") || "");
@@ -79,12 +93,13 @@ export async function handler(event) {
   const params = new URLSearchParams(event.rawQuery || "");
   const target = params.get("t") || "";
   if (!TRACKED_TARGETS.has(target)) return { statusCode:404, headers:{ "Cache-Control":"no-store" }, body:"Not found." };
-  const destination = destinationFor(target, params);
-  if (!destination) return { statusCode:503, headers:{ "Cache-Control":"no-store" }, body:"Destination is not configured." };
-
   const userAgent = String(event.headers?.["user-agent"] || event.headers?.["User-Agent"] || "");
   const signatureIsValid = validSignature(target, params.get("a") || "", params.get("s") || "", params.get("k") || "", process.env.TRACKING_LINK_SECRET || "");
+  const visitorIsHuman = !BOT_USER_AGENT.test(userAgent);
+  const destination = destinationFor(target, params, signatureIsValid && visitorIsHuman);
+  if (!destination) return { statusCode:503, headers:{ "Cache-Control":"no-store" }, body:"Destination is not configured." };
+
   const isTestLink = params.get("x") === "test";
-  if (signatureIsValid && !isTestLink && !BOT_USER_AGENT.test(userAgent)) await logClick(params);
+  if (signatureIsValid && !isTestLink && visitorIsHuman) await logClick(params);
   return redirect(destination);
 }

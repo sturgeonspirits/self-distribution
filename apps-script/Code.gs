@@ -1,8 +1,13 @@
 /*********************************
  * Inventory API (JSON) for Netlify
- * App version: 2026.10.05.27-APP
+ * App version: 2026.10.05.28-APP
  *
  * CHANGES IN THIS VERSION
+ * - Adds the protected sell-sheet read: an append-only SELL SHEET editor block, sell_sheet_section SKU dropdown,
+ *   live active-SKU grouping and availability, and account-aware wholesale prices only when the Netlify proxy has
+ *   verified a staff session or a time-limited customer link. The public listSkus response remains price-free.
+ *
+ * CHANGES IN 2026.10.05.27-APP
  * - Gives every Cocktail list recipient a 14-day gap from another Cocktail list or sales outreach email, while
  *   preserving the existing sales-follow-up cadence. The per-execution send index continues to fail closed for
  *   undated sends and records accepted sends before a scheduler can start another campaign.
@@ -293,7 +298,7 @@
  * - Use only in the staging inventory backend until testing is complete.
  *********************************/
 
-const APP_VERSION = "2026.10.05.27-APP";
+const APP_VERSION = "2026.10.05.28-APP";
 
 const SHEET_NAMES = {
   STORES: "Stores",
@@ -361,7 +366,7 @@ const PUBLIC_SITE_URL_FALLBACK = "https://distribution-hub.netlify.app";
 const READ_CACHE_VERSION_KEY = "hub_read_cache_version";
 const READ_CACHE_TTL_SECONDS = 900;
 const READ_CACHE_CHUNK_SIZE = 45000;
-const READ_ACTIONS = new Set(["initData", "listSkus", "managerGrid", "salesSinceCount", "outreachDashboard", "outreachRecord", "outreachSendStatus", "outreachNewsletterContacts", "outreachCampaigns", "outreachCampaign", "previewOutreachCampaign", "customerWorkQueue", "customerAccountIndex", "hubSystemStatus"]);
+const READ_ACTIONS = new Set(["initData", "listSkus", "sellSheet", "managerGrid", "salesSinceCount", "outreachDashboard", "outreachRecord", "outreachSendStatus", "outreachNewsletterContacts", "outreachCampaigns", "outreachCampaign", "previewOutreachCampaign", "customerWorkQueue", "customerAccountIndex", "hubSystemStatus"]);
 
 let __OPERATIONAL_SS = null;
 let __OUTREACH_SS = null;
@@ -859,6 +864,20 @@ const OUTREACH_COCKTAIL_LIST_SETTINGS = [
 const OUTREACH_PUBLIC_SITE_SETTINGS = [
   { key:PUBLIC_SITE_URL_SETTING_KEY },
 ];
+const SELL_SHEET_SECTION_VALUES = ["Best seller", "New", "Vodka", "Gin", "Rum", "Liqueur", "Agave", "Whiskey & Brandy", "Squadron Spirits", "Gift boxes", "Bitters", "Canned cocktails", "Hide"];
+const SELL_SHEET_EDITOR_SECTION = "SELL SHEET";
+const SELL_SHEET_EDITOR_ROWS = [
+  { label:"Sell sheet headline", value:"Made in Oshkosh. Poured in Your Bar.", note:"Main headline on the web and printed sell sheet." },
+  { label:"Sell sheet price line", value:"Where patience pays", note:"Shown under the headline; live prices appear only to invited visitors or staff." },
+  { label:"Sell sheet story heading", value:"Rooted in Tradition, Driven by Curiosity", note:"Story-section heading." },
+  { label:"Sell sheet story", value:"For three years, we've been getting up early, working hard, and trusting the process right here in Oshkosh. We respect the old ways, but we never stop experimenting with new flavor profiles. Put our local craft spirits into your arsenal.", note:"Karl can update the timing or copy here." },
+  { label:"Sell sheet unique heading", value:"As Unique As We Are", note:"Flavor-list heading." },
+  { label:"Sell sheet flavors line", value:"Choose from over 40 additional flavors and spirits available.", note:"Flavor-list introduction." },
+  { label:"Sell sheet infusion line", value:"Imagine a custom infusion only available at your establishment.", note:"Flavor-list introduction." },
+  { label:"Sell sheet cans line", value:"Mix flavors within a case. Ask about 5-gallon corny kegs of our cocktails.", note:"Shown only when canned-cocktail SKUs exist." },
+  { label:"Sell sheet contact", value:"2663 Oregon Street, Oshkosh, Wisconsin · sturgeonspirits.com · sales@sturgeonspirits.com · (920) 267-5192", note:"Contact block." },
+  { label:"Sell sheet footer", value:"Distilled and bottled in Oshkosh, Wisconsin", note:"Printed and web footer." },
+];
 
 function ensureOutreachMonthlyContent_() {
   const hub = getOutreachSs_();
@@ -932,6 +951,36 @@ function ensureOutreachMonthlyContent_() {
   };
 }
 
+function ensureSellSheetStructure_() {
+  const skuSheet = getSheet_(SHEET_NAMES.SKUS);
+  const skuHeaders = ensureHeaderColumns_(skuSheet, ["sell_sheet_section"]);
+  const validation = SpreadsheetApp.newDataValidation().requireValueInList(SELL_SHEET_SECTION_VALUES, true).setAllowInvalid(false).build();
+  skuSheet.getRange(2, skuHeaders.sell_sheet_section + 1, Math.max(1, skuSheet.getMaxRows() - 1), 1).setDataValidation(validation);
+  const editor = getOutreachSs_().getSheetByName("Email Editor");
+  if (!editor) throw new Error("Email Editor is required for sell-sheet content.");
+  const labels = editor.getRange(1, 1, Math.max(1, editor.getLastRow()), 1).getDisplayValues().map(row => String(row[0] || "").trim());
+  let sectionRow = labels.indexOf(SELL_SHEET_EDITOR_SECTION) + 1;
+  if (!sectionRow) {
+    sectionRow = editor.getLastRow() + 1;
+    editor.getRange(sectionRow, 1, 1, 3).setValues([[SELL_SHEET_EDITOR_SECTION, "", "Editable content for sell-sheet.html."]]);
+    editor.getRange(sectionRow, 1, 1, 3).setFontWeight("bold").setBackground("#44656b").setFontColor("#ffffff");
+  }
+  const refreshed = editor.getRange(1, 1, Math.max(1, editor.getLastRow()), 1).getDisplayValues().map(row => String(row[0] || "").trim());
+  const missing = SELL_SHEET_EDITOR_ROWS.filter(item => !refreshed.includes(item.label));
+  if (missing.length) editor.getRange(editor.getLastRow() + 1, 1, missing.length, 3).setValues(missing.map(item => [item.label, item.value, item.note]));
+  return { section_row:sectionRow, sku_column:"sell_sheet_section", added_editor_rows:missing.map(item => item.label) };
+}
+
+function sellSheetCopy_() {
+  const values = new Map(SELL_SHEET_EDITOR_ROWS.map(item => [item.label, item.value]));
+  const editor = getOutreachSs_().getSheetByName("Email Editor");
+  if (editor && editor.getLastRow()) editor.getRange(1, 1, editor.getLastRow(), Math.max(2, editor.getLastColumn())).getDisplayValues().forEach(row => {
+    const label = String(row[0] || "").trim();
+    if (values.has(label) && String(row[1] || "").trim()) values.set(label, String(row[1]).trim());
+  });
+  return { headline:values.get("Sell sheet headline"), price_line:values.get("Sell sheet price line"), story_heading:values.get("Sell sheet story heading"), story:values.get("Sell sheet story"), unique_heading:values.get("Sell sheet unique heading"), flavors_line:values.get("Sell sheet flavors line"), infusion_line:values.get("Sell sheet infusion line"), cans_line:values.get("Sell sheet cans line"), contact:values.get("Sell sheet contact"), footer:values.get("Sell sheet footer") };
+}
+
 function repairHubStructure_() {
   ensureFoundationalSheets_();
   const engagement = getOutreachSs_().getSheetByName(OUTREACH_ENGAGEMENT_SHEET_NAME);
@@ -954,6 +1003,7 @@ function repairHubStructure_() {
   }
   identity.directory_validations = directoryValidations;
   identity.monthly_content = ensureOutreachMonthlyContent_();
+  identity.sell_sheet = ensureSellSheetStructure_();
   return identity;
 }
 
@@ -1124,7 +1174,7 @@ function handle_(e, body) {
   try {
     assertAuthorized_(e, body);
     if (!action) {
-      return json_({ ok:true, service:"sturgeon-distribution-hub", version:APP_VERSION, actions:["initData","listSkus","addSkuToStore","upsertProduct","submitCounts","createReorder","managerGrid","salesSinceCount","updateStoreContacts","outreachDashboard","outreachRecord","outreachSendStatus","outreachNewsletterContacts","outreachCampaigns","outreachCampaign","previewOutreachCampaign","createOutreachCampaign","updateOutreachCampaignRecipient","setOutreachCampaignRecipientExclusion","setOutreachCampaignRecipientExclusions","approveOutreachCampaign","reopenOutreachCampaign","reconcileCampaignSends","rebuildCampaignRecipients","sendOutreachCampaignBatch","scheduleOutreachCampaign","cancelOutreachCampaignSchedule","saveOutreachDraft","sendOutreachEmail","sendOutreachTestEmail","updateOutreachOutcome","logOutreachContact","updateOutreachBusiness","updateOutreachPrograms","createOutreachBusiness","importOutreachBusinesses","recalculateOutreachMiles","backfillEngagementDetails","upsertNewsletterContact","submitCustomerApplication","submitOnlineOrderRequest","customerWorkQueue","customerAccountIndex","linkBadgerInvoice","syncBadgerStatus","markBadgerInvoicePayment","recordBadgerCheck","resolvePaymentReminder","badgerReconcilePreview","applyBadgerReconcile","previewBadgerPaymentReminder","sendBadgerPaymentReminder","previewBadgerInvoice","createBadgerInvoice","adoptBadgerInvoice","failBadgerInvoiceCreation","updateCustomerApplication","updateOnlineOrderRequest","hubSystemStatus","initializeHardenedHub","repairHubStructure","reconcileIntegrations"] });
+      return json_({ ok:true, service:"sturgeon-distribution-hub", version:APP_VERSION, actions:["initData","listSkus","sellSheet","addSkuToStore","upsertProduct","submitCounts","createReorder","managerGrid","salesSinceCount","updateStoreContacts","outreachDashboard","outreachRecord","outreachSendStatus","outreachNewsletterContacts","outreachCampaigns","outreachCampaign","previewOutreachCampaign","createOutreachCampaign","updateOutreachCampaignRecipient","setOutreachCampaignRecipientExclusion","setOutreachCampaignRecipientExclusions","approveOutreachCampaign","reopenOutreachCampaign","reconcileCampaignSends","rebuildCampaignRecipients","sendOutreachCampaignBatch","scheduleOutreachCampaign","cancelOutreachCampaignSchedule","saveOutreachDraft","sendOutreachEmail","sendOutreachTestEmail","updateOutreachOutcome","logOutreachContact","updateOutreachBusiness","updateOutreachPrograms","createOutreachBusiness","importOutreachBusinesses","recalculateOutreachMiles","backfillEngagementDetails","upsertNewsletterContact","submitCustomerApplication","submitOnlineOrderRequest","customerWorkQueue","customerAccountIndex","linkBadgerInvoice","syncBadgerStatus","markBadgerInvoicePayment","recordBadgerCheck","resolvePaymentReminder","badgerReconcilePreview","applyBadgerReconcile","previewBadgerPaymentReminder","sendBadgerPaymentReminder","previewBadgerInvoice","createBadgerInvoice","adoptBadgerInvoice","failBadgerInvoiceCreation","updateCustomerApplication","updateOnlineOrderRequest","hubSystemStatus","initializeHardenedHub","repairHubStructure","reconcileIntegrations"] });
     }
 
     invalidateReadCache = !READ_ACTIONS.has(action);
@@ -1132,6 +1182,7 @@ function handle_(e, body) {
     switch (action) {
       case "initData": res = apiGetInitData_((e?.parameter?.store_id) || (body?.store_id) || "", false, String((e?.parameter?.refresh) || (body?.refresh) || "") === "1"); break;
       case "listSkus": res = apiListSkus_(); break;
+      case "sellSheet": res = apiSellSheet_(body || {}); break;
       case "addSkuToStore": res = apiAddSkuToStore_(body); break;
       case "upsertProduct": res = apiUpsertProduct_(body); break;
       case "submitCounts": res = apiSubmitCounts_(body); break;
@@ -1305,6 +1356,75 @@ function apiListSkus_() {
     catalog_source:ORDER_CATALOG_SOURCE,
     availability_source:"Toast Stock column in SKUs (weekly Toast count) and Out of Stock checkboxes; staff confirms availability",
     skus:Array.from(map.values()).sort((a,b)=>String(a.sku_name||"").localeCompare(String(b.sku_name||""))),
+  };
+}
+
+function sellSheetSectionForSku_(sku) {
+  const explicit = String(sku.sell_sheet_section || "").trim();
+  if (explicit) return explicit;
+  const key = `${sku.sku_id || ""} ${sku.sku_name || ""} ${sku.price_tier || ""}`.toLowerCase();
+  if (/canned|cocktail/.test(key)) return "Canned cocktails";
+  if (/bitter/.test(key)) return "Bitters";
+  if (/gift|box/.test(key)) return "Gift boxes";
+  if (/squadron|spitfire|mustang|hellcat|flying fortress/.test(key)) return "Squadron Spirits";
+  if (/bourbon|whiskey|whisky|brandy/.test(key)) return "Whiskey & Brandy";
+  if (/osh.?gave|agave/.test(key)) return "Agave";
+  if (/liqueur|amaretto|coffee|pumpkin/.test(key)) return "Liqueur";
+  if (/\brum\b|banana|coconut|pineapple|mango/.test(key)) return "Rum";
+  if (/\bgin\b|blood orange|lavender|rhubarb|rosemary|sage|thyme/.test(key)) return "Gin";
+  if (/vodka|river run|bacon|basil|black pepper|blackberry|candy cane|cinnamon|cranberry|cucumber|dill|cherry|garlic|habanero|jalapeño|jalapeno|pear|raspberry|sweet tea/.test(key)) return "Vodka";
+  return "Other spirits";
+}
+
+function sellSheetCustomerPriceMap_(customerRows, accountId) {
+  const values = new Map();
+  const conflicts = new Set();
+  (customerRows || []).forEach(row => {
+    if (!toBool_(row.active) || String(row.account_id || "").trim() !== String(accountId || "").trim()) return;
+    const skuId = String(row.sku_id || "").trim();
+    const cents = badgerMoneyToCents_(firstPresent_(row, ["price", "unit_price", "wholesale_price"]));
+    if (!skuId || !(cents > 0)) return;
+    if (values.has(skuId) && values.get(skuId) !== cents) conflicts.add(skuId); else values.set(skuId, cents);
+  });
+  conflicts.forEach(skuId => values.delete(skuId));
+  return values;
+}
+
+// This endpoint is reached only through Netlify's sell-sheet function, which decides whether prices may be included.
+// Do not add wholesale prices to apiListSkus_ or another public catalog response.
+function apiSellSheet_(p) {
+  const includePrices = p && p.include_prices === true && p.sell_sheet_proxy === true;
+  const accountId = includePrices ? String(p.account_id || "").trim() : "";
+  const skuRows = getAllRowsAsObjects_(getSheet_(SHEET_NAMES.SKUS));
+  const tiers = includePrices ? priceTierCents_() : null;
+  const customerSheet = includePrices && accountId ? getSs_().getSheetByName(CUSTOMER_PRICES_SHEET_NAME) : null;
+  const customerPrices = customerSheet && customerSheet.getLastRow() >= 2 ? sellSheetCustomerPriceMap_(getAllRowsAsObjects_(customerSheet), accountId) : new Map();
+  const sections = new Map();
+  skuRows.forEach(sku => {
+    if (!toBool_(sku.active)) return;
+    const skuId = String(sku.sku_id || "").trim();
+    if (!skuId) return;
+    const section = sellSheetSectionForSku_(sku);
+    if (section === "Hide") return;
+    const stockText = String(sku.toast_stock ?? "").trim();
+    const stock = stockText === "" ? null : Number(stockText);
+    const outOfStock = toBool_(firstPresent_(sku, ["out_of_stock", "out_of_stock?"])) || (Number.isFinite(stock) && stock <= 0);
+    const item = {
+      sku_id:skuId, name:String(sku.sku_name || skuId), size:String(sku.size || ""),
+      abv:Number(sku.proof || 0) > 0 ? Number(sku.proof) / 2 : null,
+      units_per_case:Number(sku.units_per_case || 0) || null,
+      availability:outOfStock ? "Currently out" : Number.isFinite(stock) ? "In stock" : "Staff will confirm availability",
+      out_of_stock:outOfStock,
+    };
+    if (includePrices) item.price_cents = customerPrices.has(skuId) ? customerPrices.get(skuId) : skuWholesaleCents_(sku, tiers);
+    if (!sections.has(section)) sections.set(section, []);
+    sections.get(section).push(item);
+  });
+  const order = ["New", "Best seller", "Vodka", "Gin", "Rum", "Liqueur", "Agave", "Whiskey & Brandy", "Squadron Spirits", "Gift boxes", "Bitters", "Canned cocktails", "Other spirits"];
+  return {
+    access:{ prices:includePrices, account_specific:!!accountId },
+    copy:sellSheetCopy_(),
+    sections:order.filter(section => sections.has(section)).map(section => ({ section:section, products:sections.get(section).sort((a,b) => a.name.localeCompare(b.name)) })),
   };
 }
 

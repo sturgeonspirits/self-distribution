@@ -8,8 +8,8 @@ Read this file before inspecting the repository or changing the application. Upd
 
 | Component | Source version | Deployment state |
 | --- | --- | --- |
-| Netlify web app and staff proxy | `2026.10.05.20-WEB` live on `codex/distribution-system-foundation` | Promoted and confirmed from `distribution.sturgeonspirits.com` on 2026-10-05. This batch makes the canonical host active and adds public order-catalog recovery. |
-| Inventory API Apps Script | `2026.10.05.27-APP` on `codex/work`; reported deployed 2026-10-05 | Adds the 14-day Cocktail list gap and canonical order-portal URL setting/migration. |
+| Netlify web app and staff proxy | `2026.10.05.21-WEB` on `codex/work` | Repo only; production remains `2026.10.05.20-WEB` until Claude reviews the protected sell sheet. |
+| Inventory API Apps Script | `2026.10.05.28-APP` on `codex/work` | Repo only; production remains `2026.10.05.27-APP` until Claude reviews the protected sell sheet. |
 | Distribution Outreach Apps Script | `2026.10.04.25-APP` in `docs/reference/distribution-outreach/Code.gs`; reported deployed 2026-10-05 | Deployed with the paired Inventory API for Cocktail list sends. |
 | Public customer Netlify proxy | `2026.10.05.4-WEB` live with the Netlify web release | Retries only a failed/non-JSON `listSkus` catalog read once; customer submissions remain single-attempt. |
 
@@ -24,6 +24,13 @@ Badger tracker safety answer (Karl, 2026-09-30): the PDF importer never writes t
 Phase 5 deployment state: staging Inventory API `2026.10.01.5` and Netlify `2026.10.01.8-WEB` are live. Next, run `seedCurrentPricesTab()` once in staging and review/activate the tracker prices with Claude before any Badger invoice creation. Never create a test invoice in Badger.
 
 Latest completed changes:
+
+- Protected web sell sheet (`2026.10.05.28-APP`, `2026.10.05.21-WEB`; repo only, 2026-10-05): adds `/sell-sheet.html`, a phone-first, US-Letter print layout with the approved **Made in Oshkosh. Poured in Your Bar.** headline and **Rooted in Tradition, Driven by Curiosity** tagline. The public view carries `noindex`, shows live active products and availability without prices, and directs licensed retailers to the application or sales@sturgeonspirits.com. The only price-bearing route is `/api/sell-sheet`: a valid non-bot signed `/go?t=sell_sheet…` visitor receives a 90-day HMAC token bound to its account, and signed-in staff can view prices too. Invalid, expired, tampered, and bot links receive the no-price view. Account-specific Customer Prices override tier price; `listSkus` remains price-free. The Hub has a Sell sheet link and each account history has **Copy customer sell-sheet link**. Links may be forwarded; the intentional 90-day expiry limits that accepted risk. `go.js` no longer reads `SELL_SHEET_URL`; set a new Netlify `SELL_SHEET_ACCESS_SECRET` (the current tracking secret is a temporary backwards-compatible fallback) before deploy. After Apps Script deployment, run `repairHubStructure()` once: it appends only the `sell_sheet_section` SKU column and validation plus the editable **SELL SHEET** Email Editor block. It never moves existing columns/cells. **Do not deploy until Claude reviews this commit.**
+
+  - Blank `sell_sheet_section` falls back in this order: canned/cocktail → Canned cocktails; bitters → Bitters; gift/box → Gift boxes; Squadron product name/tier → Squadron Spirits; bourbon/whiskey/brandy → Whiskey & Brandy; Osh-gave/agave → Agave; liqueur/coffee/amaretto/pumpkin → Liqueur; rum flavor/name → Rum; gin flavor/name → Gin; vodka/flavor name → Vodka; otherwise → Other spirits. Karl should use the dropdown for any deliberate placement; `Hide` excludes an active SKU.
+  - Initial merchandising assignment: set Straight Bourbon Whiskey to **New**; set Blackberry Vodka, Sundown Coffee Liqueur, Wisconsin Cranberry Vodka, Classic Gin, and Blood Orange Gin to **Best seller**. These labels are intentionally sheet-managed rather than product names hard-coded in the page.
+  - Canned-cocktail setup for Karl: append (never edit) one **Canned case** `$72` row in Price Tiers after confirming the case price; append five active SKUs for **Grape Popsicle, Cherry Limeade, Mango Collins, Fat Golfer, Fresh-kosh**, each with `price_tier` `Canned case`, a 12 oz size, the confirmed `units_per_case`, and `sell_sheet_section` `Canned cocktails`. One case may mix flavors. The sell sheet automatically hides this section until at least one active can SKU exists. Cans are intentionally out of scope for order-form and Badger invoicing until the 12 oz Badger unit mapping is defined.
+  - Catalog follow-up: confirm active SKU rows for Grapefruit bitters, Crosslake Traditional Brandy, and Crosslake Blackberry Brandy. Supply `assets/sell-sheet/hero.jpg` plus product images named by `sku_id` for the bourbon, five best sellers, and any SKU marked New/Best seller; the page is intentionally complete without photography today. Update Email Editor B13 (and its Campaign Settings row-24 formula) from the Drive PDF to `https://distribution.sturgeonspirits.com/sell-sheet.html` after the deployment is live.
 
 - Cocktail-list 14-day gap, resilient order catalog, and canonical public site (`2026.10.05.27-APP` Inventory API, `2026.10.05.20-WEB` web, and `2026.10.05.4-WEB` public customer proxy; deployed 2026-10-05): Cocktail list emails are at least 14 days apart from another Cocktail list or sales outreach email in either direction; sales-to-sales stage spacing is unchanged. A sales follow-up due inside this gap is left due/blocked and can send in a later campaign after the gap. The public customer proxy retries only `listSkus` once if Google returns HTML or a non-2xx response, then returns a retryable catalog error; it never retries an application or order submission. `order.html` offers a manual retry and warns that a failed submission may not have gone through. The primary public host is `https://distribution.sturgeonspirits.com`: `distribution-hub.netlify.app` now redirects there while preserving query strings. `Public site URL` is appended blank by `repairHubStructure()`; set it to the canonical host, then run the editor-only `rewritePublicSiteUrls()` once to migrate saved Account Programs order links without changing sent records or frozen campaign HTML. **Next: run `repairHubStructure()`, set `Public site URL`, run `rewritePublicSiteUrls()`, then have staff sign in at the canonical host.**
 
@@ -198,7 +205,7 @@ Record names only—never record their values here.
 - `APP_SESSION_SECRET` (a new random secret, at least 32 characters)
 - `STAFF_ROSTER_SHEET_ID` (the Hub spreadsheet ID; Hub shared Viewer with the relay service account; Google Sheets API enabled in its Cloud project)
 - `TRACKING_LINK_SECRET`
-- `SELL_SHEET_URL`
+- `SELL_SHEET_ACCESS_SECRET`
 
 ### Inventory API Script Properties
 
@@ -221,7 +228,7 @@ The shared outreach secret must match in the two Apps Script projects. Zoho mail
 ### Tracked outreach-link setup
 
 1. Add `TRACKING_LINK_SECRET` to Netlify and to both Apps Script projects. Use the same secret in all three places; do not record its value here.
-2. Add `SELL_SHEET_URL` to Netlify.
+2. Add `SELL_SHEET_ACCESS_SECRET` to Netlify. It signs the 90-day price-access tokens; it may temporarily fall back to `TRACKING_LINK_SECRET` during the rollout, but use a distinct secret for normal operation.
 3. Deploy the Netlify and Apps Script source changes, while leaving Campaign Settings `Tracking base URL` blank.
 4. Add Campaign Settings `Tracking base URL` last (for example, the Netlify `/go` path). This is the switch that enables tracked links in newly rendered outreach emails; existing campaign snapshots keep the links captured when they were created.
 

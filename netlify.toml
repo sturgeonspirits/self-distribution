@@ -1,4 +1,4 @@
-# App version: 2026.10.05.20-WEB
+# App version: 2026.10.05.21-WEB
 [build]
   publish = "."
   functions = "netlify/functions"
@@ -26,6 +26,16 @@
   status = 200
 
 [[redirects]]
+  from = "/api/sell-sheet"
+  to = "/.netlify/functions/sell-sheet"
+  status = 200
+
+[[redirects]]
   from = "/go"
   to = "/.netlify/functions/go"
   status = 200
+
+[[headers]]
+  for = "/sell-sheet.html"
+  [headers.values]
+    X-Robots-Tag = "noindex, nofollow, noarchive"
