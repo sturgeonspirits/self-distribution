@@ -1,11 +1,13 @@
 # Sturgeon Distribution Hub
 
-- Web version: `2026.09.22.7-WEB`
-- Inventory API version: `2026.09.22.4`
+- Web version: `2026.10.05.20-WEB`
+- Inventory API version: `2026.10.05.27-APP`
 
 Repository: `sturgeonspirits/sturgeon-distribution-hub`
 
 Netlify site: `sturgeon-distribution-hub`
+
+Public site: `https://distribution.sturgeonspirits.com`
 
 Customer-facing email: `sales@sturgeonspirits.com`
 
@@ -38,7 +40,7 @@ The Outreach section can add a single business or import a CSV. Imports are staf
 
 The hardened Google Sheets model is documented in `docs/hardened-google-sheets-architecture-2026-09-17.md`. It consolidates operational tabs into the existing staging Distribution Hub workbook and keeps only the existing Badger Invoice Tracker separate because it owns the proven PDF parser. No new spreadsheet file is created.
 
-Netlify publishes `customer-signup.html` at `/customer-signup.html`. Distribution Outreach adds a short wholesale-application link to initial-email footers only when Campaign Settings contains a valid public `Customer application URL`. A missing URL suppresses the link so staging and local addresses are never emailed.
+Netlify publishes `customer-signup.html` at `/customer-signup.html`. The canonical public address is `https://distribution.sturgeonspirits.com`; the Netlify redirect routes the legacy `distribution-hub.netlify.app` host there while preserving query strings. Distribution Outreach adds a short wholesale-application link to initial-email footers only when Campaign Settings contains a valid public `Customer application URL`. A missing URL suppresses the link so staging and local addresses are never emailed.
 
 New customer applications collect the Wisconsin seller's permit number. They do not collect alcohol license type, license number, or issuing municipality. Existing staging-sheet columns and historical values are retained but are no longer populated by the application.
 
@@ -54,7 +56,8 @@ Netlify environment variables required for staff login:
 
 - `ZOHO_OIDC_CLIENT_ID`
 - `ZOHO_OIDC_CLIENT_SECRET`
-- `ZOHO_OIDC_REDIRECT_URI` — `https://distribution-hub.netlify.app/api/auth?action=callback`
+- `ZOHO_OIDC_REDIRECT_URI` — `https://distribution.sturgeonspirits.com/api/auth?action=callback`
+- `PUBLIC_SITE_URL` — `https://distribution.sturgeonspirits.com`
 - `ZOHO_OIDC_ISSUER` — normally `https://accounts.zoho.com`
 - `APP_SESSION_SECRET` — a new random secret at least 32 characters long
 - `STAFF_ROSTER_SHEET_ID` — the Hub spreadsheet ID (`1tWJ2ZnFT15cjuk7qvCWbJUJX1pAQYYsbSy5owWa8Uzo`), shared Viewer with the relay service account (`GOOGLE_SA_CLIENT_EMAIL`, `GOOGLE_SA_PRIVATE_KEY`); the Google Sheets API must be enabled in that account's Cloud project. Optional `STAFF_ROSTER_TAB` overrides the tab name.
@@ -63,7 +66,7 @@ The Staff Access tab must include Email, Role, and Active. It may also include S
 
 ## Versioning
 
-Each deployable surface is stamped with its own release version. When updating Apps Script, confirm the leading `App version` and `APP_VERSION` in `apps-script/Code.gs` match. Before a Netlify release, keep the web app footer, `index.html` metadata, staff proxy, and tracking redirect on the same `-WEB` version.
+Each deployable surface is stamped with its own release version. When updating Apps Script, confirm the leading `App version` and `APP_VERSION` in `apps-script/Code.gs` match. Before a Netlify release, keep the web app footer, `index.html` metadata, staff proxy, and tracking redirect on the same `-WEB` version. The public customer proxy has its own version series.
 
 ## Deploy flow
 

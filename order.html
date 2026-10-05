@@ -1,10 +1,10 @@
 <!doctype html>
-<!-- App version: 2026.09.25.1 -->
+<!-- App version: 2026.10.05.20-WEB -->
 <html lang="en">
 <head>
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
-  <meta name="app-version" content="2026.09.25.1" />
+  <meta name="app-version" content="2026.10.05.20-WEB" />
   <title>Order request | Sturgeon Distribution Hub</title>
   <link rel="stylesheet" href="/assets/customer-portal.css?v=2026.09.25.1" />
 </head>
@@ -118,7 +118,7 @@
     "use strict";
     window.addEventListener("unhandledrejection", e => console.error("Unhandled promise rejection:", e.reason));
     window.addEventListener("error", e => console.error("Unhandled error:", e.error || e.message));
-    const APP_VERSION = "2026.10.04.1";
+    const APP_VERSION = "2026.10.05.20-WEB";
     const form = document.getElementById("orderForm");
     const linesEl = document.getElementById("orderLines");
     const loadingEl = document.getElementById("productLoading");
@@ -196,16 +196,30 @@
       document.getElementById("orderTotals").textContent = `${lines.length} product${lines.length === 1 ? "" : "s"} · ${cases} case${cases === 1 ? "" : "s"} · ${bottles} bottle${bottles === 1 ? "" : "s"}`;
     }
 
+    async function customerResponseJson(response){
+      try {
+        return await response.json();
+      } catch (_) {
+        throw new Error("The server returned an invalid response.");
+      }
+    }
+
     async function loadProducts(){
+      submit.disabled = true;
+      loadingEl.hidden = false;
+      loadingEl.textContent = "Loading current products...";
       try {
         const response = await fetch("/api/customer", {method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({action:"listSkus"})});
-        const result = await response.json();
+        const result = await customerResponseJson(response);
+        if (!response.ok) throw new Error(result.error || "Products could not be loaded.");
         if (!result.ok || !Array.isArray(result.skus)) throw new Error(result.error || "Products could not be loaded.");
         skus = result.skus;
         loadingEl.hidden = true;
+        submit.disabled = false;
         addLine();
-      } catch (error) {
-        loadingEl.textContent = `${error.message} Please email sales@sturgeonspirits.com to order.`;
+      } catch (_) {
+        loadingEl.innerHTML = `We couldn't load the product list. Try again. <button type="button" id="retryProductsBtn">Try again</button><br /><span>Please email <a href="mailto:sales@sturgeonspirits.com">sales@sturgeonspirits.com</a> to order.</span>`;
+        document.getElementById("retryProductsBtn").addEventListener("click", loadProducts, {once:true});
         submit.disabled = true;
       }
     }
@@ -233,7 +247,8 @@
       submit.textContent = "Sending...";
       try {
         const response = await fetch("/api/customer", {method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify(payload)});
-        const result = await response.json();
+        const result = await customerResponseJson(response);
+        if (!response.ok) throw new Error(result.error || "We could not send the order request.");
         if (!result.ok) throw new Error(result.error || "We could not send the order request.");
         form.hidden = true;
         document.getElementById("orderReference").textContent = `Order request: ${result.request_id}`;
@@ -242,7 +257,7 @@
         success.focus();
       } catch (error) {
         status.className = "status error";
-        status.textContent = `${error.message} Please try again or email sales@sturgeonspirits.com.`;
+        status.textContent = `${error.message} The request may not have gone through. Please try again or email sales@sturgeonspirits.com.`;
         submit.disabled = false;
         submit.textContent = "Send order request";
       }

@@ -1,10 +1,13 @@
 /*********************************
  * Inventory API (JSON) for Netlify
- * App version: 2026.10.04.26-APP
+ * App version: 2026.10.05.27-APP
  *
  * CHANGES IN THIS VERSION
- * - Updates the per-execution cross-send cooldown index immediately after every accepted sales or Cocktail list
- *   delivery, so two due campaigns in one scheduler execution cannot send both message types to one recipient.
+ * - Gives every Cocktail list recipient a 14-day gap from another Cocktail list or sales outreach email, while
+ *   preserving the existing sales-follow-up cadence. The per-execution send index continues to fail closed for
+ *   undated sends and records accepted sends before a scheduler can start another campaign.
+ * - Adds the Campaign Settings Public site URL, uses it for new order-portal links, and supplies the editor-only
+ *   rewritePublicSiteUrls() migration for saved Account Programs links. It changes only legacy Netlify-host URLs.
  *
  * CHANGES IN 2026.10.04.25-APP
  * - Makes Cocktail list delivery use the mailer's newsletter-contact action, which validates the subscribed contact
@@ -290,7 +293,7 @@
  * - Use only in the staging inventory backend until testing is complete.
  *********************************/
 
-const APP_VERSION = "2026.10.04.26-APP";
+const APP_VERSION = "2026.10.05.27-APP";
 
 const SHEET_NAMES = {
   STORES: "Stores",
@@ -352,7 +355,9 @@ const HUB_MIGRATION_STATUS_KEY = "inventory_migration_status";
 const HUB_MIGRATION_ACTIVE = "ACTIVE";
 const ORDER_CATALOG_SOURCE = "SHEETS"; // Toast remains disabled until a reviewed integration is configured.
 const OUTREACH_COCKTAIL_LIST_STAGE = "Cocktail list";
-const OUTREACH_CROSS_SEND_COOLDOWN_DAYS = 7;
+const OUTREACH_COCKTAIL_LIST_GAP_DAYS = 14;
+const PUBLIC_SITE_URL_SETTING_KEY = "Public site URL";
+const PUBLIC_SITE_URL_FALLBACK = "https://distribution-hub.netlify.app";
 const READ_CACHE_VERSION_KEY = "hub_read_cache_version";
 const READ_CACHE_TTL_SECONDS = 900;
 const READ_CACHE_CHUNK_SIZE = 45000;
@@ -851,6 +856,9 @@ const OUTREACH_COCKTAIL_LIST_SETTINGS = [
   { key:"Cocktail list distillery line", label:"Cocktail list distillery line" },
   { key:"Cocktail list reply-to-order line", label:"Cocktail list reply-to-order line" },
 ];
+const OUTREACH_PUBLIC_SITE_SETTINGS = [
+  { key:PUBLIC_SITE_URL_SETTING_KEY },
+];
 
 function ensureOutreachMonthlyContent_() {
   const hub = getOutreachSs_();
@@ -908,12 +916,19 @@ function ensureOutreachMonthlyContent_() {
     const values = missingCocktailSettings.map(item => [item.key, `='Email Editor'!B${cocktailRowsByLabel.get(item.label)}`]);
     settings.getRange(settings.getLastRow() + 1, 1, values.length, values[0].length).setValues(values);
   }
+  const refreshedSettingKeys = settings.getRange(2, 1, Math.max(1, settings.getLastRow() - 1), 1).getDisplayValues().map(row => String(row[0] || "").trim());
+  const missingPublicSiteSettings = OUTREACH_PUBLIC_SITE_SETTINGS.filter(item => !refreshedSettingKeys.includes(item.key));
+  if (missingPublicSiteSettings.length) {
+    settings.getRange(settings.getLastRow() + 1, 1, missingPublicSiteSettings.length, 2)
+      .setValues(missingPublicSiteSettings.map(item => [item.key, ""]));
+  }
   return {
     section_row:sectionRow,
     editor_rows:Object.fromEntries(rowsByLabel),
     added_settings:missingSettings.map(item => item.key),
     cocktail_list_editor_rows:Object.fromEntries(cocktailRowsByLabel),
     cocktail_list_added_settings:missingCocktailSettings.map(item => item.key),
+    public_site_added_settings:missingPublicSiteSettings.map(item => item.key),
   };
 }
 
@@ -2917,8 +2932,8 @@ function outreachRecentSendToEmail_(email, stagePredicate, days, now) {
 function outreachCrossSendCooldownReason_(email, sendingCocktailList) {
   const recentlySent = outreachRecentSendToEmail_(email,
     stage => sendingCocktailList ? stage !== OUTREACH_COCKTAIL_LIST_STAGE : stage === OUTREACH_COCKTAIL_LIST_STAGE,
-    OUTREACH_CROSS_SEND_COOLDOWN_DAYS);
-  return recentlySent ? `Another ${sendingCocktailList ? "sales outreach email" : "cocktail list email"} was sent within the last ${OUTREACH_CROSS_SEND_COOLDOWN_DAYS} days` : "";
+    OUTREACH_COCKTAIL_LIST_GAP_DAYS);
+  return recentlySent ? `Another ${sendingCocktailList ? "sales outreach email" : "cocktail list email"} was sent within the last ${OUTREACH_COCKTAIL_LIST_GAP_DAYS} days` : "";
 }
 
 function cocktailListMessage_(record, settings) {
@@ -3652,6 +3667,9 @@ function newsletterCocktailListEligibility_(record) {
   if (["unsubscribed", "declined"].includes(programStatus)) reasons.push("Account program excludes newsletter email");
   const cooldown = outreachCrossSendCooldownReason_(email, true);
   if (cooldown) reasons.push(cooldown);
+  if (outreachRecentSendToEmail_(email, stage => stage === OUTREACH_COCKTAIL_LIST_STAGE, OUTREACH_COCKTAIL_LIST_GAP_DAYS)) {
+    reasons.push(`A cocktail list email was sent within the last ${OUTREACH_COCKTAIL_LIST_GAP_DAYS} days`);
+  }
   return reasons;
 }
 
@@ -8107,6 +8125,39 @@ function ensureInventoryStoreForApplication_(application, customerId, trackInven
   return storeId;
 }
 
+function publicSiteUrl_(settings) {
+  const configured = String(settings?.[PUBLIC_SITE_URL_SETTING_KEY] || "").trim();
+  const match = configured.match(/^https:\/\/([^\s\/?#]+)(?:[\/?#].*)?$/i);
+  return match ? `https://${match[1]}` : PUBLIC_SITE_URL_FALLBACK;
+}
+
+function hasConfiguredPublicSiteUrl_(settings) {
+  return publicSiteUrl_(settings) !== PUBLIC_SITE_URL_FALLBACK || String(settings?.[PUBLIC_SITE_URL_SETTING_KEY] || "").trim() === PUBLIC_SITE_URL_FALLBACK;
+}
+
+function rewritePublicSiteUrls() {
+  const settings = getOutreachCampaignSettings_();
+  if (!hasConfiguredPublicSiteUrl_(settings)) return { changed:0, unchanged:0 };
+  const publicSiteUrl = publicSiteUrl_(settings);
+  const sheet = getOutreachProgramSheet_(false);
+  if (!sheet || sheet.getLastRow() < 2) return { changed:0, unchanged:0 };
+  const headers = getHeaderMap_(sheet);
+  if (headers.ordering_portal_url === undefined) return { changed:0, unchanged:0 };
+  const values = sheet.getRange(2, headers.ordering_portal_url + 1, sheet.getLastRow() - 1, 1).getValues();
+  let changed = 0;
+  let unchanged = 0;
+  values.forEach((row, index) => {
+    const current = String(row[0] || "").trim();
+    const legacy = current.match(/^https:\/\/distribution-hub\.netlify\.app(?=[:\/?#]|$)(.*)$/i);
+    if (!legacy) { unchanged += 1; return; }
+    const rewritten = `${publicSiteUrl}${legacy[1] || ""}`;
+    if (rewritten === current) { unchanged += 1; return; }
+    sheet.getRange(index + 2, headers.ordering_portal_url + 1).setValue(rewritten);
+    changed += 1;
+  });
+  return { changed:changed, unchanged:unchanged };
+}
+
 function upsertActiveAccountProgram_(account, customerId, applicationId, staffName) {
   const sheet = getOutreachProgramSheet_(true);
   const h = getHeaderMap_(sheet);
@@ -8119,7 +8170,8 @@ function upsertActiveAccountProgram_(account, customerId, applicationId, staffNa
   set("program_key", key); set("account_id", account.account_id); set("source_row", account.source_row);
   set("business_name", account.business); set("email", account.email); set("ordering_status", "Active");
   set("ordering_customer_id", customerId); set("ordering_invite_date", now);
-  set("ordering_portal_url", `https://distribution-hub.netlify.app/order.html?account_id=${encodeURIComponent(account.account_id)}&customer_id=${encodeURIComponent(customerId || "")}`);
+  const settings = getOutreachCampaignSettings_();
+  set("ordering_portal_url", `${publicSiteUrl_(settings)}/order.html?account_id=${encodeURIComponent(account.account_id)}&customer_id=${encodeURIComponent(customerId || "")}`);
   set("updated_at", now); set("updated_by", staffName); set("notes", `Activated from application ${applicationId}`); set("app_version", APP_VERSION);
   sheet.getRange(index >= 0 ? index + 2 : sheet.getLastRow() + 1, 1, 1, values.length).setValues([values]);
 }

@@ -1,9 +1,10 @@
-// App version: 2026.10.02.13-WEB
+// App version: 2026.10.05.20-WEB
 import { createHmac, timingSafeEqual } from "node:crypto";
 
-const APP_VERSION = "2026.10.02.13-WEB";
+const APP_VERSION = "2026.10.05.20-WEB";
 const TRACKED_TARGETS = new Set(["sell_sheet", "application"]);
 const BOT_USER_AGENT = /(bot|crawler|spider|preview|slackbot|facebookexternalhit|linkedinbot|twitterbot|discordbot|whatsapp|googleimageproxy|proofpoint|mimecast|barracuda|urlscan|virustotal|safelinks|security|scanner|curl|wget)/i;
+const PUBLIC_SITE_URL_FALLBACK = "https://distribution-hub.netlify.app";
 
 function redirect(location) {
   return {
@@ -25,13 +26,23 @@ function validSignature(target, accountId, stage, supplied, secret) {
   return expectedBytes.length === suppliedBytes.length && timingSafeEqual(expectedBytes, suppliedBytes);
 }
 
+function publicSiteUrl() {
+  const configured = String(process.env.PUBLIC_SITE_URL || "").trim();
+  try {
+    const parsed = new URL(configured);
+    return parsed.protocol === "https:" ? parsed.origin : PUBLIC_SITE_URL_FALLBACK;
+  } catch (_) {
+    return PUBLIC_SITE_URL_FALLBACK;
+  }
+}
+
 function destinationFor(target, params) {
   if (target === "sell_sheet") return String(process.env.SELL_SHEET_URL || "").trim();
-  const destination = new URL("/customer-signup.html", "https://distribution-hub.netlify.app");
+  const destination = new URL("/customer-signup.html", publicSiteUrl());
   destination.searchParams.set("account_id", params.get("a") || "");
   destination.searchParams.set("business", params.get("business") || "");
   destination.searchParams.set("email", params.get("email") || "");
-  return `${destination.pathname}?${destination.searchParams.toString()}`;
+  return destination.toString();
 }
 
 async function logClick(params) {

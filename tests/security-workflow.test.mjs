@@ -612,6 +612,50 @@ test("public customer proxy remains narrowly allowlisted", async () => {
   assert.equal(blocked.statusCode, 403);
 });
 
+test("customer catalog retries one non-JSON or failed upstream response, while submits stay single-attempt", async () => {
+  const { handler } = await loadFunction("netlify/functions/customer.js", "customer-catalog-retry");
+  process.env.APPS_SCRIPT_URL = "https://example.test/exec";
+  process.env.API_KEY = "backend-key";
+  const originalSetTimeout = globalThis.setTimeout;
+  globalThis.setTimeout = callback => { callback(); return 0; };
+  try {
+    let calls = 0;
+    globalThis.fetch = async () => {
+      calls += 1;
+      return calls === 1
+        ? new Response("<HTML><HEAD><TITLE>Google error</TITLE></HEAD></HTML>", { status:200, headers:{ "content-type":"text/html" } })
+        : new Response(JSON.stringify({ ok:true, skus:[] }), { status:200, headers:{ "content-type":"application/json" } });
+    };
+    const recovered = await handler(event("listSkus"));
+    assert.equal(calls, 2, "listSkus retries once after HTML");
+    assert.equal(recovered.statusCode, 200);
+    assert.equal(JSON.parse(recovered.body).ok, true);
+
+    calls = 0;
+    globalThis.fetch = async () => {
+      calls += 1;
+      return new Response("<HTML>temporary error</HTML>", { status:503, headers:{ "content-type":"text/html" } });
+    };
+    const unavailable = await handler(event("listSkus"));
+    assert.equal(calls, 2, "listSkus stops after one retry");
+    assert.equal(unavailable.statusCode, 502);
+    assert.deepEqual(JSON.parse(unavailable.body), { ok:false, retryable:true, error:"The order catalog is temporarily unavailable." });
+
+    for (const action of ["submitCustomerApplication", "submitOnlineOrderRequest"]) {
+      calls = 0;
+      globalThis.fetch = async () => {
+        calls += 1;
+        return new Response("<HTML>temporary error</HTML>", { status:200, headers:{ "content-type":"text/html" } });
+      };
+      const response = await handler(event(action));
+      assert.equal(calls, 1, `${action} is never retried`);
+      assert.equal(response.statusCode, 502);
+    }
+  } finally {
+    globalThis.setTimeout = originalSetTimeout;
+  }
+});
+
 function goEvent(params, userAgent = "Mozilla/5.0") {
   return { httpMethod:"GET", rawQuery:new URLSearchParams(params).toString(), headers:{ "user-agent":userAgent } };
 }
@@ -625,6 +669,7 @@ test("tracking redirect allowlists destinations and ignores invalid signatures",
   process.env.TRACKING_LINK_SECRET = "tracking-test-secret";
   process.env.SELL_SHEET_URL = "https://example.test/sell-sheet";
   process.env.APPS_SCRIPT_URL = "https://example.test/exec";
+  process.env.PUBLIC_SITE_URL = "https://distribution.sturgeonspirits.com";
   let fetches = 0;
   globalThis.fetch = async () => { fetches += 1; return new Response(JSON.stringify({ ok:true }), { status:200 }); };
   const unknown = await handler(goEvent({ t:"https://attacker.test", url:"https://attacker.test" }));
@@ -635,9 +680,55 @@ test("tracking redirect allowlists destinations and ignores invalid signatures",
   assert.equal(fetches, 0);
   const application = await handler(goEvent({ t:"application", a:"ACC-1", s:"Initial", k:"bad", business:"Example Bar", email:"orders@example.test", url:"https://attacker.test" }));
   assert.equal(application.statusCode, 302);
-  assert.match(application.headers.Location, /^\/customer-signup\.html\?/);
-  assert.equal(new URL(application.headers.Location, "https://distribution-hub.netlify.app").searchParams.get("business"), "Example Bar");
+  assert.match(application.headers.Location, /^https:\/\/distribution\.sturgeonspirits\.com\/customer-signup\.html\?/);
+  assert.equal(new URL(application.headers.Location).searchParams.get("business"), "Example Bar");
   assert.doesNotMatch(application.headers.Location, /attacker\.test/);
+
+  process.env.PUBLIC_SITE_URL = "http://attacker.test";
+  const fallback = await handler(goEvent({ t:"application", a:"ACC-1", s:"Initial", k:"bad" }));
+  assert.match(fallback.headers.Location, /^https:\/\/distribution-hub\.netlify\.app\/customer-signup\.html\?/);
+  process.env.PUBLIC_SITE_URL = "";
+  const blankFallback = await handler(goEvent({ t:"application", a:"ACC-1", s:"Initial", k:"bad" }));
+  assert.match(blankFallback.headers.Location, /^https:\/\/distribution-hub\.netlify\.app\/customer-signup\.html\?/);
+});
+
+test("the canonical-host redirect is first and public-site URL migration is safe and idempotent", async () => {
+  const [toml, backend] = await Promise.all([
+    readFile(new URL("netlify.toml", root), "utf8"),
+    readFile(new URL("apps-script/Code.gs", root), "utf8"),
+  ]);
+  const redirects = toml.slice(toml.indexOf("[[redirects]]"));
+  assert.match(redirects, /^\[\[redirects\]\]\n  from = "https:\/\/distribution-hub\.netlify\.app\/\*"\n  to = "https:\/\/distribution\.sturgeonspirits\.com\/:splat"\n  status = 301\n  force = true/);
+  assert.ok(toml.indexOf("https://distribution-hub.netlify.app/*") < toml.indexOf('from = "/api/inventory"'), "host redirect precedes API rewrites");
+  assert.doesNotMatch(toml.slice(toml.indexOf("https://distribution-hub.netlify.app/*"), toml.indexOf('from = "/api/inventory"')), /query\s*=/, "Netlify forwards 301 query strings without a query-match rule");
+
+  const helperSource = backend.slice(backend.indexOf("function publicSiteUrl_"), backend.indexOf("function upsertActiveAccountProgram_"));
+  const values = [
+    ["https://distribution-hub.netlify.app/order.html?account_id=ACC-1&customer_id=C-1"],
+    ["https://other.example/order.html?account_id=ACC-2"],
+    [""],
+  ];
+  const writes = [];
+  const sheet = {
+    getLastRow:() => values.length + 1,
+    getRange:(row, _column, rows) => rows
+      ? { getValues:() => values.map(item => item.slice()) }
+      : { setValue:value => { writes.push({ row, value }); values[row - 2][0] = value; } },
+  };
+  const migration = new Function("getOutreachCampaignSettings_", "getOutreachProgramSheet_", "getHeaderMap_", "PUBLIC_SITE_URL_SETTING_KEY", "PUBLIC_SITE_URL_FALLBACK", `${helperSource}\nreturn { publicSiteUrl_, rewritePublicSiteUrls_ : rewritePublicSiteUrls };`)(
+    () => ({ "Public site URL":"https://distribution.sturgeonspirits.com" }),
+    () => sheet,
+    () => ({ ordering_portal_url:0 }),
+    "Public site URL",
+    "https://distribution-hub.netlify.app",
+  );
+  assert.equal(migration.publicSiteUrl_({}), "https://distribution-hub.netlify.app", "blank setting falls back");
+  assert.equal(migration.publicSiteUrl_({ "Public site URL":"http://attacker.test" }), "https://distribution-hub.netlify.app", "non-HTTPS setting falls back");
+  assert.deepEqual(migration.rewritePublicSiteUrls_(), { changed:1, unchanged:2 });
+  assert.equal(writes[0].value, "https://distribution.sturgeonspirits.com/order.html?account_id=ACC-1&customer_id=C-1");
+  assert.deepEqual(migration.rewritePublicSiteUrls_(), { changed:0, unchanged:3 }, "a second migration does not rewrite anything");
+  assert.match(backend, /set\("ordering_portal_url", `\$\{publicSiteUrl_\(settings\)\}\/order\.html\?/);
+  assert.match(backend, /public_site_added_settings/);
 });
 
 test("tracking logging failure or timeout never prevents a redirect", async () => {
@@ -807,13 +898,16 @@ test("Cocktail list campaigns keep newsletter eligibility, cross-send guards, an
     readFile(new URL("netlify/functions/inventory.js", root), "utf8"),
   ]);
   const eligibilitySource = backend.slice(backend.indexOf("function newsletterCocktailListEligibility_"), backend.indexOf("function campaignCocktailListRecords_"));
-  const eligibility = new Function("outreachCrossSendCooldownReason_", `${eligibilitySource}\nreturn newsletterCocktailListEligibility_;`)(
-    (email, cocktail) => email === "recent@example.test" && cocktail ? "Another sales outreach email was sent within the last 7 days" : ""
+  const eligibility = new Function("outreachCrossSendCooldownReason_", "outreachRecentSendToEmail_", "OUTREACH_COCKTAIL_LIST_STAGE", "OUTREACH_COCKTAIL_LIST_GAP_DAYS", `${eligibilitySource}\nreturn newsletterCocktailListEligibility_;`)(
+    (email, cocktail) => email === "recent@example.test" && cocktail ? "Another sales outreach email was sent within the last 14 days" : "",
+    () => false,
+    "Cocktail list",
+    14,
   );
   assert.deepEqual(eligibility({ email:"subscribed@example.test", newsletter_status:"Subscribed", do_not_email:false }), []);
   assert.match(eligibility({ email:"unsubscribed@example.test", newsletter_status:"Unsubscribed", do_not_email:false }).join("; "), /not subscribed/);
   assert.match(eligibility({ email:"subscribed@example.test", newsletter_status:"Subscribed", do_not_email:true }).join("; "), /excluded/);
-  assert.match(eligibility({ email:"recent@example.test", newsletter_status:"Subscribed", do_not_email:false }).join("; "), /last 7 days/);
+  assert.match(eligibility({ email:"recent@example.test", newsletter_status:"Subscribed", do_not_email:false }).join("; "), /last 14 days/);
   assert.match(backend, /campaign_type === "cocktail_list"/);
   assert.match(backend, /stage:OUTREACH_COCKTAIL_LIST_STAGE/);
   assert.match(backend, /liveCocktailListRecipient_/);
@@ -841,28 +935,38 @@ test("Cocktail list review fixes memoize cooldowns, suppress opt-outs, validate 
   ]);
   const recentSource = backend.slice(backend.indexOf("function outreachRecentSendIndex_"), backend.indexOf("function cocktailListMessage_"));
   const rows = [
-    { intended_recipient:"sales-to-cocktail@example.test", message_stage:"Initial", result:"APP SENT", timestamp:"2026-10-04T12:00:00Z" },
-    { intended_recipient:"cocktail-to-sales@example.test", message_stage:"Cocktail list", result:"APP SENT", timestamp:"2026-10-02T12:00:00Z" },
-    { intended_recipient:"day-eight@example.test", message_stage:"Initial", result:"APP SENT", timestamp:"2026-09-27T12:00:00Z" },
+    { intended_recipient:"sales-to-cocktail-day-13@example.test", message_stage:"Initial", result:"APP SENT", timestamp:"2026-10-03T12:00:00Z" },
+    { intended_recipient:"sales-to-cocktail-day-15@example.test", message_stage:"Initial", result:"APP SENT", timestamp:"2026-10-01T12:00:00Z" },
+    { intended_recipient:"cocktail-to-sales-day-13@example.test", message_stage:"Cocktail list", result:"APP SENT", timestamp:"2026-10-03T12:00:00Z" },
+    { intended_recipient:"cocktail-to-sales-day-15@example.test", message_stage:"Cocktail list", result:"APP SENT", timestamp:"2026-10-01T12:00:00Z" },
+    { intended_recipient:"cocktail-to-cocktail-day-13@example.test", message_stage:"Cocktail list", result:"APP SENT", timestamp:"2026-10-03T12:00:00Z" },
+    { intended_recipient:"cocktail-to-cocktail-day-15@example.test", message_stage:"Cocktail list", result:"APP SENT", timestamp:"2026-10-01T12:00:00Z" },
+    { intended_recipient:"sales-to-sales-day-eight@example.test", message_stage:"Initial", result:"APP SENT", timestamp:"2026-10-08T12:00:00Z" },
   ];
   let activityReads = 0;
-  const recent = new Function("getOutreachSheet_", "getAllRowsAsObjects_", "outreachValue_", "outreachDate_", "OUTREACH_ACTIVITY_SHEET_NAME", "OUTREACH_COCKTAIL_LIST_STAGE", "OUTREACH_CROSS_SEND_COOLDOWN_DAYS", `let __OUTREACH_RECENT_SEND_INDEX = null; ${recentSource}; return { outreachRecentSendToEmail_, outreachCrossSendCooldownReason_, outreachNoteRecentSend_ };`)(
+  const recent = new Function("getOutreachSheet_", "getAllRowsAsObjects_", "outreachValue_", "outreachDate_", "OUTREACH_ACTIVITY_SHEET_NAME", "OUTREACH_COCKTAIL_LIST_STAGE", "OUTREACH_COCKTAIL_LIST_GAP_DAYS", `let __OUTREACH_RECENT_SEND_INDEX = null; ${recentSource}; return { outreachRecentSendToEmail_, outreachCrossSendCooldownReason_, outreachNoteRecentSend_ };`)(
     () => ({ getLastRow:() => rows.length + 1 }),
     () => { activityReads += 1; return rows; },
     (row, keys) => keys.map(key => row[key]).find(value => value !== undefined && value !== ""),
     value => { const date = value ? new Date(value) : null; return date && !Number.isNaN(date.getTime()) ? date : ""; },
-    "Activity Log", "Cocktail list", 7,
+    "Activity Log", "Cocktail list", 14,
   );
-  const now = new Date("2026-10-10T12:00:00Z");
-  assert.equal(recent.outreachRecentSendToEmail_("sales-to-cocktail@example.test", stage => stage !== "Cocktail list", 7, now), true, "a six-day sales message blocks Cocktail list");
-  assert.equal(recent.outreachRecentSendToEmail_("cocktail-to-sales@example.test", stage => stage === "Cocktail list", 7, now), false, "an eight-day Cocktail list message permits sales outreach");
-  assert.equal(recent.outreachRecentSendToEmail_("day-eight@example.test", stage => stage !== "Cocktail list", 7, now), false, "day eight is outside the cooldown");
+  const now = new Date("2026-10-16T12:00:00Z");
+  assert.equal(recent.outreachRecentSendToEmail_("cocktail-to-cocktail-day-13@example.test", stage => stage === "Cocktail list", 14, now), true, "a Cocktail list message 13 days ago blocks another Cocktail list email");
+  assert.equal(recent.outreachRecentSendToEmail_("cocktail-to-cocktail-day-15@example.test", stage => stage === "Cocktail list", 14, now), false, "a Cocktail list message 15 days ago allows another Cocktail list email");
+  assert.equal(recent.outreachRecentSendToEmail_("sales-to-cocktail-day-13@example.test", stage => stage !== "Cocktail list", 14, now), true, "a sales message 13 days ago blocks Cocktail list");
+  assert.equal(recent.outreachRecentSendToEmail_("sales-to-cocktail-day-15@example.test", stage => stage !== "Cocktail list", 14, now), false, "a sales message 15 days ago permits Cocktail list");
+  assert.equal(recent.outreachRecentSendToEmail_("cocktail-to-sales-day-13@example.test", stage => stage === "Cocktail list", 14, now), true, "a Cocktail list message 13 days ago blocks sales outreach");
+  assert.equal(recent.outreachRecentSendToEmail_("cocktail-to-sales-day-15@example.test", stage => stage === "Cocktail list", 14, now), false, "a Cocktail list message 15 days ago permits sales outreach");
+  assert.equal(recent.outreachRecentSendToEmail_("sales-to-sales-day-eight@example.test", stage => stage === "Cocktail list", 14, now), false, "a sales Follow-up 1 eight days after Initial remains allowed without Cocktail list activity");
   assert.equal(activityReads, 1, "all cooldown checks share one Activity Log read per execution");
-  recent.outreachNoteRecentSend_("same-scheduler@example.test", "sales", now);
-  assert.equal(recent.outreachRecentSendToEmail_("same-scheduler@example.test", stage => stage !== "Cocktail list", 7, now), true, "a sales send recorded during this execution blocks a later Cocktail list campaign");
+  recent.outreachNoteRecentSend_("same-scheduler@example.test", "cocktail", now);
+  assert.equal(recent.outreachRecentSendToEmail_("same-scheduler@example.test", stage => stage === "Cocktail list", 14, now), true, "a Cocktail list send recorded during this execution blocks a second Cocktail list campaign");
 
   const eligibilitySource = backend.slice(backend.indexOf("function newsletterCocktailListEligibility_"), backend.indexOf("function cocktailListContactIndex_"));
-  const eligibility = new Function("outreachCrossSendCooldownReason_", `${eligibilitySource}; return newsletterCocktailListEligibility_;`)(() => "");
+  const eligibility = new Function("outreachCrossSendCooldownReason_", "outreachRecentSendToEmail_", "OUTREACH_COCKTAIL_LIST_STAGE", "OUTREACH_COCKTAIL_LIST_GAP_DAYS", `${eligibilitySource}; return newsletterCocktailListEligibility_;`)(
+    () => "", () => false, "Cocktail list", 14,
+  );
   assert.match(eligibility({ email:"x@example.test", newsletter_status:"Subscribed", directory_outcome:"Unsubscribed" }).join("; "), /excluded/);
   assert.match(eligibility({ email:"x@example.test", newsletter_status:"Subscribed", program_newsletter_status:"Declined" }).join("; "), /program excludes/);
 

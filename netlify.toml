@@ -1,8 +1,14 @@
-# App version: 2026.10.03.16-WEB
+# App version: 2026.10.05.20-WEB
 [build]
   publish = "."
   functions = "netlify/functions"
   ignore = "git diff --quiet $CACHED_COMMIT_REF $COMMIT_REF -- . ':(exclude)PROJECT_STATUS.md' ':(exclude)README.md' ':(exclude)docs/' ':(exclude)apps-script/' ':(exclude)tests/'"
+
+[[redirects]]
+  from = "https://distribution-hub.netlify.app/*"
+  to = "https://distribution.sturgeonspirits.com/:splat"
+  status = 301
+  force = true
 
 [[redirects]]
   from = "/api/inventory"

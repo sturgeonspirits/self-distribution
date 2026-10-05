@@ -1,10 +1,10 @@
 <!doctype html>
-<!-- App version: 2026.10.04.19-WEB -->
+<!-- App version: 2026.10.05.20-WEB -->
 <html>
 <head>
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover"/>
-  <meta name="app-version" content="2026.10.04.19-WEB" />
+  <meta name="app-version" content="2026.10.05.20-WEB" />
   <meta name="theme-color" content="#536f77" />
   <link rel="icon" href="/assets/distribution-hub-icon.svg" type="image/svg+xml" />
   <link rel="manifest" href="/site.webmanifest" />
@@ -2667,7 +2667,7 @@
 
   <footer style="max-width:1200px;margin:18px auto 120px;padding:0 12px;text-align:center;color:#6b7280;font-size:12px;">
     Designed by <a href="https://scriptspirit.dev" target="_blank" rel="noopener noreferrer" style="color:#1d4ed8;text-decoration:none;font-weight:700;">Script Spirit</a>
-<span id="appVersionFooter"> • Version 2026.10.04.19-WEB</span>
+<span id="appVersionFooter"> • Version 2026.10.05.20-WEB</span>
   </footer>
 
 
@@ -2690,7 +2690,7 @@
   window.addEventListener("unhandledrejection", e => console.error("Unhandled promise rejection:", e.reason));
   window.addEventListener("error", e => console.error("Unhandled error:", e.error || e.message));
   const $ = (id) => document.getElementById(id);
-  const APP_VERSION = "2026.10.04.19-WEB";
+  const APP_VERSION = "2026.10.05.20-WEB";
   $("appVersionFooter").textContent = ` • Version ${APP_VERSION}`;
   function screenCacheKey(screen){ return `distribution_hub:${APP_VERSION}:${staffSession?.email || "unknown"}:${screen}`; }
   function readScreenCache(screen){
@@ -4153,7 +4153,7 @@
     document.querySelectorAll("[data-campaign-sales-only]").forEach(field => field.hidden = cocktailList);
     const notice = $("outreachCampaignCriteriaDialog").querySelector(".modeNotice span");
     if (notice) notice.textContent = cocktailList
-      ? "Cocktail list campaigns go only to subscribed newsletter contacts. They use the saved monthly newsletter template, a physical mailing address, and the seven-day cross-send guard."
+      ? "Cocktail list campaigns go only to subscribed newsletter contacts. They use the saved monthly newsletter template, a physical mailing address, and a 14-day email gap."
       : "Choose the email stage first. Initial campaigns use the location and fit criteria below; follow-up and nurture campaigns select only recipients already due for that stage. Preview first; creation only happens after you confirm the preview.";
   }
 
@@ -4197,7 +4197,7 @@
       const stageLabel = criteria.campaign_type === "cocktail_list" ? "eligible subscribed newsletter contact" : criteria.stage === "Initial" ? "eligible initial prospect" : `eligible ${criteria.stage.toLowerCase()} recipient`;
       $("outreachCampaignPreviewSummary").textContent = `${Number(res.recipient_count || 0)} ${stageLabel}${Number(res.recipient_count || 0) === 1 ? "" : "s"} • ${res.audience || "Selected criteria"}`;
       const cocktailList = criteria.campaign_type === "cocktail_list";
-      $("outreachCampaignPreviewRecipients").innerHTML = (res.recipients || []).length ? res.recipients.map(recipient => `<article class="outreachCard"><div class="outreachCardTop"><div><div class="businessName">${escapeHtml(recipient.business)}</div><div class="contactLine">${cocktailList ? `${escapeHtml(recipient.email || "No email")} • ${escapeHtml(recipient.status || "Subscribed")}` : `${escapeHtml(recipient.city || "City missing")} ${recipient.postal_code ? `• ${escapeHtml(recipient.postal_code)}` : ""} • ${recipient.miles_from_center === null || recipient.miles_from_center === undefined ? "Miles missing" : `${escapeHtml(recipient.miles_from_center)} mi from center`} • Fit ${escapeHtml(recipient.craft_spirit_fit)} • ${escapeHtml(recipient.status || "No status")}`}</div>${cocktailList ? "" : `<div class="smallMuted">${escapeHtml(recipient.email || "No email")} ${recipient.last_emailed ? `• Last emailed ${escapeHtml(formatOutreachDate(recipient.last_emailed))}` : "• Not previously emailed"}</div>`}</div></div></article>`).join("") : `<div class="outreachEmpty"><strong>${cocktailList ? "No subscribed newsletter contacts are currently eligible" : "No eligible prospects match these criteria"}</strong><span>${cocktailList ? "Check contact consent, unsubscribe status, and the seven-day cross-send guard." : "Change the center, radius, fit, or optional filters and preview again."}</span></div>`;
+      $("outreachCampaignPreviewRecipients").innerHTML = (res.recipients || []).length ? res.recipients.map(recipient => `<article class="outreachCard"><div class="outreachCardTop"><div><div class="businessName">${escapeHtml(recipient.business)}</div><div class="contactLine">${cocktailList ? `${escapeHtml(recipient.email || "No email")} • ${escapeHtml(recipient.status || "Subscribed")}` : `${escapeHtml(recipient.city || "City missing")} ${recipient.postal_code ? `• ${escapeHtml(recipient.postal_code)}` : ""} • ${recipient.miles_from_center === null || recipient.miles_from_center === undefined ? "Miles missing" : `${escapeHtml(recipient.miles_from_center)} mi from center`} • Fit ${escapeHtml(recipient.craft_spirit_fit)} • ${escapeHtml(recipient.status || "No status")}`}</div>${cocktailList ? "" : `<div class="smallMuted">${escapeHtml(recipient.email || "No email")} ${recipient.last_emailed ? `• Last emailed ${escapeHtml(formatOutreachDate(recipient.last_emailed))}` : "• Not previously emailed"}</div>`}</div></div></article>`).join("") : `<div class="outreachEmpty"><strong>${cocktailList ? "No subscribed newsletter contacts are currently eligible" : "No eligible prospects match these criteria"}</strong><span>${cocktailList ? "Check contact consent, unsubscribe status, and the 14-day email gap." : "Change the center, radius, fit, or optional filters and preview again."}</span></div>`;
       $("outreachCampaignPreview").hidden = false;
       $("createOutreachCampaignCriteriaBtn").disabled = !Number(res.recipient_count || 0);
       refreshIcons();

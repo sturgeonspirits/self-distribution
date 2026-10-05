@@ -1,6 +1,6 @@
 # Sturgeon Distribution Hub — Project Status
 
-Last updated: 2026-10-04
+Last updated: 2026-10-05
 
 Read this file before inspecting the repository or changing the application. Update it whenever a deployment, version, service URL, known issue, or required setup step changes. Never put secret values in this file.
 
@@ -8,10 +8,10 @@ Read this file before inspecting the repository or changing the application. Upd
 
 | Component | Source version | Deployment state |
 | --- | --- | --- |
-| Netlify web app and staff proxy | `2026.10.04.19-WEB` live on `codex/distribution-system-foundation` | Promoted 2026-10-05 and confirmed from the live page. |
-| Inventory API Apps Script | `2026.10.04.26-APP` on `codex/work`; reported deployed 2026-10-05 | `.26` fixes scheduler-run cross-send cooldown freshness. Run `installHubReadCacheWarmer()` once if it was not already run after this deployment. |
+| Netlify web app and staff proxy | `2026.10.05.20-WEB` on `codex/work`; awaiting Claude review | `.19-WEB` is live on `codex/distribution-system-foundation`. This batch makes `distribution.sturgeonspirits.com` canonical and adds public order-catalog recovery. |
+| Inventory API Apps Script | `2026.10.05.27-APP` on `codex/work`; awaiting Claude review | `.26` is deployed. `.27` adds the 14-day Cocktail list gap and canonical order-portal URL setting/migration. |
 | Distribution Outreach Apps Script | `2026.10.04.25-APP` in `docs/reference/distribution-outreach/Code.gs`; reported deployed 2026-10-05 | Deployed with the paired Inventory API for Cocktail list sends. |
-| Public customer Netlify proxy | `2026.09.18.3-WEB` | Deployed with Netlify; unchanged by the latest staff-app UI work |
+| Public customer Netlify proxy | `2026.10.05.4-WEB` on `codex/work`; awaiting Claude review | Retries only a failed/non-JSON `listSkus` catalog read once; customer submissions remain single-attempt. |
 
 Current Git branch: `codex/work` (development). Netlify production builds `codex/distribution-system-foundation`; after Claude review, promote with `git push origin codex/work:codex/distribution-system-foundation` (fast-forward only). Never commit directly to the production branch, so the two cannot diverge again.
 
@@ -24,6 +24,8 @@ Badger tracker safety answer (Karl, 2026-09-30): the PDF importer never writes t
 Phase 5 deployment state: staging Inventory API `2026.10.01.5` and Netlify `2026.10.01.8-WEB` are live. Next, run `seedCurrentPricesTab()` once in staging and review/activate the tracker prices with Claude before any Badger invoice creation. Never create a test invoice in Badger.
 
 Latest completed changes:
+
+- Cocktail-list 14-day gap, resilient order catalog, and canonical public site (`2026.10.05.27-APP` Inventory API, `2026.10.05.20-WEB` web, and `2026.10.05.4-WEB` public customer proxy; repo only, 2026-10-05): Cocktail list emails are at least 14 days apart from another Cocktail list or sales outreach email in either direction; sales-to-sales stage spacing is unchanged. A sales follow-up due inside this gap is left due/blocked and can send in a later campaign after the gap. The public customer proxy retries only `listSkus` once if Google returns HTML or a non-2xx response, then returns a retryable catalog error; it never retries an application or order submission. `order.html` offers a manual retry and warns that a failed submission may not have gone through. The primary public host is `https://distribution.sturgeonspirits.com`: the production Netlify batch will redirect `distribution-hub.netlify.app` there while preserving query strings. `Public site URL` is appended blank by `repairHubStructure()`; set it to the canonical host, then run the editor-only `rewritePublicSiteUrls()` once to migrate saved Account Programs order links without changing sent records or frozen campaign HTML. **Do not deploy yet: first obtain Claude review. Then deploy Inventory API `.27`, run `repairHubStructure()`, set `Public site URL`, run `rewritePublicSiteUrls()`, and promote the web batch. Staff then sign in at the canonical host.**
 
 - Outreach Deploy B scheduler cooldown fix (`2026.10.04.26-APP` Inventory API, `2026.10.04.25-APP` Distribution Outreach mailer, and `2026.10.04.19-WEB`; deployed 2026-10-05): after each accepted sales or Cocktail list send, the existing per-execution cooldown index records that send before the scheduler can start another due campaign. A recipient present in a sales and Cocktail list campaign due in the same scheduler execution is therefore blocked from the second message. The optional same-type Cocktail-list cadence is intentionally unchanged pending Karl's decision. **After deployment, run `repairHubStructure()` once if it has not already been run, then complete the reviewed template-content steps.**
 
@@ -126,9 +128,10 @@ Latest completed changes:
 
 ### Application
 
-- Staff app: https://distribution-hub.netlify.app/
-- Customer signup: https://distribution-hub.netlify.app/customer-signup.html
-- Customer order request: https://distribution-hub.netlify.app/order.html
+- Canonical public site (after the next Netlify deploy): https://distribution.sturgeonspirits.com/
+- Customer signup: https://distribution.sturgeonspirits.com/customer-signup.html
+- Customer order request: https://distribution.sturgeonspirits.com/order.html
+- Legacy staff app until that deploy: https://distribution-hub.netlify.app/
 - Netlify project: https://app.netlify.com/projects/distribution-hub/overview
 - GitHub review branch: https://github.com/sturgeonspirits/self-distribution/tree/codex/work
 
@@ -190,6 +193,7 @@ Record names only—never record their values here.
 - `ZOHO_OIDC_CLIENT_ID`
 - `ZOHO_OIDC_CLIENT_SECRET`
 - `ZOHO_OIDC_REDIRECT_URI`
+- `PUBLIC_SITE_URL`
 - `ZOHO_OIDC_ISSUER` (use `https://accounts.zoho.com` unless the organization uses another Zoho data center)
 - `APP_SESSION_SECRET` (a new random secret, at least 32 characters)
 - `STAFF_ROSTER_SHEET_ID` (the Hub spreadsheet ID; Hub shared Viewer with the relay service account; Google Sheets API enabled in its Cloud project)
