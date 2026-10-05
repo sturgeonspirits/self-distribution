@@ -8,7 +8,7 @@ Read this file before inspecting the repository or changing the application. Upd
 
 | Component | Source version | Deployment state |
 | --- | --- | --- |
-| Netlify web app and staff proxy | `2026.10.05.25-WEB` on `codex/work` | Production build triggered from `994e6ff` on 2026-10-05; verify the published Netlify build before treating it as live. |
+| Netlify web app and staff proxy | `2026.10.05.26-WEB` on `codex/work` | Repo only; the May-PDF visual rebuild awaits Claude review before any further promotion. |
 | Inventory API Apps Script | `2026.10.05.30-APP` on `codex/work` | Repo only; production remains `2026.10.05.27-APP` until Claude reviews the protected sell sheet. |
 | Distribution Outreach Apps Script | `2026.10.04.25-APP` in `docs/reference/distribution-outreach/Code.gs`; reported deployed 2026-10-05 | Deployed with the paired Inventory API for Cocktail list sends. |
 | Public customer Netlify proxy | `2026.10.05.4-WEB` live with the Netlify web release | Retries only a failed/non-JSON `listSkus` catalog read once; customer submissions remain single-attempt. |
@@ -24,6 +24,8 @@ Badger tracker safety answer (Karl, 2026-09-30): the PDF importer never writes t
 Phase 5 deployment state: staging Inventory API `2026.10.01.5` and Netlify `2026.10.01.8-WEB` are live. Next, run `seedCurrentPricesTab()` once in staging and review/activate the tracker prices with Claude before any Badger invoice creation. Never create a test invoice in Badger.
 
 Latest completed changes:
+
+- May-PDF visual rebuild (`2026.10.05.30-APP`, `2026.10.05.26-WEB`; repo only, 2026-10-05): replaces the accumulated sell-sheet layout with one front-end renderer organized to match the supplied May pages: compact heavy display type, a large price composition, larger serif best-seller labels, a lower-page story and wordmark, balanced two-column product lists, and a full three-row bottle grid with the logo/contact directly beneath. Group labels and shortened flavor names follow the PDF. Price/access behavior, tokens, order links, noindex headers, and asset paths are unchanged. **Do not deploy until Claude compares this commit against the supplied reference pages.**
 
 - Sell-sheet priced-print density fix (`2026.10.05.30-APP`, `2026.10.05.25-WEB`; repo only, 2026-10-05): reduces only the printed page-two title, lead spacing, and flavor-list type size so the priced live catalog fits two US-Letter pages as well as the public catalog. No web, phone, pricing, or access logic changes. **No production deployment has been performed.**
 
