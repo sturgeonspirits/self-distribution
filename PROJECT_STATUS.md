@@ -8,7 +8,7 @@ Read this file before inspecting the repository or changing the application. Upd
 
 | Component | Source version | Deployment state |
 | --- | --- | --- |
-| Netlify web app and staff proxy | `2026.10.05.25-WEB` on `codex/work` | Repo only; production remains `2026.10.05.20-WEB` until the sell-sheet deployment steps are explicitly approved. |
+| Netlify web app and staff proxy | `2026.10.05.25-WEB` on `codex/work` | Production build triggered from `994e6ff` on 2026-10-05; verify the published Netlify build before treating it as live. |
 | Inventory API Apps Script | `2026.10.05.30-APP` on `codex/work` | Repo only; production remains `2026.10.05.27-APP` until Claude reviews the protected sell sheet. |
 | Distribution Outreach Apps Script | `2026.10.04.25-APP` in `docs/reference/distribution-outreach/Code.gs`; reported deployed 2026-10-05 | Deployed with the paired Inventory API for Cocktail list sends. |
 | Public customer Netlify proxy | `2026.10.05.4-WEB` live with the Netlify web release | Retries only a failed/non-JSON `listSkus` catalog read once; customer submissions remain single-attempt. |
