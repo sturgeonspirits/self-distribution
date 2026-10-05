@@ -1,12 +1,14 @@
 /*********************************
  * Inventory API (JSON) for Netlify
- * App version: 2026.10.05.29-APP
+ * App version: 2026.10.05.30-APP
  *
  * CHANGES IN THIS VERSION
  * - Sets the editable sell-sheet headline default to "Oshkosh's First Distillery Since 1919" for the May-style
  *   product sheet. Existing Email Editor content remains untouched.
  * - Makes conflicting active Customer Prices rows explicitly unpriceable in the sell sheet, matching invoicing,
  *   and classifies gift boxes before canned cocktails when no SKU section is selected.
+ * - Routes known liqueur SKU prefixes and liqueur product names to Liqueur so active products are retained in the
+ *   sell-sheet catalog when Karl has not selected an explicit section.
  * - Retains the protected sell-sheet read: an append-only SELL SHEET editor block, sell_sheet_section SKU dropdown,
  *   live active-SKU grouping and availability, and account-aware wholesale prices only when the Netlify proxy has
  *   verified a staff session or a time-limited customer link. The public listSkus response remains price-free.
@@ -302,7 +304,7 @@
  * - Use only in the staging inventory backend until testing is complete.
  *********************************/
 
-const APP_VERSION = "2026.10.05.29-APP";
+const APP_VERSION = "2026.10.05.30-APP";
 
 const SHEET_NAMES = {
   STORES: "Stores",
@@ -1373,7 +1375,7 @@ function sellSheetSectionForSku_(sku) {
   if (/squadron|spitfire|mustang|hellcat|flying fortress/.test(key)) return "Squadron Spirits";
   if (/bourbon|whiskey|whisky|brandy/.test(key)) return "Whiskey & Brandy";
   if (/osh.?gave|agave/.test(key)) return "Agave";
-  if (/liqueur|amaretto|coffee|pumpkin/.test(key)) return "Liqueur";
+  if (/^stur-liq-|liqueur|amaretto|coffee|pumpkin|limoncello|triple sec|creme|curacao/.test(key)) return "Liqueur";
   if (/\brum\b|banana|coconut|pineapple|mango/.test(key)) return "Rum";
   if (/\bgin\b|blood orange|lavender|rhubarb|rosemary|sage|thyme/.test(key)) return "Gin";
   if (/vodka|river run|bacon|basil|black pepper|blackberry|candy cane|cinnamon|cranberry|cucumber|dill|cherry|garlic|habanero|jalapeño|jalapeno|pear|raspberry|sweet tea/.test(key)) return "Vodka";

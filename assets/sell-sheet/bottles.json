@@ -1,7 +1,22 @@
 {
   "by_sku": {
     "STUR-BRB-STR-750": "straight-bourbon-whiskey",
-    "STUR-VOD-CRAN-750": "wisconsin-cranberry-vodka"
+    "STUR-VOD-BLKB-750": "blackberry-vodka",
+    "STUR-LIQ-COFF-750": "sundown-coffee-liqueur",
+    "STUR-VOD-CRAN-750": "wisconsin-cranberry-vodka",
+    "STUR-GIN-CLSC-750": "classic-gin",
+    "STUR-GIN-BORG-750": "blood-orange-gin",
+    "STUR-VOD-RRUN-750": "river-run-vodka",
+    "STUR-VOD-BPEP-750": "black-pepper-vodka",
+    "STUR-VOD-HABA-750": "habanero-vodka",
+    "STUR-VOD-JALA-750": "jalapeno-vodka",
+    "STUR-VOD-GARL-750": "garlic-vodka",
+    "STUR-VOD-SWEE-750": "sweet-tea-vodka",
+    "STUR-VOD-CHRY-750": "cherry-vodka",
+    "STUR-VOD-DILL-750": "dill-vodka",
+    "STUR-AGV-OSHG-750": "osh-gave",
+    "STUR-VOD-PEAR-750": "pear-vodka",
+    "STUR-BIT-ORNG-50": "bitters"
   },
   "by_name": {
     "straight bourbon whiskey": "straight-bourbon-whiskey",
@@ -16,14 +31,14 @@
     "black pepper vodka": "black-pepper-vodka",
     "habanero vodka": "habanero-vodka",
     "jalapeno vodka": "jalapeno-vodka",
-    "jalapeño vodka": "jalapeno-vodka",
     "garlic vodka": "garlic-vodka",
     "dill vodka": "dill-vodka",
     "sweet tea vodka": "sweet-tea-vodka",
     "pear vodka": "pear-vodka",
     "door county cherry vodka": "cherry-vodka",
     "cherry vodka": "cherry-vodka",
-    "osh-gave": "osh-gave",
+    "osh gave": "osh-gave",
+    "osh gave agave spirit": "osh-gave",
     "oshgave": "osh-gave",
     "bitters": "bitters"
   }

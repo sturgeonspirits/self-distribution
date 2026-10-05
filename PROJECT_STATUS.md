@@ -8,8 +8,8 @@ Read this file before inspecting the repository or changing the application. Upd
 
 | Component | Source version | Deployment state |
 | --- | --- | --- |
-| Netlify web app and staff proxy | `2026.10.05.22-WEB` on `codex/work` | Repo only; production remains `2026.10.05.20-WEB` until Claude reviews the protected sell sheet. |
-| Inventory API Apps Script | `2026.10.05.29-APP` on `codex/work` | Repo only; production remains `2026.10.05.27-APP` until Claude reviews the protected sell sheet. |
+| Netlify web app and staff proxy | `2026.10.05.23-WEB` on `codex/work` | Repo only; production remains `2026.10.05.20-WEB` until Claude reviews the protected sell sheet. |
+| Inventory API Apps Script | `2026.10.05.30-APP` on `codex/work` | Repo only; production remains `2026.10.05.27-APP` until Claude reviews the protected sell sheet. |
 | Distribution Outreach Apps Script | `2026.10.04.25-APP` in `docs/reference/distribution-outreach/Code.gs`; reported deployed 2026-10-05 | Deployed with the paired Inventory API for Cocktail list sends. |
 | Public customer Netlify proxy | `2026.10.05.4-WEB` live with the Netlify web release | Retries only a failed/non-JSON `listSkus` catalog read once; customer submissions remain single-attempt. |
 
@@ -24,6 +24,8 @@ Badger tracker safety answer (Karl, 2026-09-30): the PDF importer never writes t
 Phase 5 deployment state: staging Inventory API `2026.10.01.5` and Netlify `2026.10.01.8-WEB` are live. Next, run `seedCurrentPricesTab()` once in staging and review/activate the tracker prices with Claude before any Badger invoice creation. Never create a test invoice in Badger.
 
 Latest completed changes:
+
+- Sell-sheet final review fixes (`2026.10.05.30-APP`, `2026.10.05.23-WEB`; repo only, 2026-10-05): blocks Netlify publication of internal source and reference paths—including the supplied May PDF and page images—through forced 404 redirects before public routes. The sell-sheet renderer directly applies all design and access behavior; it has no post-render observer or client-side token decoding. It renders active **Other spirits** as **More spirits**, routes known liqueur SKUs/names to Liqueur, maps supplied bottle cutouts by SKU first, computes the headline from the most common priced 750 mL product, only shows a group price when all products share it, and displays any conflicting Customer Price note on its actual product. The contact cell splits into stacked lines and priced-only order buttons sit on their own rows. Desktop/print flavor groups flow in two columns to target two US-Letter pages. **Do not deploy until this commit is reviewed; after deployment, confirm the May reference PDF returns 404.**
 
 - May sell-sheet visual rebuild and Claude review fixes (`2026.10.05.29-APP`, `2026.10.05.22-WEB`; repo only, 2026-10-05): replaces the generic web layout with the supplied May 2026 visual language: the bar-on-ice photos, bottle cutouts, sturgeon and hand line art, real wordmarks, and self-hosted Sturgeon Spirits Display, Oswald, and Vollkorn fonts. The page is two US-Letter print pages and becomes a single-column phone layout, with the full bar image on phones. It never substitutes generic imagery or draws a bottle when `assets/sell-sheet/bottles.json` has no mapping; the local `file://` preview includes a no-price sample catalog so it remains visible without a server. The editable Sell sheet headline default is now **Oshkosh's First Distillery Since 1919**; existing Email Editor values are deliberately preserved. Claude review `60fc152` findings 1–5 are applied: neutral wording, price-view-only order links (including token account ID), conflicting Customer Prices display **Ask us for your price** rather than a tier, and gift boxes classify before canned cocktails. Price text is emitted only for the existing authorized price response, and the public view has neither amounts nor price labels. **Do not deploy until the finished commit is reviewed.**
 

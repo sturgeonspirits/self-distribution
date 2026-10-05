@@ -7,6 +7,30 @@ import vm from "node:vm";
 
 const root = new URL("../", import.meta.url);
 
+async function renderSellSheet(data, bottleMap = { by_sku:{}, by_name:{} }) {
+  const page = await readFile(new URL("sell-sheet.html", root), "utf8");
+  const script = page.match(/<script>\n([\s\S]*?)\n<\/script>/)?.[1];
+  if (!script) throw new Error("sell-sheet inline script missing");
+  const prior = { document:globalThis.document, fetch:globalThis.fetch, location:globalThis.location, print:globalThis.print };
+  const sheet = { className:"", innerHTML:"" };
+  const printButton = { addEventListener() {} };
+  let calls = 0;
+  globalThis.document = { getElementById:id => id === "sellSheet" ? sheet : id === "printButton" ? printButton : null };
+  globalThis.location = { protocol:"https:", search:"" };
+  globalThis.print = () => {};
+  globalThis.fetch = async () => ({ ok:true, json:async () => ++calls === 1 ? bottleMap : data });
+  try {
+    new Function(script)();
+    await new Promise(resolve => setTimeout(resolve, 0));
+    return { html:sheet.innerHTML, className:sheet.className };
+  } finally {
+    globalThis.document = prior.document;
+    globalThis.fetch = prior.fetch;
+    globalThis.location = prior.location;
+    globalThis.print = prior.print;
+  }
+}
+
 async function loadFunction(path, suffix = Math.random(), { useRealRoster = false } = {}) {
   let source = await readFile(new URL(path, root), "utf8");
   const dataUrl = text => `data:text/javascript;base64,${Buffer.from(text).toString("base64")}#${suffix}`;
@@ -698,7 +722,7 @@ test("the canonical-host redirect is first and public-site URL migration is safe
     readFile(new URL("apps-script/Code.gs", root), "utf8"),
   ]);
   const redirects = toml.slice(toml.indexOf("[[redirects]]"));
-  assert.match(redirects, /^\[\[redirects\]\]\n  from = "https:\/\/distribution-hub\.netlify\.app\/\*"\n  to = "https:\/\/distribution\.sturgeonspirits\.com\/:splat"\n  status = 301\n  force = true/);
+  assert.match(redirects, /\[\[redirects\]\]\n  from = "https:\/\/distribution-hub\.netlify\.app\/\*"\n  to = "https:\/\/distribution\.sturgeonspirits\.com\/:splat"\n  status = 301\n  force = true/);
   assert.ok(toml.indexOf("https://distribution-hub.netlify.app/*") < toml.indexOf('from = "/api/inventory"'), "host redirect precedes API rewrites");
   assert.doesNotMatch(toml.slice(toml.indexOf("https://distribution-hub.netlify.app/*"), toml.indexOf('from = "/api/inventory"')), /query\s*=/, "Netlify forwards 301 query strings without a query-match rule");
 
@@ -821,6 +845,7 @@ test("sell-sheet implementation keeps public catalog prices separate and install
   assert.match(sellSheet, /sellSheetCustomerPriceMap_/);
   assert.match(sellSheet, /price_note = "Ask us for your price"/);
   assert.ok(backend.indexOf('if (/gift|box/.test(key))') < backend.indexOf('if (/canned|cocktail/.test(key))'), "gift boxes classify before canned cocktails");
+  assert.match(backend, /\^stur-liq-/);
   assert.match(backend, /SELL_SHEET_SECTION_VALUES/);
   assert.match(backend, /identity\.sell_sheet = ensureSellSheetStructure_\(\)/);
   assert.match(page, /name="robots" content="noindex/);
@@ -837,17 +862,45 @@ test("sell-sheet implementation keeps public catalog prices separate and install
   assert.match(page, /assets\/fonts\/Oswald\.woff2/);
   assert.match(page, /assets\/fonts\/Vollkorn-Regular\.woff2/);
   assert.doesNotMatch(page, /Impact|Georgia|Arial/);
-  assert.match(page, /return s\?`<img/);
-  assert.match(page, /mostPrice=ok\?/);
-  assert.match(page, /price=ok\?/);
+  assert.match(page, /return slug\?`<img/);
+  assert.match(page, /common750Price/);
+  assert.match(page, /uniformPrice/);
+  assert.doesNotMatch(page, /MutationObserver|atob\(/);
   assert.match(page, /What our accounts reorder most/);
   assert.match(page, /licensed retailers, bars, restaurants and venues/);
-  assert.match(page, /account_id=\$\{encodeURIComponent\(id\)\}/);
+  assert.match(page, /account_id=\$\{encodeURIComponent\(accountId\)\}/);
   assert.doesNotMatch(page, /\$\d+(?:\.\d{2})?/);
   assert.match(functionSource, /ACCESS_SECONDS = 90 \* 24 \* 60 \* 60/);
   assert.match(functionSource, /account_id:token\?\.account_id \|\| ""/);
   assert.doesNotMatch(functionSource, /SELL_SHEET_URL/);
   assert.match(config, /X-Robots-Tag = "noindex, nofollow, noarchive"/);
+  ["/docs/*", "/claude/*", "/review-packages/*", "/imports/*", "/apps-script/*", "/tests/*", "/PROJECT_STATUS.md", "/README.md"].forEach(path => {
+    assert.ok(config.includes(`from = "${path}"\n  to = "/404"\n  status = 404\n  force = true`), `protected ${path}`);
+  });
+});
+
+test("sell-sheet render keeps public output price-free and renders authorized prices per product", async () => {
+  const copy = { headline:"Oshkosh's First Distillery Since 1919", price_line:"Where patience pays", contact:"2663 Oregon Street · sturgeonspirits.com" };
+  const sections = [
+    { section:"New", products:[{ sku_id:"BOURBON", name:"Straight Bourbon", size:"750 mL", price_cents:3000 }] },
+    { section:"Best seller", products:[{ sku_id:"GIN", name:"Gin", size:"750 mL", price_cents:2200 }] },
+    { section:"Vodka", products:[{ sku_id:"CUSTOM", name:"Custom Vodka", size:"750 mL", price_cents:1900 },{ sku_id:"VODKA", name:"River Run Vodka", size:"750 mL", price_cents:2200 }] },
+    { section:"Liqueur", products:[{ sku_id:"LIQ750", name:"Coffee Liqueur", size:"750 mL", price_cents:2200 },{ sku_id:"LIQ375", name:"Maraschino Liqueur", size:"375 mL", price_cents:1200 },{ sku_id:"CONFLICT", name:"Special Liqueur", size:"750 mL", price_note:"Ask us for your price" }] },
+    { section:"Other spirits", products:[{ sku_id:"UNMAPPED", name:"Aquavit", size:"750 mL", price_cents:2200 }] },
+  ];
+  const map = { by_sku:{ GIN:"classic-gin", VODKA:"river-run-vodka" }, by_name:{} };
+  const publicView = await renderSellSheet({ ok:true, access:{ prices:false }, copy, sections }, map);
+  assert.equal(publicView.className, "no-price");
+  assert.doesNotMatch(publicView.html, /\$|Place an order|wholesale price/);
+  assert.match(publicView.html, /More spirits/);
+  assert.doesNotMatch(publicView.html, /alt="Aquavit"/);
+  const pricedView = await renderSellSheet({ ok:true, access:{ prices:true, account_id:"ACC-1" }, copy, sections }, map);
+  assert.match(pricedView.html, /href="\/order\.html\?account_id=ACC-1"/);
+  assert.match(pricedView.html, /\$22 most bottles/);
+  assert.match(pricedView.html, /Custom Vodka[^<]*<span class="item-price">\$19/);
+  assert.match(pricedView.html, /Maraschino Liqueur[^<]*<span class="item-price">\$12/);
+  assert.match(pricedView.html, /Special Liqueur[^<]*<span class="item-price">Ask us for your price/);
+  assert.equal((pricedView.html.match(/sturgeonspirits\.com/g) || []).length, 1);
 });
 
 test("Karl-only test rendering supplies non-empty HTML with an unsigned x=test marker", async () => {

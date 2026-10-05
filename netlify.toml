@@ -1,8 +1,56 @@
-# App version: 2026.10.05.22-WEB
+# App version: 2026.10.05.23-WEB
 [build]
   publish = "."
   functions = "netlify/functions"
   ignore = "git diff --quiet $CACHED_COMMIT_REF $COMMIT_REF -- . ':(exclude)PROJECT_STATUS.md' ':(exclude)README.md' ':(exclude)docs/' ':(exclude)apps-script/' ':(exclude)tests/'"
+
+[[redirects]]
+  from = "/docs/*"
+  to = "/404"
+  status = 404
+  force = true
+
+[[redirects]]
+  from = "/claude/*"
+  to = "/404"
+  status = 404
+  force = true
+
+[[redirects]]
+  from = "/review-packages/*"
+  to = "/404"
+  status = 404
+  force = true
+
+[[redirects]]
+  from = "/imports/*"
+  to = "/404"
+  status = 404
+  force = true
+
+[[redirects]]
+  from = "/apps-script/*"
+  to = "/404"
+  status = 404
+  force = true
+
+[[redirects]]
+  from = "/tests/*"
+  to = "/404"
+  status = 404
+  force = true
+
+[[redirects]]
+  from = "/PROJECT_STATUS.md"
+  to = "/404"
+  status = 404
+  force = true
+
+[[redirects]]
+  from = "/README.md"
+  to = "/404"
+  status = 404
+  force = true
 
 [[redirects]]
   from = "https://distribution-hub.netlify.app/*"
