@@ -1,0 +1,30 @@
+{
+  "by_sku": {
+    "STUR-BRB-STR-750": "straight-bourbon-whiskey",
+    "STUR-VOD-CRAN-750": "wisconsin-cranberry-vodka"
+  },
+  "by_name": {
+    "straight bourbon whiskey": "straight-bourbon-whiskey",
+    "straight bourbon": "straight-bourbon-whiskey",
+    "blackberry vodka": "blackberry-vodka",
+    "sundown coffee liqueur": "sundown-coffee-liqueur",
+    "wisconsin cranberry vodka": "wisconsin-cranberry-vodka",
+    "cranberry vodka": "wisconsin-cranberry-vodka",
+    "classic gin": "classic-gin",
+    "blood orange gin": "blood-orange-gin",
+    "river run vodka": "river-run-vodka",
+    "black pepper vodka": "black-pepper-vodka",
+    "habanero vodka": "habanero-vodka",
+    "jalapeno vodka": "jalapeno-vodka",
+    "jalapeño vodka": "jalapeno-vodka",
+    "garlic vodka": "garlic-vodka",
+    "dill vodka": "dill-vodka",
+    "sweet tea vodka": "sweet-tea-vodka",
+    "pear vodka": "pear-vodka",
+    "door county cherry vodka": "cherry-vodka",
+    "cherry vodka": "cherry-vodka",
+    "osh-gave": "osh-gave",
+    "oshgave": "osh-gave",
+    "bitters": "bitters"
+  }
+}

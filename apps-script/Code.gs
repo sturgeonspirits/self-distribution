@@ -1,9 +1,13 @@
 /*********************************
  * Inventory API (JSON) for Netlify
- * App version: 2026.10.05.28-APP
+ * App version: 2026.10.05.29-APP
  *
  * CHANGES IN THIS VERSION
- * - Adds the protected sell-sheet read: an append-only SELL SHEET editor block, sell_sheet_section SKU dropdown,
+ * - Sets the editable sell-sheet headline default to "Oshkosh's First Distillery Since 1919" for the May-style
+ *   product sheet. Existing Email Editor content remains untouched.
+ * - Makes conflicting active Customer Prices rows explicitly unpriceable in the sell sheet, matching invoicing,
+ *   and classifies gift boxes before canned cocktails when no SKU section is selected.
+ * - Retains the protected sell-sheet read: an append-only SELL SHEET editor block, sell_sheet_section SKU dropdown,
  *   live active-SKU grouping and availability, and account-aware wholesale prices only when the Netlify proxy has
  *   verified a staff session or a time-limited customer link. The public listSkus response remains price-free.
  *
@@ -298,7 +302,7 @@
  * - Use only in the staging inventory backend until testing is complete.
  *********************************/
 
-const APP_VERSION = "2026.10.05.28-APP";
+const APP_VERSION = "2026.10.05.29-APP";
 
 const SHEET_NAMES = {
   STORES: "Stores",
@@ -867,7 +871,7 @@ const OUTREACH_PUBLIC_SITE_SETTINGS = [
 const SELL_SHEET_SECTION_VALUES = ["Best seller", "New", "Vodka", "Gin", "Rum", "Liqueur", "Agave", "Whiskey & Brandy", "Squadron Spirits", "Gift boxes", "Bitters", "Canned cocktails", "Hide"];
 const SELL_SHEET_EDITOR_SECTION = "SELL SHEET";
 const SELL_SHEET_EDITOR_ROWS = [
-  { label:"Sell sheet headline", value:"Made in Oshkosh. Poured in Your Bar.", note:"Main headline on the web and printed sell sheet." },
+  { label:"Sell sheet headline", value:"Oshkosh's First Distillery Since 1919", note:"Main headline on the web and printed sell sheet." },
   { label:"Sell sheet price line", value:"Where patience pays", note:"Shown under the headline; live prices appear only to invited visitors or staff." },
   { label:"Sell sheet story heading", value:"Rooted in Tradition, Driven by Curiosity", note:"Story-section heading." },
   { label:"Sell sheet story", value:"For three years, we've been getting up early, working hard, and trusting the process right here in Oshkosh. We respect the old ways, but we never stop experimenting with new flavor profiles. Put our local craft spirits into your arsenal.", note:"Karl can update the timing or copy here." },
@@ -1363,9 +1367,9 @@ function sellSheetSectionForSku_(sku) {
   const explicit = String(sku.sell_sheet_section || "").trim();
   if (explicit) return explicit;
   const key = `${sku.sku_id || ""} ${sku.sku_name || ""} ${sku.price_tier || ""}`.toLowerCase();
+  if (/gift|box/.test(key)) return "Gift boxes";
   if (/canned|cocktail/.test(key)) return "Canned cocktails";
   if (/bitter/.test(key)) return "Bitters";
-  if (/gift|box/.test(key)) return "Gift boxes";
   if (/squadron|spitfire|mustang|hellcat|flying fortress/.test(key)) return "Squadron Spirits";
   if (/bourbon|whiskey|whisky|brandy/.test(key)) return "Whiskey & Brandy";
   if (/osh.?gave|agave/.test(key)) return "Agave";
@@ -1387,6 +1391,7 @@ function sellSheetCustomerPriceMap_(customerRows, accountId) {
     if (values.has(skuId) && values.get(skuId) !== cents) conflicts.add(skuId); else values.set(skuId, cents);
   });
   conflicts.forEach(skuId => values.delete(skuId));
+  values.conflicts = conflicts;
   return values;
 }
 
@@ -1416,7 +1421,10 @@ function apiSellSheet_(p) {
       availability:outOfStock ? "Currently out" : Number.isFinite(stock) ? "In stock" : "Staff will confirm availability",
       out_of_stock:outOfStock,
     };
-    if (includePrices) item.price_cents = customerPrices.has(skuId) ? customerPrices.get(skuId) : skuWholesaleCents_(sku, tiers);
+    if (includePrices) {
+      if (customerPrices.conflicts && customerPrices.conflicts.has(skuId)) item.price_note = "Ask us for your price";
+      else item.price_cents = customerPrices.has(skuId) ? customerPrices.get(skuId) : skuWholesaleCents_(sku, tiers);
+    }
     if (!sections.has(section)) sections.set(section, []);
     sections.get(section).push(item);
   });

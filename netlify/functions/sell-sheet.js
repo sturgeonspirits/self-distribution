@@ -1,8 +1,8 @@
-// App version: 2026.10.05.21-WEB
+// App version: 2026.10.05.22-WEB
 import { createHmac, timingSafeEqual } from "node:crypto";
 import { requireStaffSession } from "./auth.js";
 
-const APP_VERSION = "2026.10.05.21-WEB";
+const APP_VERSION = "2026.10.05.22-WEB";
 const ACCESS_SECONDS = 90 * 24 * 60 * 60;
 
 function headers() {
@@ -92,7 +92,7 @@ export async function handler(event) {
   const prices = !!token || (!staff?.error && !!staff?.areas?.length);
   try {
     const result = await upstreamSellSheet({ prices, accountId:token?.account_id || "" });
-    return json(200, Object.assign(result, { access:{ prices, account_specific:!!token?.account_id, source:token ? "customer_link" : prices ? "staff" : "public" } }));
+    return json(200, Object.assign(result, { access:{ prices, account_specific:!!token?.account_id, account_id:token?.account_id || "", source:token ? "customer_link" : prices ? "staff" : "public" } }));
   } catch (error) {
     return json(502, { ok:false, error:error?.message || "The sell sheet could not load right now.", access:{ prices:false, source:"public" } });
   }
