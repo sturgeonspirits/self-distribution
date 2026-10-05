@@ -898,9 +898,10 @@ test("sell-sheet render keeps public output price-free and renders authorized pr
   assert.match(pricedView.html, /href="\/order\.html\?account_id=ACC-1"/);
   assert.match(pricedView.html, /\$22 most bottles/);
   assert.match(pricedView.html, /Custom Vodka[^<]*<span class="item-price">\$19/);
-  assert.match(pricedView.html, /Maraschino Liqueur[^<]*<span class="item-price">\$12/);
+  assert.match(pricedView.html, /Maraschino Liqueur \(375 mL\)[^<]*<span class="item-price">\$12/);
   assert.match(pricedView.html, /Special Liqueur[^<]*<span class="item-price">Ask us for your price/);
   assert.equal((pricedView.html.match(/sturgeonspirits\.com/g) || []).length, 1);
+  assert.ok(pricedView.html.indexOf('class="catalog-right"') < pricedView.html.indexOf('class="contact-wrap"'), "the print contact block stays in the catalog's right column");
 });
 
 test("Karl-only test rendering supplies non-empty HTML with an unsigned x=test marker", async () => {

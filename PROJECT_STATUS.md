@@ -8,7 +8,7 @@ Read this file before inspecting the repository or changing the application. Upd
 
 | Component | Source version | Deployment state |
 | --- | --- | --- |
-| Netlify web app and staff proxy | `2026.10.05.23-WEB` on `codex/work` | Repo only; production remains `2026.10.05.20-WEB` until Claude reviews the protected sell sheet. |
+| Netlify web app and staff proxy | `2026.10.05.24-WEB` on `codex/work` | Repo only; production remains `2026.10.05.20-WEB` until the sell-sheet deployment steps are explicitly approved. |
 | Inventory API Apps Script | `2026.10.05.30-APP` on `codex/work` | Repo only; production remains `2026.10.05.27-APP` until Claude reviews the protected sell sheet. |
 | Distribution Outreach Apps Script | `2026.10.04.25-APP` in `docs/reference/distribution-outreach/Code.gs`; reported deployed 2026-10-05 | Deployed with the paired Inventory API for Cocktail list sends. |
 | Public customer Netlify proxy | `2026.10.05.4-WEB` live with the Netlify web release | Retries only a failed/non-JSON `listSkus` catalog read once; customer submissions remain single-attempt. |
@@ -24,6 +24,8 @@ Badger tracker safety answer (Karl, 2026-09-30): the PDF importer never writes t
 Phase 5 deployment state: staging Inventory API `2026.10.01.5` and Netlify `2026.10.01.8-WEB` are live. Next, run `seedCurrentPricesTab()` once in staging and review/activate the tracker prices with Claude before any Badger invoice creation. Never create a test invoice in Badger.
 
 Latest completed changes:
+
+- Sell-sheet two-page print completion (`2026.10.05.30-APP`, `2026.10.05.24-WEB`; repo only, 2026-10-05): moves the rust logo, contact lines, and price-view order button into the catalog’s right column beneath the bottle grid, preventing the contact block from creating a third print page. Print now removes the forced catalog minimum height and keeps per-product prices inline; the intended output is two US-Letter pages for both public and price-authorized catalog views. A non-750 mL product now displays its size in the flavor list (for example, **Limoncello (375 mL)**), distinguishing 375 mL and 750 mL products with the same name. **No production deployment has been performed.**
 
 - Sell-sheet final review fixes (`2026.10.05.30-APP`, `2026.10.05.23-WEB`; repo only, 2026-10-05): blocks Netlify publication of internal source and reference paths—including the supplied May PDF and page images—through forced 404 redirects before public routes. The sell-sheet renderer directly applies all design and access behavior; it has no post-render observer or client-side token decoding. It renders active **Other spirits** as **More spirits**, routes known liqueur SKUs/names to Liqueur, maps supplied bottle cutouts by SKU first, computes the headline from the most common priced 750 mL product, only shows a group price when all products share it, and displays any conflicting Customer Price note on its actual product. The contact cell splits into stacked lines and priced-only order buttons sit on their own rows. Desktop/print flavor groups flow in two columns to target two US-Letter pages. **Do not deploy until this commit is reviewed; after deployment, confirm the May reference PDF returns 404.**
 
