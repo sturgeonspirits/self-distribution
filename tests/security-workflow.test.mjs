@@ -875,7 +875,12 @@ test("sell-sheet implementation keeps public catalog prices separate and install
   assert.doesNotMatch(page, /\.flavor-lead h2\{[^}]*white-space:nowrap/);
   assert.match(page, /gallery=\[\.\.\.best,\.\.\.groups\.flatMap/);
   assert.match(page, /catalog-right\{justify-content:space-between/);
-  assert.match(page, /flavor-lists\{font-size:11pt;line-height:1\.12/);
+  assert.match(page, /page-two\{min-height:10\.05in;display:flex;flex-direction:column/);
+  assert.match(page, /catalog-layout\{flex:1;align-items:stretch/);
+  assert.match(page, /flavor-lists\{font-size:12pt;line-height:1\.24/);
+  assert.match(page, /flavor-group\{margin-bottom:\.18in/);
+  assert.match(page, /flavor-group h3\{font-size:13pt/);
+  assert.match(page, /bottle-grid\{grid-template-rows:repeat\(3,1\.5in\)/);
   assert.match(page, /if\(location\.protocol==="file:"\)/);
   assert.doesNotMatch(page, /\["127\.0\.0\.1","localhost"\]\.includes/);
   assert.doesNotMatch(page, /MutationObserver|atob\(/);
