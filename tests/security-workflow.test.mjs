@@ -873,7 +873,11 @@ test("sell-sheet implementation keeps public catalog prices separate and install
   assert.doesNotMatch(page, /\.page-two\{height:/);
   assert.doesNotMatch(page, /\.catalog-layout\{[^}]*height:/);
   assert.doesNotMatch(page, /\.flavor-lead h2\{[^}]*white-space:nowrap/);
-  assert.match(page, /gallery=groups\.flatMap/);
+  assert.match(page, /gallery=\[\.\.\.best,\.\.\.groups\.flatMap/);
+  assert.match(page, /catalog-right\{justify-content:space-between/);
+  assert.match(page, /flavor-lists\{font-size:11pt;line-height:1\.12/);
+  assert.match(page, /if\(location\.protocol==="file:"\)/);
+  assert.doesNotMatch(page, /\["127\.0\.0\.1","localhost"\]\.includes/);
   assert.doesNotMatch(page, /MutationObserver|atob\(/);
   assert.doesNotMatch(page, /What our accounts reorder most/);
   assert.match(page, /licensed retailers, bars, restaurants and venues/);
@@ -897,7 +901,7 @@ test("sell-sheet render keeps public output price-free and renders authorized pr
     { section:"Liqueur", products:[{ sku_id:"LIQ750", name:"Coffee Liqueur", size:"750 mL", price_cents:2200 },{ sku_id:"LIQ375", name:"Maraschino Liqueur", size:"375 mL", price_cents:1200 },{ sku_id:"CONFLICT", name:"Special Liqueur", size:"750 mL", price_note:"Ask us for your price" }] },
     { section:"Other spirits", products:[{ sku_id:"UNMAPPED", name:"Aquavit", size:"750 mL", price_cents:2200 }] },
   ];
-  const map = { by_sku:{ GIN:"classic-gin", VODKA:"river-run-vodka" }, by_name:{} };
+  const map = { by_sku:{ BOURBON:"straight-bourbon-whiskey", GIN:"classic-gin", VODKA:"river-run-vodka" }, by_name:{} };
   const publicView = await renderSellSheet({ ok:true, access:{ prices:false }, copy, sections }, map);
   assert.equal(publicView.className, "no-price");
   assert.doesNotMatch(publicView.html, /\$|Place an order|wholesale price|Ask us for your price/);
@@ -913,6 +917,8 @@ test("sell-sheet render keeps public output price-free and renders authorized pr
   assert.doesNotMatch(pricedView.html, /Coffee Liqueur <span class="item-price">/);
   assert.match(pricedView.html, /Maraschino Liqueur \(375 mL\)<\/li>/);
   assert.match(pricedView.html, /Special Liqueur[^<]*<span class="item-price">Ask us for your price/);
+  assert.equal((pricedView.html.match(/alt="Gin"/g) || []).length, 2, "best sellers also populate the page-two grid");
+  assert.equal((pricedView.html.match(/alt="Straight Bourbon"/g) || []).length, 1, "the Page 1 New bottle is not repeated in the grid");
   assert.equal((pricedView.html.match(/sturgeonspirits\.com/g) || []).length, 1);
   assert.ok(pricedView.html.indexOf('class="catalog-right"') < pricedView.html.indexOf('class="contact-wrap"'), "the print contact block stays in the catalog's right column");
 });

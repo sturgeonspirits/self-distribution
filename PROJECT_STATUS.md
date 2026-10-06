@@ -8,7 +8,7 @@ Read this file before inspecting the repository or changing the application. Upd
 
 | Component | Source version | Deployment state |
 | --- | --- | --- |
-| Netlify web app and staff proxy | `2026.10.06.27-WEB` on `codex/work` | Repo only; the May-PDF visual rebuild awaits Claude re-review before any further promotion. |
+| Netlify web app and staff proxy | `2026.10.06.28-WEB` on `codex/work` | Repo only; the May-PDF visual rebuild awaits Claude re-review before any further promotion. |
 | Inventory API Apps Script | `2026.10.05.30-APP` on `codex/work` | Repo only; production remains `2026.10.05.27-APP` until Claude reviews the protected sell sheet. |
 | Distribution Outreach Apps Script | `2026.10.04.25-APP` in `docs/reference/distribution-outreach/Code.gs`; reported deployed 2026-10-05 | Deployed with the paired Inventory API for Cocktail list sends. |
 | Public customer Netlify proxy | `2026.10.05.4-WEB` live with the Netlify web release | Retries only a failed/non-JSON `listSkus` catalog read once; customer submissions remain single-attempt. |
@@ -24,6 +24,8 @@ Badger tracker safety answer (Karl, 2026-09-30): the PDF importer never writes t
 Phase 5 deployment state: staging Inventory API `2026.10.01.5` and Netlify `2026.10.01.8-WEB` are live. Next, run `seedCurrentPricesTab()` once in staging and review/activate the tracker prices with Claude before any Badger invoice creation. Never create a test invoice in Badger.
 
 Latest completed changes:
+
+- Sell-sheet page-two fill correction (`2026.10.05.30-APP`, `2026.10.06.28-WEB`; repo only, 2026-10-06): restores Best seller bottle cutouts to the page-two photo grid while keeping the Page 1 New bourbon out, so the active catalog can fill three rows. The catalog right column stretches to the balanced list height and places logo/contact at its bottom; print lists use 11 pt with a slightly looser line height to occupy the intended page depth. The local sample is again restricted to `file:`; `netlify dev` can load the real public or price-authorized response. **Do not deploy until Claude compares the updated public and priced printouts against the May reference pages.**
 
 - Sell-sheet unclipped catalog correction (`2026.10.05.30-APP`, `2026.10.06.27-WEB`; repo only, 2026-10-06): removes the page-two and catalog fixed heights and the sheet overflow clipping that hid the logo/contact and falsely made print appear two pages. Catalog content now determines its own height, the flavor lead and phone story heading can wrap rather than truncating, flavor groups may split only between a heading and its list, the page-two grid uses three deliberately sized rows and excludes the Page 1 New bottle, and Liqueur uses group-level 750 mL and 375 mL prices instead of repeating the same price on every line. Regression checks reject the prior clipping/nowrap constraints. **Do not deploy until Claude compares the updated public and priced printouts against the May reference pages.**
 
