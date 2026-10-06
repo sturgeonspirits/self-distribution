@@ -1398,7 +1398,11 @@ test("campaign rebuilding reconciles first and changes only review-ready snapsho
   assert.match(rebuildSource, /if \(String\(campaign\.values\[ch\.status\] \|\| ""\) !== "Review"\) throw new Error\("Campaign must be in Review/);
   assert.match(rebuildSource, /reconcileBlockedCampaignSends_\(sheets, campaign, recipients, staffName\)/);
   assert.match(rebuildSource, /filter\(item => String\(item\.values\[item\.headers\.status\] \|\| ""\) === "Ready for review"\)/);
-  assert.match(rebuildSource, /campaignRecipientWasEdited_/);
+  assert.match(rebuildSource, /const editedRecipientTokens = campaignEditedRecipientTokenSet_\(\);/);
+  assert.match(rebuildSource, /editedRecipientTokens\.has\(String\(item\.values\[rh\.idempotency_token\] \|\| ""\)\)/);
+  assert.doesNotMatch(rebuildSource, /campaignRecipientWasEdited_/);
+  assert.match(backend, /function campaignEditedRecipientTokenSet_\(\) \{/);
+  assert.match(backend, /getAllRowsAsObjects_\(auditSheet\)/);
   assert.match(rebuildSource, /outreachPlainTextToHtml_\(String\(item\.values\[rh\.body_text\] \|\| ""\)\) \+ String\(message\.footer_html \|\| ""\)/);
   assert.match(rebuildSource, /item\.values\[rh\.html\] = message\.html/);
   assert.match(rebuildSource, /campaign\.values\[ch\.approval_token\] = ""/);

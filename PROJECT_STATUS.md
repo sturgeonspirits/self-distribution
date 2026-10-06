@@ -9,7 +9,7 @@ Read this file before inspecting the repository or changing the application. Upd
 | Component | Source version | Deployment state |
 | --- | --- | --- |
 | Netlify web app and staff proxy | `2026.10.06.32-WEB` on `codex/distribution-system-foundation` | Deployed to Netlify production from `813e420` on 2026-10-06. |
-| Inventory API Apps Script | `2026.10.06.31-APP` on `codex/work` | Deployed by Karl on 2026-10-06 with the campaign-radius correction. |
+| Inventory API Apps Script | `2026.10.06.32-APP` on `codex/work` | Pending deployment: the safe one-read campaign-template rebuild correction. Production remains `2026.10.06.31-APP`. |
 | Distribution Outreach Apps Script | `2026.10.04.25-APP` in `docs/reference/distribution-outreach/Code.gs`; reported deployed 2026-10-05 | Deployed with the paired Inventory API for Cocktail list sends. |
 | Public customer Netlify proxy | `2026.10.05.4-WEB` live with the Netlify web release | Retries only a failed/non-JSON `listSkus` catalog read once; customer submissions remain single-attempt. |
 
@@ -28,6 +28,8 @@ Phase 5 deployment state: staging Inventory API `2026.10.01.5` and Netlify `2026
 - Outreach Campaigns UI: give **Create campaign** a visually distinct draft/primary color from the adjacent **Review campaign** buttons, so starting a new campaign cannot be mistaken for opening an existing one.
 
 Latest completed changes:
+
+- Campaign template rebuild performance correction (`2026.10.06.32-APP`; pending deployment, 2026-10-06): rebuilding an unsent review campaign now reads the Audit Log once to identify individually edited recipient snapshots, rather than querying it once for every recipient. Rebuild keeps edited copy intact, refreshes unedited messages from the current template, and never sends email.
 
 - Follow-up campaign criteria correction (`2026.10.06.31-APP`, `2026.10.06.32-WEB`; deployed, 2026-10-06): Sales outreach criteria now apply equally to Initial, Follow-up, and Nurture stages at preview, freeze, and send time. A campaign saved with a 30-mile radius cannot show, freeze, or send a farther-away due recipient. The campaign UI states the active fit/radius rule for every sales stage. Tests: `node --test tests/security-workflow.test.mjs` (74 passing); production web marker verified as `2026.10.06.32-WEB`.
 

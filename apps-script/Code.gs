@@ -1,8 +1,11 @@
 /*********************************
  * Inventory API (JSON) for Netlify
- * App version: 2026.10.06.31-APP
+ * App version: 2026.10.06.32-APP
  *
  * CHANGES IN THIS VERSION
+ * - Rebuilds unsent campaign email snapshots from one Audit Log lookup instead of searching that sheet once per
+ *   recipient. Large review campaigns can refresh current template copy without timing out; edited recipient copy
+ *   remains protected and no rebuild sends email.
  * - Applies each saved sales campaign's distance, fit, and optional field criteria to Initial, Follow-up, and
  *   Nurture previews, freezes, and send-time checks. A Follow-up campaign with a 30-mile radius can no longer
  *   include or send a farther-away recipient simply because it is not an Initial campaign.
@@ -307,7 +310,7 @@
  * - Use only in the staging inventory backend until testing is complete.
  *********************************/
 
-const APP_VERSION = "2026.10.06.31-APP";
+const APP_VERSION = "2026.10.06.32-APP";
 
 const SHEET_NAMES = {
   STORES: "Stores",
@@ -4235,10 +4238,13 @@ function campaignDirectoryRows_(sheet) {
   return { by_account:byAccount, by_source:bySource };
 }
 
-function campaignRecipientWasEdited_(recipientToken) {
+function campaignEditedRecipientTokenSet_() {
   const auditSheet = getOutreachSheet_(HUB_AUDIT_SHEET_NAME);
-  return outreachRowsMatchingCell_(auditSheet, ["record_id", "Record ID"], recipientToken)
-    .some(row => String(outreachValue_(row, ["action"]) || "") === "EDIT_OUTREACH_CAMPAIGN_RECIPIENT");
+  if (auditSheet.getLastRow() < 2) return new Set();
+  return new Set(getAllRowsAsObjects_(auditSheet)
+    .filter(row => String(outreachValue_(row, ["action"]) || "") === "EDIT_OUTREACH_CAMPAIGN_RECIPIENT")
+    .map(row => String(outreachValue_(row, ["record_id", "Record ID"]) || "").trim())
+    .filter(Boolean));
 }
 
 function campaignRecipientChecksum_(recipient) {
@@ -4269,6 +4275,7 @@ function apiRebuildCampaignRecipients_(p) {
     const criteria = campaignStoredCriteria_(campaign.values[ch.criteria]);
     const campaignStage = String(campaignStoredCriteria_(campaign.values[ch.criteria])?.stage || "Initial");
     const cocktailList = criteria?.campaign_type === "cocktail_list";
+    const editedRecipientTokens = campaignEditedRecipientTokenSet_();
     const changed = [];
     let rebuilt = 0;
     let rebuiltWithEditsKept = 0;
@@ -4294,7 +4301,7 @@ function apiRebuildCampaignRecipients_(p) {
           return;
         }
         const message = cocktailListMessage_(record, settings);
-        if (campaignRecipientWasEdited_(String(item.values[rh.idempotency_token] || ""))) {
+        if (editedRecipientTokens.has(String(item.values[rh.idempotency_token] || ""))) {
           item.values[rh.html] = outreachPlainTextToHtml_(String(item.values[rh.body_text] || "")) + String(message.footer_html || "");
           if (rh.footer_html !== undefined) item.values[rh.footer_html] = String(message.footer_html || "");
           rebuiltWithEditsKept += 1;
@@ -4335,7 +4342,7 @@ function apiRebuildCampaignRecipients_(p) {
       const source = Object.assign({}, current.values, { next_email:campaignStage, stage:campaignStage });
       const draft = draftMap.get(outreachDraftKey_(accountId || current.row, campaignStage)) || draftMap.get(outreachDraftKey_(current.row, campaignStage));
       const message = outreachMessage_(source, settings, draft, false);
-      if (campaignRecipientWasEdited_(String(item.values[rh.idempotency_token] || ""))) {
+      if (editedRecipientTokens.has(String(item.values[rh.idempotency_token] || ""))) {
         item.values[rh.html] = outreachPlainTextToHtml_(String(item.values[rh.body_text] || "")) + String(message.footer_html || "");
         if (rh.footer_html !== undefined) item.values[rh.footer_html] = String(message.footer_html || "");
         rebuiltWithEditsKept += 1;
