@@ -8,8 +8,8 @@ Read this file before inspecting the repository or changing the application. Upd
 
 | Component | Source version | Deployment state |
 | --- | --- | --- |
-| Netlify web app and staff proxy | `2026.10.06.32-WEB` on `codex/work` | Pending coordinated release with the required campaign-radius correction; production remains `2026.10.06.31-WEB`. |
-| Inventory API Apps Script | `2026.10.06.31-APP` on `codex/work` | Pending deployment with the required campaign-radius correction. |
+| Netlify web app and staff proxy | `2026.10.06.32-WEB` on `codex/distribution-system-foundation` | Deployed to Netlify production from `813e420` on 2026-10-06. |
+| Inventory API Apps Script | `2026.10.06.31-APP` on `codex/work` | Deployed by Karl on 2026-10-06 with the campaign-radius correction. |
 | Distribution Outreach Apps Script | `2026.10.04.25-APP` in `docs/reference/distribution-outreach/Code.gs`; reported deployed 2026-10-05 | Deployed with the paired Inventory API for Cocktail list sends. |
 | Public customer Netlify proxy | `2026.10.05.4-WEB` live with the Netlify web release | Retries only a failed/non-JSON `listSkus` catalog read once; customer submissions remain single-attempt. |
 
@@ -29,7 +29,7 @@ Phase 5 deployment state: staging Inventory API `2026.10.01.5` and Netlify `2026
 
 Latest completed changes:
 
-- Follow-up campaign criteria correction (`2026.10.06.31-APP`, `2026.10.06.32-WEB`; pending deployment, 2026-10-06): Sales outreach criteria now apply equally to Initial, Follow-up, and Nurture stages at preview, freeze, and send time. A campaign saved with a 30-mile radius cannot show, freeze, or send a farther-away due recipient. The campaign UI states the active fit/radius rule for every sales stage. Tests: `node --test tests/security-workflow.test.mjs`.
+- Follow-up campaign criteria correction (`2026.10.06.31-APP`, `2026.10.06.32-WEB`; deployed, 2026-10-06): Sales outreach criteria now apply equally to Initial, Follow-up, and Nurture stages at preview, freeze, and send time. A campaign saved with a 30-mile radius cannot show, freeze, or send a farther-away due recipient. The campaign UI states the active fit/radius rule for every sales stage. Tests: `node --test tests/security-workflow.test.mjs` (74 passing); production web marker verified as `2026.10.06.32-WEB`.
 
 - Campaign timeout recovery (`2026.10.05.30-APP`, `2026.10.06.31-WEB`; Netlify production, 2026-10-06): a browser timeout after Zoho accepts a campaign email now retries only the targeted Activity Log reconciliation while the previous Apps Script lock clears. It never retries the send; a confirmed accepted email is recorded and the run continues. All 73 workflow tests pass. No Apps Script deployment occurred.
 
