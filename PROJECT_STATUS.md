@@ -8,7 +8,7 @@ Read this file before inspecting the repository or changing the application. Upd
 
 | Component | Source version | Deployment state |
 | --- | --- | --- |
-| Netlify web app and staff proxy | `2026.10.06.30-WEB` on `codex/distribution-system-foundation` | Deployed to Netlify production from `8d4d11f` on 2026-10-06; Apps Script remains `2026.10.05.30-APP`. |
+| Netlify web app and staff proxy | `2026.10.06.31-WEB` on `codex/distribution-system-foundation` | Deployed to Netlify production from `95a0e2d` on 2026-10-06; Apps Script remains `2026.10.05.30-APP`. |
 | Inventory API Apps Script | `2026.10.05.30-APP` on `codex/work` | Repo only; production remains `2026.10.05.27-APP` until Claude reviews the protected sell sheet. |
 | Distribution Outreach Apps Script | `2026.10.04.25-APP` in `docs/reference/distribution-outreach/Code.gs`; reported deployed 2026-10-05 | Deployed with the paired Inventory API for Cocktail list sends. |
 | Public customer Netlify proxy | `2026.10.05.4-WEB` live with the Netlify web release | Retries only a failed/non-JSON `listSkus` catalog read once; customer submissions remain single-attempt. |
@@ -24,6 +24,8 @@ Badger tracker safety answer (Karl, 2026-09-30): the PDF importer never writes t
 Phase 5 deployment state: staging Inventory API `2026.10.01.5` and Netlify `2026.10.01.8-WEB` are live. Next, run `seedCurrentPricesTab()` once in staging and review/activate the tracker prices with Claude before any Badger invoice creation. Never create a test invoice in Badger.
 
 Latest completed changes:
+
+- Campaign timeout recovery (`2026.10.05.30-APP`, `2026.10.06.31-WEB`; Netlify production, 2026-10-06): a browser timeout after Zoho accepts a campaign email now retries only the targeted Activity Log reconciliation while the previous Apps Script lock clears. It never retries the send; a confirmed accepted email is recorded and the run continues. All 73 workflow tests pass. No Apps Script deployment occurred.
 
 - Sell-sheet production deployment (`2026.10.05.30-APP`, `2026.10.06.30-WEB`; Netlify production, 2026-10-06): promoted `codex/work` commit `8d4d11f` to `codex/distribution-system-foundation`; no Apps Script deployment occurred. Production `/sell-sheet.html` returns the approved web marker, retains its noindex directive, and loads without a page error after a hard reload. Follow-up: Karl should perform the approved public and customer-link Print / Save as PDF checks when convenient; the prior Chromium review already verified each as two pages.
 
