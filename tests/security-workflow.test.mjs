@@ -1508,12 +1508,13 @@ test("campaign freeze fully rechecks duplicate sends while preview and send stay
   assert.match(index, /removed_by_duplicate_checks/);
 });
 
-test("campaign send timeouts reconcile one recipient before continuing and never resend an unknown result", async () => {
+test("campaign send timeouts retry lock-bound reconciliation before continuing and never resend an unknown result", async () => {
   const [backend, index] = await Promise.all([
     readFile(new URL("apps-script/Code.gs", root), "utf8"),
     readFile(new URL("index.html", root), "utf8"),
   ]);
   const sendSource = backend.slice(backend.indexOf("function apiSendOutreachCampaignBatch_"), backend.indexOf("function outreachStatusForOutcome_"));
+  const recoverySource = index.slice(index.indexOf("const CAMPAIGN_RECONCILE_RETRY_DELAYS_MS"), index.indexOf("async function sendCampaignRecipients"));
   const clientSource = index.slice(index.indexOf("async function sendCampaignRecipients"), index.indexOf("async function sendOutreachCampaignBatch"));
   assert.doesNotMatch(sendSource, /outreachActivityMap_\(\)/);
   assert.doesNotMatch(sendSource, /outreachDraftMap_\(\)/);
@@ -1524,7 +1525,11 @@ test("campaign send timeouts reconcile one recipient before continuing and never
   assert.match(sendSource, /outreach_campaign_send_timing/);
   assert.match(backend, /function acceptedOutreachSendForToken_[\s\S]*?outreachRowsMatchingCell_/);
   assert.match(clientSource, /campaignSendOutcomeIsUnknown\(error\)/);
-  assert.match(clientSource, /action:"reconcileCampaignSends", campaign_id:campaign\.campaign_id, idempotency_token:expected\.idempotency_token/);
+  assert.match(recoverySource, /const CAMPAIGN_RECONCILE_RETRY_DELAYS_MS = \[0, 1500, 3000, 5000, 8000\]/);
+  assert.match(recoverySource, /async function reconcileCampaignSendWithRetries\(campaign, expected, staffName\)/);
+  assert.match(recoverySource, /action:"reconcileCampaignSends", campaign_id:campaign\.campaign_id, idempotency_token:expected\.idempotency_token/);
+  assert.match(recoverySource, /campaignReconciliationIsBusy\(error\)/);
+  assert.match(clientSource, /Reconciliation failed after waiting for the active campaign update/);
   assert.match(clientSource, /\["Sent", "Sent - needs recording"\]\.includes\(recipient\?\.status\)/);
   assert.match(clientSource, /no resend was attempted/);
   assert.match(clientSource, /continue;/);

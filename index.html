@@ -1,10 +1,10 @@
 <!doctype html>
-<!-- App version: 2026.10.06.30-WEB -->
+<!-- App version: 2026.10.06.31-WEB -->
 <html>
 <head>
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover"/>
-  <meta name="app-version" content="2026.10.06.30-WEB" />
+  <meta name="app-version" content="2026.10.06.31-WEB" />
   <meta name="theme-color" content="#536f77" />
   <link rel="icon" href="/assets/distribution-hub-icon.svg" type="image/svg+xml" />
   <link rel="manifest" href="/site.webmanifest" />
@@ -2668,7 +2668,7 @@
 
   <footer style="max-width:1200px;margin:18px auto 120px;padding:0 12px;text-align:center;color:#6b7280;font-size:12px;">
     Designed by <a href="https://scriptspirit.dev" target="_blank" rel="noopener noreferrer" style="color:#1d4ed8;text-decoration:none;font-weight:700;">Script Spirit</a>
-<span id="appVersionFooter"> • Version 2026.10.06.30-WEB</span>
+<span id="appVersionFooter"> • Version 2026.10.06.31-WEB</span>
   </footer>
 
 
@@ -2691,7 +2691,7 @@
   window.addEventListener("unhandledrejection", e => console.error("Unhandled promise rejection:", e.reason));
   window.addEventListener("error", e => console.error("Unhandled error:", e.error || e.message));
   const $ = (id) => document.getElementById(id);
-  const APP_VERSION = "2026.10.06.30-WEB";
+  const APP_VERSION = "2026.10.06.31-WEB";
   $("appVersionFooter").textContent = ` • Version ${APP_VERSION}`;
   function screenCacheKey(screen){ return `distribution_hub:${APP_VERSION}:${staffSession?.email || "unknown"}:${screen}`; }
   function readScreenCache(screen){
@@ -4576,6 +4576,36 @@
     return /timed out|timeout|unknown outcome|Zoho did not confirm|before Zoho confirmation|failed to fetch|networkerror/i.test(String(error?.message || error || ""));
   }
 
+  // A browser timeout can arrive while Apps Script is still recording Zoho's accepted
+  // response. Reconciliation intentionally never re-sends; retry only the read/record
+  // recovery while the original send's lock clears.
+  const CAMPAIGN_RECONCILE_RETRY_DELAYS_MS = [0, 1500, 3000, 5000, 8000];
+  function waitForCampaignRecovery(ms){
+    return new Promise(resolve => setTimeout(resolve, ms));
+  }
+  function campaignReconciliationIsBusy(error){
+    return /another campaign update is in progress|another outreach send is in progress|timed out|timeout|failed to fetch|networkerror/i.test(String(error?.message || error || ""));
+  }
+  async function reconcileCampaignSendWithRetries(campaign, expected, staffName){
+    let lastError;
+    for (let attempt = 0; attempt < CAMPAIGN_RECONCILE_RETRY_DELAYS_MS.length; attempt += 1) {
+      const delay = CAMPAIGN_RECONCILE_RETRY_DELAYS_MS[attempt];
+      if (delay) {
+        $("outreachCampaignStatus").textContent = `Waiting for Zoho's accepted send to finish recording for ${expected.business}… checking again shortly (${attempt + 1}/${CAMPAIGN_RECONCILE_RETRY_DELAYS_MS.length}).`;
+        await waitForCampaignRecovery(delay);
+      }
+      try {
+        const reconciliation = await staffApiPost({ action:"reconcileCampaignSends", campaign_id:campaign.campaign_id, idempotency_token:expected.idempotency_token, staff_name:staffName });
+        if (!reconciliation.ok) throw new Error(reconciliation.error || "no response");
+        return reconciliation;
+      } catch (error) {
+        lastError = error;
+        if (!campaignReconciliationIsBusy(error) || attempt === CAMPAIGN_RECONCILE_RETRY_DELAYS_MS.length - 1) throw error;
+      }
+    }
+    throw lastError || new Error("Campaign delivery reconciliation did not return a result.");
+  }
+
   async function sendCampaignRecipients(campaign, staffName, maximum, continueAfterBlock){
     let sent = 0, blocked = 0, remaining = Number(campaign?.counts?.["Ready to send"] || 0);
     let attempts = 0;
@@ -4603,7 +4633,12 @@
       } catch (error) {
         if (!campaignSendOutcomeIsUnknown(error)) throw error;
         $("outreachCampaignStatus").textContent = `Checking the send outcome for ${expected.business} before deciding whether to continue…`;
-        const reconciliation = await staffApiPost({ action:"reconcileCampaignSends", campaign_id:campaign.campaign_id, idempotency_token:expected.idempotency_token, staff_name:staffName });
+        let reconciliation;
+        try {
+          reconciliation = await reconcileCampaignSendWithRetries(campaign, expected, staffName);
+        } catch (reconciliationError) {
+          throw new Error(`Outcome unknown for ${expected.business}: ${error.message || String(error)} Reconciliation failed after waiting for the active campaign update: ${reconciliationError.message || String(reconciliationError)}.`);
+        }
         if (!reconciliation.ok) throw new Error(`Outcome unknown for ${expected.business}: ${error.message || String(error)} Reconciliation failed: ${reconciliation.error || "no response"}.`);
         const recipient = (reconciliation.recipient_statuses || []).find(item => item.idempotency_token === expected.idempotency_token);
         if (["Sent", "Sent - needs recording"].includes(recipient?.status)) {
