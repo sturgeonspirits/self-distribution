@@ -8,7 +8,7 @@ Read this file before inspecting the repository or changing the application. Upd
 
 | Component | Source version | Deployment state |
 | --- | --- | --- |
-| Netlify web app and staff proxy | `2026.10.06.29-WEB` on `codex/work` | Repo only; the May-PDF visual rebuild awaits Claude's final print check before any promotion. |
+| Netlify web app and staff proxy | `2026.10.06.30-WEB` on `codex/work` | Repo only; the May-PDF visual rebuild awaits Claude's final two-page confirmation before any promotion. |
 | Inventory API Apps Script | `2026.10.05.30-APP` on `codex/work` | Repo only; production remains `2026.10.05.27-APP` until Claude reviews the protected sell sheet. |
 | Distribution Outreach Apps Script | `2026.10.04.25-APP` in `docs/reference/distribution-outreach/Code.gs`; reported deployed 2026-10-05 | Deployed with the paired Inventory API for Cocktail list sends. |
 | Public customer Netlify proxy | `2026.10.05.4-WEB` live with the Netlify web release | Retries only a failed/non-JSON `listSkus` catalog read once; customer submissions remain single-attempt. |
@@ -24,6 +24,8 @@ Badger tracker safety answer (Karl, 2026-09-30): the PDF importer never writes t
 Phase 5 deployment state: staging Inventory API `2026.10.01.5` and Netlify `2026.10.01.8-WEB` are live. Next, run `seedCurrentPricesTab()` once in staging and review/activate the tracker prices with Claude before any Badger invoice creation. Never create a test invoice in Badger.
 
 Latest completed changes:
+
+- Sell-sheet priced-print fit (`2026.10.05.30-APP`, `2026.10.06.30-WEB`; repo only, 2026-10-06): reduces only printed flavor-group bottom margins from .18 in to .12 in. The public page retains its bottom fill, while the price-only group lines no longer create the blank third page. **Do not deploy until Claude confirms both public and priced views print as two pages.**
 
 - Sell-sheet final print-fill correction (`2026.10.05.30-APP`, `2026.10.06.29-WEB`; repo only, 2026-10-06): reserves a 10.05 in flex layout only for printed page two, stretches the catalog to its bottom edge, raises lists to 12 pt/1.24 with 13 pt group headings, and uses three 1.5 in bottle rows. These rules follow the prior print overrides so their values win. The local-preview logic remains `file:` only; localhost/Netlify Dev reaches the actual response. **Do not deploy until Claude makes the requested quick public/priced print check.**
 

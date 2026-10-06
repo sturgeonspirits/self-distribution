@@ -1,6 +1,6 @@
 # Review request: May-PDF sell-sheet visual rebuild
 
-Review the staged `2026.10.05.30-APP` / `2026.10.06.29-WEB` update before any deploy. This is the final frontend-only print-fill correction to the May 2026-inspired protected sell-sheet; Apps Script and access control are unchanged.
+Review the staged `2026.10.05.30-APP` / `2026.10.06.30-WEB` update before any deploy. This is the final frontend-only priced-print fit correction to the May 2026-inspired protected sell-sheet; Apps Script and access control are unchanged.
 
 Focus on these release gates:
 
