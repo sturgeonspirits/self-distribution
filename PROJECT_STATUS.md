@@ -23,6 +23,10 @@ Badger tracker safety answer (Karl, 2026-09-30): the PDF importer never writes t
 
 Phase 5 deployment state: staging Inventory API `2026.10.01.5` and Netlify `2026.10.01.8-WEB` are live. Next, run `seedCurrentPricesTab()` once in staging and review/activate the tracker prices with Claude before any Badger invoice creation. Never create a test invoice in Badger.
 
+## Future-push backlog
+
+- Outreach Campaigns UI: give **Create campaign** a visually distinct draft/primary color from the adjacent **Review campaign** buttons, so starting a new campaign cannot be mistaken for opening an existing one.
+
 Latest completed changes:
 
 - Campaign timeout recovery (`2026.10.05.30-APP`, `2026.10.06.31-WEB`; Netlify production, 2026-10-06): a browser timeout after Zoho accepts a campaign email now retries only the targeted Activity Log reconciliation while the previous Apps Script lock clears. It never retries the send; a confirmed accepted email is recorded and the run continues. All 73 workflow tests pass. No Apps Script deployment occurred.
