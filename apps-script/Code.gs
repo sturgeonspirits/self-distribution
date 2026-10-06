@@ -1,8 +1,11 @@
 /*********************************
  * Inventory API (JSON) for Netlify
- * App version: 2026.10.05.30-APP
+ * App version: 2026.10.06.31-APP
  *
  * CHANGES IN THIS VERSION
+ * - Applies each saved sales campaign's distance, fit, and optional field criteria to Initial, Follow-up, and
+ *   Nurture previews, freezes, and send-time checks. A Follow-up campaign with a 30-mile radius can no longer
+ *   include or send a farther-away recipient simply because it is not an Initial campaign.
  * - Sets the editable sell-sheet headline default to "Oshkosh's First Distillery Since 1919" for the May-style
  *   product sheet. Existing Email Editor content remains untouched.
  * - Makes conflicting active Customer Prices rows explicitly unpriceable in the sell sheet, matching invoicing,
@@ -304,7 +307,7 @@
  * - Use only in the staging inventory backend until testing is complete.
  *********************************/
 
-const APP_VERSION = "2026.10.05.30-APP";
+const APP_VERSION = "2026.10.06.31-APP";
 
 const SHEET_NAMES = {
   STORES: "Stores",
@@ -3728,13 +3731,11 @@ function campaignCriteriaFromRequest_(p) {
 function campaignAudienceLabel_(criteria) {
   if (criteria?.campaign_type === "cocktail_list") return `Cocktail list · subscribed newsletter contacts${criteria?.max_recipients ? ` · first ${criteria.max_recipients}` : ""}`;
   const stage = String(criteria?.stage || "Initial");
-  if (stage !== "Initial") {
-    return `${stage} due${criteria?.source_campaign_id ? ` · recipients of ${criteria.source_campaign_id}` : ""}${criteria?.max_recipients ? ` · first ${criteria.max_recipients}` : ""}`;
-  }
   const center = criteria?.center?.label || "selected center";
   const filters = criteria?.filters || {};
-  const suffix = [filters.city && `city ${filters.city}`, filters.county && `county ${filters.county}`, filters.segment && `segment ${filters.segment}`, filters.wave && `wave ${filters.wave}`, criteria.max_recipients && `first ${criteria.max_recipients}`].filter(Boolean);
-  return `Initial prospects · fit ≥${criteria.min_fit} · ≤${criteria.radius_miles} mi of ${center}${suffix.length ? ` · ${suffix.join(" · ")}` : ""}`;
+  const suffix = [criteria?.source_campaign_id && `recipients of ${criteria.source_campaign_id}`, filters.city && `city ${filters.city}`, filters.county && `county ${filters.county}`, filters.segment && `segment ${filters.segment}`, filters.wave && `wave ${filters.wave}`, criteria.max_recipients && `first ${criteria.max_recipients}`].filter(Boolean);
+  const audience = stage === "Initial" ? "Initial prospects" : `${stage} due`;
+  return `${audience} · fit ≥${criteria.min_fit} · ≤${criteria.radius_miles} mi of ${center}${suffix.length ? ` · ${suffix.join(" · ")}` : ""}`;
 }
 
 function campaignDistanceForCriteria_(record, criteria) {
@@ -3744,7 +3745,6 @@ function campaignDistanceForCriteria_(record, criteria) {
 function campaignCriteriaFailures_(record, criteria) {
   if (!criteria) return [];
   if (criteria.campaign_type === "cocktail_list") return [];
-  if (String(criteria.stage || "Initial") !== "Initial") return [];
   const failures = [];
   const miles = campaignDistanceForCriteria_(record, criteria);
   if (miles === null || miles > Number(criteria.radius_miles)) failures.push("distance");

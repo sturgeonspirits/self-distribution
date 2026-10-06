@@ -1,10 +1,10 @@
 <!doctype html>
-<!-- App version: 2026.10.06.31-WEB -->
+<!-- App version: 2026.10.06.32-WEB -->
 <html>
 <head>
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover"/>
-  <meta name="app-version" content="2026.10.06.31-WEB" />
+  <meta name="app-version" content="2026.10.06.32-WEB" />
   <meta name="theme-color" content="#536f77" />
   <link rel="icon" href="/assets/distribution-hub-icon.svg" type="image/svg+xml" />
   <link rel="manifest" href="/site.webmanifest" />
@@ -2481,7 +2481,7 @@
       <button id="closeOutreachCampaignCriteriaBtn" type="button">Cancel</button>
     </div>
     <div class="dlgBody">
-      <div class="modeNotice" style="margin-top:0"><i data-lucide="map-pin"></i><span>Choose the email stage first. Initial campaigns use the location and fit criteria below; follow-up and nurture campaigns select only recipients already due for that stage. Preview first; creation only happens after you confirm the preview.</span></div>
+      <div class="modeNotice" style="margin-top:0"><i data-lucide="map-pin"></i><span>Choose the email stage first. Sales campaigns select recipients due for that stage and apply the location, fit, and optional criteria below. Preview first; creation only happens after you confirm the preview.</span></div>
       <div class="workflowEditGrid">
         <div class="full"><label>Campaign name</label><input id="outreachCampaignCriteriaName" maxlength="120" /></div>
         <div><label>Campaign type</label><select id="outreachCampaignCriteriaType"><option value="sales_outreach" selected>Sales outreach</option><option value="cocktail_list">Cocktail list</option></select></div>
@@ -2668,7 +2668,7 @@
 
   <footer style="max-width:1200px;margin:18px auto 120px;padding:0 12px;text-align:center;color:#6b7280;font-size:12px;">
     Designed by <a href="https://scriptspirit.dev" target="_blank" rel="noopener noreferrer" style="color:#1d4ed8;text-decoration:none;font-weight:700;">Script Spirit</a>
-<span id="appVersionFooter"> • Version 2026.10.06.31-WEB</span>
+<span id="appVersionFooter"> • Version 2026.10.06.32-WEB</span>
   </footer>
 
 
@@ -2691,7 +2691,7 @@
   window.addEventListener("unhandledrejection", e => console.error("Unhandled promise rejection:", e.reason));
   window.addEventListener("error", e => console.error("Unhandled error:", e.error || e.message));
   const $ = (id) => document.getElementById(id);
-  const APP_VERSION = "2026.10.06.31-WEB";
+  const APP_VERSION = "2026.10.06.32-WEB";
   $("appVersionFooter").textContent = ` • Version ${APP_VERSION}`;
   function screenCacheKey(screen){ return `distribution_hub:${APP_VERSION}:${staffSession?.email || "unknown"}:${screen}`; }
   function readScreenCache(screen){
@@ -4164,7 +4164,7 @@
     const notice = $("outreachCampaignCriteriaDialog").querySelector(".modeNotice span");
     if (notice) notice.textContent = cocktailList
       ? "Cocktail list campaigns go only to subscribed newsletter contacts. They use the saved monthly newsletter template, a physical mailing address, and a 14-day email gap."
-      : "Choose the email stage first. Initial campaigns use the location and fit criteria below; follow-up and nurture campaigns select only recipients already due for that stage. Preview first; creation only happens after you confirm the preview.";
+      : "Choose the email stage first. Sales campaigns select recipients due for that stage and apply the location, fit, and optional criteria below. Preview first; creation only happens after you confirm the preview.";
   }
 
   function campaignCriteriaInput(){
@@ -4346,10 +4346,10 @@
     const maxMiles = Number(criteria?.radius_miles || 0);
     const centerLabel = criteria?.center?.label || "the original audience";
     const minFit = Number(criteria?.min_fit || 0);
-    const areaWarningCount = criteria && stage === "Initial" ? (campaign.recipients || []).filter(recipient => recipient.miles === null || recipient.miles === undefined || Number(recipient.miles) > maxMiles).length : 0;
+    const areaWarningCount = criteria && criteria.campaign_type !== "cocktail_list" ? (campaign.recipients || []).filter(recipient => recipient.miles === null || recipient.miles === undefined || Number(recipient.miles) > maxMiles).length : 0;
     const criteriaSummary = !criteria ? "Legacy campaign • no stored criteria gate"
-      : stage === "Initial" ? `Initial • fit ≥${minFit} • ≤${maxMiles} mi of ${centerLabel}`
-        : `${stage} • due recipients${criteria.source_campaign_id ? ` • from ${criteria.source_campaign_id}` : ""}`;
+      : criteria.campaign_type === "cocktail_list" ? "Cocktail list • subscribed contacts"
+        : `${stage} • fit ≥${minFit} • ≤${maxMiles} mi of ${centerLabel}${criteria.source_campaign_id ? ` • from ${criteria.source_campaign_id}` : ""}`;
     $("outreachCampaignSubtitle").textContent = `${campaign.recipient_count} frozen recipients${excludedCount ? ` • ${excludedCount} excluded` : ""} • ${criteriaSummary}${areaWarningCount ? ` • ${areaWarningCount} need area review` : ""} • ${campaign.status}`;
     $("outreachCampaignNotice").textContent = campaign.status === "Review"
       ? "Open any recipient to edit it or exclude it from this campaign. Approval freezes the exact saved audience and messages; it still does not send email."

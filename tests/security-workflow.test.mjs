@@ -1618,6 +1618,22 @@ test("campaign builder freezes and delivers the requested outreach stage", async
   assert.match(index, /campaign\.criteria\?\.stage \|\| "Initial"/);
 });
 
+test("sales campaign criteria restrict Follow-up recipients as well as Initial recipients", async () => {
+  const [backend, index] = await Promise.all([
+    readFile(new URL("apps-script/Code.gs", root), "utf8"),
+    readFile(new URL("index.html", root), "utf8"),
+  ]);
+  const source = backend.slice(backend.indexOf("function campaignCriteriaFailures_"), backend.indexOf("function campaignDirectoryRecord_"));
+  const criteriaFailures = new Function("campaignDistanceForCriteria_", `${source}; return campaignCriteriaFailures_;`)(() => 30.1);
+  const criteria = {
+    campaign_type:"sales_outreach", stage:"Follow-up 1", radius_miles:30, min_fit:5,
+    filters:{ city:"", county:"", segment:"", wave:"" },
+  };
+  assert.deepEqual(criteriaFailures({ craft_spirit_fit:5 }, criteria), ["distance"]);
+  assert.doesNotMatch(source, /String\(criteria\.stage \|\| "Initial"\) !== "Initial"/);
+  assert.match(index, /\$\{stage\} • fit ≥\$\{minFit\} • ≤\$\{maxMiles\} mi of \$\{centerLabel\}/);
+});
+
 test("Deploy A review corrections repair validations and retain a campaign's stage", async () => {
   const [backend, mailer, status] = await Promise.all([
     readFile(new URL("apps-script/Code.gs", root), "utf8"),
