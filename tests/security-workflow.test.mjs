@@ -866,7 +866,14 @@ test("sell-sheet implementation keeps public catalog prices separate and install
   assert.match(page, /common750=/);
   assert.match(page, /uniform=/);
   assert.match(page, /column-fill:balance/);
-  assert.match(page, /grid-template-rows:repeat\(3,1fr\)/);
+  assert.match(page, /grid-template-rows:repeat\(3,1\.28in\)/);
+  assert.match(page, /\.flavor-group\{break-inside:auto/);
+  assert.match(page, /break-after:avoid/);
+  assert.doesNotMatch(page, /\.sheet\{[^}]*overflow:hidden/);
+  assert.doesNotMatch(page, /\.page-two\{height:/);
+  assert.doesNotMatch(page, /\.catalog-layout\{[^}]*height:/);
+  assert.doesNotMatch(page, /\.flavor-lead h2\{[^}]*white-space:nowrap/);
+  assert.match(page, /gallery=groups\.flatMap/);
   assert.doesNotMatch(page, /MutationObserver|atob\(/);
   assert.doesNotMatch(page, /What our accounts reorder most/);
   assert.match(page, /licensed retailers, bars, restaurants and venues/);
@@ -893,7 +900,7 @@ test("sell-sheet render keeps public output price-free and renders authorized pr
   const map = { by_sku:{ GIN:"classic-gin", VODKA:"river-run-vodka" }, by_name:{} };
   const publicView = await renderSellSheet({ ok:true, access:{ prices:false }, copy, sections }, map);
   assert.equal(publicView.className, "no-price");
-  assert.doesNotMatch(publicView.html, /\$|Place an order|wholesale price/);
+  assert.doesNotMatch(publicView.html, /\$|Place an order|wholesale price|Ask us for your price/);
   assert.match(publicView.html, /More spirits/);
   assert.doesNotMatch(publicView.html, /alt="Aquavit"/);
   const pricedView = await renderSellSheet({ ok:true, access:{ prices:true, account_id:"ACC-1" }, copy, sections }, map);
@@ -901,7 +908,10 @@ test("sell-sheet render keeps public output price-free and renders authorized pr
   assert.match(pricedView.html, /class="price-amount">\$22/);
   assert.match(pricedView.html, /class="price-copy">Most<br>Bottles/);
   assert.match(pricedView.html, /Custom <span class="item-price">\$19/);
-  assert.match(pricedView.html, /Maraschino Liqueur \(375 mL\)[^<]*<span class="item-price">\$12/);
+  assert.match(pricedView.html, /Liqueurs <span class="group-price">\$22\/bottle/);
+  assert.match(pricedView.html, /375 mL — \$12\/bottle/);
+  assert.doesNotMatch(pricedView.html, /Coffee Liqueur <span class="item-price">/);
+  assert.match(pricedView.html, /Maraschino Liqueur \(375 mL\)<\/li>/);
   assert.match(pricedView.html, /Special Liqueur[^<]*<span class="item-price">Ask us for your price/);
   assert.equal((pricedView.html.match(/sturgeonspirits\.com/g) || []).length, 1);
   assert.ok(pricedView.html.indexOf('class="catalog-right"') < pricedView.html.indexOf('class="contact-wrap"'), "the print contact block stays in the catalog's right column");
