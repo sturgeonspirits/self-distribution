@@ -1,10 +1,10 @@
 <!doctype html>
-<!-- App version: 2026.10.06.32-WEB -->
+<!-- App version: 2026.10.07.35-WEB -->
 <html>
 <head>
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover"/>
-  <meta name="app-version" content="2026.10.06.32-WEB" />
+  <meta name="app-version" content="2026.10.07.35-WEB" />
   <meta name="theme-color" content="#536f77" />
   <link rel="icon" href="/assets/distribution-hub-icon.svg" type="image/svg+xml" />
   <link rel="manifest" href="/site.webmanifest" />
@@ -1956,8 +1956,8 @@
         <select id="storeSelect"></select>
       </div>
       <div>
-        <label>Rep</label>
-        <input id="rep" placeholder="Your name" />
+        <label>Counted by</label>
+        <div class="smallMuted" style="padding:14px 0">Your Zoho sign-in is recorded automatically.</div>
       </div>
     </div>
 
@@ -2668,7 +2668,7 @@
 
   <footer style="max-width:1200px;margin:18px auto 120px;padding:0 12px;text-align:center;color:#6b7280;font-size:12px;">
     Designed by <a href="https://scriptspirit.dev" target="_blank" rel="noopener noreferrer" style="color:#1d4ed8;text-decoration:none;font-weight:700;">Script Spirit</a>
-<span id="appVersionFooter"> • Version 2026.10.06.32-WEB</span>
+<span id="appVersionFooter"> • Version 2026.10.07.35-WEB</span>
   </footer>
 
 
@@ -2676,7 +2676,7 @@
   <div class="bottomInner">
     <div class="bottomSummary">
       <div class="big" id="bottomSummary">0 shown • 0 changed • 0 need attention</div>
-      <div class="smallMuted">Only changed SKUs will be submitted</div>
+      <div class="smallMuted">Changed bottles are saved on this phone until you submit.</div>
     </div>
     <button class="secondaryBlue" id="bbScan">Scan</button>
     <button class="submit" id="submitBtn">Submit</button>
@@ -2691,7 +2691,7 @@
   window.addEventListener("unhandledrejection", e => console.error("Unhandled promise rejection:", e.reason));
   window.addEventListener("error", e => console.error("Unhandled error:", e.error || e.message));
   const $ = (id) => document.getElementById(id);
-  const APP_VERSION = "2026.10.06.32-WEB";
+  const APP_VERSION = "2026.10.07.35-WEB";
   $("appVersionFooter").textContent = ` • Version ${APP_VERSION}`;
   function screenCacheKey(screen){ return `distribution_hub:${APP_VERSION}:${staffSession?.email || "unknown"}:${screen}`; }
   function readScreenCache(screen){
@@ -2708,6 +2708,7 @@
 
   let cache = { stores: [], lines: [] };
   let countState = {};
+  let loadedStoreId = "";
   let filterMode = "all";
   let filterText = "";
   let activeLocation = localStorage.getItem("inv_count_location") === "back" ? "back" : "shelf";
@@ -5965,13 +5966,52 @@
 
   function savePrefs(){
     localStorage.setItem("inv_store", $("storeSelect").value || "");
-    localStorage.setItem("inv_rep", $("rep").value || "");
     localStorage.setItem("inv_manager_open", $("managerDetails").open ? "1" : "0");
     localStorage.setItem("inv_store_contacts_open", $("storeContactsDetails").open ? "1" : "0");
   }
 
+  // A count may take place in a weak-signal store. Keep the in-progress edits on
+  // this phone so a reload, accidental close, or store switch cannot discard
+  // them. These are only local drafts: submitting remains the only server write.
+  function countDraftKey(storeId){
+    return screenCacheKey(`inventory-count-draft:${storeId}`);
+  }
+
+  function dirtyCountEntries(){
+    return Object.entries(countState).filter(([, state]) => !!state?.dirty);
+  }
+
+  function saveCountDraft(storeIdOverride = ""){
+    const storeId = storeIdOverride || $("storeSelect")?.value || loadedStoreId;
+    if (!storeId) return;
+    const entries = dirtyCountEntries().map(([skuId, state]) => [skuId, {
+      shelf: cleanCount(state.shelf),
+      back: cleanCount(state.back),
+      notes: String(state.notes || "")
+    }]);
+    try {
+      if (entries.length) {
+        localStorage.setItem(countDraftKey(storeId), JSON.stringify({ saved_at:Date.now(), entries }));
+      } else {
+        localStorage.removeItem(countDraftKey(storeId));
+      }
+    } catch (_) {}
+  }
+
+  function readCountDraft(storeId){
+    try {
+      const draft = JSON.parse(localStorage.getItem(countDraftKey(storeId)) || "null");
+      return Array.isArray(draft?.entries) ? Object.fromEntries(draft.entries) : {};
+    } catch (_) {
+      return {};
+    }
+  }
+
+  function clearCountDraft(storeId){
+    try { localStorage.removeItem(countDraftKey(storeId)); } catch (_) {}
+  }
+
   function loadPrefs(){
-    $("rep").value = localStorage.getItem("inv_rep") || "";
     if (localStorage.getItem("inv_manager_open") === "1") $("managerDetails").open = true;
     if (localStorage.getItem("inv_store_contacts_open") === "1") $("storeContactsDetails").open = true;
     $("managerSummaryCard").open = false;
@@ -6454,6 +6494,7 @@
         if (deltaEl) deltaEl.textContent = formatDelta(nextDelta);
         if (changedBadge) changedBadge.hidden = !st.dirty;
         item.classList.toggle("changed", st.dirty);
+        saveCountDraft();
         updateSummaryUi();
       }
 
@@ -6783,17 +6824,24 @@
     writeScreenCache(`inventory-store:${storeId}`, res);
     updateStoreContactsUi();
 
+    const draft = readCountDraft(storeId);
     const keep = {};
     cache.lines.forEach(line => {
-      const prior = countState[line.sku_id];
+      const prior = draft[line.sku_id] || countState[line.sku_id];
       keep[line.sku_id] = normalizeCountState(line, prior);
     });
     countState = keep;
+    loadedStoreId = String(storeId);
 
     savePrefs();
     render();
     if (activeView === "sold") await loadSalesSinceCount(storeId);
-    else setStatus(`Updated ${new Date().toLocaleTimeString([], { hour:"numeric", minute:"2-digit" })}${res.performance?.total_ms ? ` in ${(Number(res.performance.total_ms) / 1000).toFixed(1)}s` : ""}${res.performance?.cache_hit ? " (server cache)" : ""}.`);
+    else {
+      const restored = Object.keys(draft).filter(skuId => countState[skuId]?.dirty).length;
+      setStatus(restored
+        ? `Restored ${restored} unsent bottle count${restored === 1 ? "" : "s"} saved on this phone.`
+        : `Updated ${new Date().toLocaleTimeString([], { hour:"numeric", minute:"2-digit" })}${res.performance?.total_ms ? ` in ${(Number(res.performance.total_ms) / 1000).toFixed(1)}s` : ""}${res.performance?.cache_hit ? " (server cache)" : ""}.`);
+    }
   }
 
   // First inventory load after sign-in. One run at a time; one automatic retry; errors are shown on the
@@ -6863,16 +6911,15 @@
       if (!line) return;
       countState[k] = normalizeCountState(line);
     });
+    clearCountDraft($("storeSelect").value);
     render();
     toast("Counts reset");
   }
 
   async function submitCounts(){
     const storeId = $("storeSelect").value;
-    const rep = ($("rep").value || "").trim();
 
     if (!storeId) return toast("Pick a store");
-    if (!rep) return toast("Enter your name");
 
     const items = cache.lines
       .filter(line => countState[line.sku_id]?.dirty)
@@ -6894,11 +6941,12 @@
       const res = await staffApiPost({
         action:"submitCounts",
         store_id: storeId,
-        rep,
         updateInventory,
         items
       });
       if (!res.ok) throw new Error(res.error || "Submit failed. Check your connection and try again.");
+      clearCountDraft(storeId);
+      countState = {};
       setStatus(res.message || "Submitted");
       toast("Submitted");
       await loadStore(storeId);
@@ -6910,11 +6958,9 @@
 
   async function createReorder(){
     const storeId = $("storeSelect").value;
-    const rep = ($("rep").value || "").trim();
     const notes = $("visitNotes").value || "";
 
     if (!storeId) return toast("Pick a store");
-    if (!rep) return toast("Enter your name");
 
     const button = $("reorderBtn");
     button.disabled = true;
@@ -6923,7 +6969,6 @@
       const res = await staffApiPost({
         action:"createReorder",
         store_id: storeId,
-        rep,
         notes
       });
       if (!res.ok) throw new Error(res.error || "Reorder failed. Check your connection and try again.");
@@ -7140,6 +7185,7 @@
           st.dirty = (st.counted !== Number(line.on_hand_units || 0)) || !!st.notes;
 
           status.textContent = `Matched ${code} → ${skuId}. +1 ${location} bottle`;
+          saveCountDraft();
           toast(`+1 ${location}`);
           render();
 
@@ -7170,13 +7216,21 @@
   }
 
   $("storeSelect").addEventListener("change", async () => {
+    const nextStoreId = $("storeSelect").value;
+    if (loadedStoreId && String(nextStoreId) !== String(loadedStoreId) && dirtyCountEntries().length) {
+      const proceed = confirm("You have unsent bottle counts. They are saved on this phone, but not yet submitted. Switch stores?");
+      if (!proceed) {
+        $("storeSelect").value = loadedStoreId;
+        return;
+      }
+    }
+    saveCountDraft(loadedStoreId);
     savePrefs();
     countState = {};
     salesLoadedStoreId = "";
-    await loadStore($("storeSelect").value);
+    await loadStore(nextStoreId);
   });
 
-  $("rep").addEventListener("input", savePrefs);
   $("managerDetails").addEventListener("toggle", savePrefs);
   $("storeContactsDetails").addEventListener("toggle", savePrefs);
   $("storeManagerName").addEventListener("input", updateStoreContactsSummaryFromInputs);

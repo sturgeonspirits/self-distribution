@@ -8,7 +8,7 @@ Read this file before inspecting the repository or changing the application. Upd
 
 | Component | Source version | Deployment state |
 | --- | --- | --- |
-| Netlify web app and staff proxy | `2026.10.06.32-WEB` on `codex/distribution-system-foundation` | Deployed to Netlify production from `813e420` on 2026-10-06. |
+| Netlify web app and staff proxy | `2026.10.07.35-WEB` on `codex/work` | Deployed to Netlify production on 2026-10-07 from an isolated release copy (last commit `ccef7dc` plus the inventory count fix); committed afterward to match production. |
 | Inventory API Apps Script | `2026.10.06.32-APP` on `codex/work` | Pending deployment: the safe one-read campaign-template rebuild correction. Production remains `2026.10.06.31-APP`. |
 | Distribution Outreach Apps Script | `2026.10.04.25-APP` in `docs/reference/distribution-outreach/Code.gs`; reported deployed 2026-10-05 | Deployed with the paired Inventory API for Cocktail list sends. |
 | Public customer Netlify proxy | `2026.10.05.4-WEB` live with the Netlify web release | Retries only a failed/non-JSON `listSkus` catalog read once; customer submissions remain single-attempt. |
@@ -28,6 +28,8 @@ Phase 5 deployment state: staging Inventory API `2026.10.01.5` and Netlify `2026
 - Outreach Campaigns UI: give **Create campaign** a visually distinct draft/primary color from the adjacent **Review campaign** buttons, so starting a new campaign cannot be mistaken for opening an existing one.
 
 Latest completed changes:
+
+- Inventory count drafts and signed-in counter (`2026.10.07.35-WEB`; deployed 2026-10-07): bottle counts in progress are saved on the phone until submitted, so a reload, closed tab or store switch no longer loses them; switching stores with unsent counts asks first, and a successful submit or Reset clears the saved draft. The Rep name box is removed: the counter is the Zoho sign-in, which the staff proxy already sends as `rep` for `submitCounts` and `createReorder`, so the Apps Script requirement is unchanged. No Apps Script deploy. This release was deployed before it was committed; this commit records exactly what is live.
 
 - Campaign template rebuild performance correction (`2026.10.06.32-APP`; pending deployment, 2026-10-06): rebuilding an unsent review campaign now reads the Audit Log once to identify individually edited recipient snapshots, rather than querying it once for every recipient. Rebuild keeps edited copy intact, refreshes unedited messages from the current template, and never sends email.
 
