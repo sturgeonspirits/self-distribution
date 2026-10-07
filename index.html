@@ -5989,8 +5989,23 @@
   // A count may take place in a weak-signal store. Keep the in-progress edits on
   // this phone so a reload, accidental close, or store switch cannot discard
   // them. These are only local drafts: submitting remains the only server write.
+  // Unsent counts must survive a release, so this key deliberately leaves out APP_VERSION
+  // (unlike screenCacheKey). readCountDraft also picks up drafts saved under the older
+  // version-specific key used by 2026.10.07.35-WEB.
   function countDraftKey(storeId){
-    return screenCacheKey(`inventory-count-draft:${storeId}`);
+    return `distribution_hub:count-draft:${staffSession?.email || "unknown"}:${storeId}`;
+  }
+
+  function legacyCountDraftKeys(storeId){
+    const suffix = `:${staffSession?.email || "unknown"}:inventory-count-draft:${storeId}`;
+    const keys = [];
+    try {
+      for (let i = 0; i < localStorage.length; i++) {
+        const key = localStorage.key(i);
+        if (key && key.startsWith("distribution_hub:") && key.endsWith(suffix)) keys.push(key);
+      }
+    } catch (_) {}
+    return keys;
   }
 
   function dirtyCountEntries(){
@@ -6011,20 +6026,26 @@
       } else {
         localStorage.removeItem(countDraftKey(storeId));
       }
+      // Once the current state is saved under the release-independent key, older copies are stale.
+      legacyCountDraftKeys(storeId).forEach(key => localStorage.removeItem(key));
     } catch (_) {}
   }
 
   function readCountDraft(storeId){
-    try {
-      const draft = JSON.parse(localStorage.getItem(countDraftKey(storeId)) || "null");
-      return Array.isArray(draft?.entries) ? Object.fromEntries(draft.entries) : {};
-    } catch (_) {
-      return {};
-    }
+    let newest = null;
+    [countDraftKey(storeId), ...legacyCountDraftKeys(storeId)].forEach(key => {
+      try {
+        const draft = JSON.parse(localStorage.getItem(key) || "null");
+        if (Array.isArray(draft?.entries) && (!newest || Number(draft.saved_at || 0) > Number(newest.saved_at || 0))) newest = draft;
+      } catch (_) {}
+    });
+    return newest ? Object.fromEntries(newest.entries) : {};
   }
 
   function clearCountDraft(storeId){
-    try { localStorage.removeItem(countDraftKey(storeId)); } catch (_) {}
+    [countDraftKey(storeId), ...legacyCountDraftKeys(storeId)].forEach(key => {
+      try { localStorage.removeItem(key); } catch (_) {}
+    });
   }
 
   function loadPrefs(){
