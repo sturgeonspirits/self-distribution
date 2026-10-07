@@ -1389,9 +1389,10 @@ test("campaign reconciliation uses targeted accepted Activity Log records withou
 });
 
 test("campaign rebuilding reconciles first and changes only review-ready snapshots", async () => {
-  const [backend, proxy] = await Promise.all([
+  const [backend, proxy, index] = await Promise.all([
     readFile(new URL("apps-script/Code.gs", root), "utf8"),
     readFile(new URL("netlify/functions/inventory.js", root), "utf8"),
+    readFile(new URL("index.html", root), "utf8"),
   ]);
   const rebuildSource = backend.slice(backend.indexOf("function apiRebuildCampaignRecipients_"), backend.indexOf("function campaignRecipientFooterHtml_"));
   assert.match(backend, /case "rebuildCampaignRecipients": res = apiRebuildCampaignRecipients_\(body\);/);
@@ -1403,6 +1404,16 @@ test("campaign rebuilding reconciles first and changes only review-ready snapsho
   assert.doesNotMatch(rebuildSource, /campaignRecipientWasEdited_/);
   assert.match(backend, /function campaignEditedRecipientTokenSet_\(\) \{/);
   assert.match(backend, /getAllRowsAsObjects_\(auditSheet\)/);
+  assert.match(rebuildSource, /const batchSize = Number\(p\.rebuild_batch_size \|\| 25\);/);
+  assert.match(rebuildSource, /const rebuildRecipients = readyRecipients\.slice\(batchOffset, batchOffset \+ batchSize\);/);
+  assert.match(rebuildSource, /remaining:remaining/);
+  assert.match(index, /rebuild_batch_size:25, rebuild_offset:offset/);
+  assert.match(index, /while \(true\) \{/);
+  assert.match(backend, /needsTastingOffer \? outreachHasRecentBadgerInvoice_\(accountId\) : true/);
+  assert.match(backend, /Tasting Offer\\s\*\\\}\\\}\/i\.test\(`\$\{String\(settings\[keys\[0\]\]/);
+  const editorRebuild = backend.slice(backend.indexOf("function rebuildUnsentCampaignEmails"), backend.indexOf("function campaignRecipientFooterHtml_"));
+  assert.match(editorRebuild, /rebuild_offset:offset/);
+  assert.match(editorRebuild, /while \(true\)/);
   assert.match(rebuildSource, /outreachPlainTextToHtml_\(String\(item\.values\[rh\.body_text\] \|\| ""\)\) \+ String\(message\.footer_html \|\| ""\)/);
   assert.match(rebuildSource, /item\.values\[rh\.html\] = message\.html/);
   assert.match(rebuildSource, /campaign\.values\[ch\.approval_token\] = ""/);

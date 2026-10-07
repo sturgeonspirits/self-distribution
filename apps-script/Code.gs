@@ -1,8 +1,12 @@
 /*********************************
  * Inventory API (JSON) for Netlify
- * App version: 2026.10.06.32-APP
+ * App version: 2026.10.06.33-APP
  *
  * CHANGES IN THIS VERSION
+ * - Rebuilds large review campaigns in small, safe batches from the Hub, so one slow Google Sheets response cannot
+ *   abandon a 100-plus-recipient template refresh. It also skips the costly Badger lookup unless a template actually
+ *   uses the tasting-offer merge field (subject or body); when it is unused, the offer value is left blank.
+ *   The editor fallback rebuildUnsentCampaignEmails() loops through every batch. Rebuild batches never send email.
  * - Rebuilds unsent campaign email snapshots from one Audit Log lookup instead of searching that sheet once per
  *   recipient. Large review campaigns can refresh current template copy without timing out; edited recipient copy
  *   remains protected and no rebuild sends email.
@@ -310,7 +314,7 @@
  * - Use only in the staging inventory backend until testing is complete.
  *********************************/
 
-const APP_VERSION = "2026.10.06.32-APP";
+const APP_VERSION = "2026.10.06.33-APP";
 
 const SHEET_NAMES = {
   STORES: "Stores",
@@ -3207,6 +3211,10 @@ function outreachMessage_(row, settings, draft, testMode) {
   const applicationLink = (trackedApplication || directApplication)
     ? `<p>${applicationSentence}</p>`
     : "";
+  const template = String(settings[keys[1]] || "");
+  // Only pay for the Badger lookup when the subject or body actually uses the offer. When it is not used,
+  // pass "has recent invoice" so the value stays blank rather than defaulting to the offer text.
+  const needsTastingOffer = /\{\{\s*Tasting Offer\s*\}\}/i.test(`${String(settings[keys[0]] || "")}\n${template}`);
   const values = Object.assign({
     "First Name": contact ? contact.split(/\s+/)[0] : "there",
     "Business Name": outreachDisplayBusinessName_(outreachValue_(row, ["business", "business_name"]) || "your business"),
@@ -3220,8 +3228,7 @@ function outreachMessage_(row, settings, draft, testMode) {
       ? `<a href="${escapeOutreachHtml_(website)}"><img src="${escapeOutreachHtml_(logo)}" alt="Sturgeon Spirits"></a>`
       : "",
     "Sell Sheet Link": (sellSheet ? `<p><a href="${escapeOutreachHtml_(trackedSellSheet || sellSheet)}">View our current wholesale sell sheet</a></p>` : "") + applicationLink,
-  }, outreachMonthlyContentValues_(row, settings, outreachHasRecentBadgerInvoice_(accountId)));
-  const template = String(settings[keys[1]] || "");
+  }, outreachMonthlyContentValues_(row, settings, needsTastingOffer ? outreachHasRecentBadgerInvoice_(accountId) : true));
   const parts = outreachTemplateParts_(template);
   const templateSubject = renderOutreachTemplate_(settings[keys[0]], values, false);
   const templateBodyHtml = renderOutreachTemplate_(parts.body, values, true);
@@ -4257,6 +4264,10 @@ function campaignRecipientChecksum_(recipient) {
 
 function apiRebuildCampaignRecipients_(p) {
   requireFields_(p || {}, ["campaign_id"]);
+  const batchSize = Number(p.rebuild_batch_size || 25);
+  const batchOffset = Number(p.rebuild_offset || 0);
+  if (!Number.isInteger(batchSize) || batchSize < 1 || batchSize > 25) throw new Error("Rebuild batch size must be between 1 and 25.");
+  if (!Number.isInteger(batchOffset) || batchOffset < 0) throw new Error("Rebuild batch offset must be zero or greater.");
   const lock = LockService.getScriptLock();
   if (!lock.tryLock(20000)) throw new Error("Another campaign update is in progress. Try again in a moment.");
   try {
@@ -4267,7 +4278,9 @@ function apiRebuildCampaignRecipients_(p) {
     if (String(campaign.values[ch.status] || "") !== "Review") throw new Error("Campaign must be in Review before unsent emails can be rebuilt.");
     const staffName = authenticatedActor_(p, "Sturgeon Distribution Hub");
     const recipients = campaignRecipientRows_(sheets.recipients, p.campaign_id);
-    const reconciliation = reconcileBlockedCampaignSends_(sheets, campaign, recipients, staffName);
+    const reconciliation = batchOffset === 0
+      ? reconcileBlockedCampaignSends_(sheets, campaign, recipients, staffName)
+      : { reconciled:0, blocked_without_match:0 };
     const leadSheet = getOutreachSheet_(OUTREACH_SHEET_NAME);
     const directory = campaignDirectoryRows_(leadSheet);
     const settings = getOutreachCampaignSettings_();
@@ -4276,11 +4289,16 @@ function apiRebuildCampaignRecipients_(p) {
     const campaignStage = String(campaignStoredCriteria_(campaign.values[ch.criteria])?.stage || "Initial");
     const cocktailList = criteria?.campaign_type === "cocktail_list";
     const editedRecipientTokens = campaignEditedRecipientTokenSet_();
+    const readyRecipients = recipients.filter(item => String(item.values[item.headers.status] || "") === "Ready for review");
+    const rebuildRecipients = readyRecipients.slice(batchOffset, batchOffset + batchSize);
+    if (!rebuildRecipients.length) {
+      return { message:"No additional unsent campaign emails need rebuilding.", rebuilt:0, rebuilt_with_edits_kept:0, skipped:0, reconciled:reconciliation.reconciled, processed:0, remaining:0 };
+    }
     const changed = [];
     let rebuilt = 0;
     let rebuiltWithEditsKept = 0;
     let skipped = 0;
-    recipients.filter(item => String(item.values[item.headers.status] || "") === "Ready for review").forEach(item => {
+    rebuildRecipients.forEach(item => {
       const rh = item.headers;
       if (cocktailList) {
         let record;
@@ -4367,13 +4385,16 @@ function apiRebuildCampaignRecipients_(p) {
     campaign.values[ch.approval_token] = "";
     updateCampaignDeliveryCounts_(campaign, recipients);
     sheets.campaigns.getRange(campaign.row, 1, 1, campaign.values.length).setValues([campaign.values]);
-    appendAudit_("REBUILD_CAMPAIGN_RECIPIENTS", "Campaign", p.campaign_id, "", staffName, OUTREACH_SHEET_NAME, OUTREACH_CAMPAIGN_RECIPIENTS_SHEET_NAME, "Review", `${rebuilt} rebuilt; ${rebuiltWithEditsKept} rebuilt with edits kept; ${skipped} skipped — directory changed; ${reconciliation.reconciled} reconciled.`);
+    const remaining = Math.max(0, readyRecipients.length - batchOffset - rebuildRecipients.length);
+    appendAudit_("REBUILD_CAMPAIGN_RECIPIENTS", "Campaign", p.campaign_id, "", staffName, OUTREACH_SHEET_NAME, OUTREACH_CAMPAIGN_RECIPIENTS_SHEET_NAME, "Review", `${rebuilt} rebuilt; ${rebuiltWithEditsKept} rebuilt with edits kept; ${skipped} skipped — directory changed; ${reconciliation.reconciled} reconciled; ${remaining} rebuild recipients remain.`);
     return {
-      message:`${rebuilt} rebuilt; ${rebuiltWithEditsKept} rebuilt with edits kept; ${skipped} skipped; ${reconciliation.reconciled} reconciled. Campaign remains in Review and must be approved again.`,
+      message:`${rebuilt} rebuilt; ${rebuiltWithEditsKept} rebuilt with edits kept; ${skipped} skipped; ${reconciliation.reconciled} reconciled; ${remaining} remain. Campaign remains in Review and must be approved again.`,
       rebuilt:rebuilt,
       rebuilt_with_edits_kept:rebuiltWithEditsKept,
       skipped:skipped,
       reconciled:reconciliation.reconciled,
+      processed:rebuildRecipients.length,
+      remaining:remaining,
     };
   } finally {
     lock.releaseLock();
@@ -4382,9 +4403,17 @@ function apiRebuildCampaignRecipients_(p) {
 
 function rebuildUnsentCampaignEmails() {
   try {
-    const result = apiRebuildCampaignRecipients_({ campaign_id:"CMP-89758BA7F1B2483F84E59782BEFEAD39", staff_name:"Karl (editor)" });
-    Logger.log(JSON.stringify(result));
-    return result;
+    const campaignId = "CMP-89758BA7F1B2483F84E59782BEFEAD39";
+    const results = [];
+    let offset = 0;
+    while (true) {
+      const result = apiRebuildCampaignRecipients_({ campaign_id:campaignId, staff_name:"Karl (editor)", rebuild_batch_size:25, rebuild_offset:offset });
+      results.push(result);
+      Logger.log(JSON.stringify(result));
+      if (!Number(result.remaining || 0) || !Number(result.processed || 0)) break;
+      offset += Number(result.processed);
+    }
+    return results;
   } finally {
     bumpReadCacheVersion_();
   }

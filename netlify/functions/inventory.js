@@ -1,9 +1,9 @@
-// App version: 2026.10.07.35-WEB
+// App version: 2026.10.07.36-WEB
 import { gunzipSync } from "node:zlib";
 import { requireStaffSession } from "./auth.js";
 import { fetchWithDriveRelay, relayConfig } from "../lib/drive-relay.js";
 
-const APP_VERSION = "2026.10.07.35-WEB";
+const APP_VERSION = "2026.10.07.36-WEB";
 const STAFF_ACTIONS = new Set([
   "outreachDashboard",
   "outreachRecord",

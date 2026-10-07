@@ -1,10 +1,10 @@
 <!doctype html>
-<!-- App version: 2026.10.07.35-WEB -->
+<!-- App version: 2026.10.07.36-WEB -->
 <html>
 <head>
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover"/>
-  <meta name="app-version" content="2026.10.07.35-WEB" />
+  <meta name="app-version" content="2026.10.07.36-WEB" />
   <meta name="theme-color" content="#536f77" />
   <link rel="icon" href="/assets/distribution-hub-icon.svg" type="image/svg+xml" />
   <link rel="manifest" href="/site.webmanifest" />
@@ -2668,7 +2668,7 @@
 
   <footer style="max-width:1200px;margin:18px auto 120px;padding:0 12px;text-align:center;color:#6b7280;font-size:12px;">
     Designed by <a href="https://scriptspirit.dev" target="_blank" rel="noopener noreferrer" style="color:#1d4ed8;text-decoration:none;font-weight:700;">Script Spirit</a>
-<span id="appVersionFooter"> • Version 2026.10.07.35-WEB</span>
+<span id="appVersionFooter"> • Version 2026.10.07.36-WEB</span>
   </footer>
 
 
@@ -2691,7 +2691,7 @@
   window.addEventListener("unhandledrejection", e => console.error("Unhandled promise rejection:", e.reason));
   window.addEventListener("error", e => console.error("Unhandled error:", e.error || e.message));
   const $ = (id) => document.getElementById(id);
-  const APP_VERSION = "2026.10.07.35-WEB";
+  const APP_VERSION = "2026.10.07.36-WEB";
   $("appVersionFooter").textContent = ` • Version ${APP_VERSION}`;
   function screenCacheKey(screen){ return `distribution_hub:${APP_VERSION}:${staffSession?.email || "unknown"}:${screen}`; }
   function readScreenCache(screen){
@@ -4549,11 +4549,27 @@
     button.disabled = true;
     setCampaignStatus("Reconciling blocked sends and rebuilding unsent emails...");
     try {
-      const res = await staffApiPost({ action:"rebuildCampaignRecipients", campaign_id:campaign.campaign_id, staff_name:staffName });
-      if (!res.ok) throw new Error(res.error || "Campaign recipients could not be rebuilt.");
+      let offset = 0;
+      let rebuilt = 0;
+      let rebuiltWithEditsKept = 0;
+      let skipped = 0;
+      let reconciled = 0;
+      while (true) {
+        setCampaignStatus(`Rebuilding unsent emails with the current template (${rebuilt + rebuiltWithEditsKept} refreshed so far)...`);
+        const res = await staffApiPost({ action:"rebuildCampaignRecipients", campaign_id:campaign.campaign_id, staff_name:staffName, rebuild_batch_size:25, rebuild_offset:offset });
+        if (!res.ok) throw new Error(res.error || "Campaign recipients could not be rebuilt.");
+        rebuilt += Number(res.rebuilt || 0);
+        rebuiltWithEditsKept += Number(res.rebuilt_with_edits_kept || 0);
+        skipped += Number(res.skipped || 0);
+        reconciled += Number(res.reconciled || 0);
+        if (!Number(res.remaining || 0)) break;
+        const processed = Number(res.processed || 0);
+        if (!processed) throw new Error("Campaign rebuild made no progress. Refresh and try again.");
+        offset += processed;
+      }
       await loadOutreachCampaigns();
       await openOutreachCampaign(campaign.campaign_id);
-      setCampaignStatus(`${Number(res.rebuilt || 0)} rebuilt; ${Number(res.rebuilt_with_edits_kept || 0)} kept edited text; ${Number(res.skipped || 0)} skipped; ${Number(res.reconciled || 0)} reconciled. Re-approve before sending.`);
+      setCampaignStatus(`${rebuilt} rebuilt; ${rebuiltWithEditsKept} kept edited text; ${skipped} skipped; ${reconciled} reconciled. Re-approve before sending.`);
     } catch (error) {
       setCampaignStatus(`Could not rebuild campaign emails: ${error.message || String(error)}`, true);
       button.disabled = false;

@@ -8,8 +8,8 @@ Read this file before inspecting the repository or changing the application. Upd
 
 | Component | Source version | Deployment state |
 | --- | --- | --- |
-| Netlify web app and staff proxy | `2026.10.07.35-WEB` on `codex/work` | Deployed to Netlify production on 2026-10-07 from an isolated release copy (last commit `ccef7dc` plus the inventory count fix); committed afterward to match production. |
-| Inventory API Apps Script | `2026.10.06.32-APP` on `codex/work` | Pending deployment: the safe one-read campaign-template rebuild correction. Production remains `2026.10.06.31-APP`. |
+| Netlify web app and staff proxy | `2026.10.07.36-WEB` on `codex/work` | Pending coordinated release with `2026.10.06.33-APP`: batched campaign-template rebuild. Production is `2026.10.07.35-WEB` (inventory count drafts, deployed 2026-10-07). |
+| Inventory API Apps Script | `2026.10.06.33-APP` on `codex/work` | Pending deployment with `2026.10.07.36-WEB`: batched campaign-template rebuild (includes the `.32-APP` one-read Audit Log correction). Production remains `2026.10.06.32-APP`. |
 | Distribution Outreach Apps Script | `2026.10.04.25-APP` in `docs/reference/distribution-outreach/Code.gs`; reported deployed 2026-10-05 | Deployed with the paired Inventory API for Cocktail list sends. |
 | Public customer Netlify proxy | `2026.10.05.4-WEB` live with the Netlify web release | Retries only a failed/non-JSON `listSkus` catalog read once; customer submissions remain single-attempt. |
 
@@ -29,9 +29,11 @@ Phase 5 deployment state: staging Inventory API `2026.10.01.5` and Netlify `2026
 
 Latest completed changes:
 
+- Large campaign rebuild recovery (`2026.10.06.33-APP`, `2026.10.07.36-WEB`; pending deployment, 2026-10-07): the Hub refreshes review-campaign snapshots in 25-recipient server batches, carrying progress forward until none remain; blocked-send reconciliation runs only on the first batch. The Badger invoice lookup runs only when the selected template contains the `{{Tasting Offer}}` merge field. A slow batch can be retried safely and no rebuild sends mail. Deploy order: Netlify first, then Apps Script. The new Hub button works against the current `.32-APP` (that version ignores the batch fields, rebuilds everything in one call and returns no `remaining`, so the loop stops after one pass). The reverse is unsafe: `.33-APP` with the old Hub button would rebuild only the first 25 recipients. Tests: `node --test tests/security-workflow.test.mjs` (74 passing).
+
 - Inventory count drafts and signed-in counter (`2026.10.07.35-WEB`; deployed 2026-10-07): bottle counts in progress are saved on the phone until submitted, so a reload, closed tab or store switch no longer loses them; switching stores with unsent counts asks first, and a successful submit or Reset clears the saved draft. The Rep name box is removed: the counter is the Zoho sign-in, which the staff proxy already sends as `rep` for `submitCounts` and `createReorder`, so the Apps Script requirement is unchanged. No Apps Script deploy. This release was deployed before it was committed; this commit records exactly what is live.
 
-- Campaign template rebuild performance correction (`2026.10.06.32-APP`; pending deployment, 2026-10-06): rebuilding an unsent review campaign now reads the Audit Log once to identify individually edited recipient snapshots, rather than querying it once for every recipient. Rebuild keeps edited copy intact, refreshes unedited messages from the current template, and never sends email.
+- Campaign template rebuild performance correction (`2026.10.06.32-APP`; deployed, confirmed live by Karl 2026-10-07): rebuilding an unsent review campaign now reads the Audit Log once to identify individually edited recipient snapshots, rather than querying it once for every recipient. Rebuild keeps edited copy intact, refreshes unedited messages from the current template, and never sends email.
 
 - Follow-up campaign criteria correction (`2026.10.06.31-APP`, `2026.10.06.32-WEB`; deployed, 2026-10-06): Sales outreach criteria now apply equally to Initial, Follow-up, and Nurture stages at preview, freeze, and send time. A campaign saved with a 30-mile radius cannot show, freeze, or send a farther-away due recipient. The campaign UI states the active fit/radius rule for every sales stage. Tests: `node --test tests/security-workflow.test.mjs` (74 passing); production web marker verified as `2026.10.06.32-WEB`.
 
