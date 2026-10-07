@@ -1,8 +1,15 @@
 /*********************************
  * Inventory API (JSON) for Netlify
- * App version: 2026.10.06.33-APP
+ * App version: 2026.10.07.34-APP
  *
  * CHANGES IN THIS VERSION
+ * - Inventory counts: submitCounts accepts an optional submission_token and skips a retry whose token is already in the
+ *   Counts log, so a timed-out submit tapped again is not recorded twice. Shelf, back, the system number the counter
+ *   started from, and the token are logged in four new Counts columns (added automatically). Inventory on-hand and
+ *   last-count fields are written in three batched column writes instead of two or three calls per bottle. A bottle
+ *   whose system number changed during the count is reported in the response. Bottles confirmed as matching are
+ *   submitted too, so their last-count date updates. Counts must be whole numbers; a repeated SKU is rejected.
+ * - (2026.10.06.33-APP, not separately deployed) Batched campaign-template rebuild; see below.
  * - Rebuilds large review campaigns in small, safe batches from the Hub, so one slow Google Sheets response cannot
  *   abandon a 100-plus-recipient template refresh. It also skips the costly Badger lookup unless a template actually
  *   uses the tasting-offer merge field (subject or body); when it is unused, the offer value is left blank.
@@ -314,7 +321,7 @@
  * - Use only in the staging inventory backend until testing is complete.
  *********************************/
 
-const APP_VERSION = "2026.10.06.33-APP";
+const APP_VERSION = "2026.10.07.34-APP";
 
 const SHEET_NAMES = {
   STORES: "Stores",
@@ -1506,39 +1513,106 @@ function apiUpsertProductUnlocked_(p) {
   return { message:"Product saved." };
 }
 
+const COUNT_LOG_EXTRA_HEADERS = ["shelf_units", "back_units", "expected_system_units", "submission_token"];
+
+function countSubmissionAlreadyRecorded_(counts, h, token) {
+  if (!token || h.submission_token === undefined || counts.getLastRow() < 2) return false;
+  const tokens = counts.getRange(2, h.submission_token + 1, counts.getLastRow() - 1, 1).getValues();
+  return tokens.some(row => String(row[0] || "") === token);
+}
+
 function apiSubmitCountsUnlocked_(p) {
   if (!p) throw new Error("Missing body");
   requireFields_(p, ["store_id","rep"]);
   assertInventoryStoreAllowed_(p.store_id);
   if (!Array.isArray(p.items) || !p.items.length) throw new Error("Missing items[]");
+  if (p.items.length > 500) throw new Error("Too many items in one count submission.");
+
+  const storeId = String(p.store_id);
+  const token = sheetSafeText_(p.submission_token || "", 100, "Submission token");
+  const counts = getSheet_(SHEET_NAMES.COUNTS);
+  const ch = ensureHeaderColumns_(counts, COUNT_LOG_EXTRA_HEADERS);
+
+  // A retry after a dropped connection resends the same token. If those rows are already in the
+  // Counts log, the first attempt finished: report success without writing anything twice.
+  if (countSubmissionAlreadyRecorded_(counts, ch, token)) {
+    return { message:"These counts were already recorded. Nothing was submitted twice.", submitted:0, duplicate:true, changed_since_load:[] };
+  }
 
   const inv = getSheet_(SHEET_NAMES.INVENTORY);
   const ih = getHeaderMap_(inv);
-  const counts = getSheet_(SHEET_NAMES.COUNTS);
-
-  const ts = new Date();
   const rows = getAllRowsAsObjects_(inv);
-  const out=[];
-
-  p.items.forEach(it=>{
-    const r = rows.find(x => String(x.store_id)===String(p.store_id) && String(x.sku_id)===String(it.sku_id));
-    const before = r ? Number(r.on_hand_units||0) : 0;
-    const after = Number(it.counted||0);
-
-    out.push([ts, p.store_id, sheetSafeText_(p.rep, 100, "Rep"), it.sku_id, before, after, after-before, sheetSafeText_(it.notes, 500, "Notes")]);
-
-    if (r && p.updateInventory) {
-      const rowNum = rows.indexOf(r)+2;
-      inv.getRange(rowNum, ih.on_hand_units+1).setValue(after);
-      if (ih.last_count_date !== undefined) inv.getRange(rowNum, ih.last_count_date+1).setValue(ts);
-      if (ih.last_count_units !== undefined) inv.getRange(rowNum, ih.last_count_units+1).setValue(after);
-    }
+  const rowIndexBySku = new Map();
+  rows.forEach((row, index) => {
+    if (String(row.store_id) === storeId) rowIndexBySku.set(String(row.sku_id), index);
   });
 
-  if (out.length)
-    counts.getRange(counts.getLastRow()+1,1,out.length,out[0].length).setValues(out);
+  const ts = new Date();
+  const rep = sheetSafeText_(p.rep, 100, "Rep");
+  const seen = new Set();
+  const logRows = [];
+  const inventoryUpdates = [];
+  const changedSinceLoad = [];
+  const width = counts.getLastColumn();
 
-  return { message:`Submitted ${out.length} counts.`, submitted: out.length };
+  p.items.forEach(it => {
+    const skuId = String(it?.sku_id || "").trim();
+    if (!skuId) throw new Error("Each counted item needs a SKU.");
+    if (seen.has(skuId)) throw new Error(`SKU ${skuId} appears twice in this count.`);
+    seen.add(skuId);
+    const after = Number(it.counted);
+    if (!Number.isInteger(after) || after < 0) throw new Error(`Count for ${skuId} must be a whole number of bottles.`);
+    const shelf = it.shelf === undefined || it.shelf === "" ? "" : Math.max(0, Math.floor(Number(it.shelf) || 0));
+    const back = it.back === undefined || it.back === "" ? "" : Math.max(0, Math.floor(Number(it.back) || 0));
+    const index = rowIndexBySku.has(skuId) ? rowIndexBySku.get(skuId) : -1;
+    const before = index >= 0 ? Number(rows[index].on_hand_units || 0) : 0;
+    const expected = it.expected_on_hand === undefined || it.expected_on_hand === null || it.expected_on_hand === ""
+      ? ""
+      : Number(it.expected_on_hand);
+    if (expected !== "" && Number.isFinite(expected) && expected !== before) {
+      changedSinceLoad.push({ sku_id:skuId, expected_on_hand:expected, current_on_hand:before });
+    }
+
+    const logRow = Array(width).fill("");
+    logRow[0] = ts; logRow[1] = storeId; logRow[2] = rep; logRow[3] = skuId;
+    logRow[4] = before; logRow[5] = after; logRow[6] = after - before;
+    logRow[7] = sheetSafeText_(it.notes, 500, "Notes");
+    logRow[ch.shelf_units] = shelf;
+    logRow[ch.back_units] = back;
+    logRow[ch.expected_system_units] = expected;
+    logRow[ch.submission_token] = token;
+    logRows.push(logRow);
+
+    if (index >= 0 && p.updateInventory) inventoryUpdates.push({ index, after });
+  });
+
+  // Inventory first, then the Counts log: the log carries the submission token, so a request that
+  // stops between the two writes is simply redone on retry (the inventory values are the same).
+  if (inventoryUpdates.length) {
+    const columns = [
+      { key:"on_hand_units", value:update => update.after },
+      { key:"last_count_date", value:() => ts },
+      { key:"last_count_units", value:update => update.after },
+    ].filter(column => ih[column.key] !== undefined);
+    const first = Math.min(...inventoryUpdates.map(update => update.index));
+    const last = Math.max(...inventoryUpdates.map(update => update.index));
+    const byIndex = new Map(inventoryUpdates.map(update => [update.index, update]));
+    columns.forEach(column => {
+      const values = [];
+      for (let i = first; i <= last; i++) {
+        const update = byIndex.get(i);
+        values.push([update ? column.value(update) : rows[i][column.key]]);
+      }
+      inv.getRange(first + 2, ih[column.key] + 1, values.length, 1).setValues(values);
+    });
+  }
+
+  counts.getRange(counts.getLastRow() + 1, 1, logRows.length, width).setValues(logRows);
+
+  const changedText = changedSinceLoad.length
+    ? ` ${changedSinceLoad.length} item${changedSinceLoad.length === 1 ? "'s" : "s'"} system number changed while you were counting (${changedSinceLoad.map(item => `${item.sku_id}: ${item.expected_on_hand} → ${item.current_on_hand}`).join("; ")}). Your counts were recorded against the current number.`
+    : "";
+  return { message:`Submitted ${logRows.length} count${logRows.length === 1 ? "" : "s"}.${changedText}`, submitted:logRows.length, duplicate:false, changed_since_load:changedSinceLoad };
 }
 
 function apiCreateReorderUnlocked_(p) {

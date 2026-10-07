@@ -1,10 +1,10 @@
 <!doctype html>
-<!-- App version: 2026.10.07.36-WEB -->
+<!-- App version: 2026.10.07.37-WEB -->
 <html>
 <head>
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover"/>
-  <meta name="app-version" content="2026.10.07.36-WEB" />
+  <meta name="app-version" content="2026.10.07.37-WEB" />
   <meta name="theme-color" content="#536f77" />
   <link rel="icon" href="/assets/distribution-hub-icon.svg" type="image/svg+xml" />
   <link rel="manifest" href="/site.webmanifest" />
@@ -883,6 +883,7 @@
     .item.changed{
       box-shadow:0 0 0 2px rgba(29,78,216,.08) inset;
     }
+    .item.counted:not(.changed){border-color:#bbf7d0}
     .item.sold{
       background:#fff;
     }
@@ -2668,7 +2669,7 @@
 
   <footer style="max-width:1200px;margin:18px auto 120px;padding:0 12px;text-align:center;color:#6b7280;font-size:12px;">
     Designed by <a href="https://scriptspirit.dev" target="_blank" rel="noopener noreferrer" style="color:#1d4ed8;text-decoration:none;font-weight:700;">Script Spirit</a>
-<span id="appVersionFooter"> • Version 2026.10.07.36-WEB</span>
+<span id="appVersionFooter"> • Version 2026.10.07.37-WEB</span>
   </footer>
 
 
@@ -2676,7 +2677,7 @@
   <div class="bottomInner">
     <div class="bottomSummary">
       <div class="big" id="bottomSummary">0 shown • 0 changed • 0 need attention</div>
-      <div class="smallMuted">Changed bottles are saved on this phone until you submit.</div>
+      <div class="smallMuted">Counted bottles are saved on this phone until you submit. Tap "Matches system" when a count is right.</div>
     </div>
     <button class="secondaryBlue" id="bbScan">Scan</button>
     <button class="submit" id="submitBtn">Submit</button>
@@ -2691,7 +2692,7 @@
   window.addEventListener("unhandledrejection", e => console.error("Unhandled promise rejection:", e.reason));
   window.addEventListener("error", e => console.error("Unhandled error:", e.error || e.message));
   const $ = (id) => document.getElementById(id);
-  const APP_VERSION = "2026.10.07.36-WEB";
+  const APP_VERSION = "2026.10.07.37-WEB";
   $("appVersionFooter").textContent = ` • Version ${APP_VERSION}`;
   function screenCacheKey(screen){ return `distribution_hub:${APP_VERSION}:${staffSession?.email || "unknown"}:${screen}`; }
   function readScreenCache(screen){
@@ -5960,9 +5961,13 @@
       back,
       counted: shelf + back,
       notes: String(st.notes || ""),
-      dirty: false
+      dirty: false,
+      touched: false
     };
     normalized.dirty = (normalized.counted !== onHand) || !!normalized.notes;
+    // "touched" means staff actually counted this bottle: edited it, scanned it, or confirmed
+    // it matches. Matching bottles are submitted too, so their last-count date is recorded.
+    normalized.touched = !!st.touched || normalized.dirty;
     return normalized;
   }
 
@@ -6009,7 +6014,7 @@
   }
 
   function dirtyCountEntries(){
-    return Object.entries(countState).filter(([, state]) => !!state?.dirty);
+    return Object.entries(countState).filter(([, state]) => !!state?.touched);
   }
 
   function saveCountDraft(storeIdOverride = ""){
@@ -6018,7 +6023,8 @@
     const entries = dirtyCountEntries().map(([skuId, state]) => [skuId, {
       shelf: cleanCount(state.shelf),
       back: cleanCount(state.back),
-      notes: String(state.notes || "")
+      notes: String(state.notes || ""),
+      touched: true
     }]);
     try {
       if (entries.length) {
@@ -6040,6 +6046,27 @@
       } catch (_) {}
     });
     return newest ? Object.fromEntries(newest.entries) : {};
+  }
+
+  // One token per exact set of counts. A retry of the same counts (even after a reload) reuses it,
+  // so the server can recognize a submission that already went through. Changing any count makes a new one.
+  function countSubmissionKey(storeId){
+    return `distribution_hub:count-submit:${staffSession?.email || "unknown"}:${storeId}`;
+  }
+
+  function countSubmissionToken(storeId, payload){
+    const signature = JSON.stringify(payload);
+    try {
+      const saved = JSON.parse(localStorage.getItem(countSubmissionKey(storeId)) || "null");
+      if (saved?.token && saved.signature === signature) return saved.token;
+    } catch (_) {}
+    const token = crypto.randomUUID ? crypto.randomUUID() : `${Date.now()}-${Math.random().toString(36).slice(2)}`;
+    try { localStorage.setItem(countSubmissionKey(storeId), JSON.stringify({ token, signature })); } catch (_) {}
+    return token;
+  }
+
+  function clearCountSubmissionToken(storeId){
+    try { localStorage.removeItem(countSubmissionKey(storeId)); } catch (_) {}
   }
 
   function clearCountDraft(storeId){
@@ -6168,6 +6195,10 @@
     return !!countState[line.sku_id]?.dirty;
   }
 
+  function isCounted(line){
+    return !!countState[line.sku_id]?.touched;
+  }
+
   function visibleLines(){
     const q = (filterText || "").trim().toLowerCase();
 
@@ -6207,8 +6238,9 @@
     const total = cache.lines.length;
     const needs = cache.lines.filter(l => needsAttention(l) || belowPar(l)).length;
     const changed = cache.lines.filter(l => isChanged(l)).length;
+    const counted = cache.lines.filter(l => isCounted(l)).length;
     const shown = visibleLines().length;
-    return { total, needs, changed, shown };
+    return { total, needs, changed, counted, shown };
   }
 
   function setFilter(mode){
@@ -6228,15 +6260,15 @@
 
     const storeText = $("storeSelect").selectedOptions[0]?.textContent || "No store";
     if (activeAppSection === "inventory") {
-      $("hdrChanged").textContent = `${s.changed} changed`;
+      $("hdrChanged").textContent = `${s.counted} of ${s.total} counted`;
       $("hdrStore").textContent = storeText;
     }
-    $("bottomSummary").textContent = `${s.shown} shown • ${s.changed} changed • ${s.needs} need attention`;
-    $("submitBtn").disabled = s.changed === 0;
-    $("submitBtn").textContent = s.changed ? `Submit ${s.changed}` : "Submit";
+    $("bottomSummary").textContent = `${s.counted} of ${s.total} counted • ${s.changed} changed • ${s.needs} need attention`;
+    $("submitBtn").disabled = s.counted === 0;
+    $("submitBtn").textContent = s.counted ? `Submit ${s.counted}` : "Submit";
     $("submitBtn").setAttribute(
       "aria-label",
-      s.changed ? `Submit ${s.changed} changed item${s.changed === 1 ? "" : "s"}` : "Submit changed items"
+      s.counted ? `Submit ${s.counted} counted item${s.counted === 1 ? "" : "s"}` : "Submit counted items"
     );
   }
 
@@ -6406,6 +6438,7 @@
       if (needsAttention(line)) item.classList.add("needs");
       else if (belowPar(line)) item.classList.add("low");
       if (st.dirty) item.classList.add("changed");
+      if (st.touched) item.classList.add("counted");
 
       item.innerHTML = `
         <div class="itemTop">
@@ -6422,6 +6455,7 @@
             ${needsAttention(line) ? `<div class="badge red">At / below reorder point</div>` : ""}
             ${!needsAttention(line) && belowPar(line) ? `<div class="badge amber">Below PAR</div>` : ""}
             <div class="badge blue changedBadge" ${st.dirty ? "" : "hidden"}>Changed</div>
+            <div class="badge green countedBadge" ${st.touched && !st.dirty ? "" : "hidden"}>Counted, matches</div>
           </div>
         </div>
 
@@ -6510,19 +6544,21 @@
       const setSystem = document.createElement("button");
       setSystem.type = "button";
       setSystem.className = "quickBtn countReset";
-      setSystem.title = "Set shelf to system on-hand and back to 0";
-      setSystem.setAttribute("aria-label", "Set shelf to system on-hand and back to zero");
-      setSystem.textContent = "Match system";
+      setSystem.title = "The count matches the system: set shelf to system on-hand, back to 0, and mark this bottle counted";
+      setSystem.setAttribute("aria-label", "Count matches system: set shelf to system on-hand, back to zero, and mark counted");
+      setSystem.textContent = "Matches system";
 
       function refreshCountUi(updateInputs = false){
         st.shelf = cleanCount(st.shelf);
         st.back = cleanCount(st.back);
         st.counted = totalCount(st);
         st.dirty = (st.counted !== onHand) || !!st.notes;
+        st.touched = true;
         const nextDelta = Number(st.counted || 0) - onHand;
         const totalEl = item.querySelector("[data-total-value]");
         const deltaEl = item.querySelector("[data-delta-value]");
         const changedBadge = item.querySelector(".changedBadge");
+        const countedBadge = item.querySelector(".countedBadge");
         if (updateInputs) {
           locationInputs.shelf.value = st.shelf;
           locationInputs.back.value = st.back;
@@ -6530,7 +6566,9 @@
         if (totalEl) totalEl.textContent = st.counted;
         if (deltaEl) deltaEl.textContent = formatDelta(nextDelta);
         if (changedBadge) changedBadge.hidden = !st.dirty;
+        if (countedBadge) countedBadge.hidden = st.dirty;
         item.classList.toggle("changed", st.dirty);
+        item.classList.add("counted");
         saveCountDraft();
         updateSummaryUi();
       }
@@ -6874,7 +6912,7 @@
     render();
     if (activeView === "sold") await loadSalesSinceCount(storeId);
     else {
-      const restored = Object.keys(draft).filter(skuId => countState[skuId]?.dirty).length;
+      const restored = Object.keys(draft).filter(skuId => countState[skuId]?.touched).length;
       setStatus(restored
         ? `Restored ${restored} unsent bottle count${restored === 1 ? "" : "s"} saved on this phone.`
         : `Updated ${new Date().toLocaleTimeString([], { hour:"numeric", minute:"2-digit" })}${res.performance?.total_ms ? ` in ${(Number(res.performance.total_ms) / 1000).toFixed(1)}s` : ""}${res.performance?.cache_hit ? " (server cache)" : ""}.`);
@@ -6949,6 +6987,7 @@
       countState[k] = normalizeCountState(line);
     });
     clearCountDraft($("storeSelect").value);
+    clearCountSubmissionToken($("storeSelect").value);
     render();
     toast("Counts reset");
   }
@@ -6959,33 +6998,49 @@
     if (!storeId) return toast("Pick a store");
 
     const items = cache.lines
-      .filter(line => countState[line.sku_id]?.dirty)
+      .filter(line => countState[line.sku_id]?.touched)
       .map(line => ({
         sku_id: line.sku_id,
         counted: totalCount(countState[line.sku_id]),
         shelf: cleanCount(countState[line.sku_id]?.shelf),
         back: cleanCount(countState[line.sku_id]?.back),
-        notes: String(countState[line.sku_id]?.notes || "")
+        notes: String(countState[line.sku_id]?.notes || ""),
+        // The system number Todd was counting against, so the server can flag a change made meanwhile.
+        expected_on_hand: Number(line.on_hand_units || 0)
       }));
 
-    if (!items.length) return toast("No changed items to submit");
+    if (!items.length) return toast("Count at least one bottle first");
+
+    const uncounted = cache.lines.length - items.length;
+    if (uncounted > 0) {
+      const proceed = confirm(`${uncounted} bottle${uncounted === 1 ? " has" : "s have"} not been counted yet. Submit the ${items.length} you counted?`);
+      if (!proceed) return;
+    }
 
     const updateInventory = $("updateInventory").checked;
+    // Leave expected_on_hand out of the signature: after a submit that went through but timed out,
+    // a reload shows the new system numbers, and the retry must still match the first attempt.
+    const token = countSubmissionToken(storeId, {
+      updateInventory,
+      items: items.map(({ expected_on_hand, ...rest }) => rest)
+    });
     const button = $("submitBtn");
     button.disabled = true;
     try {
-      setStatus(`Submitting ${items.length} changed item(s)...`);
+      setStatus(`Submitting ${items.length} counted item(s)...`);
       const res = await staffApiPost({
         action:"submitCounts",
         store_id: storeId,
         updateInventory,
+        submission_token: token,
         items
       });
-      if (!res.ok) throw new Error(res.error || "Submit failed. Check your connection and try again.");
+      if (!res.ok) throw new Error(res.error || "Submit failed. Your counts are still saved on this phone. Check your connection and tap Submit again; it will not record them twice.");
       clearCountDraft(storeId);
+      clearCountSubmissionToken(storeId);
       countState = {};
       setStatus(res.message || "Submitted");
-      toast("Submitted");
+      toast(res.duplicate ? "Already recorded" : "Submitted");
       await loadStore(storeId);
       await loadManagerGrid();
     } finally {
@@ -7220,6 +7275,7 @@
           st[location] = cleanCount(st[location]) + 1;
           st.counted = totalCount(st);
           st.dirty = (st.counted !== Number(line.on_hand_units || 0)) || !!st.notes;
+          st.touched = true;
 
           status.textContent = `Matched ${code} → ${skuId}. +1 ${location} bottle`;
           saveCountDraft();
