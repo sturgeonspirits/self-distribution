@@ -81,9 +81,10 @@ test("a retried count submission is not recorded twice", async () => {
 });
 
 test("count submit accepts older clients without a token and rejects bad counts", async () => {
-  const { counts, submit } = await harness();
+  const { inventory, counts, submit } = await harness();
   assert.equal(submit({ store_id: "S1", rep: "Todd", updateInventory: false, items: [{ sku_id: "A", counted: 6 }] }).submitted, 1);
   assert.equal(counts.rows.length, 2);
+  assert.equal(inventory.rows[1][2], 6, "a count always updates on-hand, even if an old client sends updateInventory:false");
   assert.throws(() => submit({ store_id: "S1", rep: "Todd", items: [{ sku_id: "A", counted: -1 }] }), /whole number/);
   assert.throws(() => submit({ store_id: "S1", rep: "Todd", items: [{ sku_id: "A", counted: 1 }, { sku_id: "A", counted: 2 }] }), /appears twice/);
 });
@@ -97,6 +98,7 @@ test("the Hub submits counted bottles with a stable retry token", async () => {
   assert.match(index, /not been counted yet\. Submit the/);
   assert.match(index, /countSubmissionKey\(storeId\)/);
   assert.match(index, /distribution_hub:count-draft:/);
+  assert.doesNotMatch(index, /id="updateInventory"/);
 });
 
 test("managerGrid reports each store's most recent count date", async () => {

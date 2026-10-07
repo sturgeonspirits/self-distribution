@@ -3,6 +3,8 @@
  * App version: 2026.10.07.34-APP
  *
  * CHANGES IN THIS VERSION
+ * - submitCounts always writes the count to on-hand inventory and the last-count fields; the updateInventory flag
+ *   (formerly a Hub checkbox, now removed) is ignored.
  * - managerGrid returns each store's most recent count date (latest last_count_date on its Inventory rows), shown on
  *   the Inventory summary's location lines.
  * - Inventory counts: submitCounts accepts an optional submission_token and skips a retry whose token is already in the
@@ -1585,7 +1587,8 @@ function apiSubmitCountsUnlocked_(p) {
     logRow[ch.submission_token] = token;
     logRows.push(logRow);
 
-    if (index >= 0 && p.updateInventory) inventoryUpdates.push({ index, after });
+    // A count always sets on-hand inventory; the old "updateInventory" flag is ignored.
+    if (index >= 0) inventoryUpdates.push({ index, after });
   });
 
   // Inventory first, then the Counts log: the log carries the submission token, so a request that

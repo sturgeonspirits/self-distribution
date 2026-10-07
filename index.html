@@ -2089,16 +2089,6 @@
             <label>Visit notes</label>
             <textarea id="visitNotes" placeholder="Display issues, out-of-stocks, backroom notes..."></textarea>
           </div>
-          <div>
-            <label>Submit settings</label>
-            <div class="card" style="margin:0;padding:12px">
-              <label style="margin-top:0">
-                <input type="checkbox" id="updateInventory" checked style="width:auto;margin-right:8px">
-                Update inventory on submit
-              </label>
-              <div class="smallMuted">If checked, on-hand units will be overwritten with staff counts.</div>
-            </div>
-          </div>
         </div>
 
         <div class="btnRow" style="margin-top:10px">
@@ -7018,7 +7008,9 @@
       if (!proceed) return;
     }
 
-    const updateInventory = $("updateInventory").checked;
+    // A submitted count always becomes the store's on-hand inventory. The flag is still sent so the
+    // previous Apps Script release (which honored it) behaves the same during a deploy.
+    const updateInventory = true;
     // Leave expected_on_hand out of the signature: after a submit that went through but timed out,
     // a reload shows the new system numbers, and the retry must still match the first attempt.
     const token = countSubmissionToken(storeId, {
