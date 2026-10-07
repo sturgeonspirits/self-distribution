@@ -1864,6 +1864,20 @@
     @keyframes apiBusySlide { from { left:-35%; } to { left:100%; } }
     button.is-busy { opacity:.6; cursor:progress; pointer-events:none; }
     button.is-busy::after { content:" …"; }
+    /* Compact count mode: on a phone in the Inventory section, show only the store picker, the
+       Shelf/Back toggle, Scan, and the bottle list. "More tools" brings everything else back. */
+    .compactToolsToggle{display:none;width:100%;margin:12px 0 0}
+    body.compactCount .compactToolsToggle{display:block}
+    body.compactCount #managerSummaryCard,
+    body.compactCount #storeContactsDetails,
+    body.compactCount #countSearchLabel,
+    body.compactCount #countSearchWrap,
+    body.compactCount #inventoryViewTabs,
+    body.compactCount #countFilters,
+    body.compactCount #countSummaryGrid,
+    body.compactCount #managerDetails,
+    body.compactCount .appNav,
+    body.compactCount #appSubtitle{display:none !important}
   </style>
 </head>
 <body>
@@ -1951,14 +1965,10 @@
   </details>
 
   <div class="card" id="mainInventoryScreen">
-    <div class="grid2 setupGrid" data-inventory-count-only>
+    <div class="setupGrid" data-inventory-count-only>
       <div>
         <label>Store</label>
         <select id="storeSelect"></select>
-      </div>
-      <div>
-        <label>Counted by</label>
-        <div class="smallMuted" style="padding:14px 0">Your Zoho sign-in is recorded automatically.</div>
       </div>
     </div>
 
@@ -1981,13 +1991,13 @@
       </div>
     </details>
 
-    <label for="search" data-inventory-count-only>Search</label>
-    <div class="searchWrap" data-inventory-count-only>
+    <label for="search" id="countSearchLabel" data-inventory-count-only>Search</label>
+    <div class="searchWrap" id="countSearchWrap" data-inventory-count-only>
       <input id="search" placeholder="Search product, SKU, UPC…" autocomplete="off" enterkeyhint="search" />
       <button class="searchClear" id="clearSearchBtn" type="button" aria-label="Clear search" hidden>×</button>
     </div>
 
-    <div class="viewTabs" aria-label="Inventory views">
+    <div class="viewTabs" id="inventoryViewTabs" aria-label="Inventory views">
       <button class="viewTab active" id="countViewBtn" type="button">Inventory Count</button>
       <button class="viewTab" id="soldViewBtn" type="button">Sold Since Count</button>
       <button class="viewTab" id="inventorySummaryViewBtn" type="button">Inventory Summary</button>
@@ -2032,7 +2042,7 @@
     </div>
 
     <div class="topTools" id="countTools" data-inventory-count-only>
-      <div class="filters">
+      <div class="filters" id="countFilters">
         <button class="filterChip" id="filterNeeds">Needs attention</button>
         <button class="filterChip" id="filterChanged">Changed</button>
         <button class="filterChip active" id="filterAll">All</button>
@@ -2102,6 +2112,7 @@
   </div>
 
   <div class="list" id="list" data-inventory-count-only></div>
+  <button type="button" class="compactToolsToggle" id="compactToolsToggle">More tools (search, summary, manager)</button>
   </div>
   </section>
 
@@ -2914,6 +2925,7 @@
     $("outreachNavBtn").toggleAttribute("aria-current", isOutreach);
     $("customersNavBtn").toggleAttribute("aria-current", isCustomers);
     $("appTitle").textContent = isOutreach ? "Outreach" : isCustomers ? "Orders & Accounts" : "Inventory";
+    updateCompactCountMode();
     $("appSubtitle").textContent = isOutreach
       ? "Lead to follow-up, in one place"
       : isCustomers
@@ -6192,6 +6204,7 @@
   function visibleLines(){
     const q = (filterText || "").trim().toLowerCase();
 
+    // Bottles still to be counted come first; counted ones drop below them (order otherwise unchanged).
     return cache.lines.filter(line => {
       if (q) {
         const hay = [line.sku_name, line.sku_id, line.upc, line.size]
@@ -6203,7 +6216,39 @@
       if (filterMode === "needs") return needsAttention(line) || belowPar(line);
       if (filterMode === "changed") return isChanged(line);
       return true;
-    });
+    }).map((line, order) => ({ line, order }))
+      .sort((a, b) => (isCounted(a.line) - isCounted(b.line)) || (a.order - b.order))
+      .map(item => item.line);
+  }
+
+  // Compact count mode (phones, Inventory section): store picker, Shelf/Back, Scan and the
+  // bottle list only. The other tools stay available behind "More tools" at the bottom.
+  var compactCountQuery = window.matchMedia("(max-width: 720px)");
+  var compactToolsOpen = false;
+
+  function updateCompactCountMode(){
+    const compact = compactCountQuery.matches && activeAppSection === "inventory" && !compactToolsOpen;
+    const wasCompact = document.body.classList.contains("compactCount");
+    document.body.classList.toggle("compactCount", compact);
+    const toggle = $("compactToolsToggle");
+    if (toggle) {
+      toggle.hidden = !compactCountQuery.matches || activeAppSection !== "inventory";
+      toggle.textContent = compactToolsOpen ? "Hide extra tools" : "More tools (search, summary, manager)";
+    }
+    if (compact && !wasCompact) {
+      // Hidden controls must not keep filtering the list out of sight.
+      filterText = "";
+      if ($("search")) $("search").value = "";
+      filterMode = "all";
+      ["filterNeeds", "filterChanged"].forEach(id => $(id)?.classList.remove("active"));
+      $("filterAll")?.classList.add("active");
+      if ($("clearSearchBtn")) $("clearSearchBtn").hidden = true;
+      if (activeView !== "count") {
+        activeView = "count";
+        updateViewChrome();
+      }
+      if (cache.lines.length) render();
+    }
   }
 
   function formatDate(value){
@@ -7328,6 +7373,13 @@
       setStatus(msg);
     });
   });
+
+  $("compactToolsToggle").addEventListener("click", () => {
+    compactToolsOpen = !compactToolsOpen;
+    updateCompactCountMode();
+    if (compactToolsOpen) $("mainInventoryScreen").scrollIntoView({ behavior:"smooth", block:"start" });
+  });
+  compactCountQuery.addEventListener("change", updateCompactCountMode);
 
   $("search").addEventListener("input", () => {
     filterText = $("search").value || "";

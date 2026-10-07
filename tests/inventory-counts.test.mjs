@@ -125,3 +125,15 @@ test("managerGrid reports each store's most recent count date", async () => {
   const index = await readFile(new URL("index.html", root), "utf8");
   assert.match(index, /Last count \$\{formatDate\(store\.last_count_date\)\}/);
 });
+
+test("phone count mode hides extra tools behind More tools and lists uncounted bottles first", async () => {
+  const index = await readFile(new URL("index.html", root), "utf8");
+  assert.doesNotMatch(index, /<label>Counted by<\/label>/);
+  assert.match(index, /id="compactToolsToggle"/);
+  for (const id of ["managerSummaryCard", "storeContactsDetails", "countSearchWrap", "inventoryViewTabs", "countFilters", "countSummaryGrid", "managerDetails"]) {
+    assert.match(index, new RegExp(`body\\.compactCount #${id}`), `${id} is hidden only in compact mode`);
+    assert.match(index, new RegExp(`id="${id}"`), `${id} still exists`);
+  }
+  assert.match(index, /\.sort\(\(a, b\) => \(isCounted\(a\.line\) - isCounted\(b\.line\)\) \|\| \(a\.order - b\.order\)\)/);
+  assert.match(index, /compactCountQuery\.matches && activeAppSection === "inventory" && !compactToolsOpen/);
+});
