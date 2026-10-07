@@ -98,3 +98,28 @@ test("the Hub submits counted bottles with a stable retry token", async () => {
   assert.match(index, /countSubmissionKey\(storeId\)/);
   assert.match(index, /distribution_hub:count-draft:/);
 });
+
+test("managerGrid reports each store's most recent count date", async () => {
+  const code = await readFile(new URL("apps-script/Code.gs", root), "utf8");
+  const sheets = {
+    Stores: new FakeSheet(11, [["store_id", "store_name", "route"], ["S1", "Store One", ""], ["S2", "Store Two", ""]]),
+    SKUs: new FakeSheet(12, [["sku_id", "sku_name", "size", "units_per_case", "active"], ["A", "Alpha", "750 mL", 12, true], ["B", "Beta", "750 mL", 12, true]]),
+    Inventory: new FakeSheet(13, [
+      ["store_id", "sku_id", "on_hand_units", "par_level_units", "reorder_point_units", "last_count_date", "last_count_units"],
+      ["S1", "A", 5, 6, 2, new Date("2026-09-01T15:00:00Z"), 5],
+      ["S1", "B", 3, 6, 2, new Date("2026-10-07T15:00:00Z"), 3],
+      ["S2", "A", 4, 6, 2, "", ""],
+    ]),
+  };
+  const context = { console, Utilities: {}, PropertiesService: { getScriptProperties: () => ({ getProperty: () => "" }) }, CacheService: {}, LockService: {}, SpreadsheetApp: {}, Session: {}, ContentService: {}, MimeType: {} };
+  vm.createContext(context);
+  vm.runInContext(code, context);
+  context.__sheets = sheets;
+  vm.runInContext(`getSheet_ = name => __sheets[name]; inventoryTrackedAccountIds_ = () => new Set(); inventoryStoreAllowed_ = () => true; storeContactFields_ = () => ({});`, context);
+  const grid = JSON.parse(JSON.stringify(vm.runInContext("apiGetManagerGrid_()", context)));
+  const byId = Object.fromEntries(grid.stores.map(store => [store.store_id, store.last_count_date]));
+  assert.equal(byId.S1, "2026-10-07T15:00:00.000Z");
+  assert.equal(byId.S2, "");
+  const index = await readFile(new URL("index.html", root), "utf8");
+  assert.match(index, /Last count \$\{formatDate\(store\.last_count_date\)\}/);
+});

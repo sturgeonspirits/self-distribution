@@ -6828,7 +6828,8 @@
       const tr = document.createElement("tr");
       const storeCell = document.createElement("td");
       storeCell.className = "stickyLeft";
-      storeCell.innerHTML = `<div class="storeName">${escapeHtml(store.store_name || store.store_id)}</div><div class="storeMeta">${escapeHtml(store.store_id || "")}${store.route ? ` • ${escapeHtml(store.route)}` : ""}</div>`;
+      const lastCount = store.last_count_date ? `Last count ${formatDate(store.last_count_date)}` : "Not counted yet";
+      storeCell.innerHTML = `<div class="storeName">${escapeHtml(store.store_name || store.store_id)}</div><div class="storeMeta">${escapeHtml(store.store_id || "")}${store.route ? ` • ${escapeHtml(store.route)}` : ""}</div><div class="storeMeta">${escapeHtml(lastCount)}</div>`;
       tr.appendChild(storeCell);
       const stockCell = document.createElement("td");
       const inventoryItems = rows.map(({ sku, index }) => {

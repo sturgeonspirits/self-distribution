@@ -3,6 +3,8 @@
  * App version: 2026.10.07.34-APP
  *
  * CHANGES IN THIS VERSION
+ * - managerGrid returns each store's most recent count date (latest last_count_date on its Inventory rows), shown on
+ *   the Inventory summary's location lines.
  * - Inventory counts: submitCounts accepts an optional submission_token and skips a retry whose token is already in the
  *   Counts log, so a timed-out submit tapped again is not recorded twice. Shelf, back, the system number the counter
  *   started from, and the token are logged in four new Counts columns (added automatically). Inventory on-hand and
@@ -1720,10 +1722,16 @@ function apiGetManagerGrid_() {
   const skuMap = new Map(skuRows.map(s => [s.sku_id, s]));
 
   const cellMap = new Map();
+  const lastCountByStore = new Map();
   inventoryRows.forEach(r => {
     const storeId = String(r.store_id || "");
     const skuId = String(r.sku_id || "").trim();
     if (!storeMap.has(storeId) || !skuMap.has(skuId)) return;
+
+    const counted = r.last_count_date instanceof Date ? r.last_count_date : (r.last_count_date ? new Date(r.last_count_date) : null);
+    if (counted && !isNaN(counted.getTime()) && (!lastCountByStore.has(storeId) || counted > lastCountByStore.get(storeId))) {
+      lastCountByStore.set(storeId, counted);
+    }
 
     const onHand = Number(r.on_hand_units || 0);
     const par = Number(r.par_level_units || 0);
@@ -1770,6 +1778,7 @@ function apiGetManagerGrid_() {
       route: store.route,
       manager_name: store.manager_name,
       assistant_manager_name: store.assistant_manager_name,
+      last_count_date: lastCountByStore.has(store.store_id) ? lastCountByStore.get(store.store_id).toISOString() : "",
       needs_count: needsCount,
       below_par_count: belowParCount,
       ok_count: Math.max(0, skuRows.length - needsCount - belowParCount),
