@@ -49,6 +49,7 @@ const STAFF_ACTIONS = new Set([
   "createOutreachBusiness",
   "importOutreachBusinesses",
   "hubSystemStatus",
+  "salesReport",
   "reconcileIntegrations",
   "sendOutreachEmail",
   "sendOutreachTestEmail",
@@ -89,7 +90,7 @@ const ACTION_AREAS = new Map([
   ["updateOutreachPrograms", "outreach"], ["upsertNewsletterContact", "outreach"], ["createOutreachBusiness", "outreach"],
   ["importOutreachBusinesses", "outreach"], ["recalculateOutreachMiles", "outreach"], ["backfillEngagementDetails", "outreach"], ["sendOutreachEmail", "outreach"], ["sendOutreachTestEmail", "outreach"],
   ["customerWorkQueue", "orders"], ["customerAccountIndex", "orders"], ["linkBadgerInvoice", "orders"], ["syncBadgerStatus", "orders"], ["markBadgerInvoicePayment", "orders"], ["recordBadgerCheck", "orders"], ["resolvePaymentReminder", "orders"], ["badgerReconcilePreview", "orders"], ["applyBadgerReconcile", "orders"], ["previewBadgerPaymentReminder", "orders"], ["sendBadgerPaymentReminder", "orders"], ["previewBadgerInvoice", "orders"], ["createBadgerInvoice", "orders"], ["adoptBadgerInvoice", "orders"], ["failBadgerInvoiceCreation", "orders"], ["updateCustomerApplication", "orders"], ["updateOnlineOrderRequest", "orders"],
-  ["hubSystemStatus", "orders"], ["repairHubStructure", "orders"], ["reconcileIntegrations", "orders"],
+  ["hubSystemStatus", "orders"], ["salesReport", "orders"], ["repairHubStructure", "orders"], ["reconcileIntegrations", "orders"],
   ["initData", "inventory"], ["listSkus", "inventory"], ["addSkuToStore", "inventory"], ["upsertProduct", "inventory"],
   ["submitCounts", "inventory"], ["createReorder", "inventory"], ["managerGrid", "inventory"], ["salesSinceCount", "inventory"], ["updateStoreContacts", "inventory"],
 ]);

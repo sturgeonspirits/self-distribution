@@ -3,6 +3,8 @@
  * App version: 2026.10.07.34-APP
  *
  * CHANGES IN THIS VERSION
+ * - New read-only salesReport action (Orders & Accounts area): returns the displayed values of the Badger tracker's
+ *   Sales by Location, Sales by Product and Location x Product tabs. The analysis itself is sheet formulas.
  * - submitCounts always writes the count to on-hand inventory and the last-count fields; the updateInventory flag
  *   (formerly a Hub checkbox, now removed) is ignored.
  * - managerGrid returns each store's most recent count date (latest last_count_date on its Inventory rows), shown on
@@ -393,7 +395,7 @@ const PUBLIC_SITE_URL_FALLBACK = "https://distribution-hub.netlify.app";
 const READ_CACHE_VERSION_KEY = "hub_read_cache_version";
 const READ_CACHE_TTL_SECONDS = 900;
 const READ_CACHE_CHUNK_SIZE = 45000;
-const READ_ACTIONS = new Set(["initData", "listSkus", "sellSheet", "managerGrid", "salesSinceCount", "outreachDashboard", "outreachRecord", "outreachSendStatus", "outreachNewsletterContacts", "outreachCampaigns", "outreachCampaign", "previewOutreachCampaign", "customerWorkQueue", "customerAccountIndex", "hubSystemStatus"]);
+const READ_ACTIONS = new Set(["initData", "listSkus", "sellSheet", "managerGrid", "salesSinceCount", "outreachDashboard", "outreachRecord", "outreachSendStatus", "outreachNewsletterContacts", "outreachCampaigns", "outreachCampaign", "previewOutreachCampaign", "customerWorkQueue", "customerAccountIndex", "hubSystemStatus", "salesReport"]);
 
 let __OPERATIONAL_SS = null;
 let __OUTREACH_SS = null;
@@ -826,6 +828,45 @@ function apiInitializeHardenedHub_(p) {
   }
 }
 
+// Sales report tabs are built with formulas in the Badger tracker (Sales by Location, Sales by Product,
+// Location x Product, fed by Sales Data). The Hub only reads their displayed values; all calculation stays
+// in the sheet so this script does not grow with the analysis.
+const SALES_REPORT_TABS = [
+  { key:"locations", sheet:"Sales by Location", header_row:9 },
+  { key:"products", sheet:"Sales by Product", header_row:4 },
+  { key:"grid", sheet:"Location x Product", header_row:1 },
+];
+
+function salesReportTable_(spreadsheet, tab) {
+  const sheet = spreadsheet.getSheetByName(tab.sheet);
+  if (!sheet) return { sheet:tab.sheet, missing:true, headers:[], rows:[] };
+  const lastRow = sheet.getLastRow();
+  const lastColumn = sheet.getLastColumn();
+  if (lastRow < tab.header_row || !lastColumn) return { sheet:tab.sheet, headers:[], rows:[] };
+  const values = sheet.getRange(tab.header_row, 1, lastRow - tab.header_row + 1, lastColumn).getDisplayValues();
+  let width = values[0].length;
+  while (width > 0 && !String(values[0][width - 1] || "").trim()) width -= 1;
+  return {
+    sheet:tab.sheet,
+    headers:values[0].slice(0, width),
+    rows:values.slice(1).filter(row => String(row[0] || "").trim()).map(row => row.slice(0, width)),
+  };
+}
+
+function apiGetSalesReport_() {
+  const spreadsheet = SpreadsheetApp.openById(BADGER_TRACKER_SPREADSHEET_ID);
+  const report = {};
+  SALES_REPORT_TABS.forEach(tab => { report[tab.key] = salesReportTable_(spreadsheet, tab); });
+  const settingsSheet = spreadsheet.getSheetByName("Sales by Location");
+  const recentDays = settingsSheet ? String(settingsSheet.getRange("B5").getDisplayValue() || "") : "";
+  return {
+    sales_report:report,
+    recent_days:recentDays,
+    sheet_url:`https://docs.google.com/spreadsheets/d/${BADGER_TRACKER_SPREADSHEET_ID}/edit`,
+    loaded_at:new Date().toISOString(),
+  };
+}
+
 function apiGetHubSystemStatus_() {
   const active = isHubInventoryActive_();
   return {
@@ -1201,7 +1242,7 @@ function handle_(e, body) {
   try {
     assertAuthorized_(e, body);
     if (!action) {
-      return json_({ ok:true, service:"sturgeon-distribution-hub", version:APP_VERSION, actions:["initData","listSkus","sellSheet","addSkuToStore","upsertProduct","submitCounts","createReorder","managerGrid","salesSinceCount","updateStoreContacts","outreachDashboard","outreachRecord","outreachSendStatus","outreachNewsletterContacts","outreachCampaigns","outreachCampaign","previewOutreachCampaign","createOutreachCampaign","updateOutreachCampaignRecipient","setOutreachCampaignRecipientExclusion","setOutreachCampaignRecipientExclusions","approveOutreachCampaign","reopenOutreachCampaign","reconcileCampaignSends","rebuildCampaignRecipients","sendOutreachCampaignBatch","scheduleOutreachCampaign","cancelOutreachCampaignSchedule","saveOutreachDraft","sendOutreachEmail","sendOutreachTestEmail","updateOutreachOutcome","logOutreachContact","updateOutreachBusiness","updateOutreachPrograms","createOutreachBusiness","importOutreachBusinesses","recalculateOutreachMiles","backfillEngagementDetails","upsertNewsletterContact","submitCustomerApplication","submitOnlineOrderRequest","customerWorkQueue","customerAccountIndex","linkBadgerInvoice","syncBadgerStatus","markBadgerInvoicePayment","recordBadgerCheck","resolvePaymentReminder","badgerReconcilePreview","applyBadgerReconcile","previewBadgerPaymentReminder","sendBadgerPaymentReminder","previewBadgerInvoice","createBadgerInvoice","adoptBadgerInvoice","failBadgerInvoiceCreation","updateCustomerApplication","updateOnlineOrderRequest","hubSystemStatus","initializeHardenedHub","repairHubStructure","reconcileIntegrations"] });
+      return json_({ ok:true, service:"sturgeon-distribution-hub", version:APP_VERSION, actions:["initData","listSkus","sellSheet","addSkuToStore","upsertProduct","submitCounts","createReorder","managerGrid","salesSinceCount","updateStoreContacts","outreachDashboard","outreachRecord","outreachSendStatus","outreachNewsletterContacts","outreachCampaigns","outreachCampaign","previewOutreachCampaign","createOutreachCampaign","updateOutreachCampaignRecipient","setOutreachCampaignRecipientExclusion","setOutreachCampaignRecipientExclusions","approveOutreachCampaign","reopenOutreachCampaign","reconcileCampaignSends","rebuildCampaignRecipients","sendOutreachCampaignBatch","scheduleOutreachCampaign","cancelOutreachCampaignSchedule","saveOutreachDraft","sendOutreachEmail","sendOutreachTestEmail","updateOutreachOutcome","logOutreachContact","updateOutreachBusiness","updateOutreachPrograms","createOutreachBusiness","importOutreachBusinesses","recalculateOutreachMiles","backfillEngagementDetails","upsertNewsletterContact","submitCustomerApplication","submitOnlineOrderRequest","customerWorkQueue","customerAccountIndex","linkBadgerInvoice","syncBadgerStatus","markBadgerInvoicePayment","recordBadgerCheck","resolvePaymentReminder","badgerReconcilePreview","applyBadgerReconcile","previewBadgerPaymentReminder","sendBadgerPaymentReminder","previewBadgerInvoice","createBadgerInvoice","adoptBadgerInvoice","failBadgerInvoiceCreation","updateCustomerApplication","updateOnlineOrderRequest","hubSystemStatus","salesReport","initializeHardenedHub","repairHubStructure","reconcileIntegrations"] });
     }
 
     invalidateReadCache = !READ_ACTIONS.has(action);
@@ -1268,6 +1309,7 @@ function handle_(e, body) {
       case "updateCustomerApplication": res = apiUpdateCustomerApplication_(body); break;
       case "updateOnlineOrderRequest": res = apiUpdateOnlineOrderRequest_(body); break;
       case "hubSystemStatus": res = apiGetHubSystemStatus_(); break;
+      case "salesReport": res = apiGetSalesReport_(); break;
       case "initializeHardenedHub": res = apiInitializeHardenedHub_(body); break;
       case "repairHubStructure": res = apiRepairHubStructure_(body); break;
       case "reconcileIntegrations": res = apiReconcileIntegrations_(body); break;

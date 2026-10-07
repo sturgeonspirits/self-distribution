@@ -137,3 +137,39 @@ test("phone count mode hides extra tools behind More tools and lists uncounted b
   assert.match(index, /\.sort\(\(a, b\) => \(isCounted\(a\.line\) - isCounted\(b\.line\)\) \|\| \(a\.order - b\.order\)\)/);
   assert.match(index, /compactCountQuery\.matches && activeAppSection === "inventory" && !compactToolsOpen/);
 });
+
+test("salesReport returns the sales tabs as displayed, trimmed to their data", async () => {
+  const code = await readFile(new URL("apps-script/Code.gs", root), "utf8");
+  class DisplaySheet extends FakeSheet {
+    getRange(row, column, rows = 1, columns = 1) {
+      if (typeof row === "string") return { getDisplayValue: () => "90" };
+      const range = super.getRange(row, column, rows, columns);
+      range.getDisplayValues = () => range.getValues().map(r => r.map(v => String(v)));
+      return range;
+    }
+  }
+  const locations = new DisplaySheet(21, [
+    ["Sales by location"], [], [], ["Overdue when", 1.5], ["Recent period, in days", 90], [], [], [],
+    ["Location", "Type", "Reorder status", ""],
+    ["Becket's", "On-premise", "On schedule", ""],
+    ["Woodman's Appleton", "Retail", "Overdue", ""],
+    ["", "", "", ""],
+  ]);
+  const products = new DisplaySheet(22, [["Sales by product"], [], [], ["Product", "Units"], ["Cranberry Vodka", "485"]]);
+  const sheets = { "Sales by Location": locations, "Sales by Product": products };
+  const context = { console, Utilities: {}, PropertiesService: { getScriptProperties: () => ({ getProperty: () => "" }) }, CacheService: {}, LockService: {}, Session: {}, ContentService: {}, MimeType: {},
+    SpreadsheetApp: { openById: () => ({ getSheetByName: name => sheets[name] || null }) } };
+  vm.createContext(context);
+  vm.runInContext(code, context);
+  const result = JSON.parse(JSON.stringify(vm.runInContext("apiGetSalesReport_()", context)));
+  assert.deepEqual(result.sales_report.locations.headers, ["Location", "Type", "Reorder status"]);
+  assert.deepEqual(result.sales_report.locations.rows, [["Becket's", "On-premise", "On schedule"], ["Woodman's Appleton", "Retail", "Overdue"]]);
+  assert.deepEqual(result.sales_report.products.rows, [["Cranberry Vodka", "485"]]);
+  assert.equal(result.sales_report.grid.missing, true);
+  assert.equal(result.recent_days, "90");
+  const proxy = await readFile(new URL("netlify/functions/inventory.js", root), "utf8");
+  assert.match(proxy, /\["salesReport", "orders"\]/);
+  assert.match(code, /READ_ACTIONS = new Set\(\[[^\]]*"salesReport"/);
+  const index = await readFile(new URL("index.html", root), "utf8");
+  assert.match(index, /staffApiGet\(\{ action:"salesReport" \}\)/);
+});

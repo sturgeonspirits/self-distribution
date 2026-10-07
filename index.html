@@ -2299,6 +2299,31 @@
           </div>
         </div>
       </details>
+      <details class="managerCard" id="salesReportPanel" style="margin-bottom:12px">
+        <summary>Sales by location and product</summary>
+        <div class="managerBody">
+          <div class="smallMuted">From the Badger invoice tracker. Location names, product names and report settings are edited in the sheet.</div>
+          <div class="workflowControls" style="margin-top:10px">
+            <div class="workflowTabs" aria-label="Sales report views">
+              <button class="workflowTab active" id="salesLocationsViewBtn" type="button">Locations</button>
+              <button class="workflowTab" id="salesProductsViewBtn" type="button">Products</button>
+              <button class="workflowTab" id="salesGridViewBtn" type="button">Location x product</button>
+            </div>
+            <div class="searchWrap">
+              <label for="salesReportSearch">Filter</label>
+              <input id="salesReportSearch" placeholder="Location, product, or status" autocomplete="off" />
+            </div>
+          </div>
+          <div class="btnRow" style="margin-top:10px">
+            <button id="refreshSalesReportBtn" type="button"><i data-lucide="refresh-cw"></i><span>Refresh report</span></button>
+            <a id="salesReportSheetLink" href="https://docs.google.com/spreadsheets/d/1nmHzrZLB2Kv-bLf3z0GBXbkO0XqUL-ETCxUlOlidSEk/edit" target="_blank" rel="noopener noreferrer">Open the sheet</a>
+          </div>
+          <div class="status" id="salesReportStatus">Open this panel to load the report.</div>
+          <div class="managerGridWrap">
+            <table class="inventorySummaryTable" id="salesReportTable"><thead></thead><tbody></tbody></table>
+          </div>
+        </div>
+      </details>
       <div class="status" id="customerWorkflowStatus"></div>
       <div class="workflowList" id="customerWorkflowList"></div>
       <datalist id="badgerAccountPicker"></datalist>
@@ -5900,6 +5925,53 @@
     }
   }
 
+  // Sales report: read-only display of the formula tabs in the Badger tracker.
+  let salesReportData = null;
+  let salesReportView = "locations";
+
+  async function loadSalesReport(){
+    $("salesReportStatus").textContent = "Loading sales report...";
+    const result = await staffApiGet({ action:"salesReport" });
+    if (!result.ok) throw new Error(result.error || "The sales report could not be loaded.");
+    salesReportData = result;
+    if (result.sheet_url) $("salesReportSheetLink").href = result.sheet_url;
+    renderSalesReport();
+    return result;
+  }
+
+  function setSalesReportView(view){
+    salesReportView = view;
+    $("salesLocationsViewBtn").classList.toggle("active", view === "locations");
+    $("salesProductsViewBtn").classList.toggle("active", view === "products");
+    $("salesGridViewBtn").classList.toggle("active", view === "grid");
+    renderSalesReport();
+  }
+
+  function renderSalesReport(){
+    const table = $("salesReportTable");
+    const head = table.querySelector("thead");
+    const body = table.querySelector("tbody");
+    const data = salesReportData?.sales_report?.[salesReportView];
+    head.innerHTML = "";
+    body.innerHTML = "";
+    if (!data) return;
+    if (data.missing) {
+      $("salesReportStatus").textContent = `The "${data.sheet}" tab was not found in the Badger tracker.`;
+      return;
+    }
+    const query = ($("salesReportSearch").value || "").trim().toLowerCase();
+    const rows = (data.rows || []).filter(row => !query || row.join(" | ").toLowerCase().includes(query));
+    const statusIndex = data.headers.findIndex(header => /reorder status/i.test(header));
+    head.innerHTML = `<tr>${data.headers.map(header => `<th>${escapeHtml(header)}</th>`).join("")}</tr>`;
+    body.innerHTML = rows.map(row => `<tr>${row.map((cell, index) => {
+      if (index === statusIndex && cell === "Overdue") return `<td><span class="gridBadge red">Overdue</span></td>`;
+      return `<td>${escapeHtml(cell)}</td>`;
+    }).join("")}</tr>`).join("");
+    const loaded = salesReportData.loaded_at ? new Date(salesReportData.loaded_at).toLocaleTimeString([], { hour:"numeric", minute:"2-digit" }) : "";
+    const recent = salesReportData.recent_days ? ` Recent period: last ${salesReportData.recent_days} days.` : "";
+    $("salesReportStatus").textContent = `${rows.length} of ${(data.rows || []).length} rows shown.${recent}${loaded ? ` Loaded ${loaded}.` : ""}`;
+  }
+
   async function loadHubSystemStatus(){
     $("hubSystemStatus").textContent = "Checking Hub...";
     const result = await staffApiGet({ action:"hubSystemStatus" });
@@ -7595,6 +7667,14 @@
     if (event.target.matches("#badgerInvoiceDate, [data-badger-invoice-quantity], [data-badger-invoice-price]")) previewBadgerInvoice(true).catch(error => toast(error?.message || String(error)));
   });
   $("loadHubStatusBtn").addEventListener("click", () => loadHubSystemStatus().catch(handleCustomerError));
+  $("salesReportPanel").addEventListener("toggle", () => {
+    if ($("salesReportPanel").open && !salesReportData) loadSalesReport().catch(error => { $("salesReportStatus").textContent = error.message || String(error); });
+  });
+  $("refreshSalesReportBtn").addEventListener("click", () => loadSalesReport().catch(error => { $("salesReportStatus").textContent = error.message || String(error); }));
+  $("salesLocationsViewBtn").addEventListener("click", () => setSalesReportView("locations"));
+  $("salesProductsViewBtn").addEventListener("click", () => setSalesReportView("products"));
+  $("salesGridViewBtn").addEventListener("click", () => setSalesReportView("grid"));
+  $("salesReportSearch").addEventListener("input", renderSalesReport);
   $("reconcileHubBtn").addEventListener("click", () => reconcileHubRecords().catch(handleCustomerError));
   $("recalculateOutreachMilesBtn").addEventListener("click", () => recalculateOutreachMiles());
 
