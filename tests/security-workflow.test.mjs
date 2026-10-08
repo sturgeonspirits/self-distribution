@@ -724,8 +724,8 @@ test("Order online invite: audience, opt-outs, once per address, and the message
   assert.equal(rules.reason({ relationship:"Prospect", account_id:"ACC-BADGER" }, recent), "Badger invoice in the last 12 months");
   assert.equal(rules.reason({ status:"Existing customer" }, recent), "Existing customer");
   // A name-only Badger match counts only on a row with customer history.
-  assert.equal(rules.reason({ relationship:"Win-back due", account_id:"ACC-NAME" }, recent), "Win-back due with a Badger invoice in the last 12 months (matched by business name)");
-  assert.equal(rules.reason({ relationship:"Lapsed customer", account_id:"ACC-NAME" }, recent), "Lapsed customer with a Badger invoice in the last 12 months (matched by business name)");
+  assert.equal(rules.reason({ relationship:"Win-back due", account_id:"ACC-NAME" }, recent), "Win-back due with a Badger invoice in the last 12 months (matched by business name; Relationship may need updating)");
+  assert.equal(rules.reason({ relationship:"Lapsed customer", account_id:"ACC-NAME" }, recent), "Lapsed customer with a Badger invoice in the last 12 months (matched by business name; Relationship may need updating)");
   assert.ok(!rules.isCustomer({ relationship:"Prospect", account_id:"ACC-NAME" }, recent), "a name-only match into a Prospect row is not invited");
   assert.ok(!rules.isCustomer({ relationship:"", account_id:"ACC-NAME" }, recent), "a name-only match into a blank Relationship is not invited");
   assert.ok(!rules.isCustomer({ relationship:"Win-back due", account_id:"ACC-OTHER" }, recent), "Win-back due alone, without a recent invoice, is not a current customer");
@@ -774,7 +774,8 @@ test("Order online invite: audience, opt-outs, once per address, and the message
   assert.match(fn("campaignCustomerInviteSelection_"), /Possible customer: Badger invoice matched by name only/);
   // Preview, rebuild and send all judge with the same strong + name-only matches.
   assert.match(fn("campaignCustomerInviteSelection_"), /record\.invite_reason = customerInviteReason_\(record, badger\);/);
-  assert.match(fn("liveCustomerInviteRecipient_"), /customerInviteIsCustomer_\(record, customerInviteBadgerMatches_\(\)\)/);
+  // Review fix: Badger is read at send time only when Relationship / Status do not already qualify the row.
+  assert.match(fn("liveCustomerInviteRecipient_"), /customerInviteIsCustomer_\(record, noBadger\) \|\| customerInviteIsCustomer_\(record, customerInviteBadgerMatches_\(\)\)/);
   // Review fix: an invited address never receives the Initial prospect email.
   const initialRow = new Function("outreachValue_", "OUTREACH_CUSTOMER_INVITE_STAGE", `${fn("initialSentActivityRow_")}\nreturn initialSentActivityRow_;`)((row, keys) => keys.map(k => row[k]).find(v => v !== undefined), "Order online invite");
   assert.equal(initialRow({ result:"APP SENT", message_stage:"Order online invite" }), true);

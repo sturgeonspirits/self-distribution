@@ -6,9 +6,11 @@
  * - Order online invite: a recent Badger invoice matched to a Directory account by business or location name alone
  *   now counts when that row's Relationship shows customer history (Current customer, Customer, Existing customer,
  *   Lapsed customer or Win-back due). The preview gives the reason as "<Relationship> with a Badger invoice in the
- *   last 12 months (matched by business name)". A name-only match into a Prospect (or blank) row is still left out
- *   as "Possible customer" until the invoice is linked, because the same name could be a different business. The
- *   same rule is used at preview, rebuild and send time.
+ *   last 12 months (matched by business name; Relationship may need updating)". A name-only match into a Prospect
+ *   (or blank) row is still left out as "Possible customer" until the invoice is linked, because the same name could
+ *   be a different business. The same rule is used at preview, rebuild and send time.
+ * - Rebuild / send-time re-check reads Badger only for rows that Relationship or Status do not already qualify, so a
+ *   Badger read failure during a scheduled send no longer blocks Current customer / Existing customer recipients.
  *
  * CHANGES IN 2026.10.08.36-APP
  * - New campaign type "Current customers — order online invite" (campaign_type customer_invite, stage Order online
@@ -4144,7 +4146,7 @@ function customerInviteReason_(record, badger) {
   if (status === "existing customer") return "Existing customer";
   if (record.account_id && badger.strong.has(record.account_id)) return "Badger invoice in the last 12 months";
   if (record.account_id && badger.name_only.has(record.account_id) && OUTREACH_CUSTOMER_HISTORY_RELATIONSHIPS.includes(relationship)) {
-    return `${String(record.relationship).trim()} with a Badger invoice in the last 12 months (matched by business name)`;
+    return `${String(record.relationship).trim()} with a Badger invoice in the last 12 months (matched by business name; Relationship may need updating)`;
   }
   return "";
 }
@@ -4302,7 +4304,11 @@ function liveCustomerInviteRecipient_(sourceRow) {
   const raw = sheet.getRange(rowNumber, 1, 1, sheet.getLastColumn()).getValues()[0];
   const row = {}; Object.keys(headers).forEach(key => row[key] = raw[headers[key]]);
   const record = customerInviteRecord_(row, rowNumber, outreachProgramMap_());
-  const reasons = customerInviteIsCustomer_(record, customerInviteBadgerMatches_()) ? customerInviteEligibility_(record) : ["No longer a current customer"];
+  // Read Badger only when Relationship / Status do not already qualify the row, so a Badger read
+  // failure during a send blocks only the invoice-only customers, not every recipient.
+  const noBadger = { strong:new Set(), name_only:new Map() };
+  const isCustomer = customerInviteIsCustomer_(record, noBadger) || customerInviteIsCustomer_(record, customerInviteBadgerMatches_());
+  const reasons = isCustomer ? customerInviteEligibility_(record) : ["No longer a current customer"];
   return { record:record, reasons:reasons };
 }
 
