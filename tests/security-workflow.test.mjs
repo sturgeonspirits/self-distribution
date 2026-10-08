@@ -1138,6 +1138,16 @@ test("Cocktail list campaigns keep newsletter eligibility, cross-send guards, an
   assert.deepEqual(eligibility({ email:"subscribed@example.test", newsletter_status:"Subscribed", do_not_email:false }), []);
   assert.match(eligibility({ email:"unsubscribed@example.test", newsletter_status:"Unsubscribed", do_not_email:false }).join("; "), /not subscribed/);
   assert.match(eligibility({ email:"subscribed@example.test", newsletter_status:"Subscribed", do_not_email:true }).join("; "), /excluded/);
+  // An activated customer (Do Not Email ticked by activation) who subscribed still gets the Cocktail list.
+  const active = { email:"owner@customer.test", newsletter_status:"Subscribed", do_not_email:true, directory_status:"Existing customer", program_ordering_status:"Active" };
+  assert.deepEqual(eligibility(active), []);
+  assert.match(eligibility({ ...active, program_ordering_status:"Paused" }).join("; "), /excluded/, "only while ordering is Active");
+  assert.match(eligibility({ ...active, directory_status:"Prospect" }).join("; "), /excluded/, "only an existing customer");
+  assert.match(eligibility({ ...active, newsletter_status:"Unsubscribed" }).join("; "), /not subscribed/);
+  for (const outcome of ["Unsubscribed", "Do not contact", "Bad address", "Not interested"]) {
+    assert.match(eligibility({ ...active, directory_outcome:outcome }).join("; "), /excluded/, outcome);
+  }
+  assert.match(eligibility({ ...active, program_newsletter_status:"Declined" }).join("; "), /program excludes/);
   assert.match(eligibility({ email:"recent@example.test", newsletter_status:"Subscribed", do_not_email:false }).join("; "), /last 14 days/);
   assert.match(backend, /campaign_type === "cocktail_list"/);
   assert.match(backend, /stage:OUTREACH_COCKTAIL_LIST_STAGE/);

@@ -3,6 +3,11 @@
  * App version: 2026.10.08.35-APP
  *
  * CHANGES IN THIS VERSION
+ * - Cocktail list: Directory Do Not Email no longer excludes an active customer (Directory status Existing customer
+ *   and Account Programs ordering status Active, both set on activation) whose Newsletter Contacts status is
+ *   Subscribed. Activation ticks Do Not Email only to stop sales outreach. Every recorded opt-out still excludes:
+ *   newsletter or program Unsubscribed/Declined, and a Directory status or outcome of Do not contact, Unsubscribed,
+ *   Bad address or Not interested. Sales stages, Reactivation and payment reminders still honor Do Not Email.
  * - A customer application with the newsletter box ticked no longer re-subscribes an address whose Newsletter
  *   Contacts status is Unsubscribed or Declined, and no longer replaces the name, business or account already on
  *   that row (the public form does not prove who owns the address). It fills blank fields and adds a note; staff can
@@ -3937,7 +3942,12 @@ function newsletterCocktailListEligibility_(record) {
   const programStatus = String(record.program_newsletter_status || "").trim().toLowerCase();
   if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) reasons.push("Recipient email is invalid");
   if (String(record.newsletter_status || "").trim() !== "Subscribed") reasons.push("Newsletter contact is not subscribed");
-  if (record.do_not_email || ["do not contact", "unsubscribed", "bad address"].includes(directoryStatus) || ["do not contact", "unsubscribed", "bad address"].includes(directoryOutcome)) reasons.push("Business is excluded from email");
+  // Activating an application ticks Do Not Email to stop sales outreach to a customer.
+  // An active customer who subscribed to the Cocktail list still receives it; any
+  // recorded opt-out (status, outcome, newsletter or program) still excludes them.
+  const activeCustomer = directoryStatus === "existing customer" && String(record.program_ordering_status || "").trim().toLowerCase() === "active";
+  const optOut = ["do not contact", "unsubscribed", "bad address", "not interested"];
+  if ((record.do_not_email && !activeCustomer) || optOut.includes(directoryStatus) || optOut.includes(directoryOutcome)) reasons.push("Business is excluded from email");
   if (["unsubscribed", "declined"].includes(programStatus)) reasons.push("Account program excludes newsletter email");
   const cooldown = outreachCrossSendCooldownReason_(email, true);
   if (cooldown) reasons.push(cooldown);
@@ -3982,6 +3992,7 @@ function cocktailListRecordFromContact_(contact, index) {
     directory_status:String(outreachValue_(directoryRow, ["status"]) || ""),
     directory_outcome:String(outreachValue_(directoryRow, ["outcome"]) || ""),
     program_newsletter_status:String(program.newsletter_status || ""),
+    program_ordering_status:String(program.ordering_status || ""),
   };
 }
 
