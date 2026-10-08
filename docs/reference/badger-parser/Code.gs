@@ -23,9 +23,10 @@
  *     are written. A void or un-void is applied even if modifiedDate is unchanged.
  *   - Imported under an earlier Badger record that was voided and re-issued under
  *     the same number: follows the re-issued record (columns B-C name it).
- *   - Already in the tracker from a PDF: recorded as LINKED and never changed by
- *     the import. Each later Badger change or void is logged once to Import
- *     Errors. Compare with Badger and Apply Badger corrections handle those rows.
+ *   - Already in the tracker from a PDF: recorded as LINKED. The import applies a
+ *     void in Badger to it (as above) and changes nothing else; any other Badger
+ *     change is logged once to Import Errors. Compare with Badger and Apply Badger
+ *     corrections handle those rows.
  *   - Delivered, Paid to Me and Submitted (columns O-Q) are written only on new
  *     rows. Winery Name (J) is never written on an existing row, Terms (N) only
  *     for VOID, and a blank Badger value never overwrites a filled cell in G-L.
@@ -826,7 +827,7 @@ function badgerStateRow_(listItem, status, invNo, detail) {
 // Parser State statuses that record what the tracker holds for a Badger invoice.
 const BADGER_APPLIED_STATUSES = Object.freeze(["IMPORTED", "UPDATED", "VOIDED", "LINKED", "CORRECTED", "VOID_SKIPPED"]);
 // Statuses that only record a problem already reported, so it is not reported every day.
-const BADGER_NOTE_STATUSES = Object.freeze(["READ_FAILED", "DUPLICATE_NUMBER", "LINKED_CHANGED", "LINKED_VOIDED"]);
+const BADGER_NOTE_STATUSES = Object.freeze(["READ_FAILED", "DUPLICATE_NUMBER", "LINKED_CHANGED"]);
 
 /** Badger invoice ID -> { applied: {status, modified, at}, note: {status, modified} } from the latest rows. */
 function buildBadgerStateIndex_() {
@@ -1022,9 +1023,10 @@ function badgerTimeUp_(startedAt) {
  * Read-only toward Badger. Rules for an invoice already in the tracker:
  * - Imported from Badger (IMPORTED / UPDATED / VOIDED / CORRECTED): kept in step with
  *   Badger automatically when its modifiedDate changes.
- * - Came from a PDF (LINKED): never changed by the import. Each Badger change (or a
- *   void) is logged once to Import Errors; Compare with Badger and Apply Badger
- *   corrections handle it. After an Apply the invoice follows Badger from then on.
+ * - Came from a PDF (LINKED): not changed by the import, except that a void in
+ *   Badger is applied (M-N and its lines). Any other Badger change is logged once
+ *   to Import Errors; Compare with Badger and Apply Badger corrections handle it.
+ *   After a void or an Apply the invoice follows Badger from then on.
  * - A row imported under an earlier Badger record with the same number (voided and
  *   re-issued in Badger) follows the re-issued record; columns B-C name it.
  * - A void or un-void in Badger is applied even if Badger's modifiedDate did not change.
@@ -1070,9 +1072,15 @@ function importFromBadger() {
         }
         // Not in the tracker (new, or a row staff deleted): import it.
       } else if (!applied && tracked.fileId.indexOf(BADGER_STATE_PREFIX) !== 0) {
-        // Came from a PDF: recorded once and never changed by the import.
-        planState_(plan, invNo, badgerStateRow_(item, "LINKED", invNo, "already in the tracker; the import never changes it (use Compare with Badger)"));
-        counts.linked++;
+        // Came from a PDF: recorded once and not changed by the import, except that a
+        // void in Badger is applied (a void needs no judgment).
+        if (item.isVoid && tracked.terms.toUpperCase() !== "VOID") {
+          planBadgerVoid_(plan, item, tracked, invNo, "VOIDED");
+          counts.voided++;
+        } else {
+          planState_(plan, invNo, badgerStateRow_(item, "LINKED", invNo, "already in the tracker; the import changes it only if Badger voids it (use Compare with Badger)"));
+          counts.linked++;
+        }
         continue;
       } else if (!applied) {
         // A row this parser imported, under this Badger record (its Parser State row
@@ -1088,14 +1096,17 @@ function importFromBadger() {
           continue;
         }
       } else if (applied.status === "LINKED") {
-        // Never changed by the import. Each Badger change is logged once to Import
-        // Errors, so a scheduled run still tells someone.
-        const voidedThere = item.isVoid && tracked.terms.toUpperCase() !== "VOID";
-        if (applied.modified === modified && !voidedThere) {
+        // A void in Badger is applied: lines removed, Amount Due 0, Terms VOID (M-N
+        // only); the invoice then follows Badger like any VOIDED one. Any other
+        // Badger change is not applied, only logged once to Import Errors, so a
+        // scheduled run still tells someone.
+        if (item.isVoid && tracked.terms.toUpperCase() !== "VOID") {
+          planBadgerVoid_(plan, item, tracked, invNo, "VOIDED");
+          counts.voided++;
+        } else if (applied.modified === modified) {
           counts.unchanged++;
-        } else if (planNoteOnce_(plan, stateIndex, item, invNo, voidedThere ? "LINKED_VOIDED" : "LINKED_CHANGED", voidedThere
-          ? `${invNo} came from a PDF and is now VOID in Badger. Its amount and lines are still in the tracker and the sales tabs. Run Compare with Badger, then Apply Badger corrections.`
-          : `${invNo} came from a PDF and changed in Badger (for example, it was paid). The import does not change it; run Compare with Badger to see whether it now differs.`)) {
+        } else if (planNoteOnce_(plan, stateIndex, item, invNo, "LINKED_CHANGED",
+          `${invNo} came from a PDF and changed in Badger (for example, it was paid). The import does not change it; run Compare with Badger to see whether it now differs.`)) {
           counts.linkedChanged++;
         } else {
           counts.unchanged++;

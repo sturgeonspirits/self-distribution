@@ -734,19 +734,39 @@ t("review2 B: a void or un-void in Badger is applied even when modifiedDate does
   e.ctx.importFromBadger(); assert.strictEqual(e.tabs["Invoices"].rows[2][13], "VOID");
 });
 
-t("review2 C: a LINKED invoice's Badger change or void is logged once to Import Errors and not repeated in later toasts", () => {
+t("review2 C: a LINKED invoice's Badger change is logged once; a Badger void is applied automatically", () => {
   const b = makeBadger([]); const item = bInv(b, "201", "SS0163", "Fox and Crow", [{ q: 6, d: "Gin", p: 22 }]);
-  const e = makeEnv({ ssId: PROD_ID, sheets: prodSheets([pdfRow("SS0163", "Fox and Crow", 132)]), badger: b, props: CREDS });
+  const sheets = prodSheets([pdfRow("SS0163", "Fox and Crow", 132), pdfRow("SS0164", "Other", 22)]);
+  sheets["Invoice Lines"].push(["SS0163", "Fox and Crow", 6, "750mL", "Gin", "Spirits", 22, 132], ["SS0164", "Other", 1, "750mL", "Gin", "Spirits", 22, 22]);
+  bInv(b, "202", "SS0164", "Other", [{ q: 1, d: "Gin", p: 22 }]);
+  const e = makeEnv({ ssId: PROD_ID, sheets, badger: b, props: CREDS });
   e.ctx.importFromBadger();
   item.modifiedDate = "2026-10-01T00:00:00"; item.paidDate = "2026-10-01T00:00:00";
   assert.strictEqual(e.ctx.importFromBadger().linkedChanged, 1);
   assert.match(e.tabs["Import Errors"].rows[1][4], /came from a PDF and changed in Badger/);
+  assert.strictEqual(e.tabs["Invoices"].rows[1][12], 132, "a non-void change does not touch the LINKED row");
   assert.strictEqual(e.ctx.importFromBadger().linkedChanged, 0); assert.ok(!/came from PDFs/.test(e.toasts[e.toasts.length - 1]));
   item.isVoid = true; // same modifiedDate
-  assert.strictEqual(e.ctx.importFromBadger().linkedChanged, 1);
-  assert.match(e.tabs["Import Errors"].rows[2][4], /now VOID in Badger.*still in the tracker/);
-  assert.strictEqual(e.tabs["Invoices"].rows[1][12], 132, "the LINKED row itself is not changed");
-  e.ctx.importFromBadger(); assert.strictEqual(e.tabs["Import Errors"].rows.length, 3, "each logged once");
+  const r = e.ctx.importFromBadger(); assert.strictEqual(r.voided, 1); assert.strictEqual(r.linkedChanged, 0);
+  const row = e.tabs["Invoices"].rows[1];
+  assert.deepStrictEqual([row[1], row[5], row[12], row[13], row.slice(14)], ["PDFSS0163", "Fox and Crow", 0, "VOID", [true, true, "Yes"]], "only M-N change; staff columns kept");
+  assert.strictEqual(lineRowsFor(e, "SS0163").length, 0); assert.strictEqual(lineRowsFor(e, "SS0164").length, 1);
+  assert.strictEqual(stateRows(e).slice(-1)[0][3], "VOIDED");
+  assert.strictEqual(e.ctx.importFromBadger().voided, 0, "applied once");
+  assert.strictEqual(e.tabs["Import Errors"].rows.length, 2, "the void is applied, not logged");
+});
+
+t("voids: a PDF invoice already void in Badger at the first import is voided, and an un-void later restores it from Badger", () => {
+  const b = makeBadger([]); const item = bInv(b, "201", "SS0163", "Fox and Crow", [{ q: 6, d: "Gin", p: 22 }], { isVoid: true });
+  const sheets = prodSheets([pdfRow("SS0163", "Fox and Crow", 132)]);
+  sheets["Invoice Lines"].push(["SS0163", "Fox and Crow", 6, "750mL", "Gin", "Spirits", 22, 132]);
+  const e = makeEnv({ ssId: PROD_ID, sheets, badger: b, props: CREDS });
+  const r = e.ctx.importFromBadger(); assert.strictEqual(r.voided, 1); assert.strictEqual(r.linked, 0);
+  assert.deepStrictEqual([e.tabs["Invoices"].rows[1][12], e.tabs["Invoices"].rows[1][13], lineRowsFor(e, "SS0163").length], [0, "VOID", 0]);
+  assert.strictEqual(e.tabs["Monthly Units"].rows.length, 1, "left out of the sales tabs");
+  item.isVoid = false; item.modifiedDate = "2026-10-02T00:00:00";
+  assert.strictEqual(e.ctx.importFromBadger().updated, 1);
+  assert.deepStrictEqual([e.tabs["Invoices"].rows[1][12], e.tabs["Invoices"].rows[1][13], lineRowsFor(e, "SS0163").length], [132, "", 1]);
 });
 
 t("review2 D: Check Badger fields shows the raw field names even when the lines are under another key, and checks recent totals", () => {
@@ -792,7 +812,8 @@ t("review2 G: Apply records a void as VOIDED, so a later un-void in Badger clear
   const sheets = prodSheets([pdfRow("SS0163", "Fox and Crow", 132)]);
   sheets["Invoice Lines"].push(["SS0163", "Fox and Crow", 6, "750mL", "Gin", "Spirits", 22, 132]);
   const e = makeEnv({ ssId: PROD_ID, sheets, badger: b, props: CREDS });
-  e.ctx.importFromBadger(); e.ctx.compareWithBadger(); assert.strictEqual(e.ctx.applyBadgerCorrections().voided, 1);
+  // Compare + Apply before any import (an import would now void it itself).
+  e.ctx.compareWithBadger(); assert.strictEqual(e.ctx.applyBadgerCorrections().voided, 1);
   assert.strictEqual(stateRows(e).slice(-1)[0][3], "VOIDED");
   item.isVoid = false; item.modifiedDate = "2026-10-02T00:00:00";
   assert.strictEqual(e.ctx.importFromBadger().updated, 1);
