@@ -2754,7 +2754,8 @@ function outreachRecentBadgerInvoiceAccountIds_() {
     const recent = new Set();
     // How each account was matched: "strong" (explicit link, order link or learned alias) or
     // "name" (Badger location name or business name only). The order-online invite adds
-    // people on this basis, so it accepts only strong matches.
+    // people on this basis: strong matches always, name-only matches only on a row whose
+    // Relationship shows customer history. A name shared by two Directory accounts matches neither.
     const strong = new Set();
     const nameOnly = new Map();
     let unplaced = 0;
