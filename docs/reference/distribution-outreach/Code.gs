@@ -8,6 +8,7 @@
  *   Directory row by row number, business and email; refuses Do Not Email, an opt-out status or outcome, and an address
  *   that already received the invite; preserves lock/idempotency/Zoho recovery; and writes one Activity Log row with the
  *   Order online invite stage. It does not change the row's outreach stage.
+ * - Do Not Email typed as text ("TRUE", "Yes", "1") now blocks sales and customer sends too, not only a ticked checkbox.
  *
  * CHANGES IN 2026.10.04.25-APP
  * - Adds the Hub-only sendNewsletterEmail action for Cocktail list campaigns. It validates a subscribed Newsletter
@@ -358,7 +359,7 @@ function validateAppLead_(body, testMode) {
   if (business !== String(body.business || '').trim() || email !== String(body.recipient || '').trim().toLowerCase()) throw new Error('Source lead changed. Refresh the Hub before sending.');
   if (stage.toLowerCase() !== String(body.message_stage || '').trim().toLowerCase()) throw new Error('Email stage changed. Refresh the Hub before sending.');
   if (!testMode && !isValidEmail_(email)) throw new Error('Recipient email is invalid.');
-  if (!testMode && (row[OUTREACH.COL.DO_NOT_EMAIL - 1] === true || ['do not contact', 'not interested', 'unsubscribed'].indexOf(status) >= 0 || ['bad address', 'not interested', 'unsubscribed', 'do not contact'].indexOf(outcome) >= 0)) {
+  if (!testMode && (isTicked_(row[OUTREACH.COL.DO_NOT_EMAIL - 1]) || ['do not contact', 'not interested', 'unsubscribed'].indexOf(status) >= 0 || ['bad address', 'not interested', 'unsubscribed', 'do not contact'].indexOf(outcome) >= 0)) {
     throw new Error('The source lead is blocked from email.');
   }
   const duplicate = appSentHistory_().some(function (item) {
@@ -374,6 +375,11 @@ function validateAppLead_(body, testMode) {
     throw new Error('This email stage has already been sent to the recipient.');
   }
   return { sheet:sheet, row:row, rowNumber:rowNumber, business:business, email:email, stage:stage };
+}
+
+// A checkbox, or "TRUE" / "Yes" / "1" typed in the cell, counts as ticked (the Hub reads it the same way).
+function isTicked_(value) {
+  return value === true || /^(true|yes|y|1)$/i.test(String(value === null || value === undefined ? '' : value).trim());
 }
 
 // Order-online invite to a current customer. The Hub chooses the audience; this check is the
@@ -392,7 +398,7 @@ function validateCustomerLead_(body, testMode) {
   const outcome = String(row[OUTREACH.COL.OUTCOME - 1] || '').trim().toLowerCase();
   if (business !== String(body.business || '').trim() || email !== String(body.recipient || '').trim().toLowerCase()) throw new Error('Customer row changed. Refresh the Hub before sending.');
   if (!testMode && !isValidEmail_(email)) throw new Error('Recipient email is invalid.');
-  if (!testMode && (row[OUTREACH.COL.DO_NOT_EMAIL - 1] === true || ['do not contact', 'not interested', 'unsubscribed', 'bad address'].indexOf(status) >= 0 || ['bad address', 'not interested', 'unsubscribed', 'do not contact'].indexOf(outcome) >= 0)) {
+  if (!testMode && (isTicked_(row[OUTREACH.COL.DO_NOT_EMAIL - 1]) || ['do not contact', 'not interested', 'unsubscribed', 'bad address'].indexOf(status) >= 0 || ['bad address', 'not interested', 'unsubscribed', 'do not contact'].indexOf(outcome) >= 0)) {
     throw new Error('The customer is blocked from email.');
   }
   const alreadySent = appSentHistory_().some(function (item) {

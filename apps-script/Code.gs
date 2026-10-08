@@ -5,15 +5,20 @@
  * CHANGES IN THIS VERSION
  * - New campaign type "Current customers — order online invite" (campaign_type customer_invite, stage Order online
  *   invite). Audience: Directory rows whose Relationship is Current customer / Customer or whose Status is Existing
- *   customer, plus any Directory account with a non-void Badger invoice in the last 12 months (the same invoice
- *   matching as the tasting-offer gate; if Badger cannot be read the preview stops instead of shrinking). Left out,
+ *   customer, plus any Directory account with a non-void Badger invoice in the last 12 months that is matched by an
+ *   explicit invoice link, an order link or a learned alias. A match by business or location name alone could be a
+ *   different business with the same name, so it is only listed as a "possible customer" (link the invoice to include
+ *   it). If Badger cannot be read the preview stops instead of shrinking. The preview lists who was left out by name,
+ *   why each recipient is included, recent invoices that match no Directory account, and a stale Badger sync. Left out,
  *   and counted by reason in the preview: no or invalid email, Do Not Email, an opt-out status or outcome, an account
  *   already ordering online (Account Programs ordering status Active), an address that already received the invite,
  *   an unverified email, and the 14-day gap after a Cocktail list email. One recipient per address.
  * - The message comes from a new CUSTOMER ORDER INVITE EMAIL block in the Email Editor (added with starting copy by
  *   repairHubStructure(); edited cells are never overwritten). The code always adds the link to the wholesale account
- *   form (tracked when Tracking base URL is set, prefilled with the account, business and email) and the physical
- *   address / "Reply stop to unsubscribe." footer. Requires Physical mailing address and Customer application URL.
+ *   form (tracked when Tracking base URL is set, prefilled with the account, business and email), the sign-off and the
+ *   physical address / "Reply stop to unsubscribe." footer. These sit outside the editable text, so editing one
+ *   recipient's email or rebuilding it never drops the link. Requires Physical mailing address and Customer
+ *   application URL. An address that received the invite is never sent the Initial prospect email.
  * - It uses the existing review → freeze → approve → batch / scheduled send flow. Every check is repeated at rebuild
  *   and send time, and sending goes through the Distribution Outreach mailer's new sendCustomerEmail action
  *   (2026.10.08.26-APP). The Directory outreach stage, Last Emailed and follow-up dates are never changed.
@@ -433,6 +438,7 @@ let __HUB_INVENTORY_ACTIVE = null;
 let __OUTREACH_CAMPAIGN_SETTINGS = null;
 let __OUTREACH_RECENT_BADGER_INVOICE_ACCOUNT_IDS = null;
 let __OUTREACH_RECENT_BADGER_INVOICE_LOOKUP_FAILED = false;
+let __OUTREACH_RECENT_BADGER_MATCHES = null; // { strong:Set, name_only:Map(account -> Badger name), unplaced_invoices:number }
 let __ZIP_CENTROID_MAP = null;
 let __LEGACY_PILOT_SENT_BY_EMAIL = null;
 let __OUTREACH_RECENT_SEND_INDEX = null;
@@ -2738,6 +2744,12 @@ function outreachRecentBadgerInvoiceAccountIds_() {
     });
     const links = readBadgerInvoiceLinks_();
     const recent = new Set();
+    // How each account was matched: "strong" (explicit link, order link or learned alias) or
+    // "name" (Badger location name or business name only). The order-online invite adds
+    // people on this basis, so it accepts only strong matches.
+    const strong = new Set();
+    const nameOnly = new Map();
+    let unplaced = 0;
     cachedBadgerInvoices_(false).forEach(invoice => {
       const invoiceDate = outreachDate_(invoice.invoice_date);
       if (!invoiceDate || invoiceDate.getTime() < cutoff.getTime() || invoice.is_void) return;
@@ -2749,12 +2761,14 @@ function outreachRecentBadgerInvoiceAccountIds_() {
       if (!accountId && ordered.size > 1) return;
       if (!accountId && ordered.size === 1) accountId = Array.from(ordered)[0];
       const customerKey = normalizeCustomerMatchKey_(invoice.customer_name);
+      const strongMatch = !!accountId;
       if (!accountId && customerKey) {
         const exactAlias = aliases.by_name.get(canonicalBadgerAliasName_(invoice.customer_name));
         const looseAliasAccounts = Array.from(aliases.by_key.get(customerKey) || []);
         if (exactAlias && !exactAlias.ambiguous) accountId = String(exactAlias.account_id || "").trim();
         else if (looseAliasAccounts.length === 1) accountId = String(looseAliasAccounts[0] || "").trim();
       }
+      const aliasMatch = !strongMatch && !!accountId;
       if (!accountId && customerKey) {
         const locationKeys = locationsByInvoiceName.get(customerKey) || new Set();
         if (locationKeys.size === 1) {
@@ -2766,8 +2780,16 @@ function outreachRecentBadgerInvoiceAccountIds_() {
         const candidates = Array.from(accountsByBusiness.get(customerKey) || []);
         if (candidates.length === 1) accountId = candidates[0];
       }
-      if (accountId && accountIds.has(accountId)) recent.add(accountId);
+      if (accountId && accountIds.has(accountId)) {
+        recent.add(accountId);
+        if (strongMatch || aliasMatch) strong.add(accountId);
+        else nameOnly.set(accountId, String(invoice.customer_name || ""));
+      } else {
+        unplaced += 1;
+      }
     });
+    strong.forEach(accountId => nameOnly.delete(accountId));
+    __OUTREACH_RECENT_BADGER_MATCHES = { strong:strong, name_only:nameOnly, unplaced_invoices:unplaced };
     __OUTREACH_RECENT_BADGER_INVOICE_ACCOUNT_IDS = recent;
     return recent;
   } catch (error) {
@@ -4097,11 +4119,18 @@ function liveCocktailListRecipient_(newsletterContactId) {
 const OUTREACH_CUSTOMER_RELATIONSHIPS = ["current customer", "customer", "existing customer"];
 let __CUSTOMER_INVITE_SENT_EMAILS = null;
 
-function customerInviteIsCustomer_(record, recentBadgerAccounts) {
+/** Why a row counts as a current customer ("" if it does not). Badger counts only for a strong invoice match. */
+function customerInviteReason_(record, strongBadgerAccounts) {
   const relationship = String(record.relationship || "").trim().toLowerCase();
   const status = String(record.status || "").trim().toLowerCase();
-  return OUTREACH_CUSTOMER_RELATIONSHIPS.includes(relationship) || status === "existing customer"
-    || (!!record.account_id && recentBadgerAccounts.has(record.account_id));
+  if (OUTREACH_CUSTOMER_RELATIONSHIPS.includes(relationship)) return String(record.relationship).trim();
+  if (status === "existing customer") return "Existing customer";
+  if (record.account_id && strongBadgerAccounts.has(record.account_id)) return "Badger invoice in the last 12 months";
+  return "";
+}
+
+function customerInviteIsCustomer_(record, strongBadgerAccounts) {
+  return !!customerInviteReason_(record, strongBadgerAccounts);
 }
 
 /** Addresses that already received the invite (Activity Log, real sends only). */
@@ -4120,11 +4149,20 @@ function customerInviteSentEmails_() {
   return (__CUSTOMER_INVITE_SENT_EMAILS = sent);
 }
 
-function customerInviteRecentBadgerAccounts_() {
-  const recent = outreachRecentBadgerInvoiceAccountIds_();
+/**
+ * Recent Badger customers for the invite: { strong, name_only, unplaced_invoices }. Only "strong"
+ * accounts (explicit invoice link, order link or learned alias) join the audience; a match by
+ * business or location name alone could be a different business with the same name.
+ */
+function customerInviteBadgerMatches_() {
+  outreachRecentBadgerInvoiceAccountIds_();
   // A silent empty set would quietly drop every invoice-only customer from the audience.
-  if (__OUTREACH_RECENT_BADGER_INVOICE_LOOKUP_FAILED) throw new Error("Badger invoices could not be read, so customers found only through recent invoices would be missed. Try again in a few minutes.");
-  return recent;
+  if (__OUTREACH_RECENT_BADGER_INVOICE_LOOKUP_FAILED || !__OUTREACH_RECENT_BADGER_MATCHES) throw new Error("Badger invoices could not be read, so customers found only through recent invoices would be missed. Try again in a few minutes.");
+  return __OUTREACH_RECENT_BADGER_MATCHES;
+}
+
+function customerInviteRecentBadgerAccounts_() {
+  return customerInviteBadgerMatches_().strong;
 }
 
 function customerInviteEligibility_(record) {
@@ -4154,7 +4192,13 @@ function customerInviteRecord_(row, sourceRow, programs) {
   return record;
 }
 
-function customerInviteMessage_(record, settings) {
+/**
+ * The fixed tail of every invite: the link to the wholesale account form, the sign-off, the
+ * physical address and the unsubscribe line. It is kept out of the editable body, and every
+ * path (freeze, staff edit, rebuild) re-attaches it, so an edited invite never loses its link.
+ * Built only from the account, business and email that are frozen on the recipient row.
+ */
+function customerInviteFooterHtml_(record, settings) {
   if (!String(settings["Physical mailing address"] || "").trim()) throw new Error("Physical mailing address is required before previewing or creating an order-online invite.");
   const accountId = String(record.account_id || "").trim();
   const business = String(record.business || "").trim();
@@ -4166,43 +4210,70 @@ function customerInviteMessage_(record, settings) {
     : "";
   const link = tracked || direct;
   if (!link) throw new Error("Set Customer application URL in Campaign Settings before creating an order-online invite.");
-  const values = {
+  const values = customerInviteValues_(record);
+  const linkText = escapeOutreachHtml_(String(settings["Customer invite link text"] || "").trim() || "Set up online ordering");
+  const signOff = renderOutreachTemplate_(String(settings["Customer invite sign-off"] || ""), values, true).trim();
+  return `<p><a href="${escapeOutreachHtml_(link)}">${linkText}</a></p>`
+    + (signOff ? `<p>${signOff}</p>` : "")
+    + `<p>${escapeOutreachHtml_(String(settings["Physical mailing address"] || ""))}</p><p>Reply stop to unsubscribe.</p>`;
+}
+
+function customerInviteValues_(record) {
+  return {
     "First Name":String(record.contact || "").trim().split(/\s+/)[0] || "there",
-    "Business Name":outreachDisplayBusinessName_(business || "your business"),
+    "Business Name":outreachDisplayBusinessName_(String(record.business || "").trim() || "your business"),
     "City":String(record.city || ""),
   };
+}
+
+function customerInviteMessage_(record, settings) {
+  const footer = customerInviteFooterHtml_(record, settings);
+  const values = customerInviteValues_(record);
   const subject = renderOutreachTemplate_(String(settings["Customer invite subject"] || ""), values, false).trim();
   if (!subject) throw new Error("Fill in the CUSTOMER ORDER INVITE EMAIL block in the Email Editor (run repairHubStructure() once to add it).");
   const line = key => renderOutreachTemplate_(String(settings[key] || ""), values, true).trim();
-  const linkText = escapeOutreachHtml_(String(settings["Customer invite link text"] || "").trim() || "Set up online ordering");
-  const body = ["Customer invite greeting", "Customer invite intro", "Customer invite steps"].map(line).filter(Boolean).map(text => `<p>${text}</p>`).join("")
-    + `<p><a href="${escapeOutreachHtml_(link)}">${linkText}</a></p>`
-    + (line("Customer invite sign-off") ? `<p>${line("Customer invite sign-off")}</p>` : "");
-  const footer = `<p>${escapeOutreachHtml_(String(settings["Physical mailing address"] || ""))}</p><p>Reply stop to unsubscribe.</p>`;
+  const body = ["Customer invite greeting", "Customer invite intro", "Customer invite steps"].map(line).filter(Boolean).map(text => `<p>${text}</p>`).join("");
   return { stage:OUTREACH_CUSTOMER_INVITE_STAGE, subject:subject, body_text:outreachHtmlToPlainText_(body), html:body + footer, footer_html:footer };
 }
 
 /** Eligible current customers, one per address, with each rendered message; plus counts of who was left out and why. */
 function campaignCustomerInviteSelection_(criteria) {
-  const recent = customerInviteRecentBadgerAccounts_();
+  const badger = customerInviteBadgerMatches_();
   const programs = outreachProgramMap_();
   const settings = getOutreachCampaignSettings_();
   const excluded = {};
+  const excludedNames = {};
+  const leaveOut = (reason, record) => {
+    excluded[reason] = (excluded[reason] || 0) + 1;
+    if (!excludedNames[reason]) excludedNames[reason] = [];
+    if (excludedNames[reason].length < 25) excludedNames[reason].push(String(record.business || record.email || `Row ${record.source_row}`));
+  };
   const seen = new Set();
   const records = [];
   getAllRowsAsObjects_(getOutreachSheet_(OUTREACH_SHEET_NAME)).forEach((row, index) => {
     const record = customerInviteRecord_(row, index + 2, programs);
-    if (!customerInviteIsCustomer_(record, recent)) return;
+    record.invite_reason = customerInviteReason_(record, badger.strong);
+    if (!record.invite_reason) {
+      // Matched to a Badger invoice by name only: possibly a different business with the same
+      // name, so it is not invited. Linking the invoice in Orders & Accounts makes it a strong match.
+      if (record.account_id && badger.name_only.has(record.account_id)) leaveOut("Possible customer: Badger invoice matched by name only", record);
+      return;
+    }
     const reasons = customerInviteEligibility_(record);
     const email = String(record.email || "").trim().toLowerCase();
     if (!reasons.length && seen.has(email)) reasons.push("Another customer row has the same email");
-    if (reasons.length) { excluded[reasons[0]] = (excluded[reasons[0]] || 0) + 1; return; }
+    if (reasons.length) { leaveOut(reasons[0], record); return; }
     seen.add(email);
     const message = customerInviteMessage_(record, settings);
     records.push(Object.assign(record, { subject:message.subject, body_text:message.body_text, preview_html:message.html, footer_html:message.footer_html }));
   });
   records.sort((a, b) => String(a.business).localeCompare(String(b.business)));
-  return { records:criteria && criteria.max_recipients ? records.slice(0, criteria.max_recipients) : records, excluded:excluded };
+  const warnings = [];
+  if (badger.unplaced_invoices) warnings.push(`${badger.unplaced_invoices} recent Badger invoice(s) match no Directory account and cannot be invited; link them in Orders & Accounts.`);
+  let syncFresh = true;
+  try { syncFresh = !!badgerSyncState_().is_fresh; } catch (error) { syncFresh = false; }
+  if (!syncFresh) warnings.push("Badger status sync is not fresh, so customers with the newest invoices may be missing. Sync Badger status first.");
+  return { records:criteria && criteria.max_recipients ? records.slice(0, criteria.max_recipients) : records, excluded:excluded, excluded_names:excludedNames, warnings:warnings };
 }
 
 /** The current Directory row behind a frozen invite recipient, with the same rules applied. */
@@ -4218,10 +4289,12 @@ function liveCustomerInviteRecipient_(sourceRow) {
   return { record:record, reasons:reasons };
 }
 
+// An Initial prospect email, or an order-online invite: either means the address must never get
+// the Initial "introducing Sturgeon Spirits" email (an invited customer is not a prospect).
 function initialSentActivityRow_(row) {
   const result = String(outreachValue_(row, ["result", "send_status", "status"]) || "").toUpperCase();
   const stage = String(outreachValue_(row, ["stage", "message_stage", "next_email"]) || "").trim().toLowerCase();
-  return stage === "initial" && result.indexOf("SENT") >= 0 && result.indexOf("TEST") < 0;
+  return (stage === "initial" || stage === OUTREACH_CUSTOMER_INVITE_STAGE.toLowerCase()) && result.indexOf("SENT") >= 0 && result.indexOf("TEST") < 0;
 }
 
 function campaignInitialSentEmailSet_(directoryRecords) {
@@ -4658,6 +4731,7 @@ function apiRebuildCampaignRecipients_(p) {
         }
         const message = customerInviteMessage_(live.record, settings);
         if (editedRecipientTokens.has(String(item.values[rh.idempotency_token] || ""))) {
+          // The edited text is kept; the footer (link, sign-off, address) is always re-attached.
           item.values[rh.html] = outreachPlainTextToHtml_(String(item.values[rh.body_text] || "")) + String(message.footer_html || "");
           rebuiltWithEditsKept += 1;
         } else {
@@ -4797,7 +4871,10 @@ function campaignRecipientFooterHtml_(recipient, settings, draftMap) {
   const rh = recipient.headers;
   const stored = rh.footer_html === undefined ? "" : String(recipient.values[rh.footer_html] || "");
   if (stored) return stored;
-  if ([OUTREACH_COCKTAIL_LIST_STAGE, OUTREACH_CUSTOMER_INVITE_STAGE].includes(String(recipient.values[rh.message_stage] || ""))) {
+  if (String(recipient.values[rh.message_stage] || "") === OUTREACH_CUSTOMER_INVITE_STAGE) {
+    return customerInviteFooterHtml_({ account_id:recipient.values[rh.account_id], business:recipient.values[rh.business_name], email:recipient.values[rh.recipient_email], contact:recipient.values[rh.contact] }, settings);
+  }
+  if (String(recipient.values[rh.message_stage] || "") === OUTREACH_COCKTAIL_LIST_STAGE) {
     return `<p>${escapeOutreachHtml_(String(settings["Physical mailing address"] || ""))}</p><p>Reply stop to unsubscribe.</p>`;
   }
   const sourceRow = Number(recipient.values[rh.source_row] || 0);
@@ -4926,6 +5003,8 @@ function apiPreviewOutreachCampaign_(p) {
   return {
     criteria:criteria,
     excluded:invite ? invite.excluded : undefined,
+    excluded_names:invite ? invite.excluded_names : undefined,
+    warnings:invite ? invite.warnings : undefined,
     audience:campaignAudienceLabel_(criteria),
     recipient_count:records.length,
     recipients:records.map(record => ({
@@ -4936,6 +5015,7 @@ function apiPreviewOutreachCampaign_(p) {
       miles_from_center:record.campaign_miles,
       craft_spirit_fit:record.craft_spirit_fit || "",
       status:record.status,
+      invite_reason:record.invite_reason || "",
       email:record.email,
       last_emailed:record.last_emailed,
     })),
