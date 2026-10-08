@@ -1,8 +1,16 @@
 /*********************************
  * Inventory API (JSON) for Netlify
- * App version: 2026.10.08.36-APP
+ * App version: 2026.10.08.37-APP
  *
  * CHANGES IN THIS VERSION
+ * - Order online invite: a recent Badger invoice matched to a Directory account by business or location name alone
+ *   now counts when that row's Relationship shows customer history (Current customer, Customer, Existing customer,
+ *   Lapsed customer or Win-back due). The preview gives the reason as "<Relationship> with a Badger invoice in the
+ *   last 12 months (matched by business name)". A name-only match into a Prospect (or blank) row is still left out
+ *   as "Possible customer" until the invoice is linked, because the same name could be a different business. The
+ *   same rule is used at preview, rebuild and send time.
+ *
+ * CHANGES IN 2026.10.08.36-APP
  * - New campaign type "Current customers — order online invite" (campaign_type customer_invite, stage Order online
  *   invite). Audience: Directory rows whose Relationship is Current customer / Customer or whose Status is Existing
  *   customer, plus any Directory account with a non-void Badger invoice in the last 12 months that is matched by an
@@ -362,7 +370,7 @@
  * - Use only in the staging inventory backend until testing is complete.
  *********************************/
 
-const APP_VERSION = "2026.10.08.36-APP";
+const APP_VERSION = "2026.10.08.37-APP";
 
 const SHEET_NAMES = {
   STORES: "Stores",
@@ -4117,20 +4125,31 @@ function liveCocktailListRecipient_(newsletterContactId) {
 // Existing customer, plus any Directory account with a non-void Badger invoice in the last 12
 // months. Each address gets the invite once. Directory outreach stages are never changed.
 const OUTREACH_CUSTOMER_RELATIONSHIPS = ["current customer", "customer", "existing customer"];
+// Relationships that show the business has bought from us before (2026.10.08.37-APP). A Badger
+// invoice matched by business name alone counts only for these rows; on a Prospect row the same
+// name could be a different business (two bars both called "Village Inn").
+const OUTREACH_CUSTOMER_HISTORY_RELATIONSHIPS = OUTREACH_CUSTOMER_RELATIONSHIPS.concat(["lapsed customer", "win-back due"]);
 let __CUSTOMER_INVITE_SENT_EMAILS = null;
 
-/** Why a row counts as a current customer ("" if it does not). Badger counts only for a strong invoice match. */
-function customerInviteReason_(record, strongBadgerAccounts) {
+/**
+ * Why a row counts as a current customer ("" if it does not). badger is { strong:Set, name_only:Map }.
+ * A strong invoice match (explicit link, order link or learned alias) always counts; a match by
+ * business name alone counts only when the row's Relationship already shows customer history.
+ */
+function customerInviteReason_(record, badger) {
   const relationship = String(record.relationship || "").trim().toLowerCase();
   const status = String(record.status || "").trim().toLowerCase();
   if (OUTREACH_CUSTOMER_RELATIONSHIPS.includes(relationship)) return String(record.relationship).trim();
   if (status === "existing customer") return "Existing customer";
-  if (record.account_id && strongBadgerAccounts.has(record.account_id)) return "Badger invoice in the last 12 months";
+  if (record.account_id && badger.strong.has(record.account_id)) return "Badger invoice in the last 12 months";
+  if (record.account_id && badger.name_only.has(record.account_id) && OUTREACH_CUSTOMER_HISTORY_RELATIONSHIPS.includes(relationship)) {
+    return `${String(record.relationship).trim()} with a Badger invoice in the last 12 months (matched by business name)`;
+  }
   return "";
 }
 
-function customerInviteIsCustomer_(record, strongBadgerAccounts) {
-  return !!customerInviteReason_(record, strongBadgerAccounts);
+function customerInviteIsCustomer_(record, badger) {
+  return !!customerInviteReason_(record, badger);
 }
 
 /** Addresses that already received the invite (Activity Log, real sends only). */
@@ -4150,19 +4169,15 @@ function customerInviteSentEmails_() {
 }
 
 /**
- * Recent Badger customers for the invite: { strong, name_only, unplaced_invoices }. Only "strong"
+ * Recent Badger customers for the invite: { strong, name_only, unplaced_invoices }. "Strong"
  * accounts (explicit invoice link, order link or learned alias) join the audience; a match by
- * business or location name alone could be a different business with the same name.
+ * business or location name alone joins only on a row with customer history (see customerInviteReason_).
  */
 function customerInviteBadgerMatches_() {
   outreachRecentBadgerInvoiceAccountIds_();
   // A silent empty set would quietly drop every invoice-only customer from the audience.
   if (__OUTREACH_RECENT_BADGER_INVOICE_LOOKUP_FAILED || !__OUTREACH_RECENT_BADGER_MATCHES) throw new Error("Badger invoices could not be read, so customers found only through recent invoices would be missed. Try again in a few minutes.");
   return __OUTREACH_RECENT_BADGER_MATCHES;
-}
-
-function customerInviteRecentBadgerAccounts_() {
-  return customerInviteBadgerMatches_().strong;
 }
 
 function customerInviteEligibility_(record) {
@@ -4252,10 +4267,11 @@ function campaignCustomerInviteSelection_(criteria) {
   const records = [];
   getAllRowsAsObjects_(getOutreachSheet_(OUTREACH_SHEET_NAME)).forEach((row, index) => {
     const record = customerInviteRecord_(row, index + 2, programs);
-    record.invite_reason = customerInviteReason_(record, badger.strong);
+    record.invite_reason = customerInviteReason_(record, badger);
     if (!record.invite_reason) {
-      // Matched to a Badger invoice by name only: possibly a different business with the same
-      // name, so it is not invited. Linking the invoice in Orders & Accounts makes it a strong match.
+      // Matched to a Badger invoice by name only on a row with no customer history (e.g. Prospect):
+      // possibly a different business with the same name, so it is not invited. Linking the invoice
+      // in Orders & Accounts makes it a strong match.
       if (record.account_id && badger.name_only.has(record.account_id)) leaveOut("Possible customer: Badger invoice matched by name only", record);
       return;
     }
@@ -4285,7 +4301,7 @@ function liveCustomerInviteRecipient_(sourceRow) {
   const raw = sheet.getRange(rowNumber, 1, 1, sheet.getLastColumn()).getValues()[0];
   const row = {}; Object.keys(headers).forEach(key => row[key] = raw[headers[key]]);
   const record = customerInviteRecord_(row, rowNumber, outreachProgramMap_());
-  const reasons = customerInviteIsCustomer_(record, customerInviteRecentBadgerAccounts_()) ? customerInviteEligibility_(record) : ["No longer a current customer"];
+  const reasons = customerInviteIsCustomer_(record, customerInviteBadgerMatches_()) ? customerInviteEligibility_(record) : ["No longer a current customer"];
   return { record:record, reasons:reasons };
 }
 

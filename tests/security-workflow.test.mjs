@@ -711,16 +711,25 @@ test("Order online invite: audience, opt-outs, once per address, and the message
   // Each function runs to the next top-level declaration (brace counting would trip on regex braces).
   const fn = name => { const start = backend.indexOf(`\nfunction ${name}(`) + 1; assert.ok(start > 0, name); const end = backend.slice(start + 1).search(/\n(function |const |let |\/\/ ----)/); return backend.slice(start, start + 1 + end); };
   const sentEmails = new Set(["invited@example.test"]);
-  const rules = new Function("OUTREACH_CUSTOMER_RELATIONSHIPS", "customerInviteSentEmails_", "outreachCrossSendCooldownReason_",
+  const rules = new Function("OUTREACH_CUSTOMER_RELATIONSHIPS", "OUTREACH_CUSTOMER_HISTORY_RELATIONSHIPS", "customerInviteSentEmails_", "outreachCrossSendCooldownReason_",
     `${fn("customerInviteReason_")}\n${fn("customerInviteIsCustomer_")}\n${fn("customerInviteEligibility_")}\nreturn { isCustomer:customerInviteIsCustomer_, reason:customerInviteReason_, eligibility:customerInviteEligibility_ };`)(
-    ["current customer", "customer", "existing customer"], () => sentEmails, email => email === "recent@example.test" ? "Another cocktail list email was sent within the last 14 days" : "");
-  const recent = new Set(["ACC-BADGER"]);
+    ["current customer", "customer", "existing customer"], ["current customer", "customer", "existing customer", "lapsed customer", "win-back due"],
+    () => sentEmails, email => email === "recent@example.test" ? "Another cocktail list email was sent within the last 14 days" : "");
+  assert.match(backend, /const OUTREACH_CUSTOMER_HISTORY_RELATIONSHIPS = OUTREACH_CUSTOMER_RELATIONSHIPS\.concat\(\["lapsed customer", "win-back due"\]\);/);
+  const recent = { strong:new Set(["ACC-BADGER"]), name_only:new Map([["ACC-NAME", "FOX AND CROW"]]) };
   assert.ok(rules.isCustomer({ relationship:"Current customer" }, recent));
   assert.ok(rules.isCustomer({ status:"Existing customer" }, recent));
-  assert.ok(rules.isCustomer({ relationship:"Prospect", account_id:"ACC-BADGER" }, recent), "a recent Badger invoice makes an account a customer");
+  assert.ok(rules.isCustomer({ relationship:"Prospect", account_id:"ACC-BADGER" }, recent), "a strong recent Badger invoice makes an account a customer");
   assert.ok(!rules.isCustomer({ relationship:"Prospect", account_id:"ACC-OTHER" }, recent));
   assert.equal(rules.reason({ relationship:"Prospect", account_id:"ACC-BADGER" }, recent), "Badger invoice in the last 12 months");
   assert.equal(rules.reason({ status:"Existing customer" }, recent), "Existing customer");
+  // A name-only Badger match counts only on a row with customer history.
+  assert.equal(rules.reason({ relationship:"Win-back due", account_id:"ACC-NAME" }, recent), "Win-back due with a Badger invoice in the last 12 months (matched by business name)");
+  assert.equal(rules.reason({ relationship:"Lapsed customer", account_id:"ACC-NAME" }, recent), "Lapsed customer with a Badger invoice in the last 12 months (matched by business name)");
+  assert.ok(!rules.isCustomer({ relationship:"Prospect", account_id:"ACC-NAME" }, recent), "a name-only match into a Prospect row is not invited");
+  assert.ok(!rules.isCustomer({ relationship:"", account_id:"ACC-NAME" }, recent), "a name-only match into a blank Relationship is not invited");
+  assert.ok(!rules.isCustomer({ relationship:"Win-back due", account_id:"ACC-OTHER" }, recent), "Win-back due alone, without a recent invoice, is not a current customer");
+  assert.ok(!rules.isCustomer({ relationship:"Win-back due" }, recent), "no account id, no Badger match");
   const ok = { email:"owner@bar.test", status:"Existing customer", outcome:"", do_not_email:false, program_ordering_status:"Not offered", email_confidence:"" };
   assert.deepEqual(rules.eligibility(ok), []);
   assert.deepEqual(rules.eligibility({ ...ok, email:"" }), ["No email on file"]);
@@ -763,6 +772,9 @@ test("Order online invite: audience, opt-outs, once per address, and the message
   const matcher = fn("outreachRecentBadgerInvoiceAccountIds_");
   assert.match(matcher, /if \(strongMatch \|\| aliasMatch\) strong\.add\(accountId\);\s*else nameOnly\.set/);
   assert.match(fn("campaignCustomerInviteSelection_"), /Possible customer: Badger invoice matched by name only/);
+  // Preview, rebuild and send all judge with the same strong + name-only matches.
+  assert.match(fn("campaignCustomerInviteSelection_"), /record\.invite_reason = customerInviteReason_\(record, badger\);/);
+  assert.match(fn("liveCustomerInviteRecipient_"), /customerInviteIsCustomer_\(record, customerInviteBadgerMatches_\(\)\)/);
   // Review fix: an invited address never receives the Initial prospect email.
   const initialRow = new Function("outreachValue_", "OUTREACH_CUSTOMER_INVITE_STAGE", `${fn("initialSentActivityRow_")}\nreturn initialSentActivityRow_;`)((row, keys) => keys.map(k => row[k]).find(v => v !== undefined), "Order online invite");
   assert.equal(initialRow({ result:"APP SENT", message_stage:"Order online invite" }), true);
