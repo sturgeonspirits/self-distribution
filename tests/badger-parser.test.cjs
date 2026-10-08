@@ -12,10 +12,12 @@ function makeSheet(name, rows) {
   const width = () => Math.max(0, ...s.rows.map(r => r.length));
   s.getLastRow = () => { let n = s.rows.length; while (n > 0 && s.rows[n - 1].every(v => v === "" || v == null)) n--; return n; };
   s.getLastColumn = () => width();
-  s.getMaxRows = () => Math.max(s.rows.length, 1); s.getMaxColumns = () => Math.max(width(), 1);
+  s.getMaxRows = () => Math.max(s.rows.length, 1) + (s.spareRows || 0); s.getMaxColumns = () => Math.max(width(), 1);
   s.setFrozenRows = () => s; s.setFrozenColumns = () => s; s.autoResizeColumns = () => s;
   s.clear = () => { s.rows = []; s.cleared++; return s; };
   s.appendRow = r => { s.rows.push(r.slice()); };
+  s.insertRowsAfter = (after, n) => { s.spareRows = (s.spareRows || 0) + n; return s; };
+  s.deleteRows = (start, n) => { if (s.failDelete) throw new Error(`simulated delete failure on ${s.name}`); s.rows.splice(start - 1, n); };
   s.getDataRange = () => s.getRange(1, 1, Math.max(s.getLastRow(), 1), Math.max(width(), 1));
   s.getRange = (r, c, nr = 1, nc = 1) => {
     const rng = {
@@ -287,7 +289,7 @@ t("Badger import adds a new invoice (lines, row, Parser State with modifiedDate)
   const r = e.ctx.importFromBadger();
   assert.strictEqual(r.environment, "PRODUCTION"); assert.strictEqual(r.imported, 1); assert.strictEqual(r.detailsRead, 1);
   const row = e.tabs["Invoices"].rows[1];
-  assert.deepStrictEqual(row.slice(1, 14), ["badger:101", "Badger invoice SS0170", "SS0170", "9/16/2026", "Wagner Market", "1 Main St", "Oshkosh WI 54901", "R-1", "", "", "0170", 336, ""]);
+  assert.deepStrictEqual(row.slice(1, 14), ["badger:101", "Badger invoice SS0170", "SS0170", "9/16/2026", "Wagner Market", "1 Main St", "Oshkosh WI 54901", "R-1", "", "", "'0170", 336, ""]);
   assert.deepStrictEqual(row.slice(14), [false, false, "No"], "new row gets the default Delivered/Paid to Me/Submitted");
   assert.deepStrictEqual(lineRowsFor(e, "SS0170"), [["SS0170", "Wagner Market", 12, "750mL", "Blood Orange Gin", "Spirit", 22, 264], ["SS0170", "Wagner Market", 6, "375mL", "Limoncello", "Spirit", 12, 72]]);
   const st = stateRows(e)[0]; assert.strictEqual(st[1], "badger:101"); assert.strictEqual(st[3], "IMPORTED"); assert.match(st[5], /badgerModified=2026-09-16T10:00:00/);
@@ -339,6 +341,7 @@ t("a voided invoice loses its lines, Amount Due 0 and Terms VOID; a void never i
   assert.strictEqual(inv[1][12], 0); assert.strictEqual(inv[1][13], "VOID"); assert.strictEqual(inv[1][5], "Wagner Market");
   assert.deepStrictEqual(inv[1].slice(15), [true, "Yes"]);
   assert.strictEqual(lineRowsFor(e, "SS0170").length, 0); assert.strictEqual(lineRowsFor(e, "SS0172").length, 1, "other invoices' lines kept");
+  assert.ok(!e.tabs["Invoice Lines"].spareRows, "no spare row needed while other rows remain");
   assert.strictEqual(lineRowsFor(e, "SS0172")[0][8], "staff note", "a note beside a kept line stays on its row");
   assert.ok(!e.tabs["Monthly Units"].rows.some(r => r[2] === "Gin"), "void invoice left Monthly Units");
   const r3 = e.ctx.importFromBadger(); assert.strictEqual(r3.voided + r3.voidSkipped + r3.imported + r3.updated, 0);
@@ -395,13 +398,14 @@ t("interrupted Badger import (invoice write fails after lines) recovers without 
   assert.strictEqual(e.tabs["Invoice Lines"].rows.length, 3, "lines not doubled"); assert.strictEqual(e.tabs["Invoices"].rows.length, 2);
 });
 
-t("a failed Parser State write is finished by the next run without a second invoice row", () => {
+t("a failed Parser State write is finished by the next run without a second invoice row, and the row still follows Badger", () => {
   const b = makeBadger([]); bInv(b, "101", "SS0170", "Wagner Market", [{ q: 6, d: "Gin", p: 22 }]);
   const e = makeEnv({ ssId: PROD_ID, sheets: Object.assign(prodSheets(), { "Parser State": [["Updated At", "File Id", "File Name", "Status", "Invoice #", "Detail"]] }), badger: b, props: CREDS });
   e.tabs["Parser State"].failAppend = true;
   assert.throws(() => e.ctx.importFromBadger());
   e.tabs["Parser State"].failAppend = false;
-  const r = e.ctx.importFromBadger(); assert.strictEqual(r.linked, 1); assert.strictEqual(r.imported, 0);
+  const r = e.ctx.importFromBadger(); assert.strictEqual(r.linked, 0); assert.strictEqual(r.imported, 0);
+  assert.strictEqual(stateRows(e).slice(-1)[0][3], "IMPORTED", "its own row is recognised by badger:<id>, so it keeps following Badger (not LINKED)");
   assert.strictEqual(e.tabs["Invoices"].rows.length, 2); assert.strictEqual(e.tabs["Invoice Lines"].rows.length, 2);
 });
 
@@ -471,6 +475,230 @@ t("menu offers the Badger import, Compare, Apply, PDF fallback and daily source 
   assert.strictEqual(e.ctx.__menu.items[0], "importFromBadger");
   const s = makeEnv({ ssId: STAGE_ID }); s.ctx.onOpen(); assert.ok(!s.ctx.__menu.items.includes("useBadgerForDailyImport"));
   assert.match(SRC, /const BADGER_PARSER_VERSION = "2026\.10\.08\.1";/);
+});
+
+/* -------------------- 2026.10.08.1 review fixes -------------------- */
+
+const withClock = (e, msPerDetail) => {
+  let clock = 0; vm.runInContext("Date.now = () => globalThis.__clock()", e.ctx); e.ctx.__clock = () => clock;
+  const realFetch = e.ctx.UrlFetchApp.fetch;
+  e.ctx.UrlFetchApp.fetch = (u, o) => { if (/\/api\/invoice\/\d+$/.test(u)) clock += msPerDetail; return realFetch(u, o); };
+  return { reset: () => { clock = 0; } };
+};
+const pdfRow = (no, cust, amount, extra = {}) => Object.assign(["old", "PDF" + no, no + ".pdf", no, "9/16/2026", cust, "", "", "", "", "", "", amount, "", true, true, "Yes"], extra);
+
+t("review 1.1: a row moved during the run is found again by invoice number, so another invoice's staff columns are never touched", () => {
+  const b = makeBadger([]);
+  bInv(b, "101", "SS0170", "First", [{ q: 1, d: "Gin", p: 22 }]);
+  const second = bInv(b, "102", "SS0171", "Second", [{ q: 1, d: "Gin", p: 22 }]);
+  bInv(b, "103", "SS0172", "Third", [{ q: 1, d: "Gin", p: 22 }]);
+  const e = makeEnv({ ssId: PROD_ID, sheets: prodSheets(), badger: b, props: CREDS });
+  e.ctx.importFromBadger();
+  const inv = e.tabs["Invoices"].rows; inv[3][15] = true; inv[3][16] = "Yes"; // SS0172 paid + submitted
+  second.modifiedDate = "2026-09-22T00:00:00"; second.dollarAmount = 44; b.details["102"].lines[0].quantity = 2;
+  const realFetch = e.ctx.UrlFetchApp.fetch; let done = false;
+  e.ctx.UrlFetchApp.fetch = (u, o) => { if (!done && /\/api\/invoice\/102$/.test(u)) { done = true; inv.splice(1, 1); } return realFetch(u, o); };
+  assert.strictEqual(e.ctx.importFromBadger().updated, 1);
+  assert.deepStrictEqual(inv.slice(1).map(r => [r[3], r[12], r[15], r[16]]), [["SS0171", 44, false, "No"], ["SS0172", 22, true, "Yes"]]);
+});
+
+t("review 1.1: an invoice whose row was deleted during the run is left for the next run (no Parser State row)", () => {
+  const b = makeBadger([]); const item = bInv(b, "101", "SS0170", "First", [{ q: 1, d: "Gin", p: 22 }]);
+  const e = makeEnv({ ssId: PROD_ID, sheets: prodSheets(), badger: b, props: CREDS });
+  e.ctx.importFromBadger(); const stateBefore = stateRows(e).length;
+  item.modifiedDate = "2026-09-22T00:00:00";
+  const realFetch = e.ctx.UrlFetchApp.fetch;
+  e.ctx.UrlFetchApp.fetch = (u, o) => { if (/\/api\/invoice\/101$/.test(u)) e.tabs["Invoices"].rows.splice(1, 1); return realFetch(u, o); };
+  const r = e.ctx.importFromBadger(); assert.strictEqual(r.deferred, 1);
+  assert.strictEqual(stateRows(e).length, stateBefore, "nothing recorded"); assert.strictEqual(lineRowsFor(e, "SS0170").length, 1, "its lines untouched");
+  e.ctx.UrlFetchApp.fetch = realFetch;
+  assert.strictEqual(e.ctx.importFromBadger().imported, 1, "next run re-imports the deleted row");
+  assert.strictEqual(lineRowsFor(e, "SS0170").length, 1, "without doubling its lines");
+});
+
+t("review 1.2: a void record and its active re-issue under one number import the active one, and never void it", () => {
+  const b = makeBadger([]);
+  bInv(b, "301", "SS0200", "Wagner Market", [{ q: 6, d: "Gin", p: 22 }], { isVoid: true });
+  bInv(b, "302", "SS0200", "Wagner Market", [{ q: 12, d: "Gin", p: 22 }]);
+  const e = makeEnv({ ssId: PROD_ID, sheets: prodSheets(), badger: b, props: CREDS });
+  const r = e.ctx.importFromBadger(); assert.strictEqual(r.imported, 1); assert.strictEqual(r.voidSkipped, 0); assert.strictEqual(r.duplicateNumbers, 0);
+  assert.strictEqual(e.tabs["Invoices"].rows[1][1], "badger:302"); assert.strictEqual(e.tabs["Invoices"].rows[1][12], 264);
+  e.tabs["Invoices"].rows[1][15] = true;
+  b.invoices.reverse(); // order must not matter
+  const r2 = e.ctx.importFromBadger(); assert.strictEqual(r2.voided, 0); assert.strictEqual(r2.unchanged, 1);
+  assert.deepStrictEqual([e.tabs["Invoices"].rows[1][12], e.tabs["Invoices"].rows[1][13], lineRowsFor(e, "SS0200").length], [264, "", 1]);
+});
+
+t("review 1.2: two active records under one number are left alone and logged once", () => {
+  const b = makeBadger([]);
+  bInv(b, "301", "SS0200", "A", [{ q: 1, d: "Gin", p: 22 }]); bInv(b, "302", "SS0200", "B", [{ q: 2, d: "Gin", p: 22 }]);
+  const e = makeEnv({ ssId: PROD_ID, sheets: prodSheets(), badger: b, props: CREDS });
+  const r = e.ctx.importFromBadger(); assert.strictEqual(r.duplicateNumbers, 1); assert.strictEqual(r.imported, 0);
+  const errs = e.tabs["Import Errors"].rows.length;
+  assert.strictEqual(errs, 3, "one Import Errors row per Badger record");
+  e.ctx.importFromBadger(); e.ctx.importFromBadger();
+  assert.strictEqual(e.tabs["Import Errors"].rows.length, errs, "not logged again on later runs");
+  assert.strictEqual(e.tabs["Invoices"].rows.length, 1);
+  assert.ok(e.toasts.some(m => /more than one active Badger invoice/.test(m)));
+});
+
+t("review 1.3: lines are removed by deleting rows; a stop between delete and append is finished without duplicates", () => {
+  const b = makeBadger([]);
+  const a = bInv(b, "101", "SS0170", "A", [{ q: 1, d: "Gin", p: 22 }, { q: 2, d: "Vodka", p: 22 }]);
+  bInv(b, "102", "SS0171", "B", [{ q: 3, d: "Rum", p: 22 }]);
+  const e = makeEnv({ ssId: PROD_ID, sheets: prodSheets(), badger: b, props: CREDS });
+  e.ctx.importFromBadger();
+  a.modifiedDate = "2026-09-21T00:00:00"; a.dollarAmount = 22; b.details["101"].lines = [{ quantity: 1, description: "Gin", unitPrice: 22, unitOfMeasureId: 3 }];
+  e.tabs["Invoice Lines"].failAppend = true;
+  assert.throws(() => e.ctx.importFromBadger(), /simulated write failure/);
+  assert.deepStrictEqual(e.tabs["Invoice Lines"].rows.slice(1).map(r => `${r[0]}:${r[4]}`), ["SS0171:Rum"], "old lines deleted, nothing else touched");
+  e.tabs["Invoice Lines"].failAppend = false;
+  assert.strictEqual(e.ctx.importFromBadger().updated, 1);
+  assert.deepStrictEqual(e.tabs["Invoice Lines"].rows.slice(1).map(r => `${r[0]}:${r[4]}:${r[2]}`), ["SS0171:Rum:3", "SS0170:Gin:1"]);
+  assert.deepStrictEqual(e.tabs["Monthly Units"].rows.slice(1).map(r => `${r[2]}=${r[4]}`), ["Gin=1", "Rum=3"]);
+});
+
+t("review 1.4: Amount Due comes from the list amount; null fields never become 0; lines that do not add up are refused", () => {
+  const b = makeBadger([]); bInv(b, "101", "SS0170", "Wagner Market", [{ q: 6, d: "Gin", p: 22 }]);
+  b.details["101"].totalDue = null; b.details["101"].lines[0].lineTotal = null;
+  const e = makeEnv({ ssId: PROD_ID, sheets: prodSheets(), badger: b, props: CREDS });
+  e.ctx.importFromBadger();
+  assert.strictEqual(e.tabs["Invoices"].rows[1][12], 132); assert.strictEqual(lineRowsFor(e, "SS0170")[0][7], 132);
+
+  const b2 = makeBadger([]); bInv(b2, "201", "SS0163", "Fox and Crow", [{ q: 6, d: "Gin", p: 22 }], { paidDate: "2026-09-30T00:00:00" });
+  b2.details["201"].totalDue = 0; // an unpaid balance would be 0 once paid
+  const sheets = prodSheets([pdfRow("SS0163", "Fox and Crow", 132)]);
+  sheets["Invoice Lines"].push(["SS0163", "Fox and Crow", 6, "750mL", "Gin", "Spirits", 22, 132]);
+  const e2 = makeEnv({ ssId: PROD_ID, sheets, badger: b2, props: CREDS });
+  e2.ctx.compareWithBadger(); assert.strictEqual(e2.tabs["Badger Compare"].rows[1][3], "No differences");
+
+  const b3 = makeBadger([]); bInv(b3, "101", "SS0170", "Wagner Market", [{ q: 6, d: "Gin", p: 22 }]);
+  b3.invoices[0].dollarAmount = 150; // list amount and lines disagree
+  const e3 = makeEnv({ ssId: PROD_ID, sheets: prodSheets(), badger: b3, props: CREDS });
+  const r = e3.ctx.importFromBadger(); assert.strictEqual(r.failed, 1); assert.strictEqual(r.imported, 0);
+  assert.strictEqual(e3.tabs["Invoices"].rows.length, 1); assert.strictEqual(e3.tabs["Invoice Lines"].rows.length, 1);
+  assert.match(e3.tabs["Import Errors"].rows[1][4], /add up to \$132\.00 but its amount is \$150\.00/);
+});
+
+t("review 1.5: the key is the list number; a different detail number is refused, a leading-zero form is accepted", () => {
+  const b = makeBadger([]); bInv(b, "101", "SS0170", "Wagner Market", [{ q: 6, d: "Gin", p: 22 }]);
+  b.details["101"].number = "0170";
+  const e = makeEnv({ ssId: PROD_ID, sheets: prodSheets(), badger: b, props: CREDS });
+  assert.deepStrictEqual([e.ctx.importFromBadger().imported, e.ctx.importFromBadger().imported, e.ctx.importFromBadger().imported], [1, 0, 0]);
+  assert.deepStrictEqual(e.tabs["Invoices"].rows.slice(1).map(r => r[3]), ["SS0170"]);
+  const b2 = makeBadger([]); bInv(b2, "101", "SS0170", "Wagner Market", [{ q: 6, d: "Gin", p: 22 }]); b2.details["101"].number = "SS0171";
+  const e2 = makeEnv({ ssId: PROD_ID, sheets: prodSheets(), badger: b2, props: CREDS });
+  assert.strictEqual(e2.ctx.importFromBadger().failed, 1); assert.strictEqual(e2.tabs["Invoices"].rows.length, 1);
+});
+
+t("review 2.1: the import never changes a LINKED (PDF) row, even when Badger changes or staff type VOID", () => {
+  const b = makeBadger([]); const item = bInv(b, "201", "SS0163", "Fox and Crow LLC", [{ q: 6, d: "Blood Orange Gin", p: 22 }]);
+  const original = ["old", "PDFFILE", "0163.pdf", "SS0163", "9/16/2026", "Fox & Crow", "12 Oak St", "Oshkosh WI 54901", "R-9", "Sturgeon Spirits", "920-555-0100", "0163", 162, "Net 30", true, true, "Yes"];
+  const e = makeEnv({ ssId: PROD_ID, sheets: prodSheets([original]), badger: b, props: CREDS });
+  assert.strictEqual(e.ctx.importFromBadger().linked, 1);
+  item.modifiedDate = "2026-10-01T00:00:00"; item.paidDate = "2026-10-01T00:00:00";
+  const r = e.ctx.importFromBadger(); assert.strictEqual(r.updated, 0); assert.strictEqual(r.linkedChanged, 1);
+  assert.match(e.toasts[e.toasts.length - 1], /run Compare with Badger/);
+  assert.deepStrictEqual(e.tabs["Invoices"].rows[1], original);
+  e.tabs["Invoices"].rows[1][13] = "VOID"; e.ctx.importFromBadger();
+  assert.strictEqual(e.tabs["Invoices"].rows[1][13], "VOID", "typed VOID kept");
+});
+
+t("review 2.1: refresh and Apply never blank a filled cell or touch Winery Name / Terms; corrected rows then follow Badger", () => {
+  const b = makeBadger([]); const item = bInv(b, "201", "SS0163", "Fox and Crow LLC", [{ q: 6, d: "Blood Orange Gin", p: 22 }]);
+  ["billToAddressLine1", "billToCity", "billToState", "billToPostalCode"].forEach(k => { b.details["201"][k] = undefined; });
+  const e = makeEnv({ ssId: PROD_ID, sheets: prodSheets([["old", "PDFFILE", "0163.pdf", "SS0163", "9/16/2026", "Fox & Crow", "12 Oak St", "Oshkosh WI 54901", "R-9", "Sturgeon Spirits", "920-555-0100", "0163", 162, "Net 30", true, true, "Yes"]]), badger: b, props: CREDS });
+  e.ctx.importFromBadger(); e.ctx.compareWithBadger(); e.ctx.applyBadgerCorrections();
+  assert.deepStrictEqual(e.tabs["Invoices"].rows[1].slice(3), ["SS0163", "9/16/2026", "Fox and Crow LLC", "12 Oak St", "Oshkosh WI 54901", "R-1", "Sturgeon Spirits", "920-555-0100", "'0163", 132, "Net 30", true, true, "Yes"]);
+  assert.strictEqual(e.tabs["Invoices"].rows[1][0], "old", "Processed At not rewritten");
+  item.modifiedDate = "2026-10-02T00:00:00"; item.dollarAmount = 154; b.details["201"].lines[0].quantity = 7;
+  assert.strictEqual(e.ctx.importFromBadger().updated, 1, "a CORRECTED row follows Badger from then on");
+  assert.strictEqual(e.tabs["Invoices"].rows[1][12], 154);
+});
+
+t("review 2.2: Apply stopped by the time limit finishes on the next run; Compare continues where it stopped", () => {
+  const b = makeBadger([]); const extra = [];
+  ["401", "402", "403", "404"].forEach((id, i) => { bInv(b, id, `SS030${i}`, "Store " + i, [{ q: 2, d: "Gin", p: 22 }]); extra.push(pdfRow(`SS030${i}`, "Store " + i, 1)); });
+  const e = makeEnv({ ssId: PROD_ID, sheets: prodSheets(extra), badger: b, props: CREDS });
+  const clock = withClock(e, 3 * 60 * 1000);
+  const c1 = e.ctx.compareWithBadger(); assert.strictEqual(c1.checked, 2); assert.strictEqual(c1.notChecked, 2);
+  clock.reset(); const c2 = e.ctx.compareWithBadger(); assert.strictEqual(c2.continued, true); assert.strictEqual(c2.checked, 2); assert.strictEqual(c2.notChecked, 0);
+  assert.deepStrictEqual(e.tabs["Badger Compare"].rows.slice(1).filter(r => r[3] === "Amount differs").map(r => r[1]), ["SS0300", "SS0301", "SS0302", "SS0303"]);
+  const runs = [];
+  for (let i = 0; i < 3; i++) { clock.reset(); const r = e.ctx.applyBadgerCorrections(); runs.push(`${r.corrected}/${r.alreadyDone}`); }
+  assert.deepStrictEqual(runs, ["2/0", "2/2", "0/4"]);
+  assert.deepStrictEqual(e.tabs["Invoices"].rows.slice(1).map(r => r[12]), [44, 44, 44, 44]);
+});
+
+t("review 2.3: Compare and Apply use one Badger record per invoice number", () => {
+  const b = makeBadger([]);
+  bInv(b, "302", "SS0200", "Wagner Market", [{ q: 12, d: "Gin", p: 22 }]);
+  bInv(b, "301", "SS0200", "Wagner Market", [{ q: 6, d: "Gin", p: 22 }], { isVoid: true });
+  const sheets = prodSheets([pdfRow("SS0200", "Wagner Market", 250)]);
+  sheets["Invoice Lines"].push(["SS0200", "Wagner Market", 12, "750mL", "Gin", "Spirits", 22, 250]);
+  const e = makeEnv({ ssId: PROD_ID, sheets, badger: b, props: CREDS });
+  e.ctx.compareWithBadger();
+  assert.deepStrictEqual(e.tabs["Badger Compare"].rows.slice(1).map(r => `${r[2]}:${r[3]}`), ["302:Amount differs", "302:Lines differ"]);
+  const r = e.ctx.applyBadgerCorrections(); assert.strictEqual(r.corrected, 1); assert.strictEqual(r.voided, 0);
+  const row = e.tabs["Invoices"].rows[1];
+  assert.deepStrictEqual([row[12], row[13], lineRowsFor(e, "SS0200").length], [264, "", 1]);
+});
+
+t("review 2.5: a modifiedDate with spaces reads back exactly, so the invoice is not re-read every run", () => {
+  const b = makeBadger([]); bInv(b, "101", "SS0170", "Wagner Market", [{ q: 6, d: "Gin", p: 22 }], { modifiedDate: "9/16/2026 10:00:00 AM" });
+  const e = makeEnv({ ssId: PROD_ID, sheets: prodSheets(), badger: b, props: CREDS });
+  const rs = [e.ctx.importFromBadger(), e.ctx.importFromBadger(), e.ctx.importFromBadger()];
+  assert.deepStrictEqual(rs.map(r => `${r.imported}/${r.updated}/${r.unchanged}/${r.detailsRead}`), ["1/0/0/1", "0/0/1/0", "0/0/1/0"]);
+  assert.strictEqual(stateRows(e).length, 1);
+});
+
+t("review: voiding the only invoice keeps a spare row, since Sheets cannot delete every non-frozen row", () => {
+  const b = makeBadger([]); const item = bInv(b, "101", "SS0170", "A", [{ q: 1, d: "Gin", p: 22 }]);
+  const e = makeEnv({ ssId: PROD_ID, sheets: prodSheets(), badger: b, props: CREDS });
+  e.ctx.importFromBadger(); const lines = e.tabs["Invoice Lines"];
+  const realDelete = lines.deleteRows; lines.deleteRows = (start, n) => { assert.ok(lines.getMaxRows() - n >= 2, "would delete the last non-frozen row"); realDelete(start, n); };
+  item.isVoid = true; item.modifiedDate = "2026-09-21T00:00:00";
+  assert.strictEqual(e.ctx.importFromBadger().voided, 1); assert.strictEqual(lines.spareRows, 1); assert.strictEqual(lineRowsFor(e, "SS0170").length, 0);
+});
+
+t("review 3.2: a list page returned twice (repeated IDs) stops the run before any write", () => {
+  const b = makeBadger([], { pageSize: 2 }); ["101", "102", "103", "104"].forEach((id, i) => bInv(b, id, `SS018${i}`, "S" + i, [{ q: 1, d: "Gin", p: 22 }]));
+  const e = makeEnv({ ssId: PROD_ID, sheets: prodSheets(), badger: b, props: CREDS });
+  const realFetch = e.ctx.UrlFetchApp.fetch;
+  e.ctx.UrlFetchApp.fetch = (u, o) => { if (/Paged$/.test(u)) { const body = JSON.parse(o.payload); body.page = 0; o = Object.assign({}, o, { payload: JSON.stringify(body) }); } return realFetch(u, o); };
+  assert.throws(() => e.ctx.importFromBadger(), /same invoice twice/);
+  assert.strictEqual(e.tabs["Invoices"].rows.length, 1);
+});
+
+t("review 3.3/3.4: the unit ID wins over a name field; an unreadable invoice is logged once per Badger version", () => {
+  const b = makeBadger([]); bInv(b, "101", "SS0170", "W", [{ q: 1, d: "Gin", p: 22 }]); b.details["101"].lines[0].volume = "bottle";
+  bInv(b, "102", "SS0171", "X", [{ q: 1, d: "Gin", p: 22 }]); delete b.details["102"];
+  const e = makeEnv({ ssId: PROD_ID, sheets: prodSheets(), badger: b, props: CREDS });
+  assert.strictEqual(e.ctx.importFromBadger().failed, 1); e.ctx.importFromBadger(); e.ctx.importFromBadger();
+  assert.strictEqual(lineRowsFor(e, "SS0170")[0][3], "750mL");
+  assert.strictEqual(e.tabs["Import Errors"].rows.length, 2, "one error row, not one per run");
+  bInv(b, "102", "SS0171", "X", [{ q: 1, d: "Gin", p: 22 }]); b.invoices.pop();
+  assert.strictEqual(e.ctx.importFromBadger().imported, 1, "retried and imported once readable");
+});
+
+t("review 3.5: a row with Terms VOID is left out of Monthly Summary, Previous Month and Monthly Units alike", () => {
+  const sheets = prodSheets([pdfRow("SS0001", "A", 22), pdfRow("SS0002", "B", 44, { 13: "VOID" })]);
+  sheets["Invoice Lines"].push(["SS0001", "A", 1, "750mL", "Gin", "Spirits", 22, 22], ["SS0002", "B", 2, "750mL", "Gin", "Spirits", 22, 44]);
+  const e = makeEnv({ ssId: PROD_ID, sheets });
+  e.ctx.rebuildMonthlySummary(); e.ctx.rebuildMonthlyUnits();
+  const total = e.tabs["Monthly Summary"].rows.find(r => r[0] === "TOTAL (Products)");
+  assert.deepStrictEqual(total.slice(1, 3), [1, 22]);
+  assert.deepStrictEqual(e.tabs["Monthly Units"].rows.slice(1).map(r => r[4]), [1]);
+});
+
+t("review: Check Badger fields is read-only and writes nothing to any sheet", () => {
+  const b = makeBadger([]); bInv(b, "101", "SS0170", "W", [{ q: 1, d: "Gin", p: 22 }]); bInv(b, "102", "SS0171", "X", [{ q: 1, d: "Gin", p: 22 }], { isVoid: true });
+  const e = makeEnv({ ssId: PROD_ID, sheets: prodSheets(), badger: b, props: CREDS });
+  const before = JSON.stringify(Object.keys(e.tabs).map(n => e.tabs[n].rows));
+  const r = e.ctx.checkBadgerFields();
+  assert.strictEqual(r.samples.length, 2); assert.strictEqual(r.samples[0].detailNumber, "SS0170");
+  assert.strictEqual(JSON.stringify(Object.keys(e.tabs).map(n => e.tabs[n].rows)), before);
+  assert.ok(b.requests.every(q => ALLOWED_BADGER.test(q)));
 });
 
 console.log(`\n${passed} tests passed`);

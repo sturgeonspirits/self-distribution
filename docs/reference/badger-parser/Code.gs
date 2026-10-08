@@ -6,26 +6,42 @@
  * CHANGES IN THIS VERSION (2026.10.08.1, from 2026.10.03.1)
  * - Direct Badger import replaces OCR of invoice PDFs. "Import from Badger now"
  *   logs in with the BADGER_USERNAME / BADGER_PASSWORD Script Properties (the run
- *   stops before writing anything if either is missing) and only READS Badger:
+ *   stops before any request or write if either is missing) and only READS Badger:
  *   the paged invoice list and GET invoice/{id}. Nothing is ever created,
  *   changed or deleted in Badger.
- *   - New invoice: its lines, then its invoice row, then a Parser State row
- *     (status IMPORTED) that records Badger's modifiedDate.
- *   - Changed invoice (modifiedDate differs from Parser State): its lines are
- *     replaced and columns D-N of its invoice row are refreshed (UPDATED).
- *   - Voided invoice: its lines are removed, Amount Due becomes 0 and Terms
- *     "VOID" (VOIDED). A void invoice never in the tracker is only noted.
- *   - An invoice already in the tracker (for example from a PDF) with no Badger
- *     Parser State row is recorded as LINKED; its row is not changed.
+ *   - One Badger record per invoice number: an active re-issue wins over a void
+ *     record with the same number; two active records for one number are left
+ *     alone and logged once.
+ *   - New invoice: its lines, then its invoice row (PDF File Id badger:<id>), then
+ *     a Parser State row (IMPORTED) that records Badger's modifiedDate.
+ *   - Invoice # and Amount Due come from Badger's invoice list. An invoice whose
+ *     lines do not add up to that amount, or whose detail shows another number,
+ *     is not imported and is logged once (READ_FAILED) and retried.
+ *   - Imported from Badger and changed there (modifiedDate differs): its lines
+ *     are replaced and columns D-I and K-M refreshed (UPDATED). Voided there: its
+ *     lines are removed, Amount Due becomes 0 and Terms "VOID" (VOIDED).
+ *   - Already in the tracker from a PDF: recorded as LINKED and never changed by
+ *     the import; a later Badger change is only counted and reported. Compare
+ *     with Badger and Apply Badger corrections handle those rows.
  *   - Delivered, Paid to Me and Submitted (columns O-Q) are written only on new
- *     rows and never on an existing row.
- *   Same save order and time limit as the PDF import, under the script lock: a
- *   run stopped part-way is finished by the next run and never doubles lines.
+ *     rows. Winery Name (J) is never written on an existing row, Terms (N) only
+ *     for VOID, and a blank Badger value never overwrites a filled cell in G-L.
+ *   Under the script lock and the same time limit as the PDF import. Row numbers
+ *   are re-read at save time, lines are removed by deleting rows before new ones
+ *   are added, and Parser State is written last, so a run stopped part-way (or a
+ *   row moved during the run) is finished by the next run without doubled lines.
  * - "Compare with Badger (Diagnostics only)" lists every difference between the
- *   tracker and Badger on the "Badger Compare" tab and writes nothing else.
- *   "Apply Badger corrections" then applies the listed differences from Badger.
+ *   tracker and Badger on the "Badger Compare" tab and writes nothing else; after
+ *   a time-limit stop the next run checks only the rest. "Apply Badger
+ *   corrections" applies the listed differences from a fresh Badger read; a
+ *   corrected invoice (CORRECTED) follows Badger from then on, and a second run
+ *   after a time-limit stop skips invoices already corrected.
+ * - "Diagnostics: Check Badger fields (read-only)" writes Badger's field names and
+ *   one unpaid, one paid and one void invoice to the execution log, to confirm
+ *   the field assumptions in staging before production.
  * - New "Monthly Units" tab (Month, Channel, Product, Size, Units, Dollars),
- *   rebuilt with Monthly Summary and Previous Month after every import.
+ *   rebuilt with Monthly Summary and Previous Month after every import. All three
+ *   leave out invoices whose Terms is VOID.
  * - Daily source choice (production): the daily trigger imports from PDFs
  *   (default) or from Badger, set from the menu and shown in Parser Status.
  * - The PDF import stays in the menu as a fallback.
@@ -227,6 +243,7 @@ function onOpen() {
       .addSeparator()
       .addItem("Compare with Badger (Diagnostics only)", "compareWithBadger")
       .addItem("Apply Badger corrections", "applyBadgerCorrections")
+      .addItem("Diagnostics: Check Badger fields (read-only)", "checkBadgerFields")
       .addSeparator()
       .addItem("PDF fallback: Import New Invoice PDFs", "importInvoicePdfs")
       .addItem("Repair Missing Customer Names", "repairMissingCustomerNames")
@@ -646,6 +663,7 @@ function badgerReadJson_(method, path, body, label) {
 function fetchBadgerInvoiceList_() {
   const today = Utilities.formatDate(new Date(), PARSER_SETTINGS.AUTO_IMPORT_TIMEZONE, "yyyy-MM-dd");
   const invoices = [];
+  const seenIds = new Set();
   let totalCount = null;
   for (let page = 0; page < PARSER_SETTINGS.BADGER_MAX_PAGES; page++) {
     const payload = badgerReadJson_("POST", "/Api/invoice/Paged", {
@@ -663,6 +681,12 @@ function fetchBadgerInvoiceList_() {
       if (!invoice || !String(invoice.id || "").trim() || !String(invoice.number || "").trim()) {
         throw new Error("Badger invoice list returned an incomplete invoice record.");
       }
+      // A repeated ID means Badger returned a page twice (or ignored the page number);
+      // continuing would silently miss invoices.
+      if (seenIds.has(String(invoice.id))) {
+        throw new Error("Badger invoice list returned the same invoice twice while paging; nothing was written. Run again.");
+      }
+      seenIds.add(String(invoice.id));
       invoices.push(invoice);
     });
     if (invoices.length === totalCount) return invoices;
@@ -679,6 +703,28 @@ function fetchBadgerInvoiceDetail_(badgerId) {
   return detail;
 }
 
+/**
+ * One entry per invoice number. Badger can list a voided invoice and its re-issue
+ * under the same number: the single active record wins over void ones. Two or more
+ * active records for one number are ambiguous and left alone.
+ */
+function groupBadgerList_(list) {
+  const byNumber = new Map();
+  list.forEach((item) => {
+    const invNo = normalizeInvoiceNo_(item.number);
+    if (!byNumber.has(invNo)) byNumber.set(invNo, []);
+    byNumber.get(invNo).push(item);
+  });
+  const chosen = new Map();
+  const ambiguous = new Map();
+  byNumber.forEach((items, invNo) => {
+    const active = items.filter((i) => !i.isVoid);
+    if (active.length > 1) ambiguous.set(invNo, active);
+    else chosen.set(invNo, active.length ? active[0] : items[0]);
+  });
+  return { chosen: chosen, ambiguous: ambiguous };
+}
+
 function badgerDateText_(v) {
   const m = String(v || "").match(/^(\d{4})-(\d{2})-(\d{2})/);
   return m ? `${Number(m[2])}/${Number(m[3])}/${m[1]}` : String(v || "");
@@ -689,41 +735,70 @@ function badgerMoney_(v) {
   return isFinite(n) ? Math.round(n * 100) / 100 : 0;
 }
 
-function badgerLineVolume_(line) {
-  const named = line.unitOfMeasureName || line.unitOfMeasureDescription || (line.unitOfMeasure && (line.unitOfMeasure.name || line.unitOfMeasure.description)) || line.volume;
-  if (named) return String(named).replace(/\s+/g, "");
-  return BADGER_UNIT_NAMES[Number(line.unitOfMeasureId)] || String(line.unitOfMeasureId || "");
+/** First argument that is not null/undefined/blank. */
+function badgerFirst_() {
+  for (let i = 0; i < arguments.length; i++) {
+    const v = arguments[i];
+    if (v !== null && v !== undefined && String(v).trim() !== "") return v;
+  }
+  return null;
 }
 
-/** Tracker values (Invoices columns D-N plus the line rows) for one Badger invoice. */
+/** The unit ID map is what the Hub uses to create invoices, so it wins over any name field. */
+function badgerLineVolume_(line) {
+  const mapped = BADGER_UNIT_NAMES[Number(line.unitOfMeasureId)];
+  if (mapped) return mapped;
+  const named = badgerFirst_(line.unitOfMeasureName, line.unitOfMeasureDescription, line.unitOfMeasure && (line.unitOfMeasure.name || line.unitOfMeasure.description));
+  return named !== null ? String(named).replace(/\s+/g, "") : String(line.unitOfMeasureId || "");
+}
+
+/**
+ * Tracker values for one Badger invoice: Invoices cells by column number (D-I and
+ * K-M; never J Winery Name or N Terms) and the Invoice Lines rows. The invoice key
+ * and Amount Due come from the list record (the fields the Hub's status sync is known
+ * to read). Throws, so nothing is written for this invoice, when the detail disagrees.
+ */
 function badgerInvoiceValues_(listItem, detail) {
-  const invNo = normalizeInvoiceNo_(detail.number || listItem.number);
-  const custName = String(detail.billToName || listItem.billToName || "").trim() || "Unknown Customer";
-  const cityStateZip = [detail.billToCity, detail.billToState, detail.billToPostalCode].filter(Boolean).join(" ");
-  const amount = badgerMoney_(detail.totalDue !== undefined ? detail.totalDue : (detail.dollarAmount !== undefined ? detail.dollarAmount : listItem.dollarAmount));
+  const invNo = normalizeInvoiceNo_(listItem.number);
+  const digits = (v) => normalizeInvoiceNo_(v).replace(/^SS/, "");
+  if (badgerFirst_(detail.number) !== null && digits(detail.number) !== digits(invNo)) {
+    throw new Error(`Badger invoice ${listItem.id}: the list says ${invNo} but the invoice says ${detail.number}. Not imported.`);
+  }
+  if (badgerFirst_(listItem.dollarAmount) === null) {
+    throw new Error(`Badger invoice ${invNo} has no amount in the invoice list. Not imported.`);
+  }
+  const amount = badgerMoney_(listItem.dollarAmount);
+  const custName = String(badgerFirst_(detail.billToName, listItem.billToName) || "").trim() || "Unknown Customer";
+
+  let lineCents = 0;
   const lineRows = detail.lines.map((li) => {
-    const qty = Number(li.quantity || 0);
+    const qty = Number(badgerFirst_(li.quantity) || 0);
     const unitPrice = badgerMoney_(li.unitPrice);
-    const given = li.lineTotal !== undefined ? li.lineTotal : (li.total !== undefined ? li.total : li.extendedPrice);
-    const lineTotal = given !== undefined ? badgerMoney_(given) : Math.round(qty * unitPrice * 100) / 100;
+    const given = badgerFirst_(li.lineTotal, li.total, li.extendedPrice);
+    const lineTotal = given !== null ? badgerMoney_(given) : Math.round(qty * unitPrice * 100) / 100;
+    if (!isFinite(qty)) throw new Error(`Badger invoice ${invNo} has a line with an unreadable quantity. Not imported.`);
+    lineCents += Math.round(lineTotal * 100);
     return [invNo, custName, qty, badgerLineVolume_(li), String(li.description || "").replace(/\s+/g, " ").trim(), String(li.beverageClass || ""), unitPrice, lineTotal];
   });
+  if (lineCents !== Math.round(amount * 100)) {
+    throw new Error(`Badger invoice ${invNo}: its lines add up to $${(lineCents / 100).toFixed(2)} but its amount is $${amount.toFixed(2)}. Not imported; check it in Badger.`);
+  }
+
+  const orderNumber = String(badgerFirst_(detail.orderNumber) || "");
   return {
     invNo: invNo,
-    // Columns D (Invoice #) through N (Terms)
-    detailCells: [
-      invNo,
-      badgerDateText_(detail.date || listItem.date),
-      custName,
-      [detail.billToAddressLine1, detail.billToAddressLine2].filter(Boolean).join(", "),
-      cityStateZip,
-      String(detail.billToResellerNumber || ""),
-      "",
-      String(detail.phone || ""),
-      String(detail.orderNumber || ""),
-      amount,
-      ""
-    ],
+    cells: {
+      4: invNo,
+      5: badgerDateText_(badgerFirst_(listItem.date, detail.date)),
+      6: custName,
+      7: [detail.billToAddressLine1, detail.billToAddressLine2].filter((v) => badgerFirst_(v) !== null).join(", "),
+      8: [detail.billToCity, detail.billToState, detail.billToPostalCode].filter((v) => badgerFirst_(v) !== null).join(" "),
+      9: String(badgerFirst_(detail.billToResellerNumber) || ""),
+      11: String(badgerFirst_(detail.phone) || ""),
+      // Keep a leading zero: Sheets would otherwise store 0170 as 170.
+      12: /^\d+$/.test(orderNumber) ? `'${orderNumber}` : orderNumber,
+      13: amount
+    },
     lineRows: lineRows
   };
 }
@@ -734,11 +809,18 @@ function badgerStateRow_(listItem, status, invNo, detail) {
     `Badger invoice ${listItem.number}`,
     status,
     invNo,
-    `badgerModified=${String(listItem.modifiedDate || "")} · ${detail || ""}`.trim()
+    // Only "%" and spaces are escaped, so an ISO date stays readable and a value with
+    // spaces (for example "9/16/2026 10:00:00 AM") still reads back exactly.
+    `badgerModified=${String(listItem.modifiedDate || "").replace(/%/g, "%25").replace(/\s/g, (c) => encodeURIComponent(c))} · ${detail || ""}`.trim()
   );
 }
 
-/** Latest Parser State row per Badger invoice ID: { status, modified }. */
+// Parser State statuses that record what the tracker holds for a Badger invoice.
+const BADGER_APPLIED_STATUSES = Object.freeze(["IMPORTED", "UPDATED", "VOIDED", "LINKED", "CORRECTED", "VOID_SKIPPED"]);
+// Statuses that only record a problem already reported, so it is not reported every day.
+const BADGER_NOTE_STATUSES = Object.freeze(["READ_FAILED", "DUPLICATE_NUMBER"]);
+
+/** Badger invoice ID -> { applied: {status, modified, at}, note: {status, modified} } from the latest rows. */
 function buildBadgerStateIndex_() {
   const env = parserEnv_();
   const out = new Map();
@@ -747,86 +829,169 @@ function buildBadgerStateIndex_() {
   sh.getRange(2, 1, sh.getLastRow() - 1, 6).getValues().forEach((row) => {
     const key = String(row[1] || "").trim();
     if (key.indexOf(BADGER_STATE_PREFIX) !== 0) return;
+    const status = String(row[3] || "").trim().toUpperCase();
     const m = String(row[5] || "").match(/badgerModified=(\S*)/);
-    out.set(key.slice(BADGER_STATE_PREFIX.length), { status: String(row[3] || "").trim().toUpperCase(), modified: m ? m[1] : "" });
+    let modified = m ? m[1] : "";
+    try { modified = decodeURIComponent(modified); } catch (e) {}
+    const id = key.slice(BADGER_STATE_PREFIX.length);
+    const entry = out.get(id) || { applied: null, note: null };
+    if (BADGER_APPLIED_STATUSES.indexOf(status) >= 0) {
+      entry.applied = { status: status, modified: modified, at: row[0] };
+      entry.note = null;
+    } else if (BADGER_NOTE_STATUSES.indexOf(status) >= 0) {
+      entry.note = { status: status, modified: modified };
+    }
+    out.set(id, entry);
   });
   return out;
 }
 
-/** Invoice # -> { row (1-based), terms, amount, date, customer } for the invoices tab. */
+/** Invoice # -> { fileId, date, customer, amount, terms } for the invoices tab (first row wins). */
 function buildTrackerInvoiceRows_() {
   const env = parserEnv_();
   const sh = env.ss.getSheetByName(env.sheets.invoices);
   const out = new Map();
   if (!sh || sh.getLastRow() < 2) return out;
-  sh.getRange(2, 1, sh.getLastRow() - 1, PARSER_INVOICE_HEADERS.length).getValues().forEach((r, i) => {
+  sh.getRange(2, 1, sh.getLastRow() - 1, PARSER_INVOICE_HEADERS.length).getValues().forEach((r) => {
     const invNo = normalizeInvoiceNo_(r[3]);
     if (invNo && !out.has(invNo)) {
-      out.set(invNo, { row: i + 2, date: r[4], customer: String(r[5] || ""), amount: r[12], terms: String(r[13] || "").trim() });
+      out.set(invNo, { fileId: String(r[1] || "").trim(), date: r[4], customer: String(r[5] || ""), amount: r[12], terms: String(r[13] || "").trim() });
     }
   });
   return out;
 }
 
+function newBadgerPlan_() {
+  return { replaceLinesFor: new Set(), lineRows: [], newInvoices: [], rowUpdates: [], stateRows: [] };
+}
+
+function planState_(plan, invNo, row) {
+  plan.stateRows.push({ invNo: invNo, row: row });
+}
+
+/** Records a problem once per Badger version: one Parser State row and one Import Errors row. */
+function planNoteOnce_(plan, stateIndex, item, invNo, status, message) {
+  const known = stateIndex.get(String(item.id));
+  const modified = String(item.modifiedDate || "");
+  if (known && known.note && known.note.status === status && known.note.modified === modified) return false;
+  logError_(BADGER_STATE_PREFIX + item.id, `Badger invoice ${item.number}`, "badger", message, "");
+  planState_(plan, "", badgerStateRow_(item, status, invNo, message));
+  return true;
+}
+
+/** Voided in Badger: remove its lines; Amount Due (M) becomes 0 and Terms (N) "VOID". */
+function planBadgerVoid_(plan, item, tracked, invNo, status) {
+  plan.replaceLinesFor.add(invNo);
+  plan.rowUpdates.push({ invNo: invNo, set: { 13: 0, 14: "VOID" } });
+  planState_(plan, invNo, badgerStateRow_(item, status, invNo, `voided in Badger; Amount Due was ${tracked.amount}`));
+}
+
+/** Refresh an existing row (D-I, K-M) and its lines from Badger. Terms is cleared only to undo our own VOID. */
+function planBadgerRefresh_(plan, item, values, status, clearOwnVoid) {
+  plan.replaceLinesFor.add(values.invNo);
+  Array.prototype.push.apply(plan.lineRows, values.lineRows);
+  const set = Object.assign({}, values.cells);
+  if (clearOwnVoid) set[14] = "";
+  plan.rowUpdates.push({ invNo: values.invNo, set: set });
+  planState_(plan, values.invNo, badgerStateRow_(item, status, values.invNo, `${values.lineRows.length} line(s)`));
+}
+
+function planBadgerNew_(plan, item, values, alreadyHasLines) {
+  // A run stopped after saving lines but before the invoice row: replace those lines.
+  if (alreadyHasLines) plan.replaceLinesFor.add(values.invNo);
+  Array.prototype.push.apply(plan.lineRows, values.lineRows);
+  const row = [new Date(), BADGER_STATE_PREFIX + item.id, `Badger invoice ${item.number}`];
+  for (let col = 4; col <= 14; col++) row.push(values.cells[col] !== undefined ? values.cells[col] : "");
+  row.push(false, false, "No"); // Delivered, Paid to Me, Submitted: new rows only
+  plan.newInvoices.push({ invNo: values.invNo, row: row });
+  planState_(plan, values.invNo, badgerStateRow_(item, "IMPORTED", values.invNo, `${values.lineRows.length} line(s)`));
+}
+
+/** Drops every planned change for one invoice; Parser State is untouched, so the next run repeats it. */
+function dropFromPlan_(plan, invNo) {
+  plan.replaceLinesFor.delete(invNo);
+  plan.lineRows = plan.lineRows.filter((r) => r[0] !== invNo);
+  plan.newInvoices = plan.newInvoices.filter((n) => n.invNo !== invNo);
+  plan.rowUpdates = plan.rowUpdates.filter((u) => u.invNo !== invNo);
+  plan.stateRows = plan.stateRows.filter((s) => s.invNo !== invNo);
+}
+
+/** Invoice # -> current row number, read at save time (staff may have moved rows during the run). */
+function currentInvoiceRowNumbers_(inv) {
+  const out = new Map();
+  if (inv.getLastRow() < 2) return out;
+  inv.getRange(2, 4, inv.getLastRow() - 1, 1).getValues().forEach((r, i) => {
+    const invNo = normalizeInvoiceNo_(r[0]);
+    if (invNo && !out.has(invNo)) out.set(invNo, i + 2);
+  });
+  return out;
+}
+
+/** Deletes every Invoice Lines row of the given invoices, bottom-up in contiguous blocks. */
+function deleteInvoiceLines_(sheet, invNos) {
+  if (!invNos.size || sheet.getLastRow() < 2) return;
+  const keys = sheet.getRange(2, 1, sheet.getLastRow() - 1, 1).getValues();
+  const rows = [];
+  keys.forEach((r, i) => { if (invNos.has(normalizeInvoiceNo_(r[0]))) rows.push(i + 2); });
+  if (!rows.length) return;
+  // Sheets refuses to delete every row below the frozen header; keep one spare row.
+  if (sheet.getMaxRows() - rows.length < 2) sheet.insertRowsAfter(sheet.getMaxRows(), 1);
+  for (let i = rows.length - 1; i >= 0;) {
+    let start = rows[i];
+    let n = 1;
+    while (i - n >= 0 && rows[i - n] === start - 1) { start--; n++; }
+    sheet.deleteRows(start, n);
+    i -= n;
+  }
+}
+
 /**
  * Applies a batch of Badger changes in the failure-safe order:
- * 1. Invoice Lines: lines of replaced/voided invoices removed, new lines added.
- * 2. Invoices: new rows appended; existing rows get columns A and D-N only.
+ * 0. Re-read the Invoices row numbers. An invoice whose row appeared or disappeared
+ *    during the run is left for the next run.
+ * 1. Invoice Lines: lines of replaced/voided invoices are deleted (whole rows, so
+ *    formulas and notes on other rows are untouched), then new lines are appended.
+ * 2. Invoices: existing rows get only the planned cells in D-N (a blank Badger value
+ *    never overwrites a filled cell in G-L); new rows are appended.
  * 3. Parser State rows.
- * A stop between steps leaves Parser State unchanged for that invoice, so the next
- * run repeats it and the line rewrite (which first removes that invoice's lines)
- * cannot double them. Columns O-Q (Delivered, Paid to Me, Submitted) are only
- * written on new rows.
+ * A stop anywhere leaves that invoice's Parser State unchanged, so the next run
+ * repeats it; deleting before appending means its lines can never be doubled.
+ * Delivered, Paid to Me and Submitted (O-Q) are only written on new rows.
  */
 function saveBadgerChanges_(plan) {
   const env = parserEnv_();
   const linesSheet = env.ss.getSheetByName(env.sheets.lines);
   const inv = env.ss.getSheetByName(env.sheets.invoices);
   const stateSheet = env.ss.getSheetByName(env.sheets.state);
-  if (plan.replaceLinesFor.size) {
-    // Rewrite every column in use, so anything typed beside a line stays on its row.
-    const width = Math.max(linesSheet.getLastColumn(), PARSER_LINE_HEADERS.length);
-    const last = linesSheet.getLastRow();
-    const existing = last > 1 ? linesSheet.getRange(2, 1, last - 1, width).getValues() : [];
-    const kept = existing.filter((r) => !plan.replaceLinesFor.has(normalizeInvoiceNo_(r[0])));
-    const added = plan.lineRows.map((r) => r.concat(new Array(width - r.length).fill("")));
-    const rows = kept.concat(added);
-    if (rows.length) linesSheet.getRange(2, 1, rows.length, width).setValues(rows);
-    if (existing.length > rows.length) {
-      linesSheet.getRange(rows.length + 2, 1, existing.length - rows.length, width).clearContent();
-    }
-  } else {
-    appendRows_(linesSheet, plan.lineRows);
-  }
 
-  const firstNewInvoiceRow = inv.getLastRow() + 1;
-  appendRows_(inv, plan.newInvoiceRows);
-  applyInvoiceStatusValidations_(firstNewInvoiceRow, plan.newInvoiceRows.length);
+  const rowsNow = currentInvoiceRowNumbers_(inv);
+  let deferred = 0;
+  plan.newInvoices.filter((n) => rowsNow.has(n.invNo)).forEach((n) => { dropFromPlan_(plan, n.invNo); deferred++; });
+  plan.rowUpdates.filter((u) => !rowsNow.has(u.invNo)).forEach((u) => { dropFromPlan_(plan, u.invNo); deferred++; });
+
+  deleteInvoiceLines_(linesSheet, plan.replaceLinesFor);
+  appendRows_(linesSheet, plan.lineRows);
+
   plan.rowUpdates.forEach((u) => {
-    inv.getRange(u.row, 1).setValue(new Date());
-    inv.getRange(u.row, u.startCol, 1, u.cells.length).setValues([u.cells]);
+    const row = rowsNow.get(u.invNo);
+    const range = inv.getRange(row, 4, 1, 11); // D-N
+    const cells = range.getValues()[0];
+    Object.keys(u.set).forEach((key) => {
+      const col = Number(key);
+      const value = u.set[key];
+      const current = cells[col - 4];
+      const keepFilled = col >= 7 && col <= 12 && String(value === null || value === undefined ? "" : value).trim() === "" && String(current === null || current === undefined ? "" : current).trim() !== "";
+      if (!keepFilled) cells[col - 4] = value;
+    });
+    range.setValues([cells]);
   });
 
-  appendRows_(stateSheet, plan.stateRows);
-}
+  const firstNewInvoiceRow = inv.getLastRow() + 1;
+  appendRows_(inv, plan.newInvoices.map((n) => n.row));
+  applyInvoiceStatusValidations_(firstNewInvoiceRow, plan.newInvoices.length);
 
-function newBadgerPlan_() {
-  return { replaceLinesFor: new Set(), lineRows: [], newInvoiceRows: [], rowUpdates: [], stateRows: [] };
-}
-
-/** Voided in Badger: remove its lines; Amount Due (M) becomes 0 and Terms (N) "VOID". Nothing else on the row changes. */
-function planBadgerVoid_(plan, listItem, tracked, invNo, status) {
-  plan.replaceLinesFor.add(invNo);
-  plan.rowUpdates.push({ row: tracked.row, startCol: 13, cells: [0, "VOID"] });
-  plan.stateRows.push(badgerStateRow_(listItem, status, invNo, `voided in Badger; Amount Due was ${tracked.amount}`));
-}
-
-/** Refresh an existing row (columns D-N) and its lines from Badger. */
-function planBadgerRefresh_(plan, listItem, tracked, values, status) {
-  plan.replaceLinesFor.add(values.invNo);
-  Array.prototype.push.apply(plan.lineRows, values.lineRows);
-  plan.rowUpdates.push({ row: tracked.row, startCol: 4, cells: values.detailCells });
-  plan.stateRows.push(badgerStateRow_(listItem, status, values.invNo, `${values.lineRows.length} line(s)`));
+  appendRows_(stateSheet, plan.stateRows.map((s) => s.row));
+  return { deferred: deferred };
 }
 
 function badgerTimeUp_(startedAt) {
@@ -835,7 +1000,12 @@ function badgerTimeUp_(startedAt) {
 
 /**
  * Menu "Import from Badger now" and the daily trigger when its source is Badger.
- * New invoices are added, changed ones refreshed, voided ones voided. Read-only toward Badger.
+ * Read-only toward Badger. Rules for an invoice already in the tracker:
+ * - Imported from Badger (IMPORTED / UPDATED / VOIDED / CORRECTED): kept in step with
+ *   Badger automatically when its modifiedDate changes.
+ * - Came from a PDF (LINKED): never changed by the import. A Badger change is only
+ *   counted; Compare with Badger and Apply Badger corrections handle it. After an
+ *   Apply the invoice is CORRECTED and follows Badger from then on.
  */
 function importFromBadger() {
   requireBadgerCredentials_();
@@ -844,51 +1014,55 @@ function importFromBadger() {
     const startedAt = Date.now();
     ensureSheetsAndHeaders_();
 
-    const list = fetchBadgerInvoiceList_();
+    const groups = groupBadgerList_(fetchBadgerInvoiceList_());
     const stateIndex = buildBadgerStateIndex_();
     const tracker = buildTrackerInvoiceRows_();
     const invoicesWithLines = buildInvoicesWithLinesIndex_();
     const plan = newBadgerPlan_();
-    const seen = new Set();
-    const counts = { imported: 0, updated: 0, voided: 0, linked: 0, voidSkipped: 0, unchanged: 0, failed: 0, duplicateNumbers: 0 };
+    const counts = { imported: 0, updated: 0, voided: 0, linked: 0, linkedChanged: 0, voidSkipped: 0, unchanged: 0, failed: 0, duplicateNumbers: groups.ambiguous.size, deferred: 0 };
+    let listed = 0;
     let details = 0;
     let stoppedReason = "";
 
-    for (const item of list) {
-      const invNo = normalizeInvoiceNo_(item.number);
-      const id = String(item.id);
-      if (seen.has(invNo)) {
-        // Reported in the toast; not logged, so a daily run does not add the same row every day.
-        counts.duplicateNumbers++;
-        continue;
-      }
-      seen.add(invNo);
+    groups.ambiguous.forEach((items, invNo) => {
+      listed += items.length;
+      items.forEach((item) => planNoteOnce_(plan, stateIndex, item, invNo, "DUPLICATE_NUMBER",
+        `${items.length} active Badger invoices share the number ${invNo}; none of them is imported or changed until only one is active.`));
+    });
 
-      const state = stateIndex.get(id);
+    for (const [invNo, item] of groups.chosen) {
+      listed++;
+      const id = String(item.id);
+      const known = stateIndex.get(id);
+      const applied = known && known.applied && known.applied.status !== "VOID_SKIPPED" ? known.applied : null;
       const tracked = tracker.get(invNo);
       const modified = String(item.modifiedDate || "");
 
-      if (item.isVoid) {
-        if (tracked && tracked.terms.toUpperCase() !== "VOID") {
-          planBadgerVoid_(plan, item, tracked, invNo, "VOIDED");
-          counts.voided++;
-        } else if (!tracked && (!state || state.status !== "VOID_SKIPPED")) {
-          plan.stateRows.push(badgerStateRow_(item, "VOID_SKIPPED", invNo, "void in Badger; not imported"));
-          counts.voidSkipped++;
-        } else {
-          counts.unchanged++;
+      if (!tracked) {
+        if (item.isVoid) {
+          if (known && known.applied && known.applied.status === "VOID_SKIPPED") counts.unchanged++;
+          else { planState_(plan, invNo, badgerStateRow_(item, "VOID_SKIPPED", invNo, "void in Badger; not imported")); counts.voidSkipped++; }
+          continue;
         }
+        // Not in the tracker (new, or a row staff deleted): import it.
+      } else if (!applied) {
+        const ours = tracked.fileId === BADGER_STATE_PREFIX + id;
+        // Our own row whose Parser State write was lost is still ours; anything else came from a PDF.
+        planState_(plan, invNo, badgerStateRow_(item, ours ? "IMPORTED" : "LINKED", invNo,
+          ours ? "row already saved by an earlier run" : "already in the tracker; the import never changes it (use Compare with Badger)"));
+        counts[ours ? "unchanged" : "linked"]++;
         continue;
-      }
-
-      if (tracked && !state) {
-        // Already in the tracker (for example from a PDF): record Badger's version only.
-        plan.stateRows.push(badgerStateRow_(item, "LINKED", invNo, "already in the tracker; row not changed (Compare with Badger shows any difference)"));
-        counts.linked++;
+      } else if (applied.status === "LINKED") {
+        if (applied.modified !== modified || item.isVoid) counts.linkedChanged++;
+        else counts.unchanged++;
         continue;
-      }
-      if (tracked && state && state.modified === modified && tracked.terms.toUpperCase() !== "VOID") {
+      } else if (applied.modified === modified) {
         counts.unchanged++;
+        continue;
+      } else if (item.isVoid) {
+        if (tracked.terms.toUpperCase() === "VOID") planState_(plan, invNo, badgerStateRow_(item, "VOIDED", invNo, "already VOID in the tracker"));
+        else planBadgerVoid_(plan, item, tracked, invNo, "VOIDED");
+        counts.voided++;
         continue;
       }
 
@@ -906,44 +1080,40 @@ function importFromBadger() {
         details++;
         values = badgerInvoiceValues_(item, fetchBadgerInvoiceDetail_(id));
       } catch (err) {
-        const msg = String(err && err.message ? err.message : err);
-        logError_(BADGER_STATE_PREFIX + id, `Badger invoice ${item.number}`, "badger", msg, "");
+        planNoteOnce_(plan, stateIndex, item, invNo, "READ_FAILED", String(err && err.message ? err.message : err));
         counts.failed++;
         continue;
       }
 
       if (tracked) {
-        planBadgerRefresh_(plan, item, tracked, values, "UPDATED");
+        planBadgerRefresh_(plan, item, values, "UPDATED", applied.status === "VOIDED" && tracked.terms.toUpperCase() === "VOID");
         counts.updated++;
       } else {
-        // A run stopped after saving lines but before the invoice row: rewrite those lines.
-        if (invoicesWithLines.has(invNo)) plan.replaceLinesFor.add(invNo);
-        Array.prototype.push.apply(plan.lineRows, values.lineRows);
-        const cells = values.detailCells;
-        plan.newInvoiceRows.push([new Date(), BADGER_STATE_PREFIX + id, `Badger invoice ${item.number}`].concat(cells, [false, false, "No"]));
-        plan.stateRows.push(badgerStateRow_(item, "IMPORTED", invNo, `${values.lineRows.length} line(s)`));
+        planBadgerNew_(plan, item, values, invoicesWithLines.has(invNo));
         counts.imported++;
       }
     }
 
-    saveBadgerChanges_(plan);
+    counts.deferred = saveBadgerChanges_(plan).deferred;
     if (counts.imported || counts.updated || counts.voided) rebuildAllSummaries_();
 
     const parts = [
-      `Badger: ${list.length} invoice(s).`,
+      `Badger: ${listed} invoice(s).`,
       `Imported ${counts.imported}.`,
       counts.updated ? `Updated ${counts.updated} changed in Badger.` : "",
       counts.voided ? `Voided ${counts.voided}.` : "",
-      counts.linked ? `Linked ${counts.linked} already in the tracker.` : "",
+      counts.linked ? `Linked ${counts.linked} already in the tracker (not changed).` : "",
+      counts.linkedChanged ? `${counts.linkedChanged} invoice(s) from PDFs differ from Badger now; run Compare with Badger.` : "",
       counts.voidSkipped ? `${counts.voidSkipped} void invoice(s) not imported.` : "",
       counts.failed ? `${counts.failed} could not be read and will be retried next run (see ${env.sheets.errors}).` : "",
-      counts.duplicateNumbers ? `${counts.duplicateNumbers} invoice number(s) listed twice in Badger; only the first was used.` : "",
+      counts.duplicateNumbers ? `${counts.duplicateNumbers} invoice number(s) have more than one active Badger invoice and were left alone (see ${env.sheets.errors}).` : "",
+      counts.deferred ? `${counts.deferred} invoice(s) moved in the sheet during the run; the next run finishes them.` : "",
       `${counts.unchanged} unchanged.`,
       stoppedReason
     ].filter(Boolean);
     notify_(parts.join(" "), env.name === "PRODUCTION" ? "Badger Import" : "TEST Badger Import");
 
-    return Object.assign({ environment: env.name, source: "BADGER", listed: list.length, detailsRead: details, stoppedReason: stoppedReason }, counts);
+    return Object.assign({ environment: env.name, source: "BADGER", listed: listed, detailsRead: details, stoppedReason: stoppedReason }, counts);
   });
 }
 
@@ -951,6 +1121,7 @@ function importFromBadger() {
 
 const BADGER_COMPARE_HEADERS = Object.freeze(["Checked At", "Invoice #", "Badger ID", "Issue", "Tracker", "Badger"]);
 const BADGER_CORRECTABLE_ISSUES = Object.freeze(["Amount differs", "Customer differs", "Date differs", "Lines differ", "Void in Badger"]);
+const BADGER_NOT_CHECKED = "Not checked (time limit)";
 
 function looseName_(s) {
   return String(s || "").toLowerCase().replace(/&/g, " and ").replace(/[^a-z0-9]+/g, " ").replace(/^the /, "").trim();
@@ -977,14 +1148,15 @@ function dateKey_(v) {
 
 /**
  * Diagnostics only: reads Badger and the tracker and lists every difference on the
- * Badger Compare tab. Writes nothing else.
+ * Badger Compare tab. Writes nothing else. If a run stops at the time limit, the
+ * next run checks only the invoices marked "Not checked" and keeps the other rows.
  */
 function compareWithBadger() {
   requireBadgerCredentials_();
   return withScriptLock_(function () {
     const env = parserEnv_();
     const startedAt = Date.now();
-    const list = fetchBadgerInvoiceList_();
+    const groups = groupBadgerList_(fetchBadgerInvoiceList_());
     const tracker = buildTrackerInvoiceRows_();
     const linesByInvoice = new Map();
     const linesSheet = env.ss.getSheetByName(env.sheets.lines);
@@ -997,16 +1169,24 @@ function compareWithBadger() {
       });
     }
 
-    const now = new Date();
-    const out = [];
-    const add = (invNo, id, issue, trackerValue, badgerValue) => out.push([now, invNo, id, issue, String(trackerValue), String(badgerValue)]);
-    const inBadger = new Set();
-    let notChecked = 0;
+    let sh = env.ss.getSheetByName(env.sheets.compare);
+    const previous = sh && sh.getLastRow() > 1 ? sh.getRange(2, 1, sh.getLastRow() - 1, BADGER_COMPARE_HEADERS.length).getValues() : [];
+    const pending = new Set(previous.filter((r) => r[3] === BADGER_NOT_CHECKED).map((r) => normalizeInvoiceNo_(r[1])));
+    const continuing = pending.size > 0;
 
-    for (const item of list) {
-      const invNo = normalizeInvoiceNo_(item.number);
+    const now = new Date();
+    const out = continuing ? previous.filter((r) => r[3] !== BADGER_NOT_CHECKED && r[3] !== "No differences") : [];
+    const add = (invNo, id, issue, trackerValue, badgerValue) => out.push([now, invNo, id, issue, String(trackerValue), String(badgerValue)]);
+    let notChecked = 0;
+    let checked = 0;
+
+    if (!continuing) {
+      groups.ambiguous.forEach((items, invNo) => add(invNo, items.map((i) => i.id).join(", "), "Number used by more than one active Badger invoice", tracker.has(invNo) ? "in tracker" : "", `${items.length} active invoices`));
+    }
+
+    for (const [invNo, item] of groups.chosen) {
+      if (continuing && !pending.has(invNo)) continue;
       const id = String(item.id);
-      inBadger.add(invNo);
       const tracked = tracker.get(invNo);
 
       if (item.isVoid) {
@@ -1019,32 +1199,34 @@ function compareWithBadger() {
       }
       if (badgerTimeUp_(startedAt)) {
         notChecked++;
-        add(invNo, id, "Not checked (time limit)", "", "run Compare again");
+        add(invNo, id, BADGER_NOT_CHECKED, "", "run Compare again to check the rest");
         continue;
       }
 
       let values;
+      checked++;
       try {
         values = badgerInvoiceValues_(item, fetchBadgerInvoiceDetail_(id));
       } catch (err) {
         add(invNo, id, "Could not read from Badger", "", String(err && err.message ? err.message : err));
         continue;
       }
-      const c = values.detailCells;
-      if (tracked.terms.toUpperCase() === "VOID") add(invNo, id, "Voided in tracker, active in Badger", "VOID", `$${c[9].toFixed(2)}`);
-      if (cents_(tracked.amount) !== cents_(c[9])) add(invNo, id, "Amount differs", `$${asNumberFlexible_(tracked.amount).toFixed(2)}`, `$${c[9].toFixed(2)}`);
-      if (looseName_(tracked.customer) !== looseName_(c[2])) add(invNo, id, "Customer differs", tracked.customer, c[2]);
-      if (dateKey_(tracked.date) !== dateKey_(c[1])) add(invNo, id, "Date differs", dateKey_(tracked.date), c[1]);
+      const c = values.cells;
+      if (tracked.terms.toUpperCase() === "VOID") add(invNo, id, "Voided in tracker, active in Badger", "VOID", `$${c[13].toFixed(2)}`);
+      if (cents_(tracked.amount) !== cents_(c[13])) add(invNo, id, "Amount differs", `$${asNumberFlexible_(tracked.amount).toFixed(2)}`, `$${c[13].toFixed(2)}`);
+      if (looseName_(tracked.customer) !== looseName_(c[6])) add(invNo, id, "Customer differs", tracked.customer, c[6]);
+      if (dateKey_(tracked.date) !== dateKey_(c[5])) add(invNo, id, "Date differs", dateKey_(tracked.date), c[5]);
       const mine = lineSummary_(linesByInvoice.get(invNo) || []);
       const theirs = lineSummary_(values.lineRows);
       if (mine.count !== theirs.count || mine.units !== theirs.units || mine.cents !== theirs.cents) add(invNo, id, "Lines differ", mine.text, theirs.text);
     }
 
-    tracker.forEach((t, invNo) => {
-      if (!inBadger.has(invNo)) add(invNo, "", "Not in Badger", `${dateKey_(t.date)} ${t.customer}`, "");
-    });
+    if (!continuing) {
+      tracker.forEach((t, invNo) => {
+        if (!groups.chosen.has(invNo) && !groups.ambiguous.has(invNo)) add(invNo, "", "Not in Badger", `${dateKey_(t.date)} ${t.customer}`, "");
+      });
+    }
 
-    let sh = env.ss.getSheetByName(env.sheets.compare);
     if (!sh) sh = env.ss.insertSheet(env.sheets.compare);
     fullClearSheet_(sh);
     const rows = [BADGER_COMPARE_HEADERS.slice()].concat(out.length ? out : [[now, "", "", "No differences", "", ""]]);
@@ -1053,18 +1235,21 @@ function compareWithBadger() {
 
     const correctable = out.filter((r) => BADGER_CORRECTABLE_ISSUES.indexOf(r[3]) >= 0).length;
     notify_(
-      `Compared ${list.length} Badger invoice(s) with the tracker: ${out.length} difference(s), ${correctable} correctable. See "${env.sheets.compare}". Nothing else was changed.` +
-      (notChecked ? ` ${notChecked} not checked (time limit); run again.` : ""),
+      `${continuing ? "Continued the comparison" : "Compared Badger with the tracker"}: checked ${checked} invoice(s) in detail; ${out.length - notChecked} difference(s), ${correctable} correctable. See "${env.sheets.compare}". Nothing else was changed.` +
+      (notChecked ? ` ${notChecked} not checked (time limit); run Compare again to check them.` : ""),
       "Compare with Badger"
     );
-    return { environment: env.name, listed: list.length, differences: out.length, correctable: correctable, notChecked: notChecked };
+    return { environment: env.name, continued: continuing, checked: checked, differences: out.length - notChecked, correctable: correctable, notChecked: notChecked };
   });
 }
 
 /**
  * Applies the correctable rows on the Badger Compare tab, reading each invoice from
  * Badger again. Delete a row from that tab first to leave that invoice alone.
- * Never writes Delivered, Paid to Me or Submitted.
+ * A corrected invoice gets columns D-I and K-M and all its lines from Badger (a
+ * blank Badger value never overwrites a filled cell), then follows Badger on later
+ * imports. Never writes Delivered, Paid to Me or Submitted. After a time-limit stop,
+ * running it again skips invoices already corrected since that Compare.
  */
 function applyBadgerCorrections() {
   requireBadgerCredentials_();
@@ -1077,63 +1262,122 @@ function applyBadgerCorrections() {
       return notify_("Run Compare with Badger first; there is nothing to apply.", "Apply Badger corrections");
     }
 
+    // One entry per invoice number: { id, checkedAt }.
     const wanted = new Map();
     sh.getRange(2, 1, sh.getLastRow() - 1, BADGER_COMPARE_HEADERS.length).getValues().forEach((r) => {
       const invNo = normalizeInvoiceNo_(r[1]);
       const id = String(r[2] || "").trim();
-      if (invNo && /^\d+$/.test(id) && BADGER_CORRECTABLE_ISSUES.indexOf(String(r[3])) >= 0) wanted.set(id, invNo);
+      if (invNo && /^\d+$/.test(id) && BADGER_CORRECTABLE_ISSUES.indexOf(String(r[3])) >= 0 && !wanted.has(invNo)) {
+        wanted.set(invNo, { id: id, checkedAt: r[0] });
+      }
     });
     if (!wanted.size) {
       return notify_("The Badger Compare tab lists no correctable differences.", "Apply Badger corrections");
     }
 
-    const list = fetchBadgerInvoiceList_();
-    const byId = new Map(list.map((item) => [String(item.id), item]));
+    const groups = groupBadgerList_(fetchBadgerInvoiceList_());
+    const stateIndex = buildBadgerStateIndex_();
     const tracker = buildTrackerInvoiceRows_();
     const plan = newBadgerPlan_();
     let corrected = 0;
     let voided = 0;
+    let alreadyDone = 0;
     let skipped = 0;
     let stoppedReason = "";
 
-    for (const [id, invNo] of wanted) {
-      const item = byId.get(id);
+    for (const [invNo, want] of wanted) {
+      const item = groups.chosen.get(invNo);
       const tracked = tracker.get(invNo);
-      if (!item || !tracked || normalizeInvoiceNo_(item.number) !== invNo) {
-        skipped++;
+      if (!item || String(item.id) !== want.id || !tracked) {
+        skipped++; // Badger or the tracker changed since Compare; run Compare again.
+        continue;
+      }
+      const known = stateIndex.get(want.id);
+      const applied = known && known.applied;
+      const checkedAt = new Date(want.checkedAt).getTime();
+      if (applied && applied.status === "CORRECTED" && applied.modified === String(item.modifiedDate || "") &&
+          isFinite(checkedAt) && new Date(applied.at).getTime() >= checkedAt) {
+        alreadyDone++;
         continue;
       }
       if (item.isVoid) {
         if (tracked.terms.toUpperCase() !== "VOID") {
-          planBadgerVoid_(plan, item, tracked, invNo, "VOIDED");
+          planBadgerVoid_(plan, item, tracked, invNo, "CORRECTED");
           voided++;
         }
         continue;
       }
       if (badgerTimeUp_(startedAt)) {
-        stoppedReason = "Stopped before the Apps Script time limit; run Apply again for the rest.";
+        stoppedReason = "Stopped before the Apps Script time limit; run Apply again for the rest (invoices already corrected are skipped).";
         break;
       }
       try {
-        planBadgerRefresh_(plan, item, tracked, badgerInvoiceValues_(item, fetchBadgerInvoiceDetail_(id)), "CORRECTED");
+        const values = badgerInvoiceValues_(item, fetchBadgerInvoiceDetail_(want.id));
+        planBadgerRefresh_(plan, item, values, "CORRECTED", tracked.terms.toUpperCase() === "VOID" && applied && applied.status === "VOIDED");
         corrected++;
       } catch (err) {
-        logError_(BADGER_STATE_PREFIX + id, `Badger invoice ${item.number}`, "badger-correct", String(err && err.message ? err.message : err), "");
+        logError_(BADGER_STATE_PREFIX + want.id, `Badger invoice ${item.number}`, "badger-correct", String(err && err.message ? err.message : err), "");
         skipped++;
       }
     }
 
-    saveBadgerChanges_(plan);
+    const deferred = saveBadgerChanges_(plan).deferred;
     if (corrected || voided) rebuildAllSummaries_();
     notify_(
       `Corrected ${corrected} invoice(s) from Badger${voided ? `, voided ${voided}` : ""}.` +
-      (skipped ? ` ${skipped} skipped (no longer in Badger or the tracker, or unreadable).` : "") +
-      " Delivered, Paid to Me and Submitted were not changed. Run Compare with Badger again to confirm." +
+      (alreadyDone ? ` ${alreadyDone} already corrected.` : "") +
+      (skipped ? ` ${skipped} skipped (changed since Compare, or unreadable; see ${env.sheets.errors}).` : "") +
+      (deferred ? ` ${deferred} moved in the sheet during the run; run Apply again.` : "") +
+      " Each corrected invoice took columns D-I, K-M and its lines from Badger; Delivered, Paid to Me and Submitted were not changed. Run Compare with Badger again to confirm." +
       (stoppedReason ? ` ${stoppedReason}` : ""),
       "Apply Badger corrections"
     );
-    return { environment: env.name, corrected: corrected, voided: voided, skipped: skipped, stoppedReason: stoppedReason };
+    return { environment: env.name, corrected: corrected, voided: voided, alreadyDone: alreadyDone, skipped: skipped, deferred: deferred, stoppedReason: stoppedReason };
   });
+}
+
+/**
+ * Read-only diagnostics for checking the field assumptions against real Badger
+ * (run in staging first). Reads the list and up to three invoices (one unpaid, one
+ * paid, one void) and writes what it found to the execution log. Writes nothing to
+ * any sheet and shows no amounts beyond what the tracker already holds.
+ */
+function checkBadgerFields() {
+  requireBadgerCredentials_();
+  const list = fetchBadgerInvoiceList_();
+  const groups = groupBadgerList_(list);
+  const picks = [
+    ["unpaid", list.find((i) => !i.isVoid && !i.paidDate)],
+    ["paid", list.find((i) => !i.isVoid && i.paidDate)],
+    ["void", list.find((i) => i.isVoid)]
+  ].filter((p) => p[1]);
+  const perNumber = new Map();
+  list.forEach((i) => { const k = normalizeInvoiceNo_(i.number); perNumber.set(k, (perNumber.get(k) || 0) + 1); });
+  const report = {
+    listed: list.length,
+    numbersWithMoreThanOneRecord: Array.from(perNumber.values()).filter((n) => n > 1).length,
+    ambiguousNumbers: Array.from(groups.ambiguous.keys()),
+    listFields: Object.keys(list[0] || {}).sort(),
+    samples: []
+  };
+  picks.forEach(([kind, item]) => {
+    const sample = { kind: kind, id: item.id, listNumber: item.number, listDollarAmount: item.dollarAmount, modifiedDate: item.modifiedDate };
+    try {
+      const d = fetchBadgerInvoiceDetail_(item.id);
+      let sum = 0;
+      d.lines.forEach((li) => { sum += Math.round(Number(li.quantity || 0) * badgerMoney_(li.unitPrice) * 100); });
+      Object.assign(sample, {
+        detailNumber: d.number, detailTotalDue: d.totalDue, detailDollarAmount: d.dollarAmount, linesQtyTimesPrice: sum / 100,
+        detailFields: Object.keys(d).sort(), lineFields: Object.keys(d.lines[0] || {}).sort(), firstLine: d.lines[0] || null
+      });
+    } catch (err) {
+      sample.error = String(err && err.message ? err.message : err);
+    }
+    report.samples.push(sample);
+  });
+  console.log(`Badger field check: ${JSON.stringify(report, null, 2)}`);
+  notify_(`Badger field check done: ${list.length} invoice(s) listed, ${report.samples.length} read. Open Extensions > Apps Script > Executions to see the field report.`, "Badger field check");
+  return report;
 }
 
 /* -------------------- PARSING -------------------- */
@@ -1296,7 +1540,7 @@ function rebuildMonthlySummaryCore_() {
   for (const r of invData) {
     const invNo = normalizeInvoiceNo_(r[3]);
     const invDate = r[4];
-    if (!invNo) continue;
+    if (!invNo || isVoidInvoiceRow_(r)) continue;
 
     const ym = toMonthKeyFlexible_(invDate);
     if (!ym) continue;
@@ -1593,7 +1837,7 @@ function rebuildPreviousMonthSummaryCore_(quiet) {
   for (const r of invData) {
     const invNo = normalizeInvoiceNo_(r[3]);
     const invDate = r[4];
-    if (!invNo) continue;
+    if (!invNo || isVoidInvoiceRow_(r)) continue;
 
     if (toMonthKeyFlexible_(invDate) === targetYm) {
       targetInvoices.add(invNo);
@@ -1718,7 +1962,7 @@ function rebuildMonthlyUnitsCore_() {
     inv.getRange(2, 1, inv.getLastRow() - 1, PARSER_INVOICE_HEADERS.length).getValues().forEach((r) => {
       const invNo = normalizeInvoiceNo_(r[3]);
       const ym = toMonthKeyFlexible_(r[4]);
-      if (invNo && ym && String(r[13] || "").trim().toUpperCase() !== "VOID") months.set(invNo, ym);
+      if (invNo && ym && !isVoidInvoiceRow_(r)) months.set(invNo, ym);
     });
   }
 
@@ -1742,15 +1986,21 @@ function rebuildMonthlyUnitsCore_() {
     .map((t) => [t.ym, PARSER_SETTINGS.BADGER_CHANNEL, t.product, t.size, t.units, t.cents / 100]);
 
   const out = [MONTHLY_UNITS_HEADERS.slice()].concat(rows);
+  // Text format first, so Sheets keeps "2026-09" as text instead of turning it into a date.
+  if (rows.length) sh.getRange(2, 1, rows.length, 1).setNumberFormat("@");
   sh.getRange(1, 1, out.length, MONTHLY_UNITS_HEADERS.length).setValues(out);
   sh.setFrozenRows(1);
   sh.getRange(1, 1, 1, MONTHLY_UNITS_HEADERS.length).setFontWeight("bold");
   if (rows.length) {
-    sh.getRange(2, 1, rows.length, 1).setNumberFormat("@");
     sh.getRange(2, 5, rows.length, 1).setNumberFormat("0");
     sh.getRange(2, 6, rows.length, 1).setNumberFormat("$#,##0.00");
   }
   return `Monthly Units rebuilt: ${rows.length} row(s).`;
+}
+
+/** Terms (column N) "VOID" marks a voided invoice; every summary leaves it out. */
+function isVoidInvoiceRow_(r) {
+  return String(r[13] || "").trim().toUpperCase() === "VOID";
 }
 
 /** After any import or correction: Monthly Summary, Previous Month and Monthly Units. */
