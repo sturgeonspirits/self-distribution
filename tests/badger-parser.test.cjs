@@ -474,7 +474,7 @@ t("menu offers the Badger import, Compare, Apply, PDF fallback and daily source 
     .forEach(fn => assert.ok(e.ctx.__menu.items.includes(fn), fn));
   assert.strictEqual(e.ctx.__menu.items[0], "importFromBadger");
   const s = makeEnv({ ssId: STAGE_ID }); s.ctx.onOpen(); assert.ok(!s.ctx.__menu.items.includes("useBadgerForDailyImport"));
-  assert.match(SRC, /const BADGER_PARSER_VERSION = "2026\.10\.08\.2";/);
+  assert.match(SRC, /const BADGER_PARSER_VERSION = "2026\.10\.08\.3";/);
 });
 
 /* -------------------- 2026.10.08.1 review fixes -------------------- */
@@ -886,4 +886,16 @@ t("review3 1.2: voiding a PDF row whose customer differs from Badger's is logged
   e.ctx.importFromBadger(); assert.strictEqual(e.tabs["Import Errors"].rows.length, 2, "logged once");
 });
 
+
+t("live compare 2026-10-08: Badger 'SS53' is the tracker's 'SS0053' (no duplicate import, no false differences)", () => {
+  const b = makeBadger([]); bInv(b, "69423", "SS53", "Wagner Market", [{ q: 1, d: "Gin", p: 20 }], { date: "2025-08-13T00:00:00" });
+  const sheets = prodSheets([["old", "PDF53", "0053.pdf", "SS0053", "8/13/2025", "Wagner Market", "", "", "", "", "", "", 20, "", true, true, "Yes"]]);
+  sheets["Invoice Lines"].push(["SS0053", "Wagner Market", 1, "750mL", "Gin", "Spirits", 20, 20]);
+  const e = makeEnv({ ssId: PROD_ID, sheets, badger: b, props: CREDS });
+  e.ctx.compareWithBadger();
+  assert.strictEqual(e.tabs["Badger Compare"].rows[1][3], "No differences");
+  const r = e.ctx.importFromBadger(); assert.strictEqual(r.imported, 0); assert.strictEqual(r.linked, 1);
+  assert.strictEqual(e.tabs["Invoices"].rows.length, 2, "no second SS0053 row");
+  assert.strictEqual(e.ctx.normalizeInvoiceNo_("SS53"), "SS0053"); assert.strictEqual(e.ctx.normalizeInvoiceNo_("SS0165"), "SS0165"); assert.strictEqual(e.ctx.normalizeInvoiceNo_("ss 1234"), "SS1234");
+});
 console.log(`\n${passed} tests passed`);

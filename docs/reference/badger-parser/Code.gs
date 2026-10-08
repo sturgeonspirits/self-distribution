@@ -1,9 +1,15 @@
 /**
  * STURGEON SPIRITS — BADGER INVOICE PARSER
  *
- * VERSION: 2026.10.08.2
+ * VERSION: 2026.10.08.3
  *
- * CHANGES IN THIS VERSION (2026.10.08.2, from 2026.10.08.1)
+ * CHANGES IN THIS VERSION (2026.10.08.3, from 2026.10.08.2)
+ * - Badger lists some early invoices without leading zeros ("SS53") while the tracker
+ *   has "SS0053". Invoice numbers with fewer than four digits are now padded, so they
+ *   match instead of showing as "Missing in tracker" + "Not in Badger" and being
+ *   imported a second time. (Found by the first live Compare, 2026-10-08.)
+ *
+ * CHANGES IN 2026.10.08.2 (from 2026.10.08.1)
  * - Uses Badger's real field names, confirmed by the 2026-10-08 field check: the state is
  *   billToStateAbbreviation and the phone billToPhone (both were left blank before), and
  *   Beverage Class uses beverageClassName ("Spirits", as on the PDF lines).
@@ -113,7 +119,7 @@
  *   (Project Settings > Script Properties). Never put them in this file.
  */
 
-const BADGER_PARSER_VERSION = "2026.10.08.2";
+const BADGER_PARSER_VERSION = "2026.10.08.3";
 
 const PARSER_PRODUCTION_FOLDER_ID = "1ccOfQpk69SLyMYskD2srlNqHCGm1VBJ5";
 
@@ -2728,8 +2734,14 @@ function appendRows_(sheet, rows) {
   sheet.getRange(sheet.getLastRow() + 1, 1, rows.length, rows[0].length).setValues(rows);
 }
 
+/**
+ * Invoice # key. Badger lists a few early invoices without leading zeros ("SS53") while the
+ * PDFs and the tracker say "SS0053"; both become "SS0053" so they are one invoice.
+ */
 function normalizeInvoiceNo_(v) {
-  return String(v || "").toUpperCase().replace(/\s+/g, "").replace(/[^A-Z0-9]/g, "");
+  const key = String(v || "").toUpperCase().replace(/\s+/g, "").replace(/[^A-Z0-9]/g, "");
+  const short = key.match(/^SS(\d{1,3})$/);
+  return short ? `SS${short[1].padStart(4, "0")}` : key;
 }
 
 function parseMmDdYyyy_(s) {
