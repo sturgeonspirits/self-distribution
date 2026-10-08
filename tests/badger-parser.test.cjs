@@ -104,8 +104,8 @@ function bInv(b, id, no, cust, lines, extra = {}) {
   const total = lines.reduce((s, l) => s + l.q * l.p, 0);
   const item = Object.assign({ id, number: no, customerId: 7, billToName: cust, date: "2026-09-16T00:00:00", dollarAmount: total, paidDate: null, isVoid: false, modifiedDate: "2026-09-16T10:00:00" }, extra);
   b.invoices.push(item);
-  b.details[id] = { id, number: no, billToName: cust, billToAddressLine1: "1 Main St", billToCity: "Oshkosh", billToState: "WI", billToPostalCode: "54901", billToResellerNumber: "R-1", orderNumber: no.slice(2), date: item.date, totalDue: total,
-    lines: lines.map(l => ({ quantity: l.q, description: l.d, unitPrice: l.p, unitOfMeasureId: l.u || 3, beverageClass: "Spirit", alcoholProof: 80 })) };
+  b.details[id] = { id, number: no, billToName: cust, billToAddressLine1: "1 Main St", billToCity: "Oshkosh", billToStateAbbreviation: "WI", billToPostalCode: "54901", billToPhone: "920-555-0199", billToResellerNumber: "R-1", orderNumber: no.slice(2), date: item.date, totalDue: total,
+    lines: lines.map(l => ({ quantity: l.q, description: l.d, unitPrice: l.p, unitOfMeasureId: l.u || 3, unitOfMeasureName: (l.u || 3) === 5 ? "375mL" : "750mL", beverageClass: "Spirit", beverageClassName: "Spirits", alcoholProof: 80 })) };
   return item;
 }
 const CREDS = { BADGER_USERNAME: "karl", BADGER_PASSWORD: "pw" };
@@ -289,9 +289,9 @@ t("Badger import adds a new invoice (lines, row, Parser State with modifiedDate)
   const r = e.ctx.importFromBadger();
   assert.strictEqual(r.environment, "PRODUCTION"); assert.strictEqual(r.imported, 1); assert.strictEqual(r.detailsRead, 1);
   const row = e.tabs["Invoices"].rows[1];
-  assert.deepStrictEqual(row.slice(1, 14), ["badger:101", "Badger invoice SS0170", "SS0170", "9/16/2026", "Wagner Market", "1 Main St", "Oshkosh WI 54901", "R-1", "", "", "'0170", 336, ""]);
+  assert.deepStrictEqual(row.slice(1, 14), ["badger:101", "Badger invoice SS0170", "SS0170", "9/16/2026", "Wagner Market", "1 Main St", "Oshkosh WI 54901", "R-1", "", "920-555-0199", "'0170", 336, ""]);
   assert.deepStrictEqual(row.slice(14), [false, false, "No"], "new row gets the default Delivered/Paid to Me/Submitted");
-  assert.deepStrictEqual(lineRowsFor(e, "SS0170"), [["SS0170", "Wagner Market", 12, "750mL", "Blood Orange Gin", "Spirit", 22, 264], ["SS0170", "Wagner Market", 6, "375mL", "Limoncello", "Spirit", 12, 72]]);
+  assert.deepStrictEqual(lineRowsFor(e, "SS0170"), [["SS0170", "Wagner Market", 12, "750mL", "Blood Orange Gin", "Spirits", 22, 264], ["SS0170", "Wagner Market", 6, "375mL", "Limoncello", "Spirits", 12, 72]]);
   const st = stateRows(e)[0]; assert.strictEqual(st[1], "badger:101"); assert.strictEqual(st[3], "IMPORTED"); assert.match(st[5], /badgerModified=2026-09-16T10:00:00/);
   assert.deepStrictEqual(e.tabs["Monthly Units"].rows, [["Month", "Channel", "Product", "Size", "Units", "Dollars"], ["2026-09", "Wholesale (Badger)", "Blood Orange Gin", "750mL", 12, 264], ["2026-09", "Wholesale (Badger)", "Limoncello", "375mL", 6, 72]]);
   assert.ok(e.tabs["Monthly Summary"].cleared >= 1); assert.ok(e.tabs["Previous Month"].cleared >= 1);
@@ -474,7 +474,7 @@ t("menu offers the Badger import, Compare, Apply, PDF fallback and daily source 
     .forEach(fn => assert.ok(e.ctx.__menu.items.includes(fn), fn));
   assert.strictEqual(e.ctx.__menu.items[0], "importFromBadger");
   const s = makeEnv({ ssId: STAGE_ID }); s.ctx.onOpen(); assert.ok(!s.ctx.__menu.items.includes("useBadgerForDailyImport"));
-  assert.match(SRC, /const BADGER_PARSER_VERSION = "2026\.10\.08\.1";/);
+  assert.match(SRC, /const BADGER_PARSER_VERSION = "2026\.10\.08\.2";/);
 });
 
 /* -------------------- 2026.10.08.1 review fixes -------------------- */
@@ -606,7 +606,7 @@ t("review 2.1: the import never changes a LINKED (PDF) row, even when Badger cha
 
 t("review 2.1: refresh and Apply never blank a filled cell or touch Winery Name / Terms; corrected rows then follow Badger", () => {
   const b = makeBadger([]); const item = bInv(b, "201", "SS0163", "Fox and Crow LLC", [{ q: 6, d: "Blood Orange Gin", p: 22 }]);
-  ["billToAddressLine1", "billToCity", "billToState", "billToPostalCode"].forEach(k => { b.details["201"][k] = undefined; });
+  ["billToAddressLine1", "billToCity", "billToState", "billToStateAbbreviation", "billToPostalCode", "billToPhone"].forEach(k => { b.details["201"][k] = undefined; });
   const e = makeEnv({ ssId: PROD_ID, sheets: prodSheets([["old", "PDFFILE", "0163.pdf", "SS0163", "9/16/2026", "Fox & Crow", "12 Oak St", "Oshkosh WI 54901", "R-9", "Sturgeon Spirits", "920-555-0100", "0163", 162, "Net 30", true, true, "Yes"]]), badger: b, props: CREDS });
   e.ctx.importFromBadger(); e.ctx.compareWithBadger(); e.ctx.applyBadgerCorrections();
   assert.deepStrictEqual(e.tabs["Invoices"].rows[1].slice(3), ["SS0163", "9/16/2026", "Fox and Crow LLC", "12 Oak St", "Oshkosh WI 54901", "R-1", "Sturgeon Spirits", "920-555-0100", "'0163", 132, "Net 30", true, true, "Yes"]);
@@ -734,18 +734,26 @@ t("review2 B: a void or un-void in Badger is applied even when modifiedDate does
   e.ctx.importFromBadger(); assert.strictEqual(e.tabs["Invoices"].rows[2][13], "VOID");
 });
 
-t("review2 C: a LINKED invoice's Badger change is logged once; a Badger void is applied automatically", () => {
+t("review2 C: a LINKED invoice that is only paid is not logged; a real difference is logged once; a Badger void is applied automatically", () => {
   const b = makeBadger([]); const item = bInv(b, "201", "SS0163", "Fox and Crow", [{ q: 6, d: "Gin", p: 22 }]);
   const sheets = prodSheets([pdfRow("SS0163", "Fox and Crow", 132), pdfRow("SS0164", "Other", 22)]);
   sheets["Invoice Lines"].push(["SS0163", "Fox and Crow", 6, "750mL", "Gin", "Spirits", 22, 132], ["SS0164", "Other", 1, "750mL", "Gin", "Spirits", 22, 22]);
   bInv(b, "202", "SS0164", "Other", [{ q: 1, d: "Gin", p: 22 }]);
   const e = makeEnv({ ssId: PROD_ID, sheets, badger: b, props: CREDS });
   e.ctx.importFromBadger();
+  // Paid in Badger (modifiedDate changes) but nothing on the invoice changed: read, compared, nothing logged.
   item.modifiedDate = "2026-10-01T00:00:00"; item.paidDate = "2026-10-01T00:00:00";
+  const paid = e.ctx.importFromBadger(); assert.strictEqual(paid.linkedChanged, 0); assert.strictEqual(paid.linkedRechecked, 1); assert.strictEqual(paid.detailsRead, 1);
+  assert.strictEqual(e.tabs["Import Errors"].rows.length, 1, "a payment alone is not an error");
+  assert.strictEqual(stateRows(e).slice(-1)[0][3], "LINKED", "new baseline recorded");
+  assert.strictEqual(e.ctx.importFromBadger().detailsRead, 0, "not read again until Badger changes again");
+  // A real difference is logged once, naming it; the row itself is not changed.
+  item.modifiedDate = "2026-10-02T00:00:00"; item.dollarAmount = 154; b.details["201"].lines[0].quantity = 7;
   assert.strictEqual(e.ctx.importFromBadger().linkedChanged, 1);
-  assert.match(e.tabs["Import Errors"].rows[1][4], /came from a PDF and changed in Badger/);
+  assert.match(e.tabs["Import Errors"].rows[1][4], /SS0163 came from a PDF and now differs from Badger: Amount differs \(tracker \$132\.00, Badger \$154\.00\); Lines differ/);
   assert.strictEqual(e.tabs["Invoices"].rows[1][12], 132, "a non-void change does not touch the LINKED row");
-  assert.strictEqual(e.ctx.importFromBadger().linkedChanged, 0); assert.ok(!/came from PDFs/.test(e.toasts[e.toasts.length - 1]));
+  const again = e.ctx.importFromBadger(); assert.strictEqual(again.linkedChanged, 0); assert.strictEqual(again.detailsRead, 0, "logged once, not re-read every run");
+  assert.ok(!/came from PDFs/.test(e.toasts[e.toasts.length - 1]));
   item.isVoid = true; // same modifiedDate
   const r = e.ctx.importFromBadger(); assert.strictEqual(r.voided, 1); assert.strictEqual(r.linkedChanged, 0);
   const row = e.tabs["Invoices"].rows[1];
@@ -753,7 +761,7 @@ t("review2 C: a LINKED invoice's Badger change is logged once; a Badger void is 
   assert.strictEqual(lineRowsFor(e, "SS0163").length, 0); assert.strictEqual(lineRowsFor(e, "SS0164").length, 1);
   assert.strictEqual(stateRows(e).slice(-1)[0][3], "VOIDED");
   assert.strictEqual(e.ctx.importFromBadger().voided, 0, "applied once");
-  assert.strictEqual(e.tabs["Import Errors"].rows.length, 2, "the void is applied, not logged");
+  assert.strictEqual(e.tabs["Import Errors"].rows.length, 2, "only the real difference was logged; the void is applied, not logged");
 });
 
 t("voids: a PDF invoice already void in Badger at the first import is voided, and an un-void later restores it from Badger", () => {
