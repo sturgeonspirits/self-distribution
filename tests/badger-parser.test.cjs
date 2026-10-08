@@ -1,4 +1,4 @@
-// Badger parser 2026.10.08.1 tests (2026-10-08). Run: node tests/badger-parser.test.cjs — fakes SpreadsheetApp, Drive, ScriptApp, Badger, etc.
+// Badger parser 2026.10.08.1 tests (2026-10-08, with both review rounds). Run: node tests/badger-parser.test.cjs — fakes SpreadsheetApp, Drive, ScriptApp, Badger, etc.
 const fs = require("fs");
 const vm = require("vm");
 const assert = require("assert");
@@ -404,8 +404,8 @@ t("a failed Parser State write is finished by the next run without a second invo
   e.tabs["Parser State"].failAppend = true;
   assert.throws(() => e.ctx.importFromBadger());
   e.tabs["Parser State"].failAppend = false;
-  const r = e.ctx.importFromBadger(); assert.strictEqual(r.linked, 0); assert.strictEqual(r.imported, 0);
-  assert.strictEqual(stateRows(e).slice(-1)[0][3], "IMPORTED", "its own row is recognised by badger:<id>, so it keeps following Badger (not LINKED)");
+  const r = e.ctx.importFromBadger(); assert.strictEqual(r.linked, 0); assert.strictEqual(r.imported, 0); assert.strictEqual(r.updated, 1);
+  assert.strictEqual(stateRows(e).slice(-1)[0][3], "UPDATED", "its own row is recognised by badger:<id> and refreshed, so it keeps following Badger (not LINKED)");
   assert.strictEqual(e.tabs["Invoices"].rows.length, 2); assert.strictEqual(e.tabs["Invoice Lines"].rows.length, 2);
 });
 
@@ -699,6 +699,132 @@ t("review: Check Badger fields is read-only and writes nothing to any sheet", ()
   assert.strictEqual(r.samples.length, 2); assert.strictEqual(r.samples[0].detailNumber, "SS0170");
   assert.strictEqual(JSON.stringify(Object.keys(e.tabs).map(n => e.tabs[n].rows)), before);
   assert.ok(b.requests.every(q => ALLOWED_BADGER.test(q)));
+});
+
+/* -------------------- 2026.10.08.1 second review -------------------- */
+
+t("review2 A: an imported invoice voided and re-issued under the same number follows the re-issued record", () => {
+  const b = makeBadger([]); const first = bInv(b, "301", "SS0200", "Wagner Market", [{ q: 6, d: "Gin", p: 22 }]);
+  const e = makeEnv({ ssId: PROD_ID, sheets: prodSheets(), badger: b, props: CREDS });
+  e.ctx.importFromBadger(); e.tabs["Invoices"].rows[1][15] = true;
+  first.isVoid = true; first.modifiedDate = "2026-09-20T00:00:00";
+  const re = bInv(b, "302", "SS0200", "Wagner Market", [{ q: 12, d: "Gin", p: 22 }], { modifiedDate: "2026-09-20T00:05:00" });
+  const r1 = e.ctx.importFromBadger(); assert.strictEqual(r1.updated, 1); assert.strictEqual(r1.linked, 0);
+  const row = e.tabs["Invoices"].rows[1];
+  assert.deepStrictEqual([row[1], row[2], row[12], row[15]], ["badger:302", "Badger invoice SS0200", 264, true]);
+  assert.strictEqual(e.ctx.importFromBadger().unchanged, 1);
+  re.modifiedDate = "2026-09-25T00:00:00"; re.dollarAmount = 286; b.details["302"].lines[0].quantity = 13;
+  assert.strictEqual(e.ctx.importFromBadger().updated, 1);
+  assert.deepStrictEqual([row[12], lineRowsFor(e, "SS0200").map(l => l[2])], [286, [13]]);
+});
+
+t("review2 B: a void or un-void in Badger is applied even when modifiedDate does not change; a typed VOID is kept", () => {
+  const b = makeBadger([]); const item = bInv(b, "101", "SS0170", "Wagner Market", [{ q: 6, d: "Gin", p: 22 }]);
+  bInv(b, "102", "SS0171", "Other", [{ q: 1, d: "Gin", p: 22 }]);
+  const e = makeEnv({ ssId: PROD_ID, sheets: prodSheets(), badger: b, props: CREDS });
+  e.ctx.importFromBadger();
+  item.isVoid = true;
+  assert.strictEqual(e.ctx.importFromBadger().voided, 1);
+  assert.deepStrictEqual([e.tabs["Invoices"].rows[1][12], e.tabs["Invoices"].rows[1][13], lineRowsFor(e, "SS0170").length], [0, "VOID", 0]);
+  assert.strictEqual(e.ctx.importFromBadger().voided, 0, "not repeated");
+  item.isVoid = false;
+  assert.strictEqual(e.ctx.importFromBadger().updated, 1);
+  assert.deepStrictEqual([e.tabs["Invoices"].rows[1][12], e.tabs["Invoices"].rows[1][13], lineRowsFor(e, "SS0170").length], [132, "", 1]);
+  e.tabs["Invoices"].rows[2][13] = "VOID"; // staff typed VOID on an active invoice
+  e.ctx.importFromBadger(); assert.strictEqual(e.tabs["Invoices"].rows[2][13], "VOID");
+});
+
+t("review2 C: a LINKED invoice's Badger change or void is logged once to Import Errors and not repeated in later toasts", () => {
+  const b = makeBadger([]); const item = bInv(b, "201", "SS0163", "Fox and Crow", [{ q: 6, d: "Gin", p: 22 }]);
+  const e = makeEnv({ ssId: PROD_ID, sheets: prodSheets([pdfRow("SS0163", "Fox and Crow", 132)]), badger: b, props: CREDS });
+  e.ctx.importFromBadger();
+  item.modifiedDate = "2026-10-01T00:00:00"; item.paidDate = "2026-10-01T00:00:00";
+  assert.strictEqual(e.ctx.importFromBadger().linkedChanged, 1);
+  assert.match(e.tabs["Import Errors"].rows[1][4], /came from a PDF and changed in Badger/);
+  assert.strictEqual(e.ctx.importFromBadger().linkedChanged, 0); assert.ok(!/came from PDFs/.test(e.toasts[e.toasts.length - 1]));
+  item.isVoid = true; // same modifiedDate
+  assert.strictEqual(e.ctx.importFromBadger().linkedChanged, 1);
+  assert.match(e.tabs["Import Errors"].rows[2][4], /now VOID in Badger.*still in the tracker/);
+  assert.strictEqual(e.tabs["Invoices"].rows[1][12], 132, "the LINKED row itself is not changed");
+  e.ctx.importFromBadger(); assert.strictEqual(e.tabs["Import Errors"].rows.length, 3, "each logged once");
+});
+
+t("review2 D: Check Badger fields shows the raw field names even when the lines are under another key, and checks recent totals", () => {
+  const b = makeBadger([]); bInv(b, "101", "SS0170", "W", [{ q: 1, d: "Gin", p: 22 }]); bInv(b, "102", "SS0171", "X", [{ q: 2, d: "Gin", p: 22 }]);
+  b.invoices[1].dollarAmount = 40;
+  const d = b.details["101"]; d.invoiceLines = d.lines; delete d.lines;
+  const e = makeEnv({ ssId: PROD_ID, sheets: prodSheets(), badger: b, props: CREDS });
+  const r = e.ctx.checkBadgerFields();
+  assert.strictEqual(JSON.stringify(r.samples[0].detailArrayFields), JSON.stringify(["invoiceLines"])); assert.ok(r.samples[0].lineFields.includes("unitPrice"));
+  assert.strictEqual(r.samples[0].paidDate, null); assert.strictEqual(r.samples[0].isVoid, false);
+  assert.strictEqual(r.addUp.checked, 2); assert.strictEqual(r.addUp.matching, 1); assert.strictEqual(r.addUp.notMatching[0].number, "SS0171");
+});
+
+t("review2 E: a void writes only Amount Due and Terms; a refresh leaves an unplanned cell (Winery Name) untouched", () => {
+  const b = makeBadger([]); const item = bInv(b, "101", "SS0170", "Wagner Market", [{ q: 6, d: "Gin", p: 22 }]);
+  const e = makeEnv({ ssId: PROD_ID, sheets: prodSheets(), badger: b, props: CREDS });
+  e.ctx.importFromBadger(); e.tabs["Invoices"].rows[1][9] = "=WINERY()";
+  const sheet = e.tabs["Invoices"]; const real = sheet.getRange; const writes = [];
+  sheet.getRange = (r, c, nr = 1, nc = 1) => { const rng = real(r, c, nr, nc); const sv = rng.setValues; rng.setValues = v => { writes.push(`${c}-${c + nc - 1}`); return sv(v); }; return rng; };
+  item.isVoid = true; e.ctx.importFromBadger();
+  assert.deepStrictEqual(writes, ["13-14"]);
+  item.isVoid = false; item.modifiedDate = "2026-09-30T00:00:00"; writes.length = 0; e.ctx.importFromBadger();
+  assert.ok(writes.every(w => !/^(1|2|3|10|15|16|17)-|-(10)$/.test(w) && w !== "10-10"), writes.join(" "));
+  assert.strictEqual(e.tabs["Invoices"].rows[1][9], "=WINERY()");
+});
+
+t("review2 F: a continued Compare redoes the list-only checks; a stopped Compare older than an hour starts fresh", () => {
+  const b = makeBadger([]); const extra = [];
+  ["401", "402", "403"].forEach((id, i) => { bInv(b, id, `SS030${i}`, "Store " + i, [{ q: 2, d: "Gin", p: 22 }]); extra.push(pdfRow(`SS030${i}`, "Store " + i, 1)); });
+  const e = makeEnv({ ssId: PROD_ID, sheets: prodSheets(extra), badger: b, props: CREDS });
+  const clock = withClock(e, 3 * 60 * 1000);
+  assert.strictEqual(e.ctx.compareWithBadger().notChecked, 1);
+  bInv(b, "405", "SS0309", "New Store", [{ q: 1, d: "Gin", p: 22 }]);
+  clock.reset(); const c2 = e.ctx.compareWithBadger(); assert.strictEqual(c2.continued, true); assert.strictEqual(c2.checked, 1);
+  assert.ok(e.tabs["Badger Compare"].rows.some(r => r[1] === "SS0309" && r[3] === "Missing in tracker"));
+  // A stopped run from yesterday is not continued.
+  const tab = e.tabs["Badger Compare"]; tab.rows[1][3] = "Not checked (time limit)"; tab.rows.slice(1).forEach(r => { r[0] = new Date(Date.UTC(2020, 0, 1)); });
+  clock.reset(); const c3 = e.ctx.compareWithBadger(); assert.strictEqual(c3.continued, false);
+});
+
+t("review2 G: Apply records a void as VOIDED, so a later un-void in Badger clears Terms", () => {
+  const b = makeBadger([]); const item = bInv(b, "201", "SS0163", "Fox and Crow", [{ q: 6, d: "Gin", p: 22 }], { isVoid: true });
+  const sheets = prodSheets([pdfRow("SS0163", "Fox and Crow", 132)]);
+  sheets["Invoice Lines"].push(["SS0163", "Fox and Crow", 6, "750mL", "Gin", "Spirits", 22, 132]);
+  const e = makeEnv({ ssId: PROD_ID, sheets, badger: b, props: CREDS });
+  e.ctx.importFromBadger(); e.ctx.compareWithBadger(); assert.strictEqual(e.ctx.applyBadgerCorrections().voided, 1);
+  assert.strictEqual(stateRows(e).slice(-1)[0][3], "VOIDED");
+  item.isVoid = false; item.modifiedDate = "2026-10-02T00:00:00";
+  assert.strictEqual(e.ctx.importFromBadger().updated, 1);
+  assert.deepStrictEqual([e.tabs["Invoices"].rows[1][12], e.tabs["Invoices"].rows[1][13], e.tabs["Monthly Units"].rows.length - 1], [132, "", 1]);
+});
+
+t("review2 H: a row moved between the row re-read and the write is skipped and finished by the next run", () => {
+  const b = makeBadger([]);
+  bInv(b, "101", "SS0170", "First", [{ q: 1, d: "Gin", p: 22 }]);
+  const second = bInv(b, "102", "SS0171", "Second", [{ q: 1, d: "Gin", p: 22 }]);
+  bInv(b, "103", "SS0172", "Third", [{ q: 1, d: "Gin", p: 22 }]);
+  const e = makeEnv({ ssId: PROD_ID, sheets: prodSheets(), badger: b, props: CREDS });
+  e.ctx.importFromBadger();
+  const inv = e.tabs["Invoices"].rows; inv[3][15] = true; inv[3][16] = "Yes";
+  second.modifiedDate = "2026-09-22T00:00:00"; second.dollarAmount = 44; b.details["102"].lines[0].quantity = 2;
+  const ls = e.tabs["Invoice Lines"]; const dr = ls.deleteRows; let done = false;
+  ls.deleteRows = (...a) => { if (!done) { done = true; inv.splice(1, 1); } return dr(...a); };
+  assert.strictEqual(e.ctx.importFromBadger().deferred, 1);
+  assert.deepStrictEqual(inv.slice(1).map(r => [r[3], r[12], r[15], r[16]]), [["SS0171", 22, false, "No"], ["SS0172", 22, true, "Yes"]]);
+  const r2 = e.ctx.importFromBadger(); assert.strictEqual(r2.updated, 1); assert.strictEqual(r2.imported, 1, "the row staff deleted is re-imported");
+  assert.deepStrictEqual(inv.slice(1).map(r => [r[3], r[12], r[15], r[16]]), [["SS0171", 44, false, "No"], ["SS0172", 22, true, "Yes"], ["SS0170", 22, false, "No"]]);
+  assert.deepStrictEqual(lineRowsFor(e, "SS0171").map(l => l[2]), [2], "lines not doubled");
+});
+
+t("review2 J: Apply corrects at most 40 invoices per run and finishes on the next run", () => {
+  const b = makeBadger([]); const extra = [];
+  for (let i = 0; i < 45; i++) { const no = `SS1${String(i).padStart(3, "0")}`; bInv(b, String(500 + i), no, "Store " + i, [{ q: 2, d: "Gin", p: 22 }]); extra.push(pdfRow(no, "Store " + i, 1)); }
+  const e = makeEnv({ ssId: PROD_ID, sheets: prodSheets(extra), badger: b, props: CREDS });
+  e.ctx.compareWithBadger();
+  const r1 = e.ctx.applyBadgerCorrections(); assert.strictEqual(r1.corrected, 40); assert.match(r1.stoppedReason, /Stopped after 40 corrections/);
+  const r2 = e.ctx.applyBadgerCorrections(); assert.strictEqual(r2.corrected, 5); assert.strictEqual(r2.alreadyDone, 40);
+  assert.ok(e.tabs["Invoices"].rows.slice(1).every(r => r[12] === 44));
 });
 
 console.log(`\n${passed} tests passed`);
