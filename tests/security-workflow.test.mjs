@@ -706,6 +706,40 @@ test("Hub review: a public application cannot re-subscribe an opted-out address 
   assert.deepEqual([fresh[1][h.status], fresh[1][h.email], fresh[1][h.contact_id]], ["Subscribed", "pat@someone.example", "uuid"]);
 });
 
+test("Review fixes: public errors and order reply trimmed, writes refused over GET, mailer menu paths honour text Do Not Email", async () => {
+  const backend = await readFile(new URL("apps-script/Code.gs", root), "utf8");
+  const proxy = await readFile(new URL("netlify/functions/inventory.js", root), "utf8");
+  const mailer = await readFile(new URL("docs/reference/distribution-outreach/Code.gs", root), "utf8");
+  const fn = name => { const start = backend.indexOf(`\nfunction ${name}(`) + 1; assert.ok(start > 0, name); return backend.slice(start, backend.indexOf("\n}\n", start) + 2); };
+  // Public callers see only messages written for them.
+  assert.match(backend, /const PUBLIC_ACTIONS = new Set\(\["listSkus", "submitCustomerApplication", "submitOnlineOrderRequest"\]\);/);
+  assert.match(fn("handle_"), /if \(PUBLIC_ACTIONS\.has\(action\) && !err\?\.public_message\) \{\s*console\.error/);
+  ["publicText_", "publicEmail_", "apiSubmitCustomerApplication_", "apiSubmitOnlineOrderRequest_"].forEach(name => {
+    assert.doesNotMatch(fn(name), /throw new Error\(/, `${name} throws only customer-facing errors`);
+  });
+  const publicError = new Function(`${fn("publicError_")}\nreturn publicError_;`)();
+  assert.equal(publicError("Business name is required.").public_message, true);
+  // The order reply carries no internal identifiers.
+  const order = fn("apiSubmitOnlineOrderRequest_");
+  assert.match(order, /return \{ message:"Order request received for confirmation\.", request_id:requestId \};/);
+  assert.doesNotMatch(order, /return \{[^}]*(account_id|verification_status)/);
+  // Writes are refused over GET, in the proxy and in Apps Script; the proxy list equals READ_ACTIONS.
+  const list = source => JSON.stringify(Array.from(source.matchAll(/"([A-Za-z]+)"/g), m => m[1]).sort());
+  const readActions = backend.match(/const READ_ACTIONS = new Set\(\[([^\]]+)\]\)/)[1];
+  const getActions = proxy.match(/const GET_READ_ACTIONS = new Set\(\[([^\]]+)\]\)/)[1];
+  assert.equal(list(getActions), list(readActions));
+  assert.match(proxy, /if \(event\.httpMethod === "GET" && !GET_READ_ACTIONS\.has\(action\)\) \{\s*return response\(405/);
+  assert.match(backend, /function doGet\(e\) \{\s*return handle_\(e, null, true\);/);
+  assert.match(fn("handle_"), /if \(isGet && !READ_ACTIONS\.has\(action\)\) throw new Error/);
+  // Every staff-app GET is a read action.
+  const html = await readFile(new URL("index.html", root), "utf8");
+  const gets = Array.from(html.matchAll(/staffApiGet\(\{ action:"([A-Za-z]+)"/g), m => m[1]);
+  assert.ok(gets.length > 5);
+  gets.forEach(action => assert.ok(readActions.includes(`"${action}"`), `${action} is a read action`));
+  // The mailer's menu paths use isTicked_ for Do Not Email.
+  assert.doesNotMatch(mailer, /DO_NOT_EMAIL - 1\] (===|!==) true/);
+});
+
 test("Order online invite: audience, opt-outs, once per address, and the message always carries the form link and footer", async () => {
   const backend = await readFile(new URL("apps-script/Code.gs", root), "utf8");
   // Each function runs to the next top-level declaration (brace counting would trip on regex braces).

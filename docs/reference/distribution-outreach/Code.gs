@@ -1,9 +1,13 @@
 /**
  * Sturgeon Spirits Distribution Outreach
  *
- * VERSION: 2026.10.08.26-APP
+ * VERSION: 2026.10.08.27-APP
  *
  * CHANGES IN THIS VERSION
+ * - Do Not Email typed as text ("TRUE", "Yes", "1") is now also honoured by the menu paths: refreshFollowupStatuses
+ *   no longer schedules follow-ups for such a row, and assertPilotLeadEligible_ refuses it.
+ *
+ * CHANGES IN 2026.10.08.26-APP
  * - Adds the Hub-only sendCustomerEmail action for the "Order online invite" to current customers. It validates the
  *   Directory row by row number, business and email; refuses Do Not Email, an opt-out status or outcome, and an address
  *   that already received the invite; preserves lock/idempotency/Zoho recovery; and writes one Activity Log row with the
@@ -73,7 +77,7 @@
  * Sends through the authenticated Zoho Mail API account.
  */
 
-const OUTREACH_VERSION = '2026.10.08.26-APP';
+const OUTREACH_VERSION = '2026.10.08.27-APP';
 const NURTURE_CHECK_IN_DUPLICATE_COOLDOWN_DAYS = 60;
 
 const OUTREACH = Object.freeze({
@@ -756,7 +760,7 @@ function refreshFollowupStatuses() {
     const stage = String(row[OUTREACH.COL.STAGE - 1] || '');
     if (due instanceof Date && due <= now && stage !== 'Complete' &&
         ['Sent', 'Follow-up sent'].indexOf(status) !== -1 &&
-        row[OUTREACH.COL.DO_NOT_EMAIL - 1] !== true) {
+        !isTicked_(row[OUTREACH.COL.DO_NOT_EMAIL - 1])) {
       row[OUTREACH.COL.STATUS - 1] = 'Follow-up due';
       changed++;
     }
@@ -782,7 +786,7 @@ function assertPilotLeadEligible_(row) {
   }
   if (relationship !== 'Prospect') throw new Error('The pilot is limited to prospects.');
   if (stage !== 'Initial') throw new Error('The pilot is limited to initial outreach emails.');
-  if (blockedStatus || blockedOutcome || row[OUTREACH.COL.DO_NOT_EMAIL - 1] === true) {
+  if (blockedStatus || blockedOutcome || isTicked_(row[OUTREACH.COL.DO_NOT_EMAIL - 1])) {
     throw new Error('The source lead is blocked from email.');
   }
   if (row[OUTREACH.COL.LAST_EMAILED - 1]) {

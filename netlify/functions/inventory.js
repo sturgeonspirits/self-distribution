@@ -1,9 +1,9 @@
-// App version: 2026.10.08.39-WEB
+// App version: 2026.10.08.40-WEB
 import { gunzipSync } from "node:zlib";
 import { requireStaffSession } from "./auth.js";
 import { fetchWithDriveRelay, relayConfig } from "../lib/drive-relay.js";
 
-const APP_VERSION = "2026.10.08.39-WEB";
+const APP_VERSION = "2026.10.08.40-WEB";
 const STAFF_ACTIONS = new Set([
   "outreachDashboard",
   "outreachRecord",
@@ -78,6 +78,9 @@ const READ_UPSTREAM_TIMEOUT_MS = 11500;
 const SEND_UPSTREAM_TIMEOUT_MS = 24000;
 const SEND_ACTIONS = new Set(["sendOutreachEmail", "sendOutreachTestEmail", "sendOutreachCampaignBatch", "sendBadgerPaymentReminder", "createBadgerInvoice"]);
 const SNAPSHOT_ACTIONS = new Set(["createOutreachCampaign"]);
+// Actions allowed over GET: the same list as READ_ACTIONS in apps-script/Code.gs. Anything that
+// changes data must be a POST, so a link or image tag cannot trigger it with a staff cookie.
+const GET_READ_ACTIONS = new Set(["initData", "listSkus", "sellSheet", "managerGrid", "salesSinceCount", "outreachDashboard", "outreachRecord", "outreachSendStatus", "outreachNewsletterContacts", "outreachCampaigns", "outreachCampaign", "previewOutreachCampaign", "customerWorkQueue", "customerAccountIndex", "hubSystemStatus", "salesReport"]);
 const CAMPAIGN_READ_ACTIONS = new Set(["outreachCampaigns", "outreachCampaign", "previewOutreachCampaign"]);
 // 2026.10.02.13-WEB: initializeHardenedHub is no longer proxied; the request is refused as unknown.
 const ADMIN_ACTIONS = new Set(["repairHubStructure", "reconcileIntegrations", "recalculateOutreachMiles", "backfillEngagementDetails", "upsertProduct", "addSkuToStore"]);
@@ -234,6 +237,12 @@ export async function handler(event) {
     if (!action) return response(400, cors, { ok:false, code:"MISSING_ACTION", error:"An Inventory API action is required." });
     if (!STAFF_ACTIONS.has(action) && !ADMIN_ACTIONS.has(action)) {
       return response(400, cors, { ok:false, code:"UNKNOWN_ACTION", error:"Unknown Inventory API action." });
+    }
+    if (event.httpMethod === "GET" && !GET_READ_ACTIONS.has(action)) {
+      return response(405, cors, { ok:false, code:"METHOD_NOT_ALLOWED", error:"This action must be sent as POST." });
+    }
+    if (event.httpMethod !== "GET" && event.httpMethod !== "POST") {
+      return response(405, cors, { ok:false, code:"METHOD_NOT_ALLOWED", error:"Method not allowed." });
     }
 
     if (STAFF_ACTIONS.has(action) || ADMIN_ACTIONS.has(action)) {

@@ -9,6 +9,13 @@
  *   last 12 months (matched by business name; Relationship may need updating)". A name-only match into a Prospect
  *   (or blank) row is still left out as "Possible customer" until the invoice is linked, because the same name could
  *   be a different business. The same rule is used at preview, rebuild and send time.
+ * - Public customer actions (listSkus, submitCustomerApplication, submitOnlineOrderRequest) return only messages
+ *   written for the customer (validation such as "Business name is required."). Any other failure is logged with
+ *   console.error and the caller sees "The request could not be processed."
+ * - The public order reply no longer includes the internal Account ID or verification status (only message and
+ *   request_id).
+ * - Write actions are refused over GET ("This action must be sent as POST."); only READ_ACTIONS work as a GET, so a
+ *   link cannot trigger syncBadgerStatus or another change. The staff proxy (2026.10.08.40-WEB) refuses them first.
  * - Rebuild / send-time re-check reads Badger only for rows that Relationship or Status do not already qualify, so a
  *   Badger read failure during a scheduled send no longer blocks Current customer / Existing customer recipients.
  *
@@ -1307,7 +1314,16 @@ function readJsonBody_(e) {
 }
 function requireFields_(obj, fields) {
   const missing = fields.filter(f => obj[f] === undefined || obj[f] === null || obj[f] === "");
-  if (missing.length) throw new Error(`Missing required field(s): ${missing.join(", ")}`);
+  if (missing.length) throw publicError_(`Missing required field(s): ${missing.join(", ")}`);
+}
+// Actions the public customer proxy may call. Their callers see only messages written for them
+// (thrown with publicError_); anything else is logged and replaced with a fixed message.
+const PUBLIC_ACTIONS = new Set(["listSkus", "submitCustomerApplication", "submitOnlineOrderRequest"]);
+const PUBLIC_ERROR_MESSAGE = "The request could not be processed.";
+function publicError_(message) {
+  const error = new Error(message);
+  error.public_message = true;
+  return error;
 }
 function getApiKey_() {
   return PropertiesService.getScriptProperties().getProperty("API_KEY") || "";
@@ -1321,13 +1337,13 @@ function assertAuthorized_(e, body) {
 }
 
 function doGet(e) {
-  return handle_(e, null);
+  return handle_(e, null, true);
 }
 function doPost(e) {
   const body = readJsonBody_(e);
   return handle_(e, body);
 }
-function handle_(e, body) {
+function handle_(e, body, isGet) {
   const action = (e?.parameter?.action) || (body?.action) || "";
   let invalidateReadCache = false;
   try {
@@ -1336,6 +1352,8 @@ function handle_(e, body) {
       return json_({ ok:true, service:"sturgeon-distribution-hub", version:APP_VERSION, actions:["initData","listSkus","sellSheet","addSkuToStore","upsertProduct","submitCounts","createReorder","managerGrid","salesSinceCount","updateStoreContacts","outreachDashboard","outreachRecord","outreachSendStatus","outreachNewsletterContacts","outreachCampaigns","outreachCampaign","previewOutreachCampaign","createOutreachCampaign","updateOutreachCampaignRecipient","setOutreachCampaignRecipientExclusion","setOutreachCampaignRecipientExclusions","approveOutreachCampaign","reopenOutreachCampaign","reconcileCampaignSends","rebuildCampaignRecipients","sendOutreachCampaignBatch","scheduleOutreachCampaign","cancelOutreachCampaignSchedule","saveOutreachDraft","sendOutreachEmail","sendOutreachTestEmail","updateOutreachOutcome","logOutreachContact","updateOutreachBusiness","updateOutreachPrograms","createOutreachBusiness","importOutreachBusinesses","recalculateOutreachMiles","backfillEngagementDetails","upsertNewsletterContact","submitCustomerApplication","submitOnlineOrderRequest","customerWorkQueue","customerAccountIndex","linkBadgerInvoice","syncBadgerStatus","markBadgerInvoicePayment","recordBadgerCheck","resolvePaymentReminder","badgerReconcilePreview","applyBadgerReconcile","previewBadgerPaymentReminder","sendBadgerPaymentReminder","previewBadgerInvoice","createBadgerInvoice","adoptBadgerInvoice","failBadgerInvoiceCreation","updateCustomerApplication","updateOnlineOrderRequest","hubSystemStatus","salesReport","initializeHardenedHub","repairHubStructure","reconcileIntegrations"] });
     }
 
+    // A link or image tag can trigger a GET, so only read actions are accepted that way.
+    if (isGet && !READ_ACTIONS.has(action)) throw new Error("This action must be sent as POST.");
     invalidateReadCache = !READ_ACTIONS.has(action);
     let res;
     switch (action) {
@@ -1415,7 +1433,12 @@ function handle_(e, body) {
     const text = READ_ACTIONS.has(action) && String(e?.parameter?.gz || "") === "1" ? compressedText_(payload) : JSON.stringify(payload);
     return relayedOutput_(e, text);
   } catch (err) {
-    return relayedOutput_(e, JSON.stringify({ ok:false, version:APP_VERSION, error: err?.message ? err.message : String(err) }));
+    const detail = err?.message ? err.message : String(err);
+    if (PUBLIC_ACTIONS.has(action) && !err?.public_message) {
+      console.error(`Public ${action} failed: ${detail}`);
+      return relayedOutput_(e, JSON.stringify({ ok:false, version:APP_VERSION, error:PUBLIC_ERROR_MESSAGE }));
+    }
+    return relayedOutput_(e, JSON.stringify({ ok:false, version:APP_VERSION, error:detail }));
   } finally {
     if (invalidateReadCache) {
       try { bumpReadCacheVersion_(); }
@@ -6489,7 +6512,7 @@ function apiUpsertNewsletterContact_(p) {
 
 function publicText_(value, maxLength, label) {
   const text = String(value ?? "").trim();
-  if (text.length > maxLength) throw new Error(`${label} is too long.`);
+  if (text.length > maxLength) throw publicError_(`${label} is too long.`);
   return /^[=+\-@]/.test(text) ? `'${text}` : text;
 }
 
@@ -6502,8 +6525,8 @@ function authenticatedActor_(p, fallback) {
 
 function publicEmail_(value, label, required) {
   const email = publicText_(value, 200, label).toLowerCase();
-  if (required && !email) throw new Error(`${label} is required.`);
-  if (email && !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) throw new Error(`Enter a valid ${label.toLowerCase()}.`);
+  if (required && !email) throw publicError_(`${label} is required.`);
+  if (email && !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) throw publicError_(`Enter a valid ${label.toLowerCase()}.`);
   return email;
 }
 
@@ -6693,10 +6716,10 @@ function sendCustomerApplicationNotification_(application, sheet, rowNumber) {
 }
 
 function apiSubmitCustomerApplication_(p) {
-  if (!p) throw new Error("Missing form data.");
+  if (!p) throw publicError_("Missing form data.");
   if (String(p.form_trap || "").trim()) return { message:"Application received.", application_id:"RECEIVED" };
   requireFields_(p, ["legal_business_name", "business_type", "seller_permit_number", "primary_contact_name", "primary_email", "primary_phone", "delivery_address_1", "delivery_city", "delivery_state", "delivery_zip", "authorized_name", "authorized_title", "submission_token"]);
-  if (!toBool_(p.attested)) throw new Error("Authorization is required.");
+  if (!toBool_(p.attested)) throw publicError_("Authorization is required.");
 
   const application = {
     legal_business_name:publicText_(p.legal_business_name, 160, "Legal business name"),
@@ -6735,11 +6758,11 @@ function apiSubmitCustomerApplication_(p) {
     submission_token:publicText_(p.submission_token, 120, "Submission token"),
   };
   if (!application.billing_same && (!application.billing_address_1 || !application.billing_city || !application.billing_state || !application.billing_zip)) {
-    throw new Error("Complete the billing address or mark it the same as delivery.");
+    throw publicError_("Complete the billing address or mark it the same as delivery.");
   }
 
   const lock = LockService.getScriptLock();
-  if (!lock.tryLock(5000)) throw new Error("Another application is being recorded. Try again in a moment.");
+  if (!lock.tryLock(5000)) throw publicError_("Another application is being recorded. Try again in a moment.");
   let journal = null;
   try {
     const sheet = getCustomerApplicationsSheet_(true);
@@ -9195,11 +9218,11 @@ function sendOnlineOrderNotification_(request, lines, sheet, rowNumber) {
 }
 
 function apiSubmitOnlineOrderRequest_(p) {
-  if (!p) throw new Error("Missing order data.");
+  if (!p) throw publicError_("Missing order data.");
   if (String(p.form_trap || "").trim()) return { message:"Order request received.", request_id:"RECEIVED" };
   requireFields_(p, ["business_name", "contact_name", "email", "submission_token"]);
-  if (!Array.isArray(p.lines) || !p.lines.length) throw new Error("Choose at least one product.");
-  if (p.lines.length > 50) throw new Error("An order request can contain up to 50 products.");
+  if (!Array.isArray(p.lines) || !p.lines.length) throw publicError_("Choose at least one product.");
+  if (p.lines.length > 50) throw publicError_("An order request can contain up to 50 products.");
 
   const businessName = publicText_(p.business_name, 160, "Business name");
   const claimedAccountId = publicText_(p.account_id, 80, "Account ID");
@@ -9218,11 +9241,11 @@ function apiSubmitOnlineOrderRequest_(p) {
   const lines = p.lines.map((line, index) => {
     const skuId = publicText_(line.sku_id, 120, `Product ${index + 1}`);
     const sku = skuMap.get(skuId);
-    if (!sku) throw new Error(`Product ${index + 1} is not available.`);
+    if (!sku) throw publicError_(`Product ${index + 1} is not available.`);
     const quantity = Number(line.quantity);
-    if (!Number.isInteger(quantity) || quantity < 1 || quantity > 999) throw new Error(`Product ${index + 1} needs a whole-number quantity from 1 to 999.`);
+    if (!Number.isInteger(quantity) || quantity < 1 || quantity > 999) throw publicError_(`Product ${index + 1} needs a whole-number quantity from 1 to 999.`);
     const unit = String(line.unit || "");
-    if (!["Cases", "Bottles"].includes(unit)) throw new Error(`Product ${index + 1} has an unsupported unit.`);
+    if (!["Cases", "Bottles"].includes(unit)) throw publicError_(`Product ${index + 1} has an unsupported unit.`);
     const unitsPerCase = Number(sku.units_per_case || 12);
     return {
       sku_id:skuId,
@@ -9237,7 +9260,7 @@ function apiSubmitOnlineOrderRequest_(p) {
   });
 
   const lock = LockService.getScriptLock();
-  if (!lock.tryLock(5000)) throw new Error("Another order request is being recorded. Try again in a moment.");
+  if (!lock.tryLock(5000)) throw publicError_("Another order request is being recorded. Try again in a moment.");
   let journal = null;
   try {
     const requestSheet = getOnlineOrderRequestsSheet_(true);
@@ -9323,7 +9346,7 @@ function apiSubmitOnlineOrderRequest_(p) {
     updateIntegrationJob_(notificationJob, notification.status === "Sent" ? "Completed" : "Retry", notification.error);
     completeSubmissionJournal_(journal, "Completed", requestId, "");
     appendAudit_("SUBMIT_ORDER", "Order", requestId, verification.account_id, "Public order form", "Online order", ONLINE_ORDER_REQUESTS_SHEET_NAME, "Completed", verification.account_link_status);
-    return { message:"Order request received for confirmation.", request_id:requestId, account_id:verification.account_id, verification_status:verification.status };
+    return { message:"Order request received for confirmation.", request_id:requestId };
   } catch (error) {
     if (journal) completeSubmissionJournal_(journal, "Needs recovery", "", error.message || error);
     throw error;
