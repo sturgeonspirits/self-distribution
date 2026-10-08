@@ -1,6 +1,10 @@
-// App version: 2026.10.05.4-WEB
-const APP_VERSION = "2026.10.05.4-WEB";
+// App version: 2026.10.08.5-WEB
+const APP_VERSION = "2026.10.08.5-WEB";
 const ALLOWED_ACTIONS = new Set(["listSkus", "submitCustomerApplication", "submitOnlineOrderRequest"]);
+// Fields only the server or the signed-in staff proxy may set. A public request never
+// forwards them (the relay slots and gz/refresh belong to the staff proxy).
+const SERVER_ONLY_FIELDS = new Set(["api_key", "relay_id", "gz", "refresh", "staff_name", "rep"]);
+const isServerOnlyField_ = key => SERVER_ONLY_FIELDS.has(key) || /^authenticated_/.test(key);
 const CATALOG_RETRY_DELAY_MS = 1500;
 
 function customerResponse(statusCode, cors, body) {
@@ -57,9 +61,12 @@ export async function handler(event) {
     }
 
     const request = event.httpMethod === "GET" ? (() => {
-      if (apiKey) params.set("api_key", apiKey);
-      return { url:`${appsScriptUrl}?${params.toString()}`, options:{ method:"GET" } };
+      // The public actions take no query parameters besides the action.
+      const upstream = new URLSearchParams({ action });
+      if (apiKey) upstream.set("api_key", apiKey);
+      return { url:`${appsScriptUrl}?${upstream.toString()}`, options:{ method:"GET" } };
     })() : (() => {
+      Object.keys(body).forEach(key => { if (isServerOnlyField_(key)) delete body[key]; });
       if (apiKey) body.api_key = apiKey;
       return { url:appsScriptUrl, options:{ method:"POST", headers:{"Content-Type":"application/json"}, body:JSON.stringify(body) } };
     })();

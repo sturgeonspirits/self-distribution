@@ -637,6 +637,67 @@ test("public customer proxy remains narrowly allowlisted", async () => {
   assert.equal(blocked.statusCode, 403);
 });
 
+test("Hub review: sign-in return_to stays on this site", async () => {
+  const auth = await readFile(new URL("netlify/functions/auth.js", root), "utf8");
+  const safeReturnTo = new Function(auth.match(/function safeReturnTo\(value\) \{[\s\S]*?\n\}/)[0] + "; return safeReturnTo;")();
+  const base = "https://distribution.sturgeonspirits.com/api/auth";
+  for (const value of ["//evil.example", "/\\evil.example/x", "/\t/evil.example", "/\n/evil.example", "https://evil.example", "", undefined]) {
+    assert.equal(new URL(safeReturnTo(value), base).host, "distribution.sturgeonspirits.com", JSON.stringify(value));
+  }
+  assert.equal(safeReturnTo("/index.html?tab=orders#x"), "/index.html?tab=orders#x");
+});
+
+test("Hub review: the staff proxy refuses a request without an action and never forwards it", async () => {
+  const { handler } = await loadFunction("netlify/functions/inventory.js", "missing-action");
+  process.env.APPS_SCRIPT_URL = "https://example.test/exec";
+  process.env.API_KEY = "backend-key";
+  const calls = [];
+  globalThis.fetch = async url => { calls.push(String(url)); return new Response(JSON.stringify({ ok:true }), { status:200 }); };
+  const get = await handler({ httpMethod:"GET", rawQuery:"", queryStringParameters:{}, headers:{} });
+  const post = await handler({ httpMethod:"POST", rawQuery:"", queryStringParameters:{}, headers:{}, body:JSON.stringify({ anything:1 }) });
+  assert.equal(get.statusCode, 400); assert.equal(JSON.parse(get.body).code, "MISSING_ACTION");
+  assert.equal(post.statusCode, 400);
+  assert.equal(calls.length, 0, "nothing reaches Apps Script with the API key");
+});
+
+test("Hub review: the public proxy forwards only the action on GET and strips server-only fields on POST", async () => {
+  const { handler } = await loadFunction("netlify/functions/customer.js", "public-fields");
+  process.env.APPS_SCRIPT_URL = "https://example.test/exec";
+  process.env.API_KEY = "backend-key";
+  const calls = [];
+  globalThis.fetch = async (url, options = {}) => { calls.push({ url:String(url), body:options.body || "" }); return new Response(JSON.stringify({ ok:true }), { status:200 }); };
+  await handler({ httpMethod:"GET", rawQuery:"action=listSkus&relay_id=aaaaaaaaaaaaaaaaaaaaaaaa&refresh=1&gz=1&authenticated_staff_role=admin", headers:{} });
+  assert.equal(calls[0].url, "https://example.test/exec?action=listSkus&api_key=backend-key");
+  await handler({ httpMethod:"POST", rawQuery:"", headers:{}, body:JSON.stringify({ action:"submitOnlineOrderRequest", business_name:"Bar", authenticated_staff_name:"Karl", authenticated_staff_role:"admin", staff_name:"Karl", rep:"Karl", relay_id:"x".repeat(24), gz:"1", refresh:"1", api_key:"guess" }) });
+  assert.deepEqual(JSON.parse(calls[1].body), { action:"submitOnlineOrderRequest", business_name:"Bar", api_key:"backend-key" });
+});
+
+test("Hub review: a public application cannot re-subscribe an opted-out address or replace its details", async () => {
+  const backend = await readFile(new URL("apps-script/Code.gs", root), "utf8");
+  const start = backend.indexOf("function upsertNewsletterFromApplication_(");
+  const source = backend.slice(start, backend.indexOf("\n}\n", start) + 3);
+  const headers = ["contact_id", "account_id", "name", "email", "organization", "relationship_type", "status", "consent_source", "consent_date", "topics", "notes", "updated_at", "updated_by", "app_version"];
+  const h = Object.fromEntries(headers.map((name, index) => [name, index]));
+  const run = rows => {
+    const sheet = { getLastRow:() => rows.length, getLastColumn:() => headers.length,
+      getRange:(r, c, nr) => ({ getValues:() => rows.slice(r - 1, r - 1 + nr).map(x => x.slice()), setValues:v => { rows[r - 1] = v[0].slice(); } }) };
+    return new Function("getNewsletterContactsSheet_", "getHeaderMap_", "Utilities", "APP_VERSION", `${source}\nreturn upsertNewsletterFromApplication_;`)(() => sheet, () => h, { getUuid:() => "uuid" }, "test");
+  };
+  const app = { newsletter_opt_in:true, primary_email:"Pat@Someone.example", primary_contact_name:"Not Pat", business_name:"Anything", application_id:"APP-1", account_id:"" };
+  for (const status of ["Unsubscribed", "Declined"]) {
+    const rows = [headers, ["c1", "ACC-9", "Pat", "pat@someone.example", "Pat's Tavern", "Prospect", status, "Outreach reply", "", "", "", "", "Karl", ""]];
+    run(rows)(app);
+    assert.deepEqual([rows[1][h.status], rows[1][h.name], rows[1][h.organization], rows[1][h.account_id], rows[1][h.consent_source]], [status, "Pat", "Pat's Tavern", "ACC-9", "Outreach reply"]);
+    assert.match(rows[1][h.notes], /APP-1 asked to subscribe; left/);
+  }
+  const candidate = [headers, ["c2", "", "", "pat@someone.example", "", "", "Candidate", "", "", "", "", "", "", ""]];
+  run(candidate)(app);
+  assert.deepEqual([candidate[1][h.status], candidate[1][h.name], candidate[1][h.organization]], ["Subscribed", "Not Pat", "Anything"]);
+  const fresh = [headers];
+  run(fresh)(app);
+  assert.deepEqual([fresh[1][h.status], fresh[1][h.email], fresh[1][h.contact_id]], ["Subscribed", "pat@someone.example", "uuid"]);
+});
+
 test("customer catalog retries one non-JSON or failed upstream response, while submits stay single-attempt", async () => {
   const { handler } = await loadFunction("netlify/functions/customer.js", "customer-catalog-retry");
   process.env.APPS_SCRIPT_URL = "https://example.test/exec";

@@ -82,9 +82,12 @@ function json(statusCode, body, headers = {}) {
   return { statusCode, headers:{ "Content-Type":"application/json", "Cache-Control":"no-store", ...headers }, body:JSON.stringify(body) };
 }
 
+// Only a path on this site. Browsers read "\\" as "/" and drop tabs and newlines in a
+// Location header, so "/\\evil.example" or "/<tab>/evil.example" would leave the site.
 function safeReturnTo(value) {
   const path = String(value || "/");
-  return path.startsWith("/") && !path.startsWith("//") ? path : "/";
+  if (!/^\/(?![\/\\])/.test(path) || /[\\\s\u0000-\u001f\u007f]/.test(path)) return "/";
+  return path;
 }
 
 // Returns an approved access object, an unapproved result, or an unavailable roster.

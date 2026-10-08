@@ -1,8 +1,14 @@
 /*********************************
  * Inventory API (JSON) for Netlify
- * App version: 2026.10.07.34-APP
+ * App version: 2026.10.08.35-APP
  *
  * CHANGES IN THIS VERSION
+ * - A customer application with the newsletter box ticked no longer re-subscribes an address whose Newsletter
+ *   Contacts status is Unsubscribed or Declined, and no longer replaces the name, business or account already on
+ *   that row (the public form does not prove who owns the address). It fills blank fields and adds a note; staff can
+ *   re-subscribe from the Hub. A new address, or a Candidate/Invited contact, is subscribed as before.
+ *
+ * CHANGES IN 2026.10.07.34-APP
  * - New read-only salesReport action (Orders & Accounts area): returns the displayed values of the Badger tracker's
  *   Sales by Location, Sales by Product and Location x Product tabs. The analysis itself is sheet formulas.
  * - submitCounts always writes the count to on-hand inventory and the last-count fields; the updateInventory flag
@@ -327,7 +333,7 @@
  * - Use only in the staging inventory backend until testing is complete.
  *********************************/
 
-const APP_VERSION = "2026.10.07.34-APP";
+const APP_VERSION = "2026.10.08.35-APP";
 
 const SHEET_NAMES = {
   STORES: "Stores",
@@ -6212,23 +6218,48 @@ function upsertNewsletterFromApplication_(application) {
   if (!application.newsletter_opt_in) return;
   const sheet = getNewsletterContactsSheet_(true);
   const h = getHeaderMap_(sheet);
-  const email = application.primary_email;
+  const email = String(application.primary_email || "").trim().toLowerCase();
   const values = sheet.getLastRow() < 2 ? [] : sheet.getRange(2, 1, sheet.getLastRow() - 1, sheet.getLastColumn()).getValues();
   const match = values.findIndex(row => String(row[h.email] || "").trim().toLowerCase() === email);
   const now = new Date();
   const row = match >= 0 ? values[match].slice() : Array(sheet.getLastColumn()).fill("");
   const set = (key, value) => { if (h[key] !== undefined) row[h[key]] = value; };
-  set("contact_id", match >= 0 ? String(row[h.contact_id] || Utilities.getUuid()) : Utilities.getUuid());
-  set("account_id", application.account_id || "");
-  set("name", application.primary_contact_name);
-  set("email", email);
-  set("organization", application.business_name || application.legal_business_name);
-  set("relationship_type", "Customer");
-  set("status", "Subscribed");
-  set("consent_source", "Customer application form; option preselected and could be unchecked");
-  set("consent_date", now);
-  set("topics", "Products, cocktails, distillery updates");
-  set("notes", `Application ${application.application_id}`);
+  const fill = (key, value) => { if (h[key] !== undefined && !String(row[h[key]] || "").trim()) row[h[key]] = value; };
+  const note = `Application ${application.application_id}`;
+  if (match >= 0) {
+    // The public form does not prove who owns the address, so it never re-subscribes
+    // an address that unsubscribed or declined, and never replaces the name, business
+    // or account already on file. A Candidate/Invited contact who opts in becomes
+    // Subscribed; an existing subscription keeps its original consent record. Staff
+    // can re-subscribe from the Hub after confirming with the customer.
+    const current = String(row[h.status] || "").trim();
+    fill("account_id", application.account_id || "");
+    fill("name", application.primary_contact_name);
+    fill("organization", application.business_name || application.legal_business_name);
+    fill("relationship_type", "Customer");
+    const kept = ["unsubscribed", "declined"].includes(current.toLowerCase());
+    if (!kept && current !== "Subscribed") {
+      set("status", "Subscribed");
+      set("consent_source", "Customer application form; option preselected and could be unchecked");
+      set("consent_date", now);
+      fill("topics", "Products, cocktails, distillery updates");
+    }
+    const existingNotes = String(row[h.notes] || "").trim();
+    const addition = kept ? `${note} asked to subscribe; left ${current} (the public form cannot re-subscribe an address)` : note;
+    set("notes", existingNotes ? `${existingNotes}; ${addition}` : addition);
+  } else {
+    set("contact_id", Utilities.getUuid());
+    set("account_id", application.account_id || "");
+    set("name", application.primary_contact_name);
+    set("email", email);
+    set("organization", application.business_name || application.legal_business_name);
+    set("relationship_type", "Customer");
+    set("status", "Subscribed");
+    set("consent_source", "Customer application form; option preselected and could be unchecked");
+    set("consent_date", now);
+    set("topics", "Products, cocktails, distillery updates");
+    set("notes", note);
+  }
   set("updated_at", now);
   set("updated_by", "customer application form");
   set("app_version", APP_VERSION);

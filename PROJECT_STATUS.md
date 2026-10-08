@@ -1,6 +1,6 @@
 # Sturgeon Distribution Hub — Project Status
 
-Last updated: 2026-10-06
+Last updated: 2026-10-08
 
 Read this file before inspecting the repository or changing the application. Update it whenever a deployment, version, service URL, known issue, or required setup step changes. Never put secret values in this file.
 
@@ -8,10 +8,10 @@ Read this file before inspecting the repository or changing the application. Upd
 
 | Component | Source version | Deployment state |
 | --- | --- | --- |
-| Netlify web app and staff proxy | `2026.10.07.37-WEB` on `codex/work` | Pending coordinated release with `2026.10.07.34-APP`: batched campaign-template rebuild, release-proof count drafts, and inventory count safeguards. Production is `2026.10.07.35-WEB` (inventory count drafts, deployed 2026-10-07). |
-| Inventory API Apps Script | `2026.10.07.34-APP` on `codex/work` | Pending deployment with `2026.10.07.37-WEB`: inventory count safeguards plus the `.33-APP` batched campaign-template rebuild. Production remains `2026.10.06.32-APP`. |
+| Netlify web app and staff proxy | `2026.10.08.38-WEB` on `claude/hub-review-fixes` (`2026.10.07.37-WEB` on `codex/work`) | `.38-WEB` adds the Hub review security fixes below. Pending coordinated release with `2026.10.07.34-APP`: batched campaign-template rebuild, release-proof count drafts, and inventory count safeguards. Production is `2026.10.07.35-WEB` (inventory count drafts, deployed 2026-10-07). |
+| Inventory API Apps Script | `2026.10.08.35-APP` on `claude/hub-review-fixes` (`2026.10.07.34-APP` on `codex/work`) | Pending deployment with `2026.10.07.37-WEB`: inventory count safeguards plus the `.33-APP` batched campaign-template rebuild. Production remains `2026.10.06.32-APP`. |
 | Distribution Outreach Apps Script | `2026.10.04.25-APP` in `docs/reference/distribution-outreach/Code.gs`; reported deployed 2026-10-05 | Deployed with the paired Inventory API for Cocktail list sends. |
-| Public customer Netlify proxy | `2026.10.05.4-WEB` live with the Netlify web release | Retries only a failed/non-JSON `listSkus` catalog read once; customer submissions remain single-attempt. |
+| Public customer Netlify proxy | `2026.10.08.5-WEB` on `claude/hub-review-fixes`; `2026.10.05.4-WEB` live with the Netlify web release | Retries only a failed/non-JSON `listSkus` catalog read once; customer submissions remain single-attempt. |
 
 Current Git branch: `codex/work` (development). Netlify production builds `codex/distribution-system-foundation`; after Claude review, promote with `git push origin codex/work:codex/distribution-system-foundation` (fast-forward only). Never commit directly to the production branch, so the two cannot diverge again.
 
@@ -28,6 +28,14 @@ Phase 5 deployment state: staging Inventory API `2026.10.01.5` and Netlify `2026
 - Outreach Campaigns UI: give **Create campaign** a visually distinct draft/primary color from the adjacent **Review campaign** buttons, so starting a new campaign cannot be mistaken for opening an existing one.
 
 Latest completed changes:
+
+- Hub review security fixes (`2026.10.08.38-WEB`, public proxy `2026.10.08.5-WEB`, `2026.10.08.35-APP`; branch `claude/hub-review-fixes`, not deployed, 2026-10-08):
+  - Sign-in `return_to` accepts only a path on this site. Before, `/\evil.example` and `/<tab>/evil.example` passed the check and sent a newly signed-in staff member to another site.
+  - The staff proxy refuses a request with no action (`400 MISSING_ACTION`). Before, it skipped the sign-in check and forwarded the request to Apps Script with the API key, which returned the full action list and version to anyone.
+  - The public proxy forwards only `action` on GET, and on POST drops `api_key`, `relay_id`, `gz`, `refresh`, `staff_name`, `rep` and every `authenticated_*` field. The three public actions already ignored the staff fields, but a public `relay_id` made Apps Script write into the staff relay slots and `gz=1` broke the public reply.
+  - A customer application with the newsletter box ticked no longer re-subscribes an address marked Unsubscribed or Declined in Newsletter Contacts, and no longer replaces the name, business or account on an existing row. It fills blanks and adds a note; staff can re-subscribe from the Hub. Candidate/Invited contacts and new addresses are subscribed as before.
+  - **Open decision for Karl:** activating an application sets the Directory's Do Not Email (to stop sales outreach to customers), and the Cocktail list treats that flag as an opt-out, so an activated customer who ticked the newsletter box never receives it. Options: stop setting Do Not Email on activation and rely on the customer status to stop sales stages, or let the Cocktail list ignore Do Not Email for active customers who are Subscribed.
+  - Deploy order: Netlify and Apps Script are independent for these fixes. Tests: `node --test tests/security-workflow.test.mjs`.
 
 - Sales report in the Hub (`2026.10.07.34-APP`, `2026.10.07.37-WEB`; pending deployment, 2026-10-07): Orders & Accounts has a collapsed **Sales by location and product** panel. Opening it calls the new read-only `salesReport` action (orders area), which returns the displayed values of the Badger tracker tabs **Sales by Location**, **Sales by Product** and **Location x Product**; the panel shows them as Locations / Products / Location x product views with a filter, an Overdue badge, Refresh, and a link to the sheet. All analysis is sheet formulas built on 2026-10-07: **Sales Data** cleans Invoice Lines (drops exact duplicate lines, normalizes invoice numbers, joins invoice dates and customers from Invoices) and holds the editable customer-to-location and product-name tables plus two data checks. Settings (overdue multiplier, recent period, minimum counts) are blue cells on Sales by Location. Do not move those tabs' header rows (rows 9, 4 and 1) without updating `SALES_REPORT_TABS`. Tests: `node --test tests/inventory-counts.test.mjs`.
 

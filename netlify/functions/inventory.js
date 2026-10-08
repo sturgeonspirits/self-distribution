@@ -1,9 +1,9 @@
-// App version: 2026.10.07.37-WEB
+// App version: 2026.10.08.38-WEB
 import { gunzipSync } from "node:zlib";
 import { requireStaffSession } from "./auth.js";
 import { fetchWithDriveRelay, relayConfig } from "../lib/drive-relay.js";
 
-const APP_VERSION = "2026.10.07.37-WEB";
+const APP_VERSION = "2026.10.08.38-WEB";
 const STAFF_ACTIONS = new Set([
   "outreachDashboard",
   "outreachRecord",
@@ -229,7 +229,10 @@ export async function handler(event) {
     const request = requestAction_(event, body);
     if (request.error) return response(400, cors, { ok:false, code:"INVALID_ACTION", error:request.error });
     const action = request.action;
-    if (action && !STAFF_ACTIONS.has(action) && !ADMIN_ACTIONS.has(action)) {
+    // Every Hub call names an action. Without one, the request would reach Apps Script
+    // with the API key but without a staff sign-in check.
+    if (!action) return response(400, cors, { ok:false, code:"MISSING_ACTION", error:"An Inventory API action is required." });
+    if (!STAFF_ACTIONS.has(action) && !ADMIN_ACTIONS.has(action)) {
       return response(400, cors, { ok:false, code:"UNKNOWN_ACTION", error:"Unknown Inventory API action." });
     }
 
