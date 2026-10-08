@@ -11,7 +11,10 @@
  * - A customer application with the newsletter box ticked no longer re-subscribes an address whose Newsletter
  *   Contacts status is Unsubscribed or Declined, and no longer replaces the name, business or account already on
  *   that row (the public form does not prove who owns the address). It fills blank fields and adds a note; staff can
- *   re-subscribe from the Hub. A new address, or a Candidate/Invited contact, is subscribed as before.
+ *   re-subscribe from the Hub. A new address, or a Candidate/Invited contact, is subscribed as before. Any
+ *   Unsubscribed/Declined row for the address counts (not only the first row), and a row without a Contact ID gets one.
+ * - Cocktail list: an address with any Unsubscribed or Declined Newsletter Contacts row is treated as opted out, even if
+ *   another row for the same address says Subscribed (preview, freeze, rebuild and send all use the same record).
  *
  * CHANGES IN 2026.10.07.34-APP
  * - New read-only salesReport action (Orders & Accounts area): returns the displayed values of the Badger tracker's
@@ -3966,6 +3969,10 @@ function cocktailListContactIndex_() {
   return (__OUTREACH_COCKTAIL_LIST_CONTACT_INDEX = {
     contacts:contacts,
     contacts_by_id:new Map(contacts.map(contact => [String(contact.contact_id || ""), contact]).filter(([key]) => key)),
+    // An address with any Unsubscribed or Declined row is treated as opted out, even
+    // if another row for the same address says Subscribed.
+    opted_out_emails:new Set(contacts.filter(contact => ["unsubscribed", "declined"].includes(String(contact.status || "").trim().toLowerCase()))
+      .map(contact => String(contact.email || "").trim().toLowerCase()).filter(Boolean)),
     directory_by_account:byAccount,
     directory_by_email:byEmail,
     programs:outreachProgramMap_(),
@@ -3987,7 +3994,7 @@ function cocktailListRecordFromContact_(contact, index) {
     postal_code:String(outreachValue_(directoryRow, ["zip", "zip_code", "postal_code"]) || ""),
     priority:"", email_confidence:"", segment:"", wave:"", campaign_miles:"",
     next_email:OUTREACH_COCKTAIL_LIST_STAGE,
-    newsletter_status:contact.status,
+    newsletter_status:index.opted_out_emails && index.opted_out_emails.has(String(contact.email || "").trim().toLowerCase()) ? "Unsubscribed" : contact.status,
     do_not_email:toBool_(outreachValue_(directoryRow, ["do_not_email", "do_not_contact"])),
     directory_status:String(outreachValue_(directoryRow, ["status"]) || ""),
     directory_outcome:String(outreachValue_(directoryRow, ["outcome"]) || ""),
@@ -6232,6 +6239,8 @@ function upsertNewsletterFromApplication_(application) {
   const email = String(application.primary_email || "").trim().toLowerCase();
   const values = sheet.getLastRow() < 2 ? [] : sheet.getRange(2, 1, sheet.getLastRow() - 1, sheet.getLastColumn()).getValues();
   const match = values.findIndex(row => String(row[h.email] || "").trim().toLowerCase() === email);
+  // Any Unsubscribed or Declined row for this address counts, not just the first row.
+  const optedOut = values.some(row => String(row[h.email] || "").trim().toLowerCase() === email && ["unsubscribed", "declined"].includes(String(row[h.status] || "").trim().toLowerCase()));
   const now = new Date();
   const row = match >= 0 ? values[match].slice() : Array(sheet.getLastColumn()).fill("");
   const set = (key, value) => { if (h[key] !== undefined) row[h[key]] = value; };
@@ -6244,11 +6253,12 @@ function upsertNewsletterFromApplication_(application) {
     // Subscribed; an existing subscription keeps its original consent record. Staff
     // can re-subscribe from the Hub after confirming with the customer.
     const current = String(row[h.status] || "").trim();
+    fill("contact_id", Utilities.getUuid()); // a Cocktail list send needs one
     fill("account_id", application.account_id || "");
     fill("name", application.primary_contact_name);
     fill("organization", application.business_name || application.legal_business_name);
     fill("relationship_type", "Customer");
-    const kept = ["unsubscribed", "declined"].includes(current.toLowerCase());
+    const kept = optedOut;
     if (!kept && current !== "Subscribed") {
       set("status", "Subscribed");
       set("consent_source", "Customer application form; option preselected and could be unchecked");
@@ -6256,7 +6266,7 @@ function upsertNewsletterFromApplication_(application) {
       fill("topics", "Products, cocktails, distillery updates");
     }
     const existingNotes = String(row[h.notes] || "").trim();
-    const addition = kept ? `${note} asked to subscribe; left ${current} (the public form cannot re-subscribe an address)` : note;
+    const addition = kept ? `${note} asked to subscribe; left ${current || "unchanged"} because this address opted out (the public form cannot re-subscribe an address)` : note;
     set("notes", existingNotes ? `${existingNotes}; ${addition}` : addition);
   } else {
     set("contact_id", Utilities.getUuid());

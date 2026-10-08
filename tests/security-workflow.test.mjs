@@ -670,6 +670,9 @@ test("Hub review: the public proxy forwards only the action on GET and strips se
   assert.equal(calls[0].url, "https://example.test/exec?action=listSkus&api_key=backend-key");
   await handler({ httpMethod:"POST", rawQuery:"", headers:{}, body:JSON.stringify({ action:"submitOnlineOrderRequest", business_name:"Bar", authenticated_staff_name:"Karl", authenticated_staff_role:"admin", staff_name:"Karl", rep:"Karl", relay_id:"x".repeat(24), gz:"1", refresh:"1", api_key:"guess" }) });
   assert.deepEqual(JSON.parse(calls[1].body), { action:"submitOnlineOrderRequest", business_name:"Bar", api_key:"backend-key" });
+  // An action given only in the query string is copied into the body, so Apps Script never sees a request without one.
+  await handler({ httpMethod:"POST", rawQuery:"action=listSkus", headers:{}, body:JSON.stringify({ note:"no action" }) });
+  assert.deepEqual(JSON.parse(calls[2].body), { note:"no action", action:"listSkus", api_key:"backend-key" });
 });
 
 test("Hub review: a public application cannot re-subscribe an opted-out address or replace its details", async () => {
@@ -693,6 +696,11 @@ test("Hub review: a public application cannot re-subscribe an opted-out address 
   const candidate = [headers, ["c2", "", "", "pat@someone.example", "", "", "Candidate", "", "", "", "", "", "", ""]];
   run(candidate)(app);
   assert.deepEqual([candidate[1][h.status], candidate[1][h.name], candidate[1][h.organization]], ["Subscribed", "Not Pat", "Anything"]);
+  // Any opted-out row for the address counts, not just the first; a missing Contact ID is filled.
+  const twoRows = [headers, ["", "", "", "pat@someone.example", "", "", "Candidate", "", "", "", "", "", "", ""], ["c3", "", "Pat", "pat@someone.example", "", "", "Unsubscribed", "", "", "", "", "", "", ""]];
+  run(twoRows)(app);
+  assert.deepEqual([twoRows[1][h.status], twoRows[1][h.contact_id], twoRows[2][h.status]], ["Candidate", "uuid", "Unsubscribed"]);
+  assert.match(twoRows[1][h.notes], /left Candidate because this address opted out/);
   const fresh = [headers];
   run(fresh)(app);
   assert.deepEqual([fresh[1][h.status], fresh[1][h.email], fresh[1][h.contact_id]], ["Subscribed", "pat@someone.example", "uuid"]);
@@ -1148,6 +1156,14 @@ test("Cocktail list campaigns keep newsletter eligibility, cross-send guards, an
     assert.match(eligibility({ ...active, directory_outcome:outcome }).join("; "), /excluded/, outcome);
   }
   assert.match(eligibility({ ...active, program_newsletter_status:"Declined" }).join("; "), /program excludes/);
+  // A Subscribed row is treated as opted out when another row for the same address is Unsubscribed or Declined.
+  const recordSource = backend.slice(backend.indexOf("function cocktailListRecordFromContact_"), backend.indexOf("function campaignCocktailListRecords_"));
+  const toRecord = new Function("toBool_", "outreachValue_", "OUTREACH_COCKTAIL_LIST_STAGE", `${recordSource}\nreturn cocktailListRecordFromContact_;`)(Boolean, (row, keys) => keys.map(k => row[k]).find(v => v !== undefined), "Cocktail list");
+  const baseIndex = { directory_by_account:new Map(), directory_by_email:new Map(), programs:new Map() };
+  const contact = { contact_id:"c1", email:"Dup@Example.test", status:"Subscribed" };
+  assert.equal(toRecord(contact, { ...baseIndex, opted_out_emails:new Set(["dup@example.test"]) }).newsletter_status, "Unsubscribed");
+  assert.equal(toRecord(contact, { ...baseIndex, opted_out_emails:new Set() }).newsletter_status, "Subscribed");
+  assert.match(backend, /opted_out_emails:new Set\(contacts\.filter/);
   assert.match(eligibility({ email:"recent@example.test", newsletter_status:"Subscribed", do_not_email:false }).join("; "), /last 14 days/);
   assert.match(backend, /campaign_type === "cocktail_list"/);
   assert.match(backend, /stage:OUTREACH_COCKTAIL_LIST_STAGE/);

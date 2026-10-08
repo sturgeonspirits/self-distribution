@@ -67,6 +67,9 @@ export async function handler(event) {
       return { url:`${appsScriptUrl}?${upstream.toString()}`, options:{ method:"GET" } };
     })() : (() => {
       Object.keys(body).forEach(key => { if (isServerOnlyField_(key)) delete body[key]; });
+      // The checked action may have come from the query string; Apps Script reads the
+      // body, and a body without an action would return the service description.
+      body.action = action;
       if (apiKey) body.api_key = apiKey;
       return { url:appsScriptUrl, options:{ method:"POST", headers:{"Content-Type":"application/json"}, body:JSON.stringify(body) } };
     })();
