@@ -848,4 +848,34 @@ t("review2 J: Apply corrects at most 40 invoices per run and finishes on the nex
   assert.ok(e.tabs["Invoices"].rows.slice(1).every(r => r[12] === 44));
 });
 
+
+/* -------------------- round 3 review -------------------- */
+
+t("review3 1.1: a PDF invoice re-issued in Badger under the same number is logged once", () => {
+  const b = makeBadger([]); const first = bInv(b, "201", "SS0163", "Fox and Crow", [{ q: 6, d: "Gin", p: 22 }]);
+  const sheets = prodSheets([pdfRow("SS0163", "Fox and Crow", 132)]);
+  sheets["Invoice Lines"].push(["SS0163", "Fox and Crow", 6, "750mL", "Gin", "Spirits", 22, 132]);
+  const e = makeEnv({ ssId: PROD_ID, sheets, badger: b, props: CREDS });
+  e.ctx.importFromBadger();
+  first.isVoid = true; first.modifiedDate = "2026-10-01T00:00:00";
+  bInv(b, "202", "SS0163", "Fox and Crow", [{ q: 12, d: "Gin", p: 22 }], { modifiedDate: "2026-10-01T00:05:00" });
+  const r = e.ctx.importFromBadger(); assert.strictEqual(r.linkedChanged, 1); assert.strictEqual(r.voided, 0);
+  assert.match(e.tabs["Import Errors"].rows[1][4], /SS0163 came from a PDF and was re-issued in Badger \(record 201 replaced by 202\)/);
+  assert.strictEqual(e.tabs["Invoices"].rows[1][12], 132, "the row itself is not changed");
+  e.ctx.importFromBadger(); assert.strictEqual(e.tabs["Import Errors"].rows.length, 2, "logged once");
+});
+
+t("review3 1.2: voiding a PDF row whose customer differs from Badger's is logged once; a suffix difference is not", () => {
+  const b = makeBadger([]);
+  bInv(b, "156", "SS0156", "Wagner Market", [{ q: 2, d: "Vodka", p: 22 }], { isVoid: true });
+  bInv(b, "157", "SS0157", "FOX & CROW LLC", [{ q: 1, d: "Gin", p: 22 }], { isVoid: true });
+  const e = makeEnv({ ssId: PROD_ID, sheets: prodSheets([pdfRow("SS0156", "Acorn Ridge", 264), pdfRow("SS0157", "Fox and Crow", 22)]), badger: b, props: CREDS });
+  assert.strictEqual(e.ctx.importFromBadger().voided, 2);
+  assert.deepStrictEqual(e.tabs["Invoices"].rows.slice(1).map(r => [r[12], r[13], r[15], r[16]]), [[0, "VOID", true, "Yes"], [0, "VOID", true, "Yes"]]);
+  const errs = e.tabs["Import Errors"].rows.slice(1).map(r => r[4]);
+  assert.strictEqual(errs.length, 1);
+  assert.match(errs[0], /SS0156 is VOID in Badger.*tracker row is for Acorn Ridge and Badger's invoice is for Wagner Market.*move any Paid to Me \/ Submitted marks/);
+  e.ctx.importFromBadger(); assert.strictEqual(e.tabs["Import Errors"].rows.length, 2, "logged once");
+});
+
 console.log(`\n${passed} tests passed`);

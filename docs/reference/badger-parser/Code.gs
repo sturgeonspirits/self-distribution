@@ -24,9 +24,11 @@
  *   - Imported under an earlier Badger record that was voided and re-issued under
  *     the same number: follows the re-issued record (columns B-C name it).
  *   - Already in the tracker from a PDF: recorded as LINKED. The import applies a
- *     void in Badger to it (as above) and changes nothing else; any other Badger
- *     change is logged once to Import Errors. Compare with Badger and Apply Badger
- *     corrections handle those rows.
+ *     void in Badger to it (as above) and changes nothing else; if Badger's customer
+ *     differs from the row's (for example a misread number), the void is also logged
+ *     once. Any other Badger change, including a re-issue under the same number, is
+ *     logged once to Import Errors. Compare with Badger and Apply Badger corrections
+ *     handle those rows.
  *   - Delivered, Paid to Me and Submitted (columns O-Q) are written only on new
  *     rows. Winery Name (J) is never written on an existing row, Terms (N) only
  *     for VOID, and a blank Badger value never overwrites a filled cell in G-L.
@@ -827,7 +829,7 @@ function badgerStateRow_(listItem, status, invNo, detail) {
 // Parser State statuses that record what the tracker holds for a Badger invoice.
 const BADGER_APPLIED_STATUSES = Object.freeze(["IMPORTED", "UPDATED", "VOIDED", "LINKED", "CORRECTED", "VOID_SKIPPED"]);
 // Statuses that only record a problem already reported, so it is not reported every day.
-const BADGER_NOTE_STATUSES = Object.freeze(["READ_FAILED", "DUPLICATE_NUMBER", "LINKED_CHANGED"]);
+const BADGER_NOTE_STATUSES = Object.freeze(["READ_FAILED", "DUPLICATE_NUMBER", "LINKED_CHANGED", "LINKED_REISSUED", "VOID_CUSTOMER_MISMATCH"]);
 
 /** Badger invoice ID -> { applied: {status, modified, at}, note: {status, modified} } from the latest rows. */
 function buildBadgerStateIndex_() {
@@ -845,7 +847,7 @@ function buildBadgerStateIndex_() {
     const id = key.slice(BADGER_STATE_PREFIX.length);
     const entry = out.get(id) || { applied: null, note: null };
     if (BADGER_APPLIED_STATUSES.indexOf(status) >= 0) {
-      entry.applied = { status: status, modified: modified, at: row[0] };
+      entry.applied = { status: status, modified: modified, at: row[0], invNo: normalizeInvoiceNo_(row[4]) };
       entry.note = null;
     } else if (BADGER_NOTE_STATUSES.indexOf(status) >= 0) {
       entry.note = { status: status, modified: modified };
@@ -893,6 +895,25 @@ function planBadgerVoid_(plan, item, tracked, invNo, status) {
   plan.replaceLinesFor.add(invNo);
   plan.rowUpdates.push({ invNo: invNo, set: { 13: 0, 14: "VOID" } });
   planState_(plan, invNo, badgerStateRow_(item, status, invNo, `voided in Badger; Amount Due was ${tracked.amount}`));
+}
+
+/**
+ * Voids a row that came from a PDF. If Badger's customer is not the row's customer
+ * (for example OCR misread the invoice number), the void still happens, because
+ * Badger's invoice under that number is void, but it is logged once so someone
+ * moves any Paid to Me / Submitted marks to the right invoice.
+ */
+function planPdfRowVoid_(plan, stateIndex, item, tracked, invNo) {
+  planBadgerVoid_(plan, item, tracked, invNo, "VOIDED");
+  // Company suffixes (LLC, Inc., ...) and "The" are ignored, so a spelling difference is not a mismatch.
+  const key = (s) => looseName_(s).replace(/\b(llc|inc|incorporated|co|corp|corporation|company|ltd)\b/g, " ").replace(/\s+/g, " ").trim();
+  const theirs = key(item.billToName);
+  const ours = key(tracked.customer);
+  if (theirs && ours && theirs !== ours) {
+    planNoteOnce_(plan, stateIndex, item, invNo, "VOID_CUSTOMER_MISMATCH",
+      `${invNo} is VOID in Badger and was voided in the tracker, but the tracker row is for ${tracked.customer} and Badger's invoice is for ${item.billToName}. ` +
+      "The row may hold another invoice (for example a misread number); move any Paid to Me / Submitted marks to the right invoice.");
+  }
 }
 
 /** Refresh an existing row (D-I, K-M) and its lines from Badger. Terms is cleared only to undo our own VOID. */
@@ -1075,11 +1096,22 @@ function importFromBadger() {
         // Came from a PDF: recorded once and not changed by the import, except that a
         // void in Badger is applied (a void needs no judgment).
         if (item.isVoid && tracked.terms.toUpperCase() !== "VOID") {
-          planBadgerVoid_(plan, item, tracked, invNo, "VOIDED");
+          planPdfRowVoid_(plan, stateIndex, item, tracked, invNo);
           counts.voided++;
         } else {
           planState_(plan, invNo, badgerStateRow_(item, "LINKED", invNo, "already in the tracker; the import changes it only if Badger voids it (use Compare with Badger)"));
           counts.linked++;
+          // The row was linked to another Badger record with this number before: Badger
+          // voided that one and re-issued the invoice. The row keeps the old invoice's
+          // amount and lines, so say so once.
+          const earlier = [];
+          stateIndex.forEach((entry, otherId) => {
+            if (otherId !== id && entry.applied && entry.applied.status === "LINKED" && entry.applied.invNo === invNo) earlier.push(otherId);
+          });
+          if (earlier.length && planNoteOnce_(plan, stateIndex, item, invNo, "LINKED_REISSUED",
+            `${invNo} came from a PDF and was re-issued in Badger (record ${earlier.join(", ")} replaced by ${id}). The tracker row still has the earlier invoice's amount and lines; run Compare with Badger, then Apply Badger corrections.`)) {
+            counts.linkedChanged++;
+          }
         }
         continue;
       } else if (!applied) {
@@ -1101,7 +1133,7 @@ function importFromBadger() {
         // Badger change is not applied, only logged once to Import Errors, so a
         // scheduled run still tells someone.
         if (item.isVoid && tracked.terms.toUpperCase() !== "VOID") {
-          planBadgerVoid_(plan, item, tracked, invNo, "VOIDED");
+          planPdfRowVoid_(plan, stateIndex, item, tracked, invNo);
           counts.voided++;
         } else if (applied.modified === modified) {
           counts.unchanged++;
