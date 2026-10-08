@@ -1,9 +1,38 @@
 /**
  * STURGEON SPIRITS — BADGER INVOICE PARSER
  *
- * VERSION: 2026.10.03.1
+ * VERSION: 2026.10.08.1
  *
- * CHANGES IN THIS VERSION (2026.10.03.1, from 2026.10.02.1)
+ * CHANGES IN THIS VERSION (2026.10.08.1, from 2026.10.03.1)
+ * - Direct Badger import replaces OCR of invoice PDFs. "Import from Badger now"
+ *   logs in with the BADGER_USERNAME / BADGER_PASSWORD Script Properties (the run
+ *   stops before writing anything if either is missing) and only READS Badger:
+ *   the paged invoice list and GET invoice/{id}. Nothing is ever created,
+ *   changed or deleted in Badger.
+ *   - New invoice: its lines, then its invoice row, then a Parser State row
+ *     (status IMPORTED) that records Badger's modifiedDate.
+ *   - Changed invoice (modifiedDate differs from Parser State): its lines are
+ *     replaced and columns D-N of its invoice row are refreshed (UPDATED).
+ *   - Voided invoice: its lines are removed, Amount Due becomes 0 and Terms
+ *     "VOID" (VOIDED). A void invoice never in the tracker is only noted.
+ *   - An invoice already in the tracker (for example from a PDF) with no Badger
+ *     Parser State row is recorded as LINKED; its row is not changed.
+ *   - Delivered, Paid to Me and Submitted (columns O-Q) are written only on new
+ *     rows and never on an existing row.
+ *   Same save order and time limit as the PDF import, under the script lock: a
+ *   run stopped part-way is finished by the next run and never doubles lines.
+ * - "Compare with Badger (Diagnostics only)" lists every difference between the
+ *   tracker and Badger on the "Badger Compare" tab and writes nothing else.
+ *   "Apply Badger corrections" then applies the listed differences from Badger.
+ * - New "Monthly Units" tab (Month, Channel, Product, Size, Units, Dollars),
+ *   rebuilt with Monthly Summary and Previous Month after every import.
+ * - Daily source choice (production): the daily trigger imports from PDFs
+ *   (default) or from Badger, set from the menu and shown in Parser Status.
+ * - The PDF import stays in the menu as a fallback.
+ * - The staging tracker keeps its TEST - tabs (it reads the same Badger account
+ *   read-only).
+ *
+ * CHANGES IN 2026.10.03.1 (from 2026.10.02.1)
  * - Daily automatic import (production only). Menu items "Turn On Daily
  *   Automatic Import" and "Turn Off Automatic Import" add or remove one
  *   time-driven trigger that runs scheduledInvoiceImport() once a day at about
@@ -45,9 +74,11 @@
  *   Delete supakeys.gs. Another file defining onOpen or the same function
  *   names would silently override these.
  * - Requires the Drive advanced service (v3), as before.
+ * - The Badger import needs Script Properties BADGER_USERNAME and BADGER_PASSWORD
+ *   (Project Settings > Script Properties). Never put them in this file.
  */
 
-const BADGER_PARSER_VERSION = "2026.10.03.1";
+const BADGER_PARSER_VERSION = "2026.10.08.1";
 
 const PARSER_PRODUCTION_FOLDER_ID = "1ccOfQpk69SLyMYskD2srlNqHCGm1VBJ5";
 
@@ -67,7 +98,9 @@ const PARSER_ENVIRONMENTS = Object.freeze({
       summary: "Monthly Summary",
       errors: "Import Errors",
       previousMonth: "Previous Month",
-      state: "Parser State"
+      state: "Parser State",
+      monthlyUnits: "Monthly Units",
+      compare: "Badger Compare"
     })
   }),
   // STAGING - Badger Invoice Tracker - 2026-09-15
@@ -85,7 +118,9 @@ const PARSER_ENVIRONMENTS = Object.freeze({
       summary: "TEST - Monthly Summary",
       errors: "TEST - Import Errors",
       previousMonth: "TEST - Previous Month",
-      state: "TEST - Parser State"
+      state: "TEST - Parser State",
+      monthlyUnits: "TEST - Monthly Units",
+      compare: "TEST - Badger Compare"
     })
   })
 });
@@ -108,7 +143,15 @@ const PARSER_SETTINGS = Object.freeze({
   AUTO_IMPORT_HANDLER: "scheduledInvoiceImport",
   AUTO_IMPORT_HOUR: 5,
   AUTO_IMPORT_MINUTE: 45,
-  AUTO_IMPORT_TIMEZONE: "America/Chicago"
+  AUTO_IMPORT_TIMEZONE: "America/Chicago",
+  // 2026.10.08.1 — direct Badger import
+  DAILY_SOURCE_PROPERTY: "PARSER_DAILY_SOURCE", // "PDF" (default) or "BADGER"
+  BADGER_BASE_URL: "https://badgerstatecoop.com/BSWCSite",
+  BADGER_RANGE_START: "2024-01-01T00:00:00-06:00",
+  BADGER_PAGE_SIZE: 500,
+  BADGER_MAX_PAGES: 100,
+  BADGER_MAX_DETAILS_PER_RUN: 200,
+  BADGER_CHANNEL: "Wholesale (Badger)"
 });
 
 const PARSER_INVOICE_HEADERS = Object.freeze([
@@ -177,10 +220,15 @@ function onOpen() {
   const menu = SpreadsheetApp.getUi().createMenu(env ? env.menuTitle : "Invoice Parser (not configured)");
   if (env) {
     menu
-      .addItem("1. Import New Invoice PDFs", "importInvoicePdfs")
+      .addItem("1. Import from Badger now", "importFromBadger")
       .addItem("2. Rebuild Monthly Summary", "rebuildMonthlySummary")
       .addItem("3. Rebuild Previous Month", "rebuildPreviousMonthSummary")
+      .addItem("4. Rebuild Monthly Units", "rebuildMonthlyUnits")
       .addSeparator()
+      .addItem("Compare with Badger (Diagnostics only)", "compareWithBadger")
+      .addItem("Apply Badger corrections", "applyBadgerCorrections")
+      .addSeparator()
+      .addItem("PDF fallback: Import New Invoice PDFs", "importInvoicePdfs")
       .addItem("Repair Missing Customer Names", "repairMissingCustomerNames")
       .addItem("Parser Status", "showParserStatus")
       .addItem("One-time: Move Old Parser Settings", "migrateLegacyParserSettings");
@@ -188,7 +236,9 @@ function onOpen() {
       menu
         .addSeparator()
         .addItem("Turn On Daily Automatic Import (about 5:45 am)", "turnOnDailyAutomaticImport")
-        .addItem("Turn Off Automatic Import", "turnOffAutomaticImport");
+        .addItem("Turn Off Automatic Import", "turnOffAutomaticImport")
+        .addItem("Daily import source: Badger", "useBadgerForDailyImport")
+        .addItem("Daily import source: PDF (fallback)", "usePdfForDailyImport");
     }
     if (env.allowReset) {
       menu.addSeparator().addItem("RESET TEST OUTPUT (run twice)", "resetTestOutput");
@@ -218,7 +268,9 @@ function showParserStatus() {
     `Version ${BADGER_PARSER_VERSION} · ${env.name} (${env.label}) · reads the ${env.folderLabel} · ` +
     `writes "${env.sheets.invoices}" and "${env.sheets.lines}" · Parser State rows: ${stateRows} · ` +
     `OCR today: ${ocr.count}/${PARSER_SETTINGS.OCR_DAILY_LIMIT} · old processed_pdf_/ocr_count_ settings left: ${legacyCount} · ` +
-    `daily automatic import: ${dailyImportTriggers_().length ? "ON (about 5:45 am)" : "off"}` +
+    `daily automatic import: ${dailyImportTriggers_().length ? "ON (about 5:45 am)" : "off"} · ` +
+    `daily source: ${dailyImportSource_() === "BADGER" ? "Badger" : "PDF"} · ` +
+    `Badger login settings: ${badgerCredentials_() ? "present" : "missing"}` +
     (retired.length ? ` · retired settings still present: ${retired.join(", ")}` : ""),
     "Parser Status"
   );
@@ -246,7 +298,36 @@ function turnOnDailyAutomaticImport() {
     .nearMinute(PARSER_SETTINGS.AUTO_IMPORT_MINUTE)
     .everyDays(1)
     .create();
-  return notify_("Daily automatic import is ON. It runs once a day at about 5:45 am and imports any new Badger invoice PDFs. Results appear in Parser State and Import Errors.", "Automatic Import");
+  const source = dailyImportSource_() === "BADGER" ? "from Badger" : "from new Badger invoice PDFs";
+  return notify_(`Daily automatic import is ON. It runs once a day at about 5:45 am and imports ${source}. Results appear in Parser State and Import Errors.`, "Automatic Import");
+}
+
+/** "BADGER" or "PDF". Anything else (including unset) means PDF. */
+function dailyImportSource_() {
+  const v = String(PropertiesService.getScriptProperties().getProperty(PARSER_SETTINGS.DAILY_SOURCE_PROPERTY) || "").trim().toUpperCase();
+  return v === "BADGER" ? "BADGER" : "PDF";
+}
+
+function setDailyImportSource_(source) {
+  const env = parserEnv_();
+  if (env.name !== "PRODUCTION") {
+    throw new Error("The daily import source is only for the production tracker.");
+  }
+  PropertiesService.getScriptProperties().setProperty(PARSER_SETTINGS.DAILY_SOURCE_PROPERTY, source);
+  return notify_(
+    source === "BADGER"
+      ? "The daily import now reads invoices directly from Badger."
+      : "The daily import now reads invoice PDFs from the Badger folder (fallback).",
+    "Automatic Import"
+  );
+}
+
+function useBadgerForDailyImport() {
+  return setDailyImportSource_("BADGER");
+}
+
+function usePdfForDailyImport() {
+  return setDailyImportSource_("PDF");
 }
 
 function turnOffAutomaticImport() {
@@ -264,7 +345,7 @@ function scheduledInvoiceImport() {
   if (env.name !== "PRODUCTION") {
     throw new Error("Scheduled import refused: this is not the production tracker. Turn the trigger off here.");
   }
-  const result = importInvoicePdfs();
+  const result = dailyImportSource_() === "BADGER" ? importFromBadger() : importInvoicePdfs();
   console.log(`Scheduled import result: ${JSON.stringify(result)}`);
   return result;
 }
@@ -387,7 +468,7 @@ function importInvoicePdfs() {
     applyInvoiceStatusValidations_(firstNewInvoiceRow, invoiceRows.length);
     appendRows_(parserState, parserStateRows);
 
-    if (imported) rebuildMonthlySummaryCore_();
+    if (imported) rebuildAllSummaries_();
 
     const parts = [
       `Imported ${imported}.`,
@@ -455,6 +536,604 @@ function buildInvoiceWriteRows_(fileMeta, parsed) {
   ]);
 
   return { invoiceRow, lineRows };
+}
+
+/* -------------------- DIRECT BADGER IMPORT (2026.10.08.1) -------------------- */
+//
+// Read-only. The only Badger requests this file can make are the login, the paged
+// invoice list and GET invoice/{id} (see badgerParserUrl_). It never creates,
+// changes or deletes anything in Badger.
+
+const BADGER_STATE_PREFIX = "badger:";
+const BADGER_UNIT_NAMES = Object.freeze({ 3: "750mL", 5: "375mL", 20: "1.75L", 2: "1500mL", 25: "200mL", 26: "100mL", 19: "50mL" });
+let BADGER_SESSION_COOKIE_ = "";
+
+function badgerCredentials_() {
+  const props = PropertiesService.getScriptProperties();
+  const username = String(props.getProperty("BADGER_USERNAME") || "").trim();
+  const password = String(props.getProperty("BADGER_PASSWORD") || "");
+  return username && password ? { username: username, password: password } : null;
+}
+
+function requireBadgerCredentials_() {
+  const creds = badgerCredentials_();
+  if (!creds) {
+    throw new Error("Badger import stopped: add the BADGER_USERNAME and BADGER_PASSWORD Script Properties (Project Settings > Script Properties), then run it again. Nothing was written.");
+  }
+  return creds;
+}
+
+function badgerParserUrl_(method, path) {
+  const m = String(method || "").toUpperCase();
+  const p = String(path || "");
+  const allowed =
+    (m === "POST" && (p === "/Login/Authenticate" || p === "/Api/invoice/Paged")) ||
+    (m === "GET" && /^\/api\/invoice\/\d+$/.test(p));
+  if (!allowed) throw new Error(`Badger request ${m} ${p} is not allowed (the parser only reads Badger).`);
+  return PARSER_SETTINGS.BADGER_BASE_URL + p;
+}
+
+function badgerCookieHeader_(headers) {
+  const raw = (headers && (headers["Set-Cookie"] || headers["set-cookie"])) || [];
+  const values = Array.isArray(raw) ? raw : [raw];
+  const cookies = [];
+  values.forEach((value) => {
+    (String(value || "").match(/(?:^|,\s*)([^;,\s]+=[^;,\s]+)/g) || []).forEach((c) => {
+      const cookie = c.replace(/^,\s*/, "").trim();
+      if (cookie && cookies.indexOf(cookie) < 0) cookies.push(cookie);
+    });
+  });
+  return cookies.join("; ");
+}
+
+/** Logs in once per execution (or again when forced). */
+function badgerSession_(forceRefresh) {
+  if (BADGER_SESSION_COOKIE_ && !forceRefresh) return BADGER_SESSION_COOKIE_;
+  const creds = requireBadgerCredentials_();
+  const response = UrlFetchApp.fetch(badgerParserUrl_("POST", "/Login/Authenticate"), {
+    method: "post",
+    contentType: "application/json",
+    payload: JSON.stringify({ username: creds.username, password: creds.password }),
+    muteHttpExceptions: true,
+    followRedirects: false
+  });
+  const status = response.getResponseCode();
+  if (status < 200 || status >= 400) throw new Error(`Badger login was rejected (HTTP ${status}).`);
+  let payload = null;
+  try { payload = JSON.parse(response.getContentText()); } catch (e) {}
+  if (payload && payload.isSuccess === false) throw new Error("Badger login was rejected.");
+  const cookie = badgerCookieHeader_(response.getAllHeaders());
+  if (!cookie) throw new Error("Badger login did not return a session cookie.");
+  BADGER_SESSION_COOKIE_ = cookie;
+  return cookie;
+}
+
+function badgerNeedsSessionRefresh_(status, text) {
+  if (status === 401 || (status >= 300 && status < 400)) return true;
+  try {
+    const payload = JSON.parse(text);
+    const errors = payload && Array.isArray(payload.errors) ? payload.errors : [];
+    return !!payload && payload.isAuthorized === false && !errors.length && payload.hasErrors !== true;
+  } catch (e) {
+    return true;
+  }
+}
+
+/** One read request; logs in again once if the session expired. Returns parsed JSON. */
+function badgerReadJson_(method, path, body, label) {
+  const url = badgerParserUrl_(method, path);
+  const send = (force) => UrlFetchApp.fetch(url, Object.assign(
+    {
+      method: method.toLowerCase(),
+      headers: { Cookie: badgerSession_(force) },
+      muteHttpExceptions: true,
+      followRedirects: false
+    },
+    body ? { contentType: "application/json", payload: JSON.stringify(body) } : {}
+  ));
+  let response = send(false);
+  if (badgerNeedsSessionRefresh_(response.getResponseCode(), response.getContentText())) response = send(true);
+  const status = response.getResponseCode();
+  if (status < 200 || status >= 300) throw new Error(`${label} failed (HTTP ${status}).`);
+  try {
+    return JSON.parse(response.getContentText());
+  } catch (e) {
+    throw new Error(`${label} returned invalid JSON.`);
+  }
+}
+
+/** Every Badger invoice (all statuses) from 2024 on, page by page; stops on any inconsistency. */
+function fetchBadgerInvoiceList_() {
+  const today = Utilities.formatDate(new Date(), PARSER_SETTINGS.AUTO_IMPORT_TIMEZONE, "yyyy-MM-dd");
+  const invoices = [];
+  let totalCount = null;
+  for (let page = 0; page < PARSER_SETTINGS.BADGER_MAX_PAGES; page++) {
+    const payload = badgerReadJson_("POST", "/Api/invoice/Paged", {
+      pageSize: PARSER_SETTINGS.BADGER_PAGE_SIZE, page: page, sorts: [], filters: [],
+      parameters: { rangeStart: PARSER_SETTINGS.BADGER_RANGE_START, rangeEnd: `${today}T23:59:59-06:00`, status: "All" }
+    }, "Badger invoice list");
+    const data = payload && payload.data;
+    const count = Number(data && data.totalCount);
+    if (!data || !Number.isInteger(count) || count < 0 || !Array.isArray(data.data)) {
+      throw new Error("Badger invoice list returned an unexpected response shape.");
+    }
+    if (totalCount === null) totalCount = count;
+    if (totalCount !== count) throw new Error("Badger invoice count changed while reading the list; nothing was written. Run again.");
+    data.data.forEach((invoice) => {
+      if (!invoice || !String(invoice.id || "").trim() || !String(invoice.number || "").trim()) {
+        throw new Error("Badger invoice list returned an incomplete invoice record.");
+      }
+      invoices.push(invoice);
+    });
+    if (invoices.length === totalCount) return invoices;
+    if (!data.data.length || invoices.length > totalCount) throw new Error("Badger invoice list returned an incomplete page sequence.");
+  }
+  throw new Error("Badger invoice list exceeded the safe page limit.");
+}
+
+function fetchBadgerInvoiceDetail_(badgerId) {
+  if (!/^\d+$/.test(String(badgerId || ""))) throw new Error(`Badger invoice ID "${badgerId}" is invalid.`);
+  const payload = badgerReadJson_("GET", `/api/invoice/${badgerId}`, null, `Badger invoice ${badgerId}`);
+  const detail = payload && payload.data ? payload.data : payload;
+  if (!detail || !Array.isArray(detail.lines)) throw new Error(`Badger invoice ${badgerId} returned no line list.`);
+  return detail;
+}
+
+function badgerDateText_(v) {
+  const m = String(v || "").match(/^(\d{4})-(\d{2})-(\d{2})/);
+  return m ? `${Number(m[2])}/${Number(m[3])}/${m[1]}` : String(v || "");
+}
+
+function badgerMoney_(v) {
+  const n = Number(String(v === null || v === undefined ? "" : v).replace(/[$,\s]/g, ""));
+  return isFinite(n) ? Math.round(n * 100) / 100 : 0;
+}
+
+function badgerLineVolume_(line) {
+  const named = line.unitOfMeasureName || line.unitOfMeasureDescription || (line.unitOfMeasure && (line.unitOfMeasure.name || line.unitOfMeasure.description)) || line.volume;
+  if (named) return String(named).replace(/\s+/g, "");
+  return BADGER_UNIT_NAMES[Number(line.unitOfMeasureId)] || String(line.unitOfMeasureId || "");
+}
+
+/** Tracker values (Invoices columns D-N plus the line rows) for one Badger invoice. */
+function badgerInvoiceValues_(listItem, detail) {
+  const invNo = normalizeInvoiceNo_(detail.number || listItem.number);
+  const custName = String(detail.billToName || listItem.billToName || "").trim() || "Unknown Customer";
+  const cityStateZip = [detail.billToCity, detail.billToState, detail.billToPostalCode].filter(Boolean).join(" ");
+  const amount = badgerMoney_(detail.totalDue !== undefined ? detail.totalDue : (detail.dollarAmount !== undefined ? detail.dollarAmount : listItem.dollarAmount));
+  const lineRows = detail.lines.map((li) => {
+    const qty = Number(li.quantity || 0);
+    const unitPrice = badgerMoney_(li.unitPrice);
+    const given = li.lineTotal !== undefined ? li.lineTotal : (li.total !== undefined ? li.total : li.extendedPrice);
+    const lineTotal = given !== undefined ? badgerMoney_(given) : Math.round(qty * unitPrice * 100) / 100;
+    return [invNo, custName, qty, badgerLineVolume_(li), String(li.description || "").replace(/\s+/g, " ").trim(), String(li.beverageClass || ""), unitPrice, lineTotal];
+  });
+  return {
+    invNo: invNo,
+    // Columns D (Invoice #) through N (Terms)
+    detailCells: [
+      invNo,
+      badgerDateText_(detail.date || listItem.date),
+      custName,
+      [detail.billToAddressLine1, detail.billToAddressLine2].filter(Boolean).join(", "),
+      cityStateZip,
+      String(detail.billToResellerNumber || ""),
+      "",
+      String(detail.phone || ""),
+      String(detail.orderNumber || ""),
+      amount,
+      ""
+    ],
+    lineRows: lineRows
+  };
+}
+
+function badgerStateRow_(listItem, status, invNo, detail) {
+  return buildParserStateRow_(
+    BADGER_STATE_PREFIX + listItem.id,
+    `Badger invoice ${listItem.number}`,
+    status,
+    invNo,
+    `badgerModified=${String(listItem.modifiedDate || "")} · ${detail || ""}`.trim()
+  );
+}
+
+/** Latest Parser State row per Badger invoice ID: { status, modified }. */
+function buildBadgerStateIndex_() {
+  const env = parserEnv_();
+  const out = new Map();
+  const sh = env.ss.getSheetByName(env.sheets.state);
+  if (!sh || sh.getLastRow() < 2) return out;
+  sh.getRange(2, 1, sh.getLastRow() - 1, 6).getValues().forEach((row) => {
+    const key = String(row[1] || "").trim();
+    if (key.indexOf(BADGER_STATE_PREFIX) !== 0) return;
+    const m = String(row[5] || "").match(/badgerModified=(\S*)/);
+    out.set(key.slice(BADGER_STATE_PREFIX.length), { status: String(row[3] || "").trim().toUpperCase(), modified: m ? m[1] : "" });
+  });
+  return out;
+}
+
+/** Invoice # -> { row (1-based), terms, amount, date, customer } for the invoices tab. */
+function buildTrackerInvoiceRows_() {
+  const env = parserEnv_();
+  const sh = env.ss.getSheetByName(env.sheets.invoices);
+  const out = new Map();
+  if (!sh || sh.getLastRow() < 2) return out;
+  sh.getRange(2, 1, sh.getLastRow() - 1, PARSER_INVOICE_HEADERS.length).getValues().forEach((r, i) => {
+    const invNo = normalizeInvoiceNo_(r[3]);
+    if (invNo && !out.has(invNo)) {
+      out.set(invNo, { row: i + 2, date: r[4], customer: String(r[5] || ""), amount: r[12], terms: String(r[13] || "").trim() });
+    }
+  });
+  return out;
+}
+
+/**
+ * Applies a batch of Badger changes in the failure-safe order:
+ * 1. Invoice Lines: lines of replaced/voided invoices removed, new lines added.
+ * 2. Invoices: new rows appended; existing rows get columns A and D-N only.
+ * 3. Parser State rows.
+ * A stop between steps leaves Parser State unchanged for that invoice, so the next
+ * run repeats it and the line rewrite (which first removes that invoice's lines)
+ * cannot double them. Columns O-Q (Delivered, Paid to Me, Submitted) are only
+ * written on new rows.
+ */
+function saveBadgerChanges_(plan) {
+  const env = parserEnv_();
+  const linesSheet = env.ss.getSheetByName(env.sheets.lines);
+  const inv = env.ss.getSheetByName(env.sheets.invoices);
+  const stateSheet = env.ss.getSheetByName(env.sheets.state);
+  if (plan.replaceLinesFor.size) {
+    // Rewrite every column in use, so anything typed beside a line stays on its row.
+    const width = Math.max(linesSheet.getLastColumn(), PARSER_LINE_HEADERS.length);
+    const last = linesSheet.getLastRow();
+    const existing = last > 1 ? linesSheet.getRange(2, 1, last - 1, width).getValues() : [];
+    const kept = existing.filter((r) => !plan.replaceLinesFor.has(normalizeInvoiceNo_(r[0])));
+    const added = plan.lineRows.map((r) => r.concat(new Array(width - r.length).fill("")));
+    const rows = kept.concat(added);
+    if (rows.length) linesSheet.getRange(2, 1, rows.length, width).setValues(rows);
+    if (existing.length > rows.length) {
+      linesSheet.getRange(rows.length + 2, 1, existing.length - rows.length, width).clearContent();
+    }
+  } else {
+    appendRows_(linesSheet, plan.lineRows);
+  }
+
+  const firstNewInvoiceRow = inv.getLastRow() + 1;
+  appendRows_(inv, plan.newInvoiceRows);
+  applyInvoiceStatusValidations_(firstNewInvoiceRow, plan.newInvoiceRows.length);
+  plan.rowUpdates.forEach((u) => {
+    inv.getRange(u.row, 1).setValue(new Date());
+    inv.getRange(u.row, u.startCol, 1, u.cells.length).setValues([u.cells]);
+  });
+
+  appendRows_(stateSheet, plan.stateRows);
+}
+
+function newBadgerPlan_() {
+  return { replaceLinesFor: new Set(), lineRows: [], newInvoiceRows: [], rowUpdates: [], stateRows: [] };
+}
+
+/** Voided in Badger: remove its lines; Amount Due (M) becomes 0 and Terms (N) "VOID". Nothing else on the row changes. */
+function planBadgerVoid_(plan, listItem, tracked, invNo, status) {
+  plan.replaceLinesFor.add(invNo);
+  plan.rowUpdates.push({ row: tracked.row, startCol: 13, cells: [0, "VOID"] });
+  plan.stateRows.push(badgerStateRow_(listItem, status, invNo, `voided in Badger; Amount Due was ${tracked.amount}`));
+}
+
+/** Refresh an existing row (columns D-N) and its lines from Badger. */
+function planBadgerRefresh_(plan, listItem, tracked, values, status) {
+  plan.replaceLinesFor.add(values.invNo);
+  Array.prototype.push.apply(plan.lineRows, values.lineRows);
+  plan.rowUpdates.push({ row: tracked.row, startCol: 4, cells: values.detailCells });
+  plan.stateRows.push(badgerStateRow_(listItem, status, values.invNo, `${values.lineRows.length} line(s)`));
+}
+
+function badgerTimeUp_(startedAt) {
+  return Date.now() - startedAt > PARSER_SETTINGS.MAX_RUN_MS;
+}
+
+/**
+ * Menu "Import from Badger now" and the daily trigger when its source is Badger.
+ * New invoices are added, changed ones refreshed, voided ones voided. Read-only toward Badger.
+ */
+function importFromBadger() {
+  requireBadgerCredentials_();
+  return withScriptLock_(function () {
+    const env = parserEnv_();
+    const startedAt = Date.now();
+    ensureSheetsAndHeaders_();
+
+    const list = fetchBadgerInvoiceList_();
+    const stateIndex = buildBadgerStateIndex_();
+    const tracker = buildTrackerInvoiceRows_();
+    const invoicesWithLines = buildInvoicesWithLinesIndex_();
+    const plan = newBadgerPlan_();
+    const seen = new Set();
+    const counts = { imported: 0, updated: 0, voided: 0, linked: 0, voidSkipped: 0, unchanged: 0, failed: 0, duplicateNumbers: 0 };
+    let details = 0;
+    let stoppedReason = "";
+
+    for (const item of list) {
+      const invNo = normalizeInvoiceNo_(item.number);
+      const id = String(item.id);
+      if (seen.has(invNo)) {
+        // Reported in the toast; not logged, so a daily run does not add the same row every day.
+        counts.duplicateNumbers++;
+        continue;
+      }
+      seen.add(invNo);
+
+      const state = stateIndex.get(id);
+      const tracked = tracker.get(invNo);
+      const modified = String(item.modifiedDate || "");
+
+      if (item.isVoid) {
+        if (tracked && tracked.terms.toUpperCase() !== "VOID") {
+          planBadgerVoid_(plan, item, tracked, invNo, "VOIDED");
+          counts.voided++;
+        } else if (!tracked && (!state || state.status !== "VOID_SKIPPED")) {
+          plan.stateRows.push(badgerStateRow_(item, "VOID_SKIPPED", invNo, "void in Badger; not imported"));
+          counts.voidSkipped++;
+        } else {
+          counts.unchanged++;
+        }
+        continue;
+      }
+
+      if (tracked && !state) {
+        // Already in the tracker (for example from a PDF): record Badger's version only.
+        plan.stateRows.push(badgerStateRow_(item, "LINKED", invNo, "already in the tracker; row not changed (Compare with Badger shows any difference)"));
+        counts.linked++;
+        continue;
+      }
+      if (tracked && state && state.modified === modified && tracked.terms.toUpperCase() !== "VOID") {
+        counts.unchanged++;
+        continue;
+      }
+
+      if (details >= PARSER_SETTINGS.BADGER_MAX_DETAILS_PER_RUN) {
+        stoppedReason = `Stopped after reading ${details} invoices; run again for the rest.`;
+        break;
+      }
+      if (badgerTimeUp_(startedAt)) {
+        stoppedReason = "Stopped before the Apps Script time limit; run again for the rest.";
+        break;
+      }
+
+      let values;
+      try {
+        details++;
+        values = badgerInvoiceValues_(item, fetchBadgerInvoiceDetail_(id));
+      } catch (err) {
+        const msg = String(err && err.message ? err.message : err);
+        logError_(BADGER_STATE_PREFIX + id, `Badger invoice ${item.number}`, "badger", msg, "");
+        counts.failed++;
+        continue;
+      }
+
+      if (tracked) {
+        planBadgerRefresh_(plan, item, tracked, values, "UPDATED");
+        counts.updated++;
+      } else {
+        // A run stopped after saving lines but before the invoice row: rewrite those lines.
+        if (invoicesWithLines.has(invNo)) plan.replaceLinesFor.add(invNo);
+        Array.prototype.push.apply(plan.lineRows, values.lineRows);
+        const cells = values.detailCells;
+        plan.newInvoiceRows.push([new Date(), BADGER_STATE_PREFIX + id, `Badger invoice ${item.number}`].concat(cells, [false, false, "No"]));
+        plan.stateRows.push(badgerStateRow_(item, "IMPORTED", invNo, `${values.lineRows.length} line(s)`));
+        counts.imported++;
+      }
+    }
+
+    saveBadgerChanges_(plan);
+    if (counts.imported || counts.updated || counts.voided) rebuildAllSummaries_();
+
+    const parts = [
+      `Badger: ${list.length} invoice(s).`,
+      `Imported ${counts.imported}.`,
+      counts.updated ? `Updated ${counts.updated} changed in Badger.` : "",
+      counts.voided ? `Voided ${counts.voided}.` : "",
+      counts.linked ? `Linked ${counts.linked} already in the tracker.` : "",
+      counts.voidSkipped ? `${counts.voidSkipped} void invoice(s) not imported.` : "",
+      counts.failed ? `${counts.failed} could not be read and will be retried next run (see ${env.sheets.errors}).` : "",
+      counts.duplicateNumbers ? `${counts.duplicateNumbers} invoice number(s) listed twice in Badger; only the first was used.` : "",
+      `${counts.unchanged} unchanged.`,
+      stoppedReason
+    ].filter(Boolean);
+    notify_(parts.join(" "), env.name === "PRODUCTION" ? "Badger Import" : "TEST Badger Import");
+
+    return Object.assign({ environment: env.name, source: "BADGER", listed: list.length, detailsRead: details, stoppedReason: stoppedReason }, counts);
+  });
+}
+
+/* -------------------- COMPARE / CORRECT (2026.10.08.1) -------------------- */
+
+const BADGER_COMPARE_HEADERS = Object.freeze(["Checked At", "Invoice #", "Badger ID", "Issue", "Tracker", "Badger"]);
+const BADGER_CORRECTABLE_ISSUES = Object.freeze(["Amount differs", "Customer differs", "Date differs", "Lines differ", "Void in Badger"]);
+
+function looseName_(s) {
+  return String(s || "").toLowerCase().replace(/&/g, " and ").replace(/[^a-z0-9]+/g, " ").replace(/^the /, "").trim();
+}
+
+function cents_(v) {
+  return Math.round(asNumberFlexible_(v) * 100);
+}
+
+function lineSummary_(rows) {
+  let units = 0;
+  let total = 0;
+  rows.forEach((r) => { units += asNumberFlexible_(r[2]); total += cents_(r[7]); });
+  return { count: rows.length, units: units, cents: total, text: `${rows.length} line(s), ${units} unit(s), $${(total / 100).toFixed(2)}` };
+}
+
+function dateKey_(v) {
+  if (Object.prototype.toString.call(v) === "[object Date]" && !isNaN(v.getTime())) {
+    return `${v.getMonth() + 1}/${v.getDate()}/${v.getFullYear()}`;
+  }
+  const d = parseMmDdYyyy_(String(v || "").trim());
+  return d ? `${d.getMonth() + 1}/${d.getDate()}/${d.getFullYear()}` : String(v || "").trim();
+}
+
+/**
+ * Diagnostics only: reads Badger and the tracker and lists every difference on the
+ * Badger Compare tab. Writes nothing else.
+ */
+function compareWithBadger() {
+  requireBadgerCredentials_();
+  return withScriptLock_(function () {
+    const env = parserEnv_();
+    const startedAt = Date.now();
+    const list = fetchBadgerInvoiceList_();
+    const tracker = buildTrackerInvoiceRows_();
+    const linesByInvoice = new Map();
+    const linesSheet = env.ss.getSheetByName(env.sheets.lines);
+    if (linesSheet && linesSheet.getLastRow() > 1) {
+      linesSheet.getRange(2, 1, linesSheet.getLastRow() - 1, PARSER_LINE_HEADERS.length).getValues().forEach((r) => {
+        const invNo = normalizeInvoiceNo_(r[0]);
+        if (!invNo) return;
+        if (!linesByInvoice.has(invNo)) linesByInvoice.set(invNo, []);
+        linesByInvoice.get(invNo).push(r);
+      });
+    }
+
+    const now = new Date();
+    const out = [];
+    const add = (invNo, id, issue, trackerValue, badgerValue) => out.push([now, invNo, id, issue, String(trackerValue), String(badgerValue)]);
+    const inBadger = new Set();
+    let notChecked = 0;
+
+    for (const item of list) {
+      const invNo = normalizeInvoiceNo_(item.number);
+      const id = String(item.id);
+      inBadger.add(invNo);
+      const tracked = tracker.get(invNo);
+
+      if (item.isVoid) {
+        if (tracked && tracked.terms.toUpperCase() !== "VOID") add(invNo, id, "Void in Badger", `$${asNumberFlexible_(tracked.amount).toFixed(2)}`, "VOID");
+        continue;
+      }
+      if (!tracked) {
+        add(invNo, id, "Missing in tracker", "", `${badgerDateText_(item.date)} ${item.billToName || ""} $${badgerMoney_(item.dollarAmount).toFixed(2)}`);
+        continue;
+      }
+      if (badgerTimeUp_(startedAt)) {
+        notChecked++;
+        add(invNo, id, "Not checked (time limit)", "", "run Compare again");
+        continue;
+      }
+
+      let values;
+      try {
+        values = badgerInvoiceValues_(item, fetchBadgerInvoiceDetail_(id));
+      } catch (err) {
+        add(invNo, id, "Could not read from Badger", "", String(err && err.message ? err.message : err));
+        continue;
+      }
+      const c = values.detailCells;
+      if (tracked.terms.toUpperCase() === "VOID") add(invNo, id, "Voided in tracker, active in Badger", "VOID", `$${c[9].toFixed(2)}`);
+      if (cents_(tracked.amount) !== cents_(c[9])) add(invNo, id, "Amount differs", `$${asNumberFlexible_(tracked.amount).toFixed(2)}`, `$${c[9].toFixed(2)}`);
+      if (looseName_(tracked.customer) !== looseName_(c[2])) add(invNo, id, "Customer differs", tracked.customer, c[2]);
+      if (dateKey_(tracked.date) !== dateKey_(c[1])) add(invNo, id, "Date differs", dateKey_(tracked.date), c[1]);
+      const mine = lineSummary_(linesByInvoice.get(invNo) || []);
+      const theirs = lineSummary_(values.lineRows);
+      if (mine.count !== theirs.count || mine.units !== theirs.units || mine.cents !== theirs.cents) add(invNo, id, "Lines differ", mine.text, theirs.text);
+    }
+
+    tracker.forEach((t, invNo) => {
+      if (!inBadger.has(invNo)) add(invNo, "", "Not in Badger", `${dateKey_(t.date)} ${t.customer}`, "");
+    });
+
+    let sh = env.ss.getSheetByName(env.sheets.compare);
+    if (!sh) sh = env.ss.insertSheet(env.sheets.compare);
+    fullClearSheet_(sh);
+    const rows = [BADGER_COMPARE_HEADERS.slice()].concat(out.length ? out : [[now, "", "", "No differences", "", ""]]);
+    sh.getRange(1, 1, rows.length, BADGER_COMPARE_HEADERS.length).setValues(rows);
+    sh.setFrozenRows(1);
+
+    const correctable = out.filter((r) => BADGER_CORRECTABLE_ISSUES.indexOf(r[3]) >= 0).length;
+    notify_(
+      `Compared ${list.length} Badger invoice(s) with the tracker: ${out.length} difference(s), ${correctable} correctable. See "${env.sheets.compare}". Nothing else was changed.` +
+      (notChecked ? ` ${notChecked} not checked (time limit); run again.` : ""),
+      "Compare with Badger"
+    );
+    return { environment: env.name, listed: list.length, differences: out.length, correctable: correctable, notChecked: notChecked };
+  });
+}
+
+/**
+ * Applies the correctable rows on the Badger Compare tab, reading each invoice from
+ * Badger again. Delete a row from that tab first to leave that invoice alone.
+ * Never writes Delivered, Paid to Me or Submitted.
+ */
+function applyBadgerCorrections() {
+  requireBadgerCredentials_();
+  return withScriptLock_(function () {
+    const env = parserEnv_();
+    const startedAt = Date.now();
+    ensureSheetsAndHeaders_();
+    const sh = env.ss.getSheetByName(env.sheets.compare);
+    if (!sh || sh.getLastRow() < 2) {
+      return notify_("Run Compare with Badger first; there is nothing to apply.", "Apply Badger corrections");
+    }
+
+    const wanted = new Map();
+    sh.getRange(2, 1, sh.getLastRow() - 1, BADGER_COMPARE_HEADERS.length).getValues().forEach((r) => {
+      const invNo = normalizeInvoiceNo_(r[1]);
+      const id = String(r[2] || "").trim();
+      if (invNo && /^\d+$/.test(id) && BADGER_CORRECTABLE_ISSUES.indexOf(String(r[3])) >= 0) wanted.set(id, invNo);
+    });
+    if (!wanted.size) {
+      return notify_("The Badger Compare tab lists no correctable differences.", "Apply Badger corrections");
+    }
+
+    const list = fetchBadgerInvoiceList_();
+    const byId = new Map(list.map((item) => [String(item.id), item]));
+    const tracker = buildTrackerInvoiceRows_();
+    const plan = newBadgerPlan_();
+    let corrected = 0;
+    let voided = 0;
+    let skipped = 0;
+    let stoppedReason = "";
+
+    for (const [id, invNo] of wanted) {
+      const item = byId.get(id);
+      const tracked = tracker.get(invNo);
+      if (!item || !tracked || normalizeInvoiceNo_(item.number) !== invNo) {
+        skipped++;
+        continue;
+      }
+      if (item.isVoid) {
+        if (tracked.terms.toUpperCase() !== "VOID") {
+          planBadgerVoid_(plan, item, tracked, invNo, "VOIDED");
+          voided++;
+        }
+        continue;
+      }
+      if (badgerTimeUp_(startedAt)) {
+        stoppedReason = "Stopped before the Apps Script time limit; run Apply again for the rest.";
+        break;
+      }
+      try {
+        planBadgerRefresh_(plan, item, tracked, badgerInvoiceValues_(item, fetchBadgerInvoiceDetail_(id)), "CORRECTED");
+        corrected++;
+      } catch (err) {
+        logError_(BADGER_STATE_PREFIX + id, `Badger invoice ${item.number}`, "badger-correct", String(err && err.message ? err.message : err), "");
+        skipped++;
+      }
+    }
+
+    saveBadgerChanges_(plan);
+    if (corrected || voided) rebuildAllSummaries_();
+    notify_(
+      `Corrected ${corrected} invoice(s) from Badger${voided ? `, voided ${voided}` : ""}.` +
+      (skipped ? ` ${skipped} skipped (no longer in Badger or the tracker, or unreadable).` : "") +
+      " Delivered, Paid to Me and Submitted were not changed. Run Compare with Badger again to confirm." +
+      (stoppedReason ? ` ${stoppedReason}` : ""),
+      "Apply Badger corrections"
+    );
+    return { environment: env.name, corrected: corrected, voided: voided, skipped: skipped, stoppedReason: stoppedReason };
+  });
 }
 
 /* -------------------- PARSING -------------------- */
@@ -878,7 +1557,7 @@ function rebuildPreviousMonthSummary() {
   });
 }
 
-function rebuildPreviousMonthSummaryCore_() {
+function rebuildPreviousMonthSummaryCore_(quiet) {
   const env = parserEnv_();
   const ss = env.ss;
   const inv = ss.getSheetByName(env.sheets.invoices);
@@ -1005,12 +1684,80 @@ function rebuildPreviousMonthSummaryCore_() {
 
   sh.setFrozenRows(2);
   sh.autoResizeColumns(1, 4);
-  ss.setActiveSheet(sh);
+  if (!quiet) ss.setActiveSheet(sh);
 
-  return notify_(
-    `${sheetTitle}: ${sortedProducts.length} products, ${totalBottles} bottles, $${totalSales.toFixed(2)}`,
-    "Previous Month Summary"
+  const message = (
+    `${sheetTitle}: ${sortedProducts.length} products, ${totalBottles} bottles, $${totalSales.toFixed(2)}`
   );
+  return quiet ? message : notify_(message, "Previous Month Summary");
+}
+
+/* -------------------- MONTHLY UNITS (2026.10.08.1) -------------------- */
+
+const MONTHLY_UNITS_HEADERS = Object.freeze(["Month", "Channel", "Product", "Size", "Units", "Dollars"]);
+
+function rebuildMonthlyUnits() {
+  return withScriptLock_(function () {
+    const result = rebuildMonthlyUnitsCore_();
+    notify_(result, "Monthly Units");
+    return result;
+  });
+}
+
+/** One row per month, channel, product and size, from Invoices (dates) and Invoice Lines. */
+function rebuildMonthlyUnitsCore_() {
+  const env = parserEnv_();
+  const inv = env.ss.getSheetByName(env.sheets.invoices);
+  const lines = env.ss.getSheetByName(env.sheets.lines);
+  let sh = env.ss.getSheetByName(env.sheets.monthlyUnits);
+  if (!sh) sh = env.ss.insertSheet(env.sheets.monthlyUnits);
+  fullClearSheet_(sh);
+
+  const months = new Map();
+  if (inv && inv.getLastRow() > 1) {
+    inv.getRange(2, 1, inv.getLastRow() - 1, PARSER_INVOICE_HEADERS.length).getValues().forEach((r) => {
+      const invNo = normalizeInvoiceNo_(r[3]);
+      const ym = toMonthKeyFlexible_(r[4]);
+      if (invNo && ym && String(r[13] || "").trim().toUpperCase() !== "VOID") months.set(invNo, ym);
+    });
+  }
+
+  const totals = new Map();
+  if (lines && lines.getLastRow() > 1) {
+    lines.getRange(2, 1, lines.getLastRow() - 1, PARSER_LINE_HEADERS.length).getValues().forEach((r) => {
+      const ym = months.get(normalizeInvoiceNo_(r[0]));
+      const product = String(r[4] || "").replace(/\s+/g, " ").trim();
+      if (!ym || !product) return;
+      const size = String(r[3] || "").replace(/\s+/g, "");
+      const key = [ym, PARSER_SETTINGS.BADGER_CHANNEL, product, size].join("\u0001");
+      const cur = totals.get(key) || { ym: ym, product: product, size: size, units: 0, cents: 0 };
+      cur.units += asNumberFlexible_(r[2]);
+      cur.cents += Math.round(asNumberFlexible_(r[7]) * 100);
+      totals.set(key, cur);
+    });
+  }
+
+  const rows = Array.from(totals.values())
+    .sort((a, b) => a.ym.localeCompare(b.ym) || a.product.localeCompare(b.product) || a.size.localeCompare(b.size))
+    .map((t) => [t.ym, PARSER_SETTINGS.BADGER_CHANNEL, t.product, t.size, t.units, t.cents / 100]);
+
+  const out = [MONTHLY_UNITS_HEADERS.slice()].concat(rows);
+  sh.getRange(1, 1, out.length, MONTHLY_UNITS_HEADERS.length).setValues(out);
+  sh.setFrozenRows(1);
+  sh.getRange(1, 1, 1, MONTHLY_UNITS_HEADERS.length).setFontWeight("bold");
+  if (rows.length) {
+    sh.getRange(2, 1, rows.length, 1).setNumberFormat("@");
+    sh.getRange(2, 5, rows.length, 1).setNumberFormat("0");
+    sh.getRange(2, 6, rows.length, 1).setNumberFormat("$#,##0.00");
+  }
+  return `Monthly Units rebuilt: ${rows.length} row(s).`;
+}
+
+/** After any import or correction: Monthly Summary, Previous Month and Monthly Units. */
+function rebuildAllSummaries_() {
+  rebuildMonthlySummaryCore_();
+  rebuildPreviousMonthSummaryCore_(true);
+  rebuildMonthlyUnitsCore_();
 }
 
 /* -------------------- REPAIRS -------------------- */
@@ -1136,7 +1883,7 @@ function resetTestOutput() {
         sh.getRange(2, 1, sh.getLastRow() - 1, sh.getLastColumn()).clearContent();
       }
     });
-    [env.sheets.summary, env.sheets.previousMonth].forEach((name) => {
+    [env.sheets.summary, env.sheets.previousMonth, env.sheets.monthlyUnits, env.sheets.compare].forEach((name) => {
       const sh = env.ss.getSheetByName(name);
       if (sh) fullClearSheet_(sh);
     });
