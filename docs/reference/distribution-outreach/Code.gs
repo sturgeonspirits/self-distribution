@@ -1,9 +1,15 @@
 /**
  * Sturgeon Spirits Distribution Outreach
  *
- * VERSION: 2026.10.04.25-APP
+ * VERSION: 2026.10.08.26-APP
  *
  * CHANGES IN THIS VERSION
+ * - Adds the Hub-only sendCustomerEmail action for the "Order online invite" to current customers. It validates the
+ *   Directory row by row number, business and email; refuses Do Not Email, an opt-out status or outcome, and an address
+ *   that already received the invite; preserves lock/idempotency/Zoho recovery; and writes one Activity Log row with the
+ *   Order online invite stage. It does not change the row's outreach stage.
+ *
+ * CHANGES IN 2026.10.04.25-APP
  * - Adds the Hub-only sendNewsletterEmail action for Cocktail list campaigns. It validates a subscribed Newsletter
  *   Contacts record by contact ID and email, preserves lock/idempotency/Zoho recovery, and writes one Activity Log row
  *   with its true Cocktail list stage and saved subject without changing Directory outreach state.
@@ -66,7 +72,7 @@
  * Sends through the authenticated Zoho Mail API account.
  */
 
-const OUTREACH_VERSION = '2026.10.04.25-APP';
+const OUTREACH_VERSION = '2026.10.08.26-APP';
 const NURTURE_CHECK_IN_DUPLICATE_COOLDOWN_DAYS = 60;
 
 const OUTREACH = Object.freeze({
@@ -206,6 +212,7 @@ function doPost(e) {
     if (action === 'appMailerStatus') return appJson_(Object.assign({ ok:true, version:OUTREACH_VERSION }, appMailerStatus_()));
     if (action === 'sendAppEmail') return appJson_(Object.assign({ ok:true, version:OUTREACH_VERSION }, sendAppEmailRequest_(body, false)));
     if (action === 'sendNewsletterEmail') return appJson_(Object.assign({ ok:true, version:OUTREACH_VERSION }, sendNewsletterEmailRequest_(body)));
+    if (action === 'sendCustomerEmail') return appJson_(Object.assign({ ok:true, version:OUTREACH_VERSION }, sendAppEmailRequest_(body, false, validateCustomerLead_)));
     if (action === 'sendAppTestEmail') return appJson_(Object.assign({ ok:true, version:OUTREACH_VERSION }, sendAppEmailRequest_(body, true)));
     if (action === 'sendPaymentReminder') return appJson_(Object.assign({ ok:true, version:OUTREACH_VERSION }, sendPaymentReminderRequest_(body)));
     throw new Error('Unsupported app mailer action.');
@@ -367,6 +374,34 @@ function validateAppLead_(body, testMode) {
     throw new Error('This email stage has already been sent to the recipient.');
   }
   return { sheet:sheet, row:row, rowNumber:rowNumber, business:business, email:email, stage:stage };
+}
+
+// Order-online invite to a current customer. The Hub chooses the audience; this check is the
+// independent last gate before Zoho, so it repeats the opt-out and once-per-address rules.
+const CUSTOMER_INVITE_STAGE = 'Order online invite';
+
+function validateCustomerLead_(body, testMode) {
+  if (String(body.message_stage || '').trim() !== CUSTOMER_INVITE_STAGE) throw new Error('Customer messages must use the Order online invite stage.');
+  const sheet = assertStagingEnvironment_().getSheetByName(OUTREACH.LEADS_SHEET);
+  const rowNumber = Number(body.source_row);
+  if (!Number.isInteger(rowNumber) || rowNumber < OUTREACH.FIRST_DATA_ROW || rowNumber > sheet.getLastRow()) throw new Error('Customer row was not found.');
+  const row = sheet.getRange(rowNumber, 1, 1, Math.max(sheet.getLastColumn(), OUTREACH.COL.LAST_DATA_COLUMN)).getValues()[0];
+  const business = String(row[OUTREACH.COL.BUSINESS - 1] || '').trim();
+  const email = String(row[OUTREACH.COL.EMAIL - 1] || '').trim().toLowerCase();
+  const status = String(row[OUTREACH.COL.STATUS - 1] || '').trim().toLowerCase();
+  const outcome = String(row[OUTREACH.COL.OUTCOME - 1] || '').trim().toLowerCase();
+  if (business !== String(body.business || '').trim() || email !== String(body.recipient || '').trim().toLowerCase()) throw new Error('Customer row changed. Refresh the Hub before sending.');
+  if (!testMode && !isValidEmail_(email)) throw new Error('Recipient email is invalid.');
+  if (!testMode && (row[OUTREACH.COL.DO_NOT_EMAIL - 1] === true || ['do not contact', 'not interested', 'unsubscribed', 'bad address'].indexOf(status) >= 0 || ['bad address', 'not interested', 'unsubscribed', 'do not contact'].indexOf(outcome) >= 0)) {
+    throw new Error('The customer is blocked from email.');
+  }
+  const alreadySent = appSentHistory_().some(function (item) {
+    const result = String(item.result || '').toUpperCase();
+    const intended = String(item.intended_recipient || item.email || '').trim().toLowerCase();
+    return result.indexOf('SENT') >= 0 && result.indexOf('TEST') < 0 && intended === email && String(item.message_stage || item.stage || '').trim() === CUSTOMER_INVITE_STAGE;
+  });
+  if (!testMode && alreadySent) throw new Error('The order-online invite was already sent to this address.');
+  return { sheet:sheet, row:row, rowNumber:rowNumber, business:business, email:email, stage:CUSTOMER_INVITE_STAGE };
 }
 
 function validateNewsletterContact_(body, testMode) {

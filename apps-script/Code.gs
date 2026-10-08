@@ -1,8 +1,24 @@
 /*********************************
  * Inventory API (JSON) for Netlify
- * App version: 2026.10.08.35-APP
+ * App version: 2026.10.08.36-APP
  *
  * CHANGES IN THIS VERSION
+ * - New campaign type "Current customers — order online invite" (campaign_type customer_invite, stage Order online
+ *   invite). Audience: Directory rows whose Relationship is Current customer / Customer or whose Status is Existing
+ *   customer, plus any Directory account with a non-void Badger invoice in the last 12 months (the same invoice
+ *   matching as the tasting-offer gate; if Badger cannot be read the preview stops instead of shrinking). Left out,
+ *   and counted by reason in the preview: no or invalid email, Do Not Email, an opt-out status or outcome, an account
+ *   already ordering online (Account Programs ordering status Active), an address that already received the invite,
+ *   an unverified email, and the 14-day gap after a Cocktail list email. One recipient per address.
+ * - The message comes from a new CUSTOMER ORDER INVITE EMAIL block in the Email Editor (added with starting copy by
+ *   repairHubStructure(); edited cells are never overwritten). The code always adds the link to the wholesale account
+ *   form (tracked when Tracking base URL is set, prefilled with the account, business and email) and the physical
+ *   address / "Reply stop to unsubscribe." footer. Requires Physical mailing address and Customer application URL.
+ * - It uses the existing review → freeze → approve → batch / scheduled send flow. Every check is repeated at rebuild
+ *   and send time, and sending goes through the Distribution Outreach mailer's new sendCustomerEmail action
+ *   (2026.10.08.26-APP). The Directory outreach stage, Last Emailed and follow-up dates are never changed.
+ *
+ * CHANGES IN 2026.10.08.35-APP
  * - Cocktail list: Directory Do Not Email no longer excludes an active customer (Directory status Existing customer
  *   and Account Programs ordering status Active, both set on activation) whose Newsletter Contacts status is
  *   Subscribed. Activation ticks Do Not Email only to stop sales outreach. Every recorded opt-out still excludes:
@@ -341,7 +357,7 @@
  * - Use only in the staging inventory backend until testing is complete.
  *********************************/
 
-const APP_VERSION = "2026.10.08.35-APP";
+const APP_VERSION = "2026.10.08.36-APP";
 
 const SHEET_NAMES = {
   STORES: "Stores",
@@ -943,6 +959,19 @@ const OUTREACH_COCKTAIL_LIST_SETTINGS = [
   { key:"Cocktail list distillery line", label:"Cocktail list distillery line" },
   { key:"Cocktail list reply-to-order line", label:"Cocktail list reply-to-order line" },
 ];
+// Order-online invite for current customers (2026.10.08.36-APP). The account-form link and the
+// address/unsubscribe footer are added by the code, so the template cannot leave them out.
+const OUTREACH_CUSTOMER_INVITE_STAGE = "Order online invite";
+const OUTREACH_CUSTOMER_INVITE_EDITOR_ROWS = [
+  { label:"CUSTOMER ORDER INVITE EMAIL", value:"", note:"Invites current customers to set up online ordering. The account-form link and the address / unsubscribe footer are added automatically." },
+  { label:"Customer invite subject", value:"Online ordering is open for {{Business Name}}", note:"Merge fields: {{First Name}}, {{Business Name}}, {{City}}." },
+  { label:"Customer invite greeting", value:"Hi {{First Name}},", note:"First line of the email." },
+  { label:"Customer invite intro", value:"Thank you for carrying Sturgeon Spirits. You can now place your wholesale orders with us online.", note:"Why you are writing." },
+  { label:"Customer invite steps", value:"Setting up takes about five minutes: fill in our short wholesale account form, and we'll send your ordering link as soon as it's approved.", note:"What they do next. The link follows this line." },
+  { label:"Customer invite link text", value:"Set up online ordering", note:"The words of the link to the account form." },
+  { label:"Customer invite sign-off", value:"Questions? Just reply to this email. Thank you, Sturgeon Spirits", note:"Last line before the footer." },
+];
+const OUTREACH_CUSTOMER_INVITE_SETTINGS = OUTREACH_CUSTOMER_INVITE_EDITOR_ROWS.slice(1).map(item => ({ key:item.label, label:item.label }));
 const OUTREACH_PUBLIC_SITE_SETTINGS = [
   { key:PUBLIC_SITE_URL_SETTING_KEY },
 ];
@@ -1017,6 +1046,7 @@ function ensureOutreachMonthlyContent_() {
     const values = missingCocktailSettings.map(item => [item.key, `='Email Editor'!B${cocktailRowsByLabel.get(item.label)}`]);
     settings.getRange(settings.getLastRow() + 1, 1, values.length, values[0].length).setValues(values);
   }
+  const invite = ensureEditorBlockWithSettings_(editor, settings, OUTREACH_CUSTOMER_INVITE_EDITOR_ROWS, OUTREACH_CUSTOMER_INVITE_SETTINGS);
   const refreshedSettingKeys = settings.getRange(2, 1, Math.max(1, settings.getLastRow() - 1), 1).getDisplayValues().map(row => String(row[0] || "").trim());
   const missingPublicSiteSettings = OUTREACH_PUBLIC_SITE_SETTINGS.filter(item => !refreshedSettingKeys.includes(item.key));
   if (missingPublicSiteSettings.length) {
@@ -1030,7 +1060,38 @@ function ensureOutreachMonthlyContent_() {
     cocktail_list_editor_rows:Object.fromEntries(cocktailRowsByLabel),
     cocktail_list_added_settings:missingCocktailSettings.map(item => item.key),
     public_site_added_settings:missingPublicSiteSettings.map(item => item.key),
+    customer_invite_editor_rows:invite.editor_rows,
+    customer_invite_added_settings:invite.added_settings,
   };
+}
+
+/**
+ * Appends any missing rows of an Email Editor block (label, starting value, note) and links
+ * each missing Campaign Settings key to its editor cell. Never moves or overwrites existing
+ * cells, so an edited template is kept.
+ */
+function ensureEditorBlockWithSettings_(editor, settings, rows, settingItems) {
+  const labels = editor.getRange(1, 1, Math.max(1, editor.getLastRow()), 1).getDisplayValues().map(row => String(row[0] || "").trim());
+  const rowsByLabel = new Map();
+  rows.forEach(item => {
+    const row = labels.indexOf(item.label) + 1;
+    if (row) rowsByLabel.set(item.label, row);
+  });
+  const missing = rows.filter(item => !rowsByLabel.has(item.label));
+  if (missing.length) {
+    const start = editor.getLastRow() + 1;
+    const values = missing.map(item => [item.label, item.value || "", item.note || ""]);
+    editor.getRange(start, 1, values.length, values[0].length).setValues(values);
+    if (missing[0] === rows[0]) editor.getRange(start, 1, 1, values[0].length).setFontWeight("bold").setBackground("#44656b").setFontColor("#ffffff");
+    missing.forEach((item, index) => rowsByLabel.set(item.label, start + index));
+  }
+  const keys = settings.getRange(2, 1, Math.max(1, settings.getLastRow() - 1), 1).getDisplayValues().map(row => String(row[0] || "").trim());
+  const missingSettings = settingItems.filter(item => !keys.includes(item.key));
+  if (missingSettings.length) {
+    settings.getRange(settings.getLastRow() + 1, 1, missingSettings.length, 2)
+      .setValues(missingSettings.map(item => [item.key, `='Email Editor'!B${rowsByLabel.get(item.label)}`]));
+  }
+  return { editor_rows:Object.fromEntries(rowsByLabel), added_settings:missingSettings.map(item => item.key) };
 }
 
 function ensureSellSheetStructure_() {
@@ -3808,7 +3869,7 @@ function campaignRecipientSummaryRows_(sheet) {
 function campaignStoredCriteria_(value) {
   try {
     const criteria = JSON.parse(String(value || ""));
-    return criteria && typeof criteria === "object" && (criteria.campaign_type === "cocktail_list" || (criteria.center && Number.isFinite(Number(criteria.radius_miles)))) ? criteria : null;
+    return criteria && typeof criteria === "object" && (criteria.campaign_type === "cocktail_list" || criteria.campaign_type === "customer_invite" || (criteria.center && Number.isFinite(Number(criteria.radius_miles)))) ? criteria : null;
   } catch (error) {
     return null;
   }
@@ -3858,7 +3919,8 @@ function campaignCriteriaFromRequest_(p) {
   const stages = ["Initial", "Follow-up 1", "Follow-up 2", "Nurture check-in"];
   if (maxRecipients !== null && (!Number.isInteger(maxRecipients) || maxRecipients < 1 || maxRecipients > 5000)) throw new Error("Campaign maximum recipients must be from 1 to 5,000.");
   if (campaignType === "cocktail_list") return { schema:3, campaign_type:"cocktail_list", stage:OUTREACH_COCKTAIL_LIST_STAGE, max_recipients:maxRecipients, filters:{} };
-  if (campaignType !== "sales_outreach") throw new Error("Campaign type must be Sales outreach or Cocktail list.");
+  if (campaignType === "customer_invite") return { schema:3, campaign_type:"customer_invite", stage:OUTREACH_CUSTOMER_INVITE_STAGE, max_recipients:maxRecipients, filters:{} };
+  if (campaignType !== "sales_outreach") throw new Error("Campaign type must be Sales outreach, Cocktail list, or Current customers.");
   if (!Number.isFinite(radius) || radius < 0 || radius > 1000) throw new Error("Campaign radius must be from 0 to 1,000 miles.");
   if (!Number.isInteger(minFit) || minFit < 1 || minFit > 5) throw new Error("Campaign minimum fit must be from 1 to 5.");
   if (!stages.includes(stage)) throw new Error("Campaign stage must be Initial, Follow-up 1, Follow-up 2, or Nurture check-in.");
@@ -3881,6 +3943,7 @@ function campaignCriteriaFromRequest_(p) {
 }
 
 function campaignAudienceLabel_(criteria) {
+  if (criteria?.campaign_type === "customer_invite") return `Current customers · order online invite${criteria?.max_recipients ? ` · first ${criteria.max_recipients}` : ""}`;
   if (criteria?.campaign_type === "cocktail_list") return `Cocktail list · subscribed newsletter contacts${criteria?.max_recipients ? ` · first ${criteria.max_recipients}` : ""}`;
   const stage = String(criteria?.stage || "Initial");
   const center = criteria?.center?.label || "selected center";
@@ -3896,7 +3959,7 @@ function campaignDistanceForCriteria_(record, criteria) {
 
 function campaignCriteriaFailures_(record, criteria) {
   if (!criteria) return [];
-  if (criteria.campaign_type === "cocktail_list") return [];
+  if (criteria.campaign_type === "cocktail_list" || criteria.campaign_type === "customer_invite") return [];
   const failures = [];
   const miles = campaignDistanceForCriteria_(record, criteria);
   if (miles === null || miles > Number(criteria.radius_miles)) failures.push("distance");
@@ -4027,6 +4090,134 @@ function liveCocktailListRecipient_(newsletterContactId) {
   return cocktailListRecordFromContact_(contact, index);
 }
 
+// ---------- Order-online invite for current customers (2026.10.08.36-APP) ----------
+// Audience: Directory rows whose Relationship is Current customer / Customer or whose Status is
+// Existing customer, plus any Directory account with a non-void Badger invoice in the last 12
+// months. Each address gets the invite once. Directory outreach stages are never changed.
+const OUTREACH_CUSTOMER_RELATIONSHIPS = ["current customer", "customer", "existing customer"];
+let __CUSTOMER_INVITE_SENT_EMAILS = null;
+
+function customerInviteIsCustomer_(record, recentBadgerAccounts) {
+  const relationship = String(record.relationship || "").trim().toLowerCase();
+  const status = String(record.status || "").trim().toLowerCase();
+  return OUTREACH_CUSTOMER_RELATIONSHIPS.includes(relationship) || status === "existing customer"
+    || (!!record.account_id && recentBadgerAccounts.has(record.account_id));
+}
+
+/** Addresses that already received the invite (Activity Log, real sends only). */
+function customerInviteSentEmails_() {
+  if (__CUSTOMER_INVITE_SENT_EMAILS) return __CUSTOMER_INVITE_SENT_EMAILS;
+  const sent = new Set();
+  const sheet = getOutreachSheet_(OUTREACH_ACTIVITY_SHEET_NAME);
+  if (sheet && sheet.getLastRow() >= 2) {
+    getAllRowsAsObjects_(sheet).forEach(row => {
+      const stage = String(outreachValue_(row, ["message_stage", "stage"]) || "").trim();
+      const result = String(outreachValue_(row, ["result"]) || "").toUpperCase();
+      const email = String(outreachValue_(row, ["intended_recipient", "delivered_to", "email", "email_address"]) || "").trim().toLowerCase();
+      if (stage === OUTREACH_CUSTOMER_INVITE_STAGE && email && result.includes("SENT") && !result.includes("TEST")) sent.add(email);
+    });
+  }
+  return (__CUSTOMER_INVITE_SENT_EMAILS = sent);
+}
+
+function customerInviteRecentBadgerAccounts_() {
+  const recent = outreachRecentBadgerInvoiceAccountIds_();
+  // A silent empty set would quietly drop every invoice-only customer from the audience.
+  if (__OUTREACH_RECENT_BADGER_INVOICE_LOOKUP_FAILED) throw new Error("Badger invoices could not be read, so customers found only through recent invoices would be missed. Try again in a few minutes.");
+  return recent;
+}
+
+function customerInviteEligibility_(record) {
+  const reasons = [];
+  const email = String(record.email || "").trim().toLowerCase();
+  const status = String(record.status || "").trim().toLowerCase();
+  const outcome = String(record.outcome || "").trim().toLowerCase();
+  const confidence = String(record.email_confidence || "").trim().toLowerCase();
+  const optOut = ["do not contact", "not interested", "unsubscribed", "bad address"];
+  if (!email) reasons.push("No email on file");
+  else if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) reasons.push("Recipient email is invalid");
+  if (record.do_not_email) reasons.push("Do Not Email is ticked");
+  if (optOut.includes(status) || optOut.includes(outcome)) reasons.push("Business is excluded from email");
+  if (String(record.program_ordering_status || "").trim().toLowerCase() === "active") reasons.push("Already set up for online ordering");
+  if (email && customerInviteSentEmails_().has(email)) reasons.push("Invite already sent");
+  if (confidence && !["confirmed", "published", "supplied"].includes(confidence)) reasons.push("Recipient email is not verified");
+  const cooldown = email ? outreachCrossSendCooldownReason_(email, false) : "";
+  if (cooldown) reasons.push(cooldown);
+  return reasons;
+}
+
+function customerInviteRecord_(row, sourceRow, programs) {
+  const record = campaignDirectoryRecord_(row, sourceRow);
+  const program = programs.get(record.account_id) || programs.get(sourceRow) || {};
+  record.program_ordering_status = String(program.ordering_status || "");
+  record.next_email = OUTREACH_CUSTOMER_INVITE_STAGE;
+  return record;
+}
+
+function customerInviteMessage_(record, settings) {
+  if (!String(settings["Physical mailing address"] || "").trim()) throw new Error("Physical mailing address is required before previewing or creating an order-online invite.");
+  const accountId = String(record.account_id || "").trim();
+  const business = String(record.business || "").trim();
+  const email = String(record.email || "").trim();
+  const applicationUrl = String(settings["Customer application URL"] || "").trim();
+  const tracked = outreachTrackingUrl_("application", accountId, OUTREACH_CUSTOMER_INVITE_STAGE, settings, { business:business, email:email }, false);
+  const direct = /^https:\/\/\S+$/i.test(applicationUrl)
+    ? `${applicationUrl}${applicationUrl.includes("?") ? "&" : "?"}account_id=${encodeURIComponent(accountId)}&business=${encodeURIComponent(business)}&email=${encodeURIComponent(email)}`
+    : "";
+  const link = tracked || direct;
+  if (!link) throw new Error("Set Customer application URL in Campaign Settings before creating an order-online invite.");
+  const values = {
+    "First Name":String(record.contact || "").trim().split(/\s+/)[0] || "there",
+    "Business Name":outreachDisplayBusinessName_(business || "your business"),
+    "City":String(record.city || ""),
+  };
+  const subject = renderOutreachTemplate_(String(settings["Customer invite subject"] || ""), values, false).trim();
+  if (!subject) throw new Error("Fill in the CUSTOMER ORDER INVITE EMAIL block in the Email Editor (run repairHubStructure() once to add it).");
+  const line = key => renderOutreachTemplate_(String(settings[key] || ""), values, true).trim();
+  const linkText = escapeOutreachHtml_(String(settings["Customer invite link text"] || "").trim() || "Set up online ordering");
+  const body = ["Customer invite greeting", "Customer invite intro", "Customer invite steps"].map(line).filter(Boolean).map(text => `<p>${text}</p>`).join("")
+    + `<p><a href="${escapeOutreachHtml_(link)}">${linkText}</a></p>`
+    + (line("Customer invite sign-off") ? `<p>${line("Customer invite sign-off")}</p>` : "");
+  const footer = `<p>${escapeOutreachHtml_(String(settings["Physical mailing address"] || ""))}</p><p>Reply stop to unsubscribe.</p>`;
+  return { stage:OUTREACH_CUSTOMER_INVITE_STAGE, subject:subject, body_text:outreachHtmlToPlainText_(body), html:body + footer, footer_html:footer };
+}
+
+/** Eligible current customers, one per address, with each rendered message; plus counts of who was left out and why. */
+function campaignCustomerInviteSelection_(criteria) {
+  const recent = customerInviteRecentBadgerAccounts_();
+  const programs = outreachProgramMap_();
+  const settings = getOutreachCampaignSettings_();
+  const excluded = {};
+  const seen = new Set();
+  const records = [];
+  getAllRowsAsObjects_(getOutreachSheet_(OUTREACH_SHEET_NAME)).forEach((row, index) => {
+    const record = customerInviteRecord_(row, index + 2, programs);
+    if (!customerInviteIsCustomer_(record, recent)) return;
+    const reasons = customerInviteEligibility_(record);
+    const email = String(record.email || "").trim().toLowerCase();
+    if (!reasons.length && seen.has(email)) reasons.push("Another customer row has the same email");
+    if (reasons.length) { excluded[reasons[0]] = (excluded[reasons[0]] || 0) + 1; return; }
+    seen.add(email);
+    const message = customerInviteMessage_(record, settings);
+    records.push(Object.assign(record, { subject:message.subject, body_text:message.body_text, preview_html:message.html, footer_html:message.footer_html }));
+  });
+  records.sort((a, b) => String(a.business).localeCompare(String(b.business)));
+  return { records:criteria && criteria.max_recipients ? records.slice(0, criteria.max_recipients) : records, excluded:excluded };
+}
+
+/** The current Directory row behind a frozen invite recipient, with the same rules applied. */
+function liveCustomerInviteRecipient_(sourceRow) {
+  const sheet = getOutreachSheet_(OUTREACH_SHEET_NAME);
+  const rowNumber = Number(sourceRow || 0);
+  if (!Number.isInteger(rowNumber) || rowNumber < 2 || rowNumber > sheet.getLastRow()) throw new Error("Customer row no longer exists.");
+  const headers = getHeaderMap_(sheet);
+  const raw = sheet.getRange(rowNumber, 1, 1, sheet.getLastColumn()).getValues()[0];
+  const row = {}; Object.keys(headers).forEach(key => row[key] = raw[headers[key]]);
+  const record = customerInviteRecord_(row, rowNumber, outreachProgramMap_());
+  const reasons = customerInviteIsCustomer_(record, customerInviteRecentBadgerAccounts_()) ? customerInviteEligibility_(record) : ["No longer a current customer"];
+  return { record:record, reasons:reasons };
+}
+
 function initialSentActivityRow_(row) {
   const result = String(outreachValue_(row, ["result", "send_status", "status"]) || "").toUpperCase();
   const stage = String(outreachValue_(row, ["stage", "message_stage", "next_email"]) || "").trim().toLowerCase();
@@ -4131,6 +4322,7 @@ function campaignRecipientSnapshotValues_(sheet, campaignId, record) {
   set("email_confidence", record.email_confidence); set("segment", record.segment); set("wave", record.wave);
   set("message_stage", record.next_email); set("newsletter_contact_id", record.newsletter_contact_id || "");
   set("subject", record.subject); set("body_text", record.body_text); set("html", record.preview_html);
+  if (record.footer_html) set("footer_html", record.footer_html);
   set("content_checksum", checksum); set("status", "Ready for review"); set("idempotency_token", `${campaignId}-${record.newsletter_contact_id || record.source_row}`); set("app_version", APP_VERSION);
   return values;
 }
@@ -4293,7 +4485,7 @@ function reconcileBlockedCampaignSends_(sheets, campaign, recipients, staffName,
   const settings = getOutreachCampaignSettings_();
   const criteria = campaignStoredCriteria_(campaign.values[campaign.headers.criteria]);
   const campaignStage = String(campaignStoredCriteria_(campaign.values[campaign.headers.criteria])?.stage || "Initial");
-  const cocktailList = criteria?.campaign_type === "cocktail_list";
+  const cocktailList = criteria?.campaign_type === "cocktail_list" || criteria?.campaign_type === "customer_invite";
   const changed = [];
   let reconciled = 0;
   let unmatched = 0;
@@ -4440,6 +4632,7 @@ function apiRebuildCampaignRecipients_(p) {
     const criteria = campaignStoredCriteria_(campaign.values[ch.criteria]);
     const campaignStage = String(campaignStoredCriteria_(campaign.values[ch.criteria])?.stage || "Initial");
     const cocktailList = criteria?.campaign_type === "cocktail_list";
+    const customerInvite = criteria?.campaign_type === "customer_invite";
     const editedRecipientTokens = campaignEditedRecipientTokenSet_();
     const readyRecipients = recipients.filter(item => String(item.values[item.headers.status] || "") === "Ready for review");
     const rebuildRecipients = readyRecipients.slice(batchOffset, batchOffset + batchSize);
@@ -4452,6 +4645,35 @@ function apiRebuildCampaignRecipients_(p) {
     let skipped = 0;
     rebuildRecipients.forEach(item => {
       const rh = item.headers;
+      if (customerInvite) {
+        let live;
+        try { live = liveCustomerInviteRecipient_(item.values[rh.source_row]); }
+        catch (error) { live = null; }
+        if (!live || live.reasons.length || live.record.business !== String(item.values[rh.business_name] || "") || String(live.record.email || "").trim().toLowerCase() !== String(item.values[rh.recipient_email] || "").trim().toLowerCase()) {
+          item.values[rh.result_detail] = `Skipped — customer row changed or is no longer eligible${live && live.reasons.length ? ` (${live.reasons.join("; ")})` : ""}.`;
+          item.values[rh.app_version] = APP_VERSION;
+          changed.push(item);
+          skipped += 1;
+          return;
+        }
+        const message = customerInviteMessage_(live.record, settings);
+        if (editedRecipientTokens.has(String(item.values[rh.idempotency_token] || ""))) {
+          item.values[rh.html] = outreachPlainTextToHtml_(String(item.values[rh.body_text] || "")) + String(message.footer_html || "");
+          rebuiltWithEditsKept += 1;
+        } else {
+          item.values[rh.subject] = message.subject;
+          item.values[rh.body_text] = message.body_text;
+          item.values[rh.html] = message.html;
+          rebuilt += 1;
+        }
+        if (rh.footer_html !== undefined) item.values[rh.footer_html] = String(message.footer_html || "");
+        item.values[rh.content_checksum] = campaignRecipientChecksum_(item);
+        if (rh.message_stage !== undefined) item.values[rh.message_stage] = OUTREACH_CUSTOMER_INVITE_STAGE;
+        item.values[rh.result_detail] = "Rebuilt with current order-online invite template.";
+        item.values[rh.app_version] = APP_VERSION;
+        changed.push(item);
+        return;
+      }
       if (cocktailList) {
         let record;
         try {
@@ -4575,7 +4797,7 @@ function campaignRecipientFooterHtml_(recipient, settings, draftMap) {
   const rh = recipient.headers;
   const stored = rh.footer_html === undefined ? "" : String(recipient.values[rh.footer_html] || "");
   if (stored) return stored;
-  if (String(recipient.values[rh.message_stage] || "") === OUTREACH_COCKTAIL_LIST_STAGE) {
+  if ([OUTREACH_COCKTAIL_LIST_STAGE, OUTREACH_CUSTOMER_INVITE_STAGE].includes(String(recipient.values[rh.message_stage] || ""))) {
     return `<p>${escapeOutreachHtml_(String(settings["Physical mailing address"] || ""))}</p><p>Reply stop to unsubscribe.</p>`;
   }
   const sourceRow = Number(recipient.values[rh.source_row] || 0);
@@ -4699,9 +4921,11 @@ function apiUpdateOutreachCampaignRecipient_(p) {
 
 function apiPreviewOutreachCampaign_(p) {
   const criteria = campaignCriteriaFromRequest_(p);
-  const records = criteria.campaign_type === "cocktail_list" ? campaignCocktailListRecords_(criteria) : campaignDirectoryInitialRecords_(criteria);
+  const invite = criteria.campaign_type === "customer_invite" ? campaignCustomerInviteSelection_(criteria) : null;
+  const records = invite ? invite.records : criteria.campaign_type === "cocktail_list" ? campaignCocktailListRecords_(criteria) : campaignDirectoryInitialRecords_(criteria);
   return {
     criteria:criteria,
+    excluded:invite ? invite.excluded : undefined,
     audience:campaignAudienceLabel_(criteria),
     recipient_count:records.length,
     recipients:records.map(record => ({
@@ -4721,7 +4945,7 @@ function apiPreviewOutreachCampaign_(p) {
 function apiCreateOutreachCampaign_(p) {
   if (p?.preview_confirmed !== true) throw new Error("Preview the campaign audience and confirm it before creating a campaign.");
   const criteria = campaignCriteriaFromRequest_(p);
-  const name = publicText_(p?.campaign_name || (criteria.campaign_type === "cocktail_list" ? "Cocktail list" : "Initial prospect campaign"), 120, "Campaign name");
+  const name = publicText_(p?.campaign_name || (criteria.campaign_type === "cocktail_list" ? "Cocktail list" : criteria.campaign_type === "customer_invite" ? "Order online invite" : "Initial prospect campaign"), 120, "Campaign name");
   const audience = campaignAudienceLabel_(criteria);
   const lock = LockService.getScriptLock();
   if (!lock.tryLock(10000)) throw new Error("Another campaign update is in progress. Try again in a moment.");
@@ -4729,15 +4953,18 @@ function apiCreateOutreachCampaign_(p) {
     const sheets = outreachCampaignSheets_();
     const eligibility = criteria.campaign_type === "cocktail_list"
       ? { records:campaignCocktailListRecords_(criteria), preview_count:0, removed_by_duplicate_checks:0 }
-      : campaignEligibleInitialRecords_(criteria);
+      : criteria.campaign_type === "customer_invite"
+        ? { records:campaignCustomerInviteSelection_(criteria).records, preview_count:0, removed_by_duplicate_checks:0 }
+        : campaignEligibleInitialRecords_(criteria);
     const eligible = eligibility.records;
-    if (!eligible.length) throw new Error(criteria.campaign_type === "cocktail_list" ? "No subscribed newsletter contacts are eligible for a cocktail list campaign." : "No eligible initial prospects are available for a campaign.");
+    if (!eligible.length) throw new Error(criteria.campaign_type === "cocktail_list" ? "No subscribed newsletter contacts are eligible for a cocktail list campaign."
+      : criteria.campaign_type === "customer_invite" ? "No current customers are eligible for an order-online invite." : "No eligible initial prospects are available for a campaign.");
     const campaignId = permanentId_("CMP");
     const recipientRows = eligible.map(record => campaignRecipientSnapshotValues_(sheets.recipients, campaignId, record));
     const recipientHeaders = getHeaderMap_(sheets.recipients);
     const criteriaJson = JSON.stringify(criteria);
     const audienceChecksum = campaignAudienceChecksum_(audience, recipientRows.map(values => ({ values:values, headers:recipientHeaders })), criteriaJson);
-    const unsegmentedCount = criteria.campaign_type === "cocktail_list" ? 0 : eligible.filter(record => !String(record.segment || "").trim()).length;
+    const unsegmentedCount = ["cocktail_list", "customer_invite"].includes(criteria.campaign_type) ? 0 : eligible.filter(record => !String(record.segment || "").trim()).length;
     const campaignHeaders = getHeaderMap_(sheets.campaigns);
     if (sheets.campaigns.getLastRow() >= 2) {
       const matching = sheets.campaigns.getRange(2, 1, sheets.campaigns.getLastRow() - 1, sheets.campaigns.getLastColumn()).getValues()
@@ -4773,7 +5000,7 @@ function apiApproveOutreachCampaign_(p) {
     const recipients = campaignRecipientRows_(sheets.recipients, p.campaign_id);
     if (Number(p.recipient_count || 0) !== recipients.length) throw new Error("Recipient count confirmation does not match this campaign.");
     const criteria = campaignStoredCriteria_(campaign.values[h.criteria]);
-    const unsegmented = criteria?.campaign_type === "cocktail_list" ? 0 : recipients.filter(item => !String(item.values[item.headers.segment] || "").trim()).length;
+    const unsegmented = ["cocktail_list", "customer_invite"].includes(criteria?.campaign_type) ? 0 : recipients.filter(item => !String(item.values[item.headers.segment] || "").trim()).length;
     if (unsegmented && p.confirm_unsegmented !== true) throw new Error(`${unsegmented} recipients have no segment. Confirm the default template before approval.`);
     const token = Utilities.getUuid().replace(/-/g, "");
     const now = new Date();
@@ -4897,6 +5124,30 @@ function apiSendOutreachCampaignBatch_(p) {
       const timing = { lock_ms:lockMs };
       const recipientName = String(item.values[rh.business_name] || "");
       try {
+        if (campaignCriteria?.campaign_type === "customer_invite") {
+          const live = liveCustomerInviteRecipient_(sourceRow);
+          const record = live.record;
+          if (record.business !== recipientName || String(record.email || "").toLowerCase() !== String(item.values[rh.recipient_email] || "").toLowerCase()) throw new Error("Customer or recipient changed after review.");
+          if (rh.message_stage !== undefined && String(item.values[rh.message_stage] || "") !== OUTREACH_CUSTOMER_INVITE_STAGE) throw new Error("Frozen recipient type does not match this campaign.");
+          const token = String(item.values[rh.idempotency_token] || "");
+          const prior = acceptedOutreachSendForToken_(token);
+          // A send already accepted for this token is recovered, not blocked as "Invite already sent".
+          if (!prior && live.reasons.length) throw new Error(live.reasons.join("; "));
+          mailerAttempted = !prior;
+          result = prior || callOutreachMailer_({ action:"sendCustomerEmail", idempotency_token:token, account_id:record.account_id,
+            source_row:sourceRow, business:record.business, recipient:record.email, message_stage:OUTREACH_CUSTOMER_INVITE_STAGE,
+            subject:String(item.values[rh.subject] || ""), html:String(item.values[rh.html] || ""), requested_by:staffName });
+          if (!result.accepted || !String(result.message_id || "").trim()) throw new Error("Zoho did not return a verified message ID.");
+          const sentAt = result.sent_at ? new Date(result.sent_at) : new Date();
+          const acceptedAt = isNaN(sentAt.getTime()) ? new Date() : sentAt;
+          outreachNoteRecentSend_(record.email, "sales", acceptedAt);
+          customerInviteSentEmails_().add(String(record.email || "").trim().toLowerCase());
+          item.values[rh.status] = "Sent"; item.values[rh.result_detail] = result.idempotent ? "Previously accepted and recovered." : "Zoho accepted delivery.";
+          item.values[rh.zoho_message_id] = String(result.message_id); item.values[rh.sent_at] = acceptedAt; item.values[rh.app_version] = APP_VERSION;
+          sheets.recipients.getRange(item.row, 1, 1, item.values.length).setValues([item.values]);
+          sent += 1; results.push({ source_row:sourceRow, business:record.business, status:"Sent", message_id:String(result.message_id) });
+          continue;
+        }
         if (campaignCriteria?.campaign_type === "cocktail_list") {
           const record = liveCocktailListRecipient_(rh.newsletter_contact_id === undefined ? "" : item.values[rh.newsletter_contact_id]);
           if (record.business !== recipientName || record.email.toLowerCase() !== String(item.values[rh.recipient_email] || "").toLowerCase()) throw new Error("Newsletter contact or recipient changed after review.");

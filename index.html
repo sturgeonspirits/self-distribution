@@ -1,10 +1,10 @@
 <!doctype html>
-<!-- App version: 2026.10.08.38-WEB -->
+<!-- App version: 2026.10.08.39-WEB -->
 <html>
 <head>
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover"/>
-  <meta name="app-version" content="2026.10.08.38-WEB" />
+  <meta name="app-version" content="2026.10.08.39-WEB" />
   <meta name="theme-color" content="#536f77" />
   <link rel="icon" href="/assets/distribution-hub-icon.svg" type="image/svg+xml" />
   <link rel="manifest" href="/site.webmanifest" />
@@ -2511,7 +2511,7 @@
       <div class="modeNotice" style="margin-top:0"><i data-lucide="map-pin"></i><span>Choose the email stage first. Sales campaigns select recipients due for that stage and apply the location, fit, and optional criteria below. Preview first; creation only happens after you confirm the preview.</span></div>
       <div class="workflowEditGrid">
         <div class="full"><label>Campaign name</label><input id="outreachCampaignCriteriaName" maxlength="120" /></div>
-        <div><label>Campaign type</label><select id="outreachCampaignCriteriaType"><option value="sales_outreach" selected>Sales outreach</option><option value="cocktail_list">Cocktail list</option></select></div>
+        <div><label>Campaign type</label><select id="outreachCampaignCriteriaType"><option value="sales_outreach" selected>Sales outreach</option><option value="cocktail_list">Cocktail list</option><option value="customer_invite">Current customers — order online invite</option></select></div>
         <div data-campaign-sales-only><label>Stage</label><select id="outreachCampaignCriteriaStage"><option value="Initial" selected>Initial</option><option value="Follow-up 1">Follow-up 1 due</option><option value="Follow-up 2">Follow-up 2 due</option><option value="Nurture check-in">Nurture check-in due</option></select></div>
         <div data-campaign-sales-only><label>Only recipients of campaign (optional)</label><select id="outreachCampaignCriteriaSourceCampaign"><option value="">Any eligible recipient</option></select></div>
         <div data-campaign-sales-only><label>Center</label><select id="outreachCampaignCriteriaCenterType"><option value="distillery">Distillery (default)</option><option value="zip">ZIP</option><option value="city">City</option></select></div>
@@ -2695,7 +2695,7 @@
 
   <footer style="max-width:1200px;margin:18px auto 120px;padding:0 12px;text-align:center;color:#6b7280;font-size:12px;">
     Designed by <a href="https://scriptspirit.dev" target="_blank" rel="noopener noreferrer" style="color:#1d4ed8;text-decoration:none;font-weight:700;">Script Spirit</a>
-<span id="appVersionFooter"> • Version 2026.10.08.38-WEB</span>
+<span id="appVersionFooter"> • Version 2026.10.08.39-WEB</span>
   </footer>
 
 
@@ -2718,7 +2718,7 @@
   window.addEventListener("unhandledrejection", e => console.error("Unhandled promise rejection:", e.reason));
   window.addEventListener("error", e => console.error("Unhandled error:", e.error || e.message));
   const $ = (id) => document.getElementById(id);
-  const APP_VERSION = "2026.10.08.38-WEB";
+  const APP_VERSION = "2026.10.08.39-WEB";
   $("appVersionFooter").textContent = ` • Version ${APP_VERSION}`;
   function screenCacheKey(screen){ return `distribution_hub:${APP_VERSION}:${staffSession?.email || "unknown"}:${screen}`; }
   function readScreenCache(screen){
@@ -4188,10 +4188,13 @@
   }
 
   function syncOutreachCampaignTypeFields(){
-    const cocktailList = $("outreachCampaignCriteriaType").value === "cocktail_list";
-    document.querySelectorAll("[data-campaign-sales-only]").forEach(field => field.hidden = cocktailList);
+    const type = $("outreachCampaignCriteriaType").value;
+    const cocktailList = type === "cocktail_list";
+    document.querySelectorAll("[data-campaign-sales-only]").forEach(field => field.hidden = type !== "sales_outreach");
     const notice = $("outreachCampaignCriteriaDialog").querySelector(".modeNotice span");
-    if (notice) notice.textContent = cocktailList
+    if (notice) notice.textContent = type === "customer_invite"
+      ? "Invites current customers to set up online ordering: Directory rows marked Current customer or Existing customer, plus any account with a Badger invoice in the last 12 months. Each address gets it once; Do Not Email, opt-outs and accounts already ordering online are left out. Uses the CUSTOMER ORDER INVITE EMAIL template in the Email Editor."
+      : cocktailList
       ? "Cocktail list campaigns go only to subscribed newsletter contacts. They use the saved monthly newsletter template, a physical mailing address, and a 14-day email gap."
       : "Choose the email stage first. Sales campaigns select recipients due for that stage and apply the location, fit, and optional criteria below. Preview first; creation only happens after you confirm the preview.";
   }
@@ -4223,8 +4226,8 @@
     const staffName = $("outreachStaffName").value.trim();
     if (!staffName) return $("outreachCampaignCriteriaStatus").textContent = "Enter your staff name before previewing a campaign.";
     const criteria = campaignCriteriaInput();
-    if (criteria.campaign_type !== "cocktail_list" && criteria.center_type === "zip" && !/^\d{5}$/.test(criteria.center_value)) return $("outreachCampaignCriteriaStatus").textContent = "Enter a five-digit center ZIP.";
-    if (criteria.campaign_type !== "cocktail_list" && criteria.center_type === "city" && !criteria.center_value) return $("outreachCampaignCriteriaStatus").textContent = "Enter a center city.";
+    if (criteria.campaign_type === "sales_outreach" && criteria.center_type === "zip" && !/^\d{5}$/.test(criteria.center_value)) return $("outreachCampaignCriteriaStatus").textContent = "Enter a five-digit center ZIP.";
+    if (criteria.campaign_type === "sales_outreach" && criteria.center_type === "city" && !criteria.center_value) return $("outreachCampaignCriteriaStatus").textContent = "Enter a center city.";
     const button = $("previewOutreachCampaignCriteriaBtn");
     button.disabled = true;
     $("outreachCampaignCriteriaStatus").textContent = "Building audience preview...";
@@ -4233,10 +4236,12 @@
       if (!res.ok) throw new Error(res.error || "Campaign preview could not be created.");
       outreachCampaignPreview = { criteria:criteria, result:res };
       $("outreachCampaignCriteriaStatus").textContent = "Preview is ready. Confirm only if this is the intended audience.";
-      const stageLabel = criteria.campaign_type === "cocktail_list" ? "eligible subscribed newsletter contact" : criteria.stage === "Initial" ? "eligible initial prospect" : `eligible ${criteria.stage.toLowerCase()} recipient`;
-      $("outreachCampaignPreviewSummary").textContent = `${Number(res.recipient_count || 0)} ${stageLabel}${Number(res.recipient_count || 0) === 1 ? "" : "s"} • ${res.audience || "Selected criteria"}`;
-      const cocktailList = criteria.campaign_type === "cocktail_list";
-      $("outreachCampaignPreviewRecipients").innerHTML = (res.recipients || []).length ? res.recipients.map(recipient => `<article class="outreachCard"><div class="outreachCardTop"><div><div class="businessName">${escapeHtml(recipient.business)}</div><div class="contactLine">${cocktailList ? `${escapeHtml(recipient.email || "No email")} • ${escapeHtml(recipient.status || "Subscribed")}` : `${escapeHtml(recipient.city || "City missing")} ${recipient.postal_code ? `• ${escapeHtml(recipient.postal_code)}` : ""} • ${recipient.miles_from_center === null || recipient.miles_from_center === undefined ? "Miles missing" : `${escapeHtml(recipient.miles_from_center)} mi from center`} • Fit ${escapeHtml(recipient.craft_spirit_fit)} • ${escapeHtml(recipient.status || "No status")}`}</div>${cocktailList ? "" : `<div class="smallMuted">${escapeHtml(recipient.email || "No email")} ${recipient.last_emailed ? `• Last emailed ${escapeHtml(formatOutreachDate(recipient.last_emailed))}` : "• Not previously emailed"}</div>`}</div></div></article>`).join("") : `<div class="outreachEmpty"><strong>${cocktailList ? "No subscribed newsletter contacts are currently eligible" : "No eligible prospects match these criteria"}</strong><span>${cocktailList ? "Check contact consent, unsubscribe status, and the 14-day email gap." : "Change the center, radius, fit, or optional filters and preview again."}</span></div>`;
+      const customerInvite = criteria.campaign_type === "customer_invite";
+      const stageLabel = customerInvite ? "eligible current customer" : criteria.campaign_type === "cocktail_list" ? "eligible subscribed newsletter contact" : criteria.stage === "Initial" ? "eligible initial prospect" : `eligible ${criteria.stage.toLowerCase()} recipient`;
+      const excludedSummary = customerInvite ? Object.entries(res.excluded || {}).map(([reason, count]) => `${count} ${reason.toLowerCase()}`).join(" • ") : "";
+      $("outreachCampaignPreviewSummary").textContent = `${Number(res.recipient_count || 0)} ${stageLabel}${Number(res.recipient_count || 0) === 1 ? "" : "s"} • ${res.audience || "Selected criteria"}${excludedSummary ? ` • Left out: ${excludedSummary}` : ""}`;
+      const cocktailList = criteria.campaign_type === "cocktail_list" || customerInvite;
+      $("outreachCampaignPreviewRecipients").innerHTML = (res.recipients || []).length ? res.recipients.map(recipient => `<article class="outreachCard"><div class="outreachCardTop"><div><div class="businessName">${escapeHtml(recipient.business)}</div><div class="contactLine">${cocktailList ? `${escapeHtml(recipient.email || "No email")} • ${escapeHtml(recipient.status || "Subscribed")}` : `${escapeHtml(recipient.city || "City missing")} ${recipient.postal_code ? `• ${escapeHtml(recipient.postal_code)}` : ""} • ${recipient.miles_from_center === null || recipient.miles_from_center === undefined ? "Miles missing" : `${escapeHtml(recipient.miles_from_center)} mi from center`} • Fit ${escapeHtml(recipient.craft_spirit_fit)} • ${escapeHtml(recipient.status || "No status")}`}</div>${cocktailList ? "" : `<div class="smallMuted">${escapeHtml(recipient.email || "No email")} ${recipient.last_emailed ? `• Last emailed ${escapeHtml(formatOutreachDate(recipient.last_emailed))}` : "• Not previously emailed"}</div>`}</div></div></article>`).join("") : `<div class="outreachEmpty"><strong>${customerInvite ? "No current customers are eligible" : cocktailList ? "No subscribed newsletter contacts are currently eligible" : "No eligible prospects match these criteria"}</strong><span>${customerInvite ? "See who was left out and why above. Customers need an email, no Do Not Email or opt-out, and must not already be ordering online or have received the invite." : cocktailList ? "Check contact consent, unsubscribe status, and the 14-day email gap." : "Change the center, radius, fit, or optional filters and preview again."}</span></div>`;
       $("outreachCampaignPreview").hidden = false;
       $("createOutreachCampaignCriteriaBtn").disabled = !Number(res.recipient_count || 0);
       refreshIcons();
@@ -4375,9 +4380,10 @@
     const maxMiles = Number(criteria?.radius_miles || 0);
     const centerLabel = criteria?.center?.label || "the original audience";
     const minFit = Number(criteria?.min_fit || 0);
-    const areaWarningCount = criteria && criteria.campaign_type !== "cocktail_list" ? (campaign.recipients || []).filter(recipient => recipient.miles === null || recipient.miles === undefined || Number(recipient.miles) > maxMiles).length : 0;
+    const areaWarningCount = criteria && !["cocktail_list", "customer_invite"].includes(criteria.campaign_type) ? (campaign.recipients || []).filter(recipient => recipient.miles === null || recipient.miles === undefined || Number(recipient.miles) > maxMiles).length : 0;
     const criteriaSummary = !criteria ? "Legacy campaign • no stored criteria gate"
       : criteria.campaign_type === "cocktail_list" ? "Cocktail list • subscribed contacts"
+      : criteria.campaign_type === "customer_invite" ? "Current customers • order online invite"
         : `${stage} • fit ≥${minFit} • ≤${maxMiles} mi of ${centerLabel}${criteria.source_campaign_id ? ` • from ${criteria.source_campaign_id}` : ""}`;
     $("outreachCampaignSubtitle").textContent = `${campaign.recipient_count} frozen recipients${excludedCount ? ` • ${excludedCount} excluded` : ""} • ${criteriaSummary}${areaWarningCount ? ` • ${areaWarningCount} need area review` : ""} • ${campaign.status}`;
     $("outreachCampaignNotice").textContent = campaign.status === "Review"
@@ -4385,7 +4391,7 @@
       : campaign.status === "Approved" ? "This audience is approved. “Send remaining” sends one verified recipient at a time, skips delivery-unknown records without retrying them, and sends no further email if the connection outcome is unknown. Or choose a send time below and the Hub sends it for you with the same checks."
       : "This campaign is closed; delivery history remains available below.";
     const unsegmentedCount = Number(campaign.unsegmented_count || 0);
-    const requiresSegmentConfirmation = campaign.status === "Review" && criteria?.campaign_type !== "cocktail_list" && unsegmentedCount > 0;
+    const requiresSegmentConfirmation = campaign.status === "Review" && !["cocktail_list", "customer_invite"].includes(criteria?.campaign_type) && unsegmentedCount > 0;
     $("campaignSegmentConfirmRow").hidden = !requiresSegmentConfirmation;
     $("campaignSegmentConfirmLabel").textContent = `I reviewed the fallback message for ${unsegmentedCount} unsegmented recipient${unsegmentedCount === 1 ? "" : "s"}.`;
     const isSameReviewSession = campaignSegmentConfirmation.campaignId === campaign.campaign_id;
@@ -4450,7 +4456,7 @@
 
   function refreshCampaignApprovalControl(){
     const campaign = selectedOutreachCampaign;
-    const requiresConfirmation = campaign?.status === "Review" && campaign?.criteria?.campaign_type !== "cocktail_list" && Number(campaign.unsegmented_count || 0) > 0;
+    const requiresConfirmation = campaign?.status === "Review" && !["cocktail_list", "customer_invite"].includes(campaign?.criteria?.campaign_type) && Number(campaign.unsegmented_count || 0) > 0;
     const confirmed = $("campaignSegmentConfirm").checked;
     const approveButton = $("approveOutreachCampaignBtn");
     approveButton.disabled = campaign?.status !== "Review" || (requiresConfirmation && !confirmed);
@@ -4536,7 +4542,7 @@
     const campaign = selectedOutreachCampaign;
     const staffName = $("outreachStaffName").value.trim();
     if (!campaign || !staffName) return setCampaignStatus("Enter your staff name before approving.", true);
-    if (campaign.criteria?.campaign_type !== "cocktail_list" && Number(campaign.unsegmented_count || 0) && !$("campaignSegmentConfirm").checked) return setCampaignStatus("Review the fallback message and check the confirmation box before approving.", true);
+    if (!["cocktail_list", "customer_invite"].includes(campaign.criteria?.campaign_type) && Number(campaign.unsegmented_count || 0) && !$("campaignSegmentConfirm").checked) return setCampaignStatus("Review the fallback message and check the confirmation box before approving.", true);
     if (!confirm(`Approve ${campaign.recipient_count} recipients for controlled batch delivery? This action does not send email.`)) return;
     const res = await staffApiPost({ action:"approveOutreachCampaign", campaign_id:campaign.campaign_id, audience_checksum:campaign.audience_checksum, recipient_count:campaign.recipient_count, confirm_unsegmented:$("campaignSegmentConfirm").checked, staff_name:staffName });
     if (!res.ok) throw new Error(res.error || "Campaign could not be approved.");

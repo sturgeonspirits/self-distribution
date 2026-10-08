@@ -706,6 +706,77 @@ test("Hub review: a public application cannot re-subscribe an opted-out address 
   assert.deepEqual([fresh[1][h.status], fresh[1][h.email], fresh[1][h.contact_id]], ["Subscribed", "pat@someone.example", "uuid"]);
 });
 
+test("Order online invite: audience, opt-outs, once per address, and the message always carries the form link and footer", async () => {
+  const backend = await readFile(new URL("apps-script/Code.gs", root), "utf8");
+  // Each function runs to the next top-level declaration (brace counting would trip on regex braces).
+  const fn = name => { const start = backend.indexOf(`\nfunction ${name}(`) + 1; assert.ok(start > 0, name); const end = backend.slice(start + 1).search(/\n(function |const |let |\/\/ ----)/); return backend.slice(start, start + 1 + end); };
+  const sentEmails = new Set(["invited@example.test"]);
+  const rules = new Function("OUTREACH_CUSTOMER_RELATIONSHIPS", "customerInviteSentEmails_", "outreachCrossSendCooldownReason_",
+    `${fn("customerInviteIsCustomer_")}\n${fn("customerInviteEligibility_")}\nreturn { isCustomer:customerInviteIsCustomer_, eligibility:customerInviteEligibility_ };`)(
+    ["current customer", "customer", "existing customer"], () => sentEmails, email => email === "recent@example.test" ? "Another cocktail list email was sent within the last 14 days" : "");
+  const recent = new Set(["ACC-BADGER"]);
+  assert.ok(rules.isCustomer({ relationship:"Current customer" }, recent));
+  assert.ok(rules.isCustomer({ status:"Existing customer" }, recent));
+  assert.ok(rules.isCustomer({ relationship:"Prospect", account_id:"ACC-BADGER" }, recent), "a recent Badger invoice makes an account a customer");
+  assert.ok(!rules.isCustomer({ relationship:"Prospect", account_id:"ACC-OTHER" }, recent));
+  const ok = { email:"owner@bar.test", status:"Existing customer", outcome:"", do_not_email:false, program_ordering_status:"Not offered", email_confidence:"" };
+  assert.deepEqual(rules.eligibility(ok), []);
+  assert.deepEqual(rules.eligibility({ ...ok, email:"" }), ["No email on file"]);
+  assert.deepEqual(rules.eligibility({ ...ok, do_not_email:true }), ["Do Not Email is ticked"]);
+  assert.deepEqual(rules.eligibility({ ...ok, outcome:"Unsubscribed" }), ["Business is excluded from email"]);
+  assert.deepEqual(rules.eligibility({ ...ok, program_ordering_status:"Active" }), ["Already set up for online ordering"]);
+  assert.deepEqual(rules.eligibility({ ...ok, email:"Invited@Example.test" }), ["Invite already sent"]);
+  assert.deepEqual(rules.eligibility({ ...ok, email_confidence:"Guessed" }), ["Recipient email is not verified"]);
+  assert.match(rules.eligibility({ ...ok, email:"recent@example.test" }).join(";"), /14 days/);
+
+  const settings = { "Physical mailing address":"2663 Oregon St, Oshkosh WI", "Customer application URL":"https://distribution.example/customer-signup.html",
+    "Customer invite subject":"Online ordering is open for {{Business Name}}", "Customer invite greeting":"Hi {{First Name}},", "Customer invite intro":"Thanks for carrying us at {{Business Name}}.",
+    "Customer invite steps":"", "Customer invite link text":"Set up online ordering", "Customer invite sign-off":"Thanks" };
+  const message = new Function("OUTREACH_CUSTOMER_INVITE_STAGE", "outreachTrackingUrl_", "outreachDisplayBusinessName_", "outreachHtmlToPlainText_",
+    `${fn("escapeOutreachHtml_")}\n${fn("renderOutreachTemplate_")}\n${fn("customerInviteMessage_")}\nreturn customerInviteMessage_;`)(
+    "Order online invite", () => "", name => name, html => html.replace(/<[^>]+>/g, " "));
+  const record = { account_id:"ACC-1", business:"Fox & Crow", email:"owner@fox.test", contact:"Pat Smith", city:"Oshkosh" };
+  const m = message(record, settings);
+  assert.equal(m.subject, "Online ordering is open for Fox & Crow");
+  assert.match(m.html, /<p>Hi Pat,<\/p>/);
+  assert.match(m.html, /<p>Thanks for carrying us at Fox &amp; Crow\.<\/p>/, "merged values are escaped; Email Editor text is used as written");
+  assert.match(m.html, /href="https:\/\/distribution\.example\/customer-signup\.html\?account_id=ACC-1&amp;business=Fox%20%26%20Crow&amp;email=owner%40fox\.test">Set up online ordering<\/a>/);
+  assert.match(m.html, /2663 Oregon St, Oshkosh WI<\/p><p>Reply stop to unsubscribe\.<\/p>$/);
+  assert.throws(() => message(record, { ...settings, "Customer application URL":"" }), /Customer application URL/);
+  assert.throws(() => message(record, { ...settings, "Physical mailing address":"" }), /Physical mailing address/);
+  assert.throws(() => message(record, { ...settings, "Customer invite subject":"" }), /CUSTOMER ORDER INVITE EMAIL/);
+
+  // A failed Badger read stops the preview instead of silently shrinking the audience.
+  assert.match(fn("customerInviteRecentBadgerAccounts_"), /__OUTREACH_RECENT_BADGER_INVOICE_LOOKUP_FAILED\) throw new Error/);
+  // Sends go through the mailer's own gate and never move the Directory outreach stage.
+  const sendSource = backend.slice(backend.indexOf('if (campaignCriteria?.campaign_type === "customer_invite")'), backend.indexOf('if (campaignCriteria?.campaign_type === "cocktail_list")'));
+  assert.match(sendSource, /action:"sendCustomerEmail"/);
+  assert.match(sendSource, /if \(!prior && live\.reasons\.length\) throw/);
+  assert.doesNotMatch(sendSource, /finalizeOutreachSend_|advanceOutreachSend_/);
+  const index = await readFile(new URL("index.html", root), "utf8");
+  assert.match(index, /<option value="customer_invite">Current customers — order online invite<\/option>/);
+});
+
+test("Distribution Outreach sendCustomerEmail refuses opt-outs, changed rows, other stages and repeat invites", async () => {
+  const mailer = await readFile(new URL("docs/reference/distribution-outreach/Code.gs", root), "utf8");
+  assert.match(mailer, /action === 'sendCustomerEmail'\) return appJson_\(Object\.assign\(\{ ok:true, version:OUTREACH_VERSION \}, sendAppEmailRequest_\(body, false, validateCustomerLead_\)\)\)/);
+  const start = mailer.indexOf("function validateCustomerLead_(");
+  const source = mailer.slice(start, mailer.indexOf("\nfunction validateNewsletterContact_", start));
+  const COL = { BUSINESS:1, EMAIL:2, STATUS:3, OUTCOME:4, DO_NOT_EMAIL:5, LAST_DATA_COLUMN:5 };
+  const make = (row, history = []) => new Function("assertStagingEnvironment_", "OUTREACH", "isValidEmail_", "appSentHistory_", "CUSTOMER_INVITE_STAGE", `${source}\nreturn validateCustomerLead_;`)(
+    () => ({ getSheetByName:() => ({ getLastRow:() => 2, getLastColumn:() => 5, getRange:() => ({ getValues:() => [row] }) }) }),
+    { LEADS_SHEET:"Directory", FIRST_DATA_ROW:2, COL }, email => /@/.test(email), () => history, "Order online invite");
+  const body = { source_row:2, business:"Fox & Crow", recipient:"owner@fox.test", message_stage:"Order online invite" };
+  const good = ["Fox & Crow", "owner@fox.test", "Existing customer", "", false];
+  assert.equal(make(good)(body, false).email, "owner@fox.test");
+  assert.throws(() => make(good)({ ...body, message_stage:"Initial" }, false), /Order online invite stage/);
+  assert.throws(() => make(["Fox & Crow", "owner@fox.test", "Existing customer", "", true])(body, false), /blocked from email/);
+  assert.throws(() => make(["Fox & Crow", "owner@fox.test", "Existing customer", "Unsubscribed", false])(body, false), /blocked from email/);
+  assert.throws(() => make(["Other Bar", "owner@fox.test", "", "", false])(body, false), /changed/);
+  assert.throws(() => make(good, [{ result:"APP SENT", intended_recipient:"owner@fox.test", message_stage:"Order online invite" }])(body, false), /already sent/);
+  assert.equal(make(good, [{ result:"APP TEST SENT", intended_recipient:"owner@fox.test", message_stage:"Order online invite" }])(body, false).stage, "Order online invite", "a test send does not count");
+});
+
 test("customer catalog retries one non-JSON or failed upstream response, while submits stay single-attempt", async () => {
   const { handler } = await loadFunction("netlify/functions/customer.js", "customer-catalog-retry");
   process.env.APPS_SCRIPT_URL = "https://example.test/exec";
