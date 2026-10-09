@@ -1,10 +1,10 @@
 <!doctype html>
-<!-- App version: 2026.10.08.40-WEB -->
+<!-- App version: 2026.10.09.41-WEB -->
 <html>
 <head>
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover"/>
-  <meta name="app-version" content="2026.10.08.40-WEB" />
+  <meta name="app-version" content="2026.10.09.41-WEB" />
   <meta name="theme-color" content="#536f77" />
   <link rel="icon" href="/assets/distribution-hub-icon.svg" type="image/svg+xml" />
   <link rel="manifest" href="/site.webmanifest" />
@@ -244,7 +244,7 @@
     }
     .outreachTabs{
       display:grid;
-      grid-template-columns:repeat(4,1fr);
+      grid-template-columns:repeat(3,1fr);
       gap:4px;
       padding:4px;
       border:1px solid var(--line);
@@ -356,6 +356,14 @@
       line-height:1.15;
       text-decoration:none;
     }
+    .tabCount{display:inline-block;min-width:18px;margin-left:4px;padding:0 5px;border-radius:9px;background:var(--red);color:#fff;font-size:11px;line-height:18px;text-align:center}
+    .outreachTab.active .tabCount{background:#fff;color:var(--primary)}
+    .replyPanel{display:grid;gap:8px;padding:12px;border:1px solid var(--line);border-radius:8px;background:#fff}
+    .replyPanel .replyCounts{display:flex;flex-wrap:wrap;gap:6px;align-items:center}
+    .replyGroupTitle{margin:10px 2px 0;font-size:13px;font-weight:700;color:var(--muted)}
+    .replySummary{margin:6px 0 0;font-size:14px}
+    .replyText{margin:6px 0 0;padding:8px;border-radius:6px;background:#f9fafb;white-space:pre-wrap;overflow-wrap:anywhere;font-size:13px;max-height:320px;overflow:auto}
+    .replyCard.overdue{border-color:var(--red-line)}
     .outreachEmpty{
       padding:26px 18px;
       text-align:center;
@@ -2212,6 +2220,7 @@
     <div class="outreachControls">
       <div class="outreachTabs" aria-label="Outreach views">
         <button class="outreachTab active" id="outreachTodayBtn" type="button">Today</button>
+        <button class="outreachTab" id="outreachRepliesBtn" type="button">Replies<span class="tabCount" id="outreachRepliesCount" hidden></span></button>
         <button class="outreachTab" id="outreachDirectoryBtn" type="button">Businesses</button>
         <button class="outreachTab" id="outreachSentBtn" type="button">Sent</button>
         <button class="outreachTab" id="outreachCampaignsBtn" type="button">Campaigns</button>
@@ -2695,7 +2704,7 @@
 
   <footer style="max-width:1200px;margin:18px auto 120px;padding:0 12px;text-align:center;color:#6b7280;font-size:12px;">
     Designed by <a href="https://scriptspirit.dev" target="_blank" rel="noopener noreferrer" style="color:#1d4ed8;text-decoration:none;font-weight:700;">Script Spirit</a>
-<span id="appVersionFooter"> • Version 2026.10.08.40-WEB</span>
+<span id="appVersionFooter"> • Version 2026.10.09.41-WEB</span>
   </footer>
 
 
@@ -2718,7 +2727,7 @@
   window.addEventListener("unhandledrejection", e => console.error("Unhandled promise rejection:", e.reason));
   window.addEventListener("error", e => console.error("Unhandled error:", e.error || e.message));
   const $ = (id) => document.getElementById(id);
-  const APP_VERSION = "2026.10.08.40-WEB";
+  const APP_VERSION = "2026.10.09.41-WEB";
   $("appVersionFooter").textContent = ` • Version ${APP_VERSION}`;
   function screenCacheKey(screen){ return `distribution_hub:${APP_VERSION}:${staffSession?.email || "unknown"}:${screen}`; }
   function readScreenCache(screen){
@@ -2748,7 +2757,7 @@
   let salesData = { lines: [], summary: { total_sold_units: 0, counted_skus: 0, total_skus: 0 } };
   let salesLoadedStoreId = "";
 
-  let outreachData = { today: [], directory: [], sent: [], newsletter: [], campaigns: [], summary: { due_today: 0, total_businesses: 0, waiting: 0, weekly_ready: 0 } };
+  let outreachData = { today: [], directory: [], sent: [], newsletter: [], campaigns: [], replies: [], summary: { due_today: 0, total_businesses: 0, waiting: 0, weekly_ready: 0 } };
   let outreachView = localStorage.getItem("outreach_view") || "today";
   if (outreachView === "leads") outreachView = "directory";
   const OUTREACH_AUDIENCE_PRESETS = ["weekly", "distance_needed", "follow_up_due", "interested", "contact_issues"];
@@ -2767,6 +2776,9 @@
   let outreachOutcomeOpenRequest = 0;
   let outreachDetailOpenRequest = 0;
   let outreachNewsletterLoaded = false;
+  let outreachRepliesMeta = null;
+  let outreachRepliesLoading = null;
+  let outcomeReplyId = "";
   let selectedOutreachRecord = null;
   let selectedOutcome = "";
   let outreachDraftOriginal = { subject:"", body:"" };
@@ -4083,6 +4095,171 @@
     return `https://www.google.com/maps/dir/?api=1&destination=${encodeURIComponent(destination)}`;
   }
 
+  // ---------- Replies (inbound reply checker, 2026.10.09.41-WEB) ----------
+  async function loadOutreachReplies(){
+    if (outreachRepliesLoading) return outreachRepliesLoading;
+    outreachRepliesLoading = (async () => {
+      const res = await staffApiGet({ action:"inboundReplies" });
+      if (!res.ok) throw new Error(res.error || "Replies could not be loaded.");
+      outreachData.replies = res.replies || [];
+      outreachRepliesMeta = res;
+      updateRepliesTabCount();
+      if (outreachView === "replies") renderOutreach();
+    })();
+    try { await outreachRepliesLoading; } finally { outreachRepliesLoading = null; }
+  }
+
+  function updateRepliesTabCount(){
+    const open = (outreachData.replies || []).filter(reply => reply.status === "New").length;
+    $("outreachRepliesCount").hidden = !open;
+    $("outreachRepliesCount").textContent = open;
+  }
+
+  function patchReplyLocally(updated){
+    if (!updated?.reply_id) return;
+    const list = outreachData.replies || [];
+    const existing = list.find(reply => reply.reply_id === updated.reply_id);
+    if (existing) Object.assign(existing, updated); else list.unshift(updated);
+    outreachData.replies = list;
+    updateRepliesTabCount();
+    if (outreachView === "replies") renderOutreach();
+  }
+
+  function replyIsOverdue(reply){
+    return reply.status === "New" && reply.respond_by && Date.parse(reply.respond_by) < Date.now();
+  }
+
+  function replyRespondByLabel(reply){
+    if (!reply.respond_by) return reply.priority || "";
+    const due = new Date(reply.respond_by);
+    const today = new Date();
+    const sameDay = due.toDateString() === today.toDateString();
+    const time = due.toLocaleTimeString([], { hour:"numeric", minute:"2-digit" });
+    if (replyIsOverdue(reply)) return `Overdue since ${sameDay ? time : `${formatOutreachDate(reply.respond_by)} ${time}`}`;
+    return `Respond by ${sameDay ? `today ${time}` : `${due.toLocaleDateString(undefined, { weekday:"short" })} ${formatOutreachDate(reply.respond_by)} ${time}`}`;
+  }
+
+  function replyCategoryBadge(category){
+    if (["Order or reorder", "Interested", "Schedule tasting"].includes(category)) return "green";
+    if (["Unsubscribe", "Bounce", "Not interested"].includes(category)) return "red";
+    if (["Question", "Wrong contact", "Needs reading", "Wants cocktail list"].includes(category)) return "amber";
+    return "";
+  }
+
+  function replyReceivedLabel(reply){
+    const received = new Date(reply.received_at);
+    if (isNaN(received.getTime())) return "";
+    return `${formatOutreachDate(reply.received_at)} ${received.toLocaleTimeString([], { hour:"numeric", minute:"2-digit" })}`;
+  }
+
+  function replyCardHtml(reply){
+    const open = reply.status === "New";
+    const subject = String(reply.subject || "").replace(/^\s*((re|aw|sv)\s*:\s*)+/i, "");
+    const mailto = `mailto:${encodeURIComponent(reply.from)}?subject=${encodeURIComponent(`Re: ${subject}`)}`;
+    const zohoUrl = outreachRepliesMeta?.zoho_mail_url || "https://mail.zoho.com/zm/";
+    const zohoLink = reply.zoho_message_id ? `${zohoUrl}#mail/folder/inbox/p/${encodeURIComponent(reply.zoho_message_id)}` : zohoUrl;
+    const canLogOutcome = open && !!reply.source_row && !!reply.business;
+    return `
+      <article class="outreachCard replyCard ${replyIsOverdue(reply) ? "overdue" : ""}" data-reply-id="${escapeHtml(reply.reply_id)}">
+        <div class="outreachCardTop">
+          <div>
+            <div class="businessName">${escapeHtml(reply.business || reply.from_name || reply.from)}</div>
+            <div class="contactLine">${escapeHtml([reply.from_name, reply.from].filter(Boolean).join(" • "))}</div>
+          </div>
+          <span class="badge ${replyCategoryBadge(reply.category)}">${escapeHtml(reply.category || "Reply")}</span>
+        </div>
+        ${reply.summary ? `<p class="replySummary">${escapeHtml(reply.summary)}</p>` : ""}
+        <div class="outreachMeta">
+          <span class="badge">${escapeHtml(`Received ${replyReceivedLabel(reply)}`)}</span>
+          ${open && (reply.respond_by || reply.priority) ? `<span class="badge ${replyIsOverdue(reply) ? "red" : reply.priority === "Respond today" ? "amber" : ""}">${escapeHtml(replyRespondByLabel(reply))}</span>` : ""}
+          ${reply.relationship ? `<span class="badge blue">${escapeHtml(reply.relationship)}</span>` : ""}
+          ${reply.last_sent_stage ? `<span class="badge">${escapeHtml(`Answering: ${reply.last_sent_stage}`)}</span>` : ""}
+          ${reply.auto_action ? `<span class="badge green">${escapeHtml(reply.auto_action)}</span>` : ""}
+          ${!open ? `<span class="badge">${escapeHtml(`${reply.status}${reply.handled_by ? ` by ${reply.handled_by}` : ""}${reply.handled_note ? ` — ${reply.handled_note}` : ""}`)}</span>` : ""}
+          ${!reply.business ? `<span class="badge amber">${escapeHtml(reply.matched_by || "No business match")}</span>` : ""}
+        </div>
+        <details><summary>${escapeHtml(reply.subject || "(no subject)")}</summary><div class="replyText">${escapeHtml(reply.reply_text || "")}</div><div class="smallMuted">Matched by: ${escapeHtml(reply.matched_by || "")}${reply.classifier ? ` • Sorted by: ${escapeHtml(reply.classifier)}` : ""}</div></details>
+        <div class="outreachActions">
+          ${open ? `<a class="actionBtn primary actionPrimary" href="${escapeHtml(zohoLink)}" target="_blank" rel="noopener noreferrer"><i data-lucide="reply"></i><span>Open in Zoho Mail</span></a>` : ""}
+          ${open ? `<a class="actionBtn" href="${escapeHtml(mailto)}"><i data-lucide="mail"></i><span>Reply by email</span></a>` : ""}
+          ${canLogOutcome ? `<button class="actionBtn" type="button" data-reply-action="outcome"><i data-lucide="clipboard-check"></i><span>${escapeHtml(reply.suggested_outcome ? `Log outcome: ${reply.suggested_outcome}` : "Log outcome")}</span></button>` : ""}
+          ${open ? `<button class="actionBtn" type="button" data-reply-action="handled"><i data-lucide="check"></i><span>Mark handled</span></button>` : ""}
+          ${open ? `<button class="actionBtn" type="button" data-reply-action="dismiss"><i data-lucide="x"></i><span>Not a reply</span></button>` : `<button class="actionBtn" type="button" data-reply-action="reopen"><i data-lucide="rotate-ccw"></i><span>Reopen</span></button>`}
+        </div>
+      </article>`;
+  }
+
+  function renderOutreachReplies(){
+    const meta = outreachRepliesMeta;
+    const query = outreachFilterText.trim().toLowerCase();
+    const replies = (outreachData.replies || []).filter(reply => !query || [
+      reply.business, reply.from, reply.from_name, reply.subject, reply.summary, reply.category, reply.reply_text, reply.relationship,
+    ].some(value => String(value || "").toLowerCase().includes(query)));
+    const open = replies.filter(reply => reply.status === "New");
+    const byDue = (a, b) => (Date.parse(a.respond_by) || Number.MAX_SAFE_INTEGER) - (Date.parse(b.respond_by) || Number.MAX_SAFE_INTEGER) || String(b.received_at).localeCompare(String(a.received_at));
+    const groups = [
+      { title:"Respond today", items:open.filter(reply => replyIsOverdue(reply) || reply.priority === "Respond today").sort(byDue) },
+      { title:"Respond soon", items:open.filter(reply => !replyIsOverdue(reply) && ["Respond soon", "Confirm unsubscribe"].includes(reply.priority)).sort(byDue) },
+      { title:"Optional reply", items:open.filter(reply => !replyIsOverdue(reply) && !["Respond today", "Respond soon", "Confirm unsubscribe"].includes(reply.priority)).sort(byDue) },
+      { title:"Handled in the last 30 days", items:replies.filter(reply => reply.status !== "New") },
+    ];
+    $("outreachAudienceCount").textContent = `${open.length} open repl${open.length === 1 ? "y" : "ies"}`;
+    const lastRun = meta?.last_run;
+    const lastRunText = lastRun?.at
+      ? `Last checked ${formatOutreachDate(lastRun.at)} ${new Date(lastRun.at).toLocaleTimeString([], { hour:"numeric", minute:"2-digit" })}${lastRun.error ? ` — failed: ${lastRun.error}` : ` — ${Number(lastRun.added || 0)} new`}`
+      : "The Inbox has not been checked yet.";
+    const warnings = [];
+    if (meta && meta.checker_installed === false) warnings.push("Automatic checks are off: run installInboundReplyChecker() once in the Inventory API project.");
+    if (meta && meta.ai_enabled === false) warnings.push("AI sorting is off: add the ANTHROPIC_API_KEY Script Property in the Inventory API project. Replies are listed as Needs reading until then.");
+    if (meta && meta.mailer_configured === false) warnings.push("The Distribution Outreach mailer is not configured, so the Inbox cannot be read.");
+    const panel = `
+      <div class="replyPanel">
+        <div class="replyCounts">
+          <span class="badge ${Number(meta?.counts?.overdue || 0) ? "red" : ""}">${Number(meta?.counts?.overdue || 0)} overdue</span>
+          <span class="badge amber">${Number(meta?.counts?.respond_today || 0)} respond today</span>
+          <span class="badge">${Number(meta?.counts?.open || 0)} open</span>
+          <button class="actionBtn" type="button" data-reply-action="check"><i data-lucide="inbox"></i><span>Check Inbox now</span></button>
+        </div>
+        <div class="smallMuted">${escapeHtml(lastRunText)}</div>
+        ${warnings.map(text => `<div class="smallMuted" style="color:var(--amber)">${escapeHtml(text)}</div>`).join("")}
+      </div>`;
+    const body = !meta
+      ? `<div class="outreachEmpty"><strong>Loading replies…</strong><span>Replies to sales@ appear here with a respond-by time.</span></div>`
+      : groups.filter(group => group.items.length).map(group => `<div class="replyGroupTitle">${escapeHtml(group.title)} (${group.items.length})</div>${group.items.map(replyCardHtml).join("")}`).join("")
+        || `<div class="outreachEmpty"><strong>No replies yet</strong><span>Replies from businesses and contacts you email appear here, sorted by how soon to answer.</span></div>`;
+    $("outreachList").innerHTML = panel + body;
+    refreshIcons();
+  }
+
+  async function handleReplyAction(button){
+    const action = button.dataset.replyAction;
+    if (action === "check") {
+      button.disabled = true;
+      try {
+        const res = await staffApiPost({ action:"checkInboundReplies" });
+        if (!res.ok) throw new Error(res.error || "The Inbox check could not start.");
+        toast(res.message || "Checking the Inbox now.");
+        setTimeout(() => loadOutreachReplies().catch(handleOutreachLoadError), 45000);
+      } finally { button.disabled = false; }
+      return;
+    }
+    const card = button.closest("[data-reply-id]");
+    const reply = (outreachData.replies || []).find(item => item.reply_id === card?.dataset.replyId);
+    if (!reply) return;
+    if (action === "outcome") {
+      openOutcomeDialogForRecord({ source_row:reply.source_row, account_id:reply.account_id, business:reply.business }, reply);
+      return;
+    }
+    const status = action === "handled" ? "Handled" : action === "dismiss" ? "Dismissed" : "New";
+    button.disabled = true;
+    try {
+      const res = await staffApiPost({ action:"resolveInboundReply", reply_id:reply.reply_id, status:status, note:action === "dismiss" ? "Not a reply to our email" : "" });
+      if (!res.ok) throw new Error(res.error || "The reply could not be updated.");
+      patchReplyLocally(res.reply);
+      toast(res.message || "Reply updated");
+    } finally { button.disabled = false; }
+  }
+
   function renderNewsletterContacts(){
     const query = outreachFilterText.trim().toLowerCase();
     const contacts = (outreachData.newsletter || []).filter(contact => !query || [
@@ -4834,14 +5011,16 @@
       $("hdrChanged").textContent = `${Number(summary.waiting || 0)} waiting`;
     }
 
-    ["today", "directory", "sent", "campaigns", "newsletter"].forEach(view => {
+    ["today", "replies", "directory", "sent", "campaigns", "newsletter"].forEach(view => {
       $(`outreach${view.charAt(0).toUpperCase() + view.slice(1)}Btn`).classList.toggle("active", outreachView === view);
     });
     const newsletterView = outreachView === "newsletter";
     const campaignsView = outreachView === "campaigns";
-    $("outreachAudienceBar").hidden = newsletterView || campaignsView;
+    const repliesView = outreachView === "replies";
+    $("outreachAudienceBar").hidden = newsletterView || campaignsView || repliesView;
     $("addNewsletterContactBtn").hidden = !newsletterView;
-    $("outreachSearch").placeholder = newsletterView ? "Search newsletter contacts" : "Search any business information";
+    $("outreachSearch").placeholder = newsletterView ? "Search newsletter contacts" : repliesView ? "Search replies" : "Search any business information";
+    if (repliesView) { renderOutreachReplies(); return; }
     if (newsletterView) {
       renderNewsletterContacts();
       return;
@@ -4967,7 +5146,7 @@
     const directory = res.directory || [];
     const recordsBySourceRow = new Map(directory.map(record => [Number(record.source_row), record]));
     const resolveSlimRows = rows => (rows || []).map(row => row && typeof row === "object" ? row : recordsBySourceRow.get(Number(row)) || null).filter(Boolean);
-    outreachData = { today:resolveSlimRows(res.today), directory, sent:resolveSlimRows(res.sent), newsletter:outreachData.newsletter || [], campaigns: outreachData.campaigns || [], summary:res.summary || { due_today:0, total_businesses:0, waiting:0, weekly_ready:0 } };
+    outreachData = { today:resolveSlimRows(res.today), directory, sent:resolveSlimRows(res.sent), newsletter:outreachData.newsletter || [], campaigns: outreachData.campaigns || [], replies:outreachData.replies || [], summary:res.summary || { due_today:0, total_businesses:0, waiting:0, weekly_ready:0 } };
     outreachIsMock = !!res.is_mock;
     outreachLoaded = true;
     if (res.is_mock) outreachNewsletterLoaded = true;
@@ -4999,6 +5178,7 @@
     });
     if (outreachView === "newsletter") loadOutreachNewsletterContacts().catch(handleOutreachLoadError);
     if (outreachView === "campaigns") loadOutreachCampaigns().catch(handleOutreachLoadError);
+    if (!res.is_mock) loadOutreachReplies().catch(error => { if (outreachView === "replies") handleOutreachLoadError(error); });
   }
 
   function patchOutreachRecordLocally(sourceRow, patch){
@@ -5297,10 +5477,11 @@
     if (!$("outcomeDialog").open) $("outcomeDialog").showModal();
   }
 
-  async function openOutcomeDialogForRecord(record){
+  async function openOutcomeDialogForRecord(record, fromReply){
     const requestId = ++outreachOutcomeOpenRequest;
     selectedOutreachRecord = null;
     selectedOutcome = "";
+    outcomeReplyId = fromReply?.reply_id || "";
     $("outcomeBusiness").textContent = `${outreachBusinessName(record)} — loading…`;
     $("outcomeNotes").value = "";
     $("outcomeFollowUpDate").value = "";
@@ -5312,6 +5493,12 @@
       const fullRecord = await fetchOutreachRecord(record);
       if (requestId !== outreachOutcomeOpenRequest || !$("outcomeDialog").open) return;
       openOutcomeDialog(fullRecord);
+      if (fromReply) {
+        const suggested = Array.from(document.querySelectorAll(".outcomeOption")).find(button => button.dataset.outcome === fromReply.suggested_outcome);
+        if (suggested) selectOutcome(suggested);
+        if (!$("outcomeNotes").value) $("outcomeNotes").value = `Email reply ${formatOutreachDate(fromReply.received_at)}: ${fromReply.summary || fromReply.category}`.slice(0, 1000);
+        $("outcomeStatus").textContent = "Saving also marks the reply handled.";
+      }
     } catch (error) {
       if (requestId !== outreachOutcomeOpenRequest || !$("outcomeDialog").open) return;
       $("outcomeBusiness").textContent = outreachBusinessName(record);
@@ -5705,8 +5892,10 @@
         outcome:selectedOutcome,
         next_follow_up:$("outcomeFollowUpDate").value,
         notes:$("outcomeNotes").value.trim(),
+        ...(outcomeReplyId ? { reply_id:outcomeReplyId } : {}),
       });
       if (!res.ok) throw new Error(res.error || "Outcome could not be saved.");
+      if (res.reply) patchReplyLocally(res.reply);
       patchOutreachRecordLocally(selectedOutreachRecord.source_row, {
         outcome:selectedOutcome,
         status:res.status || selectedOutreachRecord.status,
@@ -7728,6 +7917,12 @@
     renderOutreach();
     loadOutreachCampaigns().catch(handleOutreachLoadError);
   });
+  $("outreachRepliesBtn").addEventListener("click", () => {
+    outreachView = "replies";
+    localStorage.setItem("outreach_view", outreachView);
+    renderOutreach();
+    loadOutreachReplies().catch(handleOutreachLoadError);
+  });
   $("outreachNewsletterBtn").addEventListener("click", () => {
     outreachView = "newsletter";
     localStorage.setItem("outreach_view", outreachView);
@@ -7763,6 +7958,11 @@
     $("outreachSearch").focus();
   });
   $("outreachList").addEventListener("click", event => {
+    const replyButton = event.target.closest("[data-reply-action]");
+    if (replyButton) {
+      handleReplyAction(replyButton).catch(error => toast(error.message || String(error)));
+      return;
+    }
     const campaignButton = event.target.closest("[data-campaign-action]");
     if (campaignButton) {
       const action = campaignButton.dataset.campaignAction;
@@ -7797,7 +7997,7 @@
   $("closeOutcomeBtn").addEventListener("click", () => $("outcomeDialog").close());
   $("closeContactLogBtn").addEventListener("click", () => $("contactLogDialog").close());
   $("saveContactLogBtn").addEventListener("click", saveContactLog);
-  $("outcomeDialog").addEventListener("close", () => { outreachOutcomeOpenRequest += 1; });
+  $("outcomeDialog").addEventListener("close", () => { outreachOutcomeOpenRequest += 1; outcomeReplyId = ""; });
   $("outreachReviewSubject").addEventListener("input", updateOutreachDraftState);
   $("outreachReviewBody").addEventListener("input", updateOutreachDraftState);
   $("saveOutreachDraftBtn").addEventListener("click", saveOutreachDraft);

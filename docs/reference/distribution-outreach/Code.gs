@@ -1,9 +1,18 @@
 /**
  * Sturgeon Spirits Distribution Outreach
  *
- * VERSION: 2026.10.08.27-APP
+ * VERSION: 2026.10.09.28-APP
  *
  * CHANGES IN THIS VERSION
+ * - Adds two Hub-only, read-only actions for the Hub's reply checker. listInboxMessages returns Inbox messages
+ *   received after a given time (newest 200 at most) with sender, recipients, subject and Zoho's short summary.
+ *   getInboxMessage returns one message's plain text (first 20,000 characters) and whether its headers declare it
+ *   automatic (Auto-Submitted, X-Autoreply, auto-reply precedence). Neither sends, moves, marks read or deletes mail.
+ * - Reading the Inbox needs two more Zoho scopes. Run "1. Connect Zoho" once with a grant code generated for
+ *   ZohoMail.accounts.READ,ZohoMail.messages.CREATE,ZohoMail.messages.READ,ZohoMail.folders.READ. Sending keeps
+ *   working with the old token until then; only the reply checker reports the missing scope.
+ *
+ * CHANGES IN 2026.10.08.27-APP
  * - Do Not Email typed as text ("TRUE", "Yes", "1") is now also honoured by the menu paths: refreshFollowupStatuses
  *   no longer schedules follow-ups for such a row, and assertPilotLeadEligible_ refuses it.
  *
@@ -77,7 +86,7 @@
  * Sends through the authenticated Zoho Mail API account.
  */
 
-const OUTREACH_VERSION = '2026.10.08.27-APP';
+const OUTREACH_VERSION = '2026.10.09.28-APP';
 const NURTURE_CHECK_IN_DUPLICATE_COOLDOWN_DAYS = 60;
 
 const OUTREACH = Object.freeze({
@@ -220,6 +229,8 @@ function doPost(e) {
     if (action === 'sendCustomerEmail') return appJson_(Object.assign({ ok:true, version:OUTREACH_VERSION }, sendAppEmailRequest_(body, false, validateCustomerLead_)));
     if (action === 'sendAppTestEmail') return appJson_(Object.assign({ ok:true, version:OUTREACH_VERSION }, sendAppEmailRequest_(body, true)));
     if (action === 'sendPaymentReminder') return appJson_(Object.assign({ ok:true, version:OUTREACH_VERSION }, sendPaymentReminderRequest_(body)));
+    if (action === 'listInboxMessages') return appJson_(Object.assign({ ok:true, version:OUTREACH_VERSION }, listInboxMessagesRequest_(body)));
+    if (action === 'getInboxMessage') return appJson_(Object.assign({ ok:true, version:OUTREACH_VERSION }, getInboxMessageRequest_(body)));
     throw new Error('Unsupported app mailer action.');
   } catch (error) {
     return appJson_({ ok:false, version:OUTREACH_VERSION, error:String(error.message || error) });
@@ -641,6 +652,132 @@ function sendPaymentReminderRequest_(body) {
   }
 }
 
+// ---------- Inbox reading for the Hub's reply checker (2026.10.09.28-APP) ----------
+// Read-only: lists Inbox messages received after since_ms. The Hub matches them to businesses,
+// classifies them and decides what to do; this project only talks to Zoho.
+const INBOX_PAGE_SIZE = 50;
+const INBOX_MAX_MESSAGES = 200;
+const INBOX_TEXT_LIMIT = 20000;
+
+function zohoGet_(path, settings) {
+  const response = UrlFetchApp.fetch(String(settings['Zoho Mail API URL'] || '').replace(/\/+$/, '') + path, {
+    method: 'get',
+    headers: { Authorization: 'Zoho-oauthtoken ' + getAccessToken_() },
+    muteHttpExceptions: true
+  });
+  const json = parseJson_(response.getContentText());
+  const httpCode = response.getResponseCode();
+  const zohoCode = json && json.status && Number(json.status.code);
+  if (httpCode < 200 || httpCode >= 300 || (zohoCode && zohoCode >= 400)) {
+    const detail = safeError_(json, response);
+    if (/scope|permission|unauthori[sz]ed|INVALID_OAUTHSCOPE/i.test(detail) || httpCode === 401 || httpCode === 403) {
+      throw new Error('Zoho refused to read the Inbox (' + detail + '). Run Distribution Outreach PILOT > 1. Connect Zoho with a grant code that includes ZohoMail.messages.READ and ZohoMail.folders.READ.');
+    }
+    throw new Error('Zoho Inbox read failed: ' + detail);
+  }
+  return json;
+}
+
+function inboxFolderId_(settings, accountId) {
+  const cache = CacheService.getScriptCache();
+  const cached = cache.get('ZOHO_INBOX_FOLDER_ID');
+  if (cached) return cached;
+  const json = zohoGet_('/accounts/' + encodeURIComponent(accountId) + '/folders', settings);
+  const folders = Array.isArray(json.data) ? json.data : [];
+  const inbox = folders.find(function (folder) { return String(folder.folderType || '').toLowerCase() === 'inbox'; })
+    || folders.find(function (folder) { return String(folder.folderName || '').toLowerCase() === 'inbox'; });
+  if (!inbox || !inbox.folderId) throw new Error('The Zoho Inbox folder was not found.');
+  cache.put('ZOHO_INBOX_FOLDER_ID', String(inbox.folderId), 21600);
+  return String(inbox.folderId);
+}
+
+function decodeHtmlEntities_(value) {
+  return String(value || '')
+    .replace(/&lt;/gi, '<').replace(/&gt;/gi, '>').replace(/&quot;/gi, '"').replace(/&#39;|&apos;/gi, "'")
+    .replace(/&nbsp;/gi, ' ').replace(/&#(\d+);/g, function (match, code) { return String.fromCharCode(Number(code)); })
+    .replace(/&amp;/gi, '&');
+}
+
+function htmlToText_(html) {
+  return decodeHtmlEntities_(String(html || '')
+    .replace(/<(script|style)[\s\S]*?<\/\1>/gi, ' ')
+    .replace(/<br\s*\/?>/gi, '\n')
+    .replace(/<\/(p|div|li|tr|h[1-6]|blockquote)>/gi, '\n')
+    .replace(/<[^>]+>/g, ''))
+    .replace(/\r/g, '')
+    .replace(/[ \t]+\n/g, '\n')
+    .replace(/\n{3,}/g, '\n\n')
+    .trim();
+}
+
+function emailAddressesIn_(value) {
+  const matches = decodeHtmlEntities_(value).toLowerCase().match(/[a-z0-9._%+'-]+@[a-z0-9.-]+\.[a-z]{2,}/g) || [];
+  return matches.filter(function (item, index) { return matches.indexOf(item) === index; });
+}
+
+function automaticMessageFlags_(headerText) {
+  const headers = String(headerText || '');
+  const autoSubmitted = /^auto-submitted:\s*(?!no\b)\S+/im.test(headers);
+  const autoReply = /^x-autoreply:/im.test(headers) || /^x-autorespond:/im.test(headers) || /^precedence:\s*(auto_reply|bulk|junk)/im.test(headers);
+  const inReplyTo = (headers.match(/^in-reply-to:\s*(.+)$/im) || [])[1] || '';
+  return { automatic:autoSubmitted || autoReply, in_reply_to:String(inReplyTo).trim().slice(0, 500) };
+}
+
+function listInboxMessagesRequest_(body) {
+  const settings = getSettings_();
+  const accountId = String(settings['Zoho account ID'] || '').trim();
+  if (!accountId) throw new Error('Zoho account ID is not set. Run Distribution Outreach PILOT > 2. Test Zoho connection.');
+  const sinceMs = Math.max(0, Number(body.since_ms) || 0);
+  const folderId = inboxFolderId_(settings, accountId);
+  const listed = [];
+  let reachedOlder = false;
+  for (let start = 1; !reachedOlder && listed.length < INBOX_MAX_MESSAGES; start += INBOX_PAGE_SIZE) {
+    const page = zohoGet_('/accounts/' + encodeURIComponent(accountId) + '/messages/view?folderId=' + encodeURIComponent(folderId) + '&start=' + start + '&limit=' + INBOX_PAGE_SIZE + '&sortBy=date&sortorder=false&includeto=true', settings);
+    const rows = Array.isArray(page.data) ? page.data : [];
+    rows.forEach(function (row) {
+      const receivedMs = Number(row.receivedTime || row.sentDateInGMT || 0);
+      if (receivedMs && receivedMs <= sinceMs) { reachedOlder = true; return; }
+      if (listed.length < INBOX_MAX_MESSAGES) listed.push(row);
+    });
+    if (rows.length < INBOX_PAGE_SIZE) break;
+  }
+  const messages = listed.map(function (row) {
+    const fromText = decodeHtmlEntities_(row.fromAddress || '');
+    return {
+      message_id:String(row.messageId || ''),
+      folder_id:String(row.folderId || folderId),
+      thread_id:String(row.threadId || ''),
+      received_ms:Number(row.receivedTime || row.sentDateInGMT || 0),
+      from_address:(emailAddressesIn_(fromText)[0] || emailAddressesIn_(row.sender || '')[0] || ''),
+      from_name:decodeHtmlEntities_(row.sender || '').replace(/<[^>]*>/g, '').trim().slice(0, 200),
+      to_addresses:emailAddressesIn_(String(row.toAddress || '') + ' ' + String(row.ccAddress || '')),
+      subject:decodeHtmlEntities_(row.subject || '').slice(0, 500),
+      summary:decodeHtmlEntities_(row.summary || '').slice(0, 1000),
+    };
+  });
+  return { messages:messages, folder_id:folderId, more_available:listed.length >= INBOX_MAX_MESSAGES && !reachedOlder };
+}
+
+function getInboxMessageRequest_(body) {
+  const settings = getSettings_();
+  const accountId = String(settings['Zoho account ID'] || '').trim();
+  const messageId = String(body.message_id || '').trim();
+  const folderId = String(body.folder_id || '').trim();
+  if (!accountId || !/^\d+$/.test(messageId) || !/^\d+$/.test(folderId)) throw new Error('A Zoho message and folder ID are required.');
+  const path = '/accounts/' + encodeURIComponent(accountId) + '/folders/' + encodeURIComponent(folderId) + '/messages/' + encodeURIComponent(messageId);
+  const text = htmlToText_(findValueByKey_(zohoGet_(path + '/content', settings), ['content']) || '');
+  let flags = { automatic:false, in_reply_to:'' };
+  try { flags = automaticMessageFlags_(findValueByKey_(zohoGet_(path + '/header', settings), ['headerContent']) || ''); }
+  catch (error) { /* Headers are optional; the Hub also checks the subject and text. */ }
+  return {
+    message_id:messageId,
+    text:text.slice(0, INBOX_TEXT_LIMIT),
+    text_truncated:text.length > INBOX_TEXT_LIMIT,
+    automatic:!!flags.automatic,
+    in_reply_to:flags.in_reply_to,
+  };
+}
+
 function connectZoho() {
   assertStagingEnvironment_();
   const ui = SpreadsheetApp.getUi();
@@ -648,7 +785,7 @@ function connectZoho() {
   if (clientId === null) return;
   const clientSecret = promptRequired_(ui, 'Zoho connection', 'Paste the Client Secret. It will be stored in Apps Script properties, not in the spreadsheet.');
   if (clientSecret === null) return;
-  const grantCode = promptRequired_(ui, 'Zoho connection', 'Paste the short-lived authorization code generated with scopes ZohoMail.accounts.READ,ZohoMail.messages.CREATE');
+  const grantCode = promptRequired_(ui, 'Zoho connection', 'Paste the short-lived authorization code generated with scopes ZohoMail.accounts.READ,ZohoMail.messages.CREATE,ZohoMail.messages.READ,ZohoMail.folders.READ');
   if (grantCode === null) return;
 
   const settings = getSettings_();
