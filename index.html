@@ -4210,7 +4210,7 @@
       : "The Inbox has not been checked yet.";
     const warnings = [];
     if (meta && meta.checker_installed === false) warnings.push("Automatic checks are off: run installInboundReplyChecker() once in the Inventory API project.");
-    if (meta && meta.ai_enabled === false) warnings.push("AI sorting is off: add the ANTHROPIC_API_KEY Script Property in the Inventory API project. Replies are listed as Needs reading until then.");
+    if (Number(meta?.awaiting_skill || 0)) warnings.push(`${Number(meta.awaiting_skill)} repl${Number(meta.awaiting_skill) === 1 ? "y needs" : "ies need"} reading: ask Claude to "sort inbound replies" to fill in the category, summary and respond-by time.`);
     if (meta && meta.mailer_configured === false) warnings.push("The Distribution Outreach mailer is not configured, so the Inbox cannot be read.");
     const panel = `
       <div class="replyPanel">
