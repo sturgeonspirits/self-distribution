@@ -4174,7 +4174,7 @@
           ${open && (reply.respond_by || reply.priority) ? `<span class="badge ${replyIsOverdue(reply) ? "red" : reply.priority === "Respond today" ? "amber" : ""}">${escapeHtml(replyRespondByLabel(reply))}</span>` : ""}
           ${reply.relationship ? `<span class="badge blue">${escapeHtml(reply.relationship)}</span>` : ""}
           ${reply.last_sent_stage ? `<span class="badge">${escapeHtml(`Answering: ${reply.last_sent_stage}`)}</span>` : ""}
-          ${reply.auto_action ? `<span class="badge green">${escapeHtml(reply.auto_action)}</span>` : ""}
+          ${reply.auto_action ? `<span class="badge ${/possible match|not applied|nothing found|pending/i.test(reply.auto_action) ? "amber" : "green"}">${escapeHtml(reply.auto_action)}</span>` : ""}
           ${!open ? `<span class="badge">${escapeHtml(`${reply.status}${reply.handled_by ? ` by ${reply.handled_by}` : ""}${reply.handled_note ? ` — ${reply.handled_note}` : ""}`)}</span>` : ""}
           ${!reply.business ? `<span class="badge amber">${escapeHtml(reply.matched_by || "No business match")}</span>` : ""}
         </div>
@@ -4199,8 +4199,8 @@
     const byDue = (a, b) => (Date.parse(a.respond_by) || Number.MAX_SAFE_INTEGER) - (Date.parse(b.respond_by) || Number.MAX_SAFE_INTEGER) || String(b.received_at).localeCompare(String(a.received_at));
     const groups = [
       { title:"Respond today", items:open.filter(reply => replyIsOverdue(reply) || reply.priority === "Respond today").sort(byDue) },
-      { title:"Respond soon", items:open.filter(reply => !replyIsOverdue(reply) && ["Respond soon", "Confirm unsubscribe"].includes(reply.priority)).sort(byDue) },
-      { title:"Optional reply", items:open.filter(reply => !replyIsOverdue(reply) && !["Respond today", "Respond soon", "Confirm unsubscribe"].includes(reply.priority)).sort(byDue) },
+      { title:"Respond soon", items:open.filter(reply => !replyIsOverdue(reply) && ["Respond soon", "Confirm unsubscribe", "Review bounce"].includes(reply.priority)).sort(byDue) },
+      { title:"Optional reply", items:open.filter(reply => !replyIsOverdue(reply) && !["Respond today", "Respond soon", "Confirm unsubscribe", "Review bounce"].includes(reply.priority)).sort(byDue) },
       { title:"Handled in the last 30 days", items:replies.filter(reply => reply.status !== "New") },
     ];
     $("outreachAudienceCount").textContent = `${open.length} open repl${open.length === 1 ? "y" : "ies"}`;
@@ -8073,7 +8073,7 @@
     if (event.target.closest("#saveBusinessEditBtn")) saveBusinessEdits();
     if (event.target.closest("#saveProgramSettingsBtn")) saveProgramSettings();
     if (event.target.closest("#logContactFromDetailBtn") && selectedOutreachRecord) openContactLogForRecord(selectedOutreachRecord).catch(error => toast(error.message || String(error)));
-    if (event.target.closest("#logOutcomeFromDetailBtn") && selectedOutreachRecord) openOutcomeDialog(selectedOutreachRecord);
+    if (event.target.closest("#logOutcomeFromDetailBtn") && selectedOutreachRecord) { outcomeReplyId = ""; openOutcomeDialog(selectedOutreachRecord); }
   });
 
   refreshIcons();

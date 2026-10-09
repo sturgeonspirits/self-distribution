@@ -4,9 +4,10 @@
  *
  * CHANGES IN THIS VERSION
  * - Inbound reply checker. Every 15 minutes (installInboundReplyChecker() once) the Hub asks the Distribution Outreach
- *   mailer (2026.10.09.28-APP) for new sales@ Inbox messages and keeps the ones that answer us: from a Directory email or
- *   an "Alt email" in Notes, an address we emailed, a Newsletter contact, the only Directory business on that company
- *   email domain, a "Re:" of a subject we sent, or a bounce naming one of our recipients. Each reply is written to the
+ *   mailer (2026.10.09.28-APP) for new Inbox messages addressed (To/Cc) to sales@ and keeps the ones that answer us:
+ *   from a Directory email or an "Alt email" in Notes, an address we emailed, a Newsletter contact, or a bounce naming
+ *   one of our recipients. A "Re:" from the only Directory business on that company domain, or a "Re:" of a subject
+ *   sent to exactly one business, is kept as a possible match that changes nothing. Each reply is written to the
  *   new Inbound Replies tab (created by repairHubStructure() or the installer) with the reply text (quoted history
  *   removed), the business, what we last sent, a category, a one-line summary, the suggested outcome, a priority and a
  *   respond-by time (orders, interest and tastings: same business day if received by 3 PM; questions and the rest: next
@@ -14,12 +15,18 @@
  * - Categories come from fixed rules (bounces; a reply that is only "stop" / "unsubscribe" / "remove me"; "cocktails";
  *   automatic replies recognised from their headers or subject). The Hub makes no AI calls. Any other reply is listed as
  *   "Needs reading" (Classifier "Awaiting skill") until the sort-inbound-replies Claude skill sorts it in the sheet.
- * - Applied without a click (the only automatic changes): a person's reply sets Status "Replied" and clears Next
- *   Follow-Up when the row was waiting on a sales or reactivation email; a plain "stop" reply records Unsubscribed (as
- *   the Log outcome button does) and unsubscribes the newsletter contact; a hard bounce for the row's current email
- *   records Bad address. Automatic (out-of-office) replies change nothing. Replies and
- *   bounces are also added to Email Engagement. An unsubscribe request the skill finds in a longer message is only
- *   suggested ("Confirm unsubscribe").
+ * - Applied without a click (the only automatic changes), and only for a sure match: a person's reply sets Status
+ *   "Replied" and clears Next Follow-Up when the row was waiting on a sales or reactivation email; a reply that is only
+ *   "stop" (plus sign-off lines) records Unsubscribed (as the Log outcome button does) and unsubscribes the newsletter
+ *   contact; a bounce saying the row's current address does not exist (5.1.x / user unknown) records Bad address.
+ *   Blocked, refused, delayed and unclear bounces, automatic replies, mailing-list mail and possible matches change
+ *   nothing. A stop or bounce that could not be applied stays open as "Confirm unsubscribe" / "Review bounce".
+ *   An unsubscribe request the skill finds in a longer message is only suggested.
+ * - Each message is stored once: Zoho IDs are written as text, a per-message script lock re-checks the ID, the row is
+ *   written before any change is made, and the checkpoint is saved after every message. Status changes and the
+ *   automatic Directory changes write only the cells they change (also for Log outcome and Log contact), so
+ *   apostrophe-protected text is never turned into a formula. Respond-by times use the project time zone; the
+ *   installer warns unless it is America/Chicago.
  * - New staff actions: inboundReplies (read), resolveInboundReply (Handled / Dismissed / reopen) and checkInboundReplies
  *   (starts a background check). updateOutreachOutcome accepts reply_id and marks that reply handled in the same save.
  *
@@ -5451,6 +5458,9 @@ const INBOUND_REPLY_CATEGORY_RULES = {
   "Needs reading":       { outcome:"",                    respond:"soon" },
 };
 const INBOUND_REPLY_PRIORITY_LABELS = { today:"Respond today", soon:"Respond soon", optional:"Optional reply", none:"No reply needed" };
+// Only these matches are certain enough to change a Directory row without a click. A match by company
+// email domain or by subject line is listed as a possible match and changes nothing.
+const INBOUND_REPLY_STRONG_MATCHES = ["Sender email", "Alternate email in notes", "Address we emailed", "Newsletter contact", "Bounce for address"];
 // Statuses a person's reply moves to "Replied" so no automatic follow-up goes out after a real answer.
 const INBOUND_REPLY_PAUSABLE_STATUSES = ["sent", "follow-up due", "follow-up sent", "reactivation sent", "reactivation due"];
 
@@ -5467,7 +5477,10 @@ function installInboundReplyChecker() {
     .forEach(trigger => ScriptApp.deleteTrigger(trigger));
   ScriptApp.newTrigger(INBOUND_REPLY_CHECK_HANDLER).timeBased().everyMinutes(15).create();
   getInboundRepliesSheet_(true);
-  return { message:"Reply checker installed. It reads new sales@ Inbox messages every 15 minutes." };
+  // Respond-by times use the project's time zone (business days and hours, no holiday calendar).
+  const timeZone = Session.getScriptTimeZone();
+  const zoneNote = timeZone === "America/Chicago" ? "" : ` Warning: this project's time zone is ${timeZone}; set it to America/Chicago in Project Settings so respond-by times are right.`;
+  return { message:`Reply checker installed. It reads new sales@ Inbox messages every 15 minutes.${zoneNote}` };
 }
 
 function inboundReplyCheckerInstalled_() {
@@ -5488,9 +5501,10 @@ function stripQuotedReply_(text) {
     /^\s*-{2,}\s*(original message|forwarded message)/i,
     /^\s*-{2,}\s*on .+wrote\s*-{2,}\s*$/i,
     /^\s*on .{6,200}wrote:\s*$/i,
-    /^\s*on .{6,200}$/i, // "On Tue, Oct 7, 2026 at 3:32 PM Sturgeon Spirits <sales@...>" followed by "wrote:"
-    /^\s*from:\s.+/i,
+    /^\s*on .{6,200}$/i, // "On Tue, Oct 7, 2026 at 3:32 PM Sturgeon Spirits <" followed by "sales@...> wrote:"
+    /^\s*from:\s.*(@|<).*/i, // Outlook header block: From: name <address> followed by Sent: / Date:
     /^\s*_{5,}\s*$/,
+    /^\s*={3,}\s*(forwarded|original) message\s*={3,}/i,
   ];
   let end = lines.length;
   for (let i = 0; i < lines.length; i += 1) {
@@ -5498,14 +5512,14 @@ function stripQuotedReply_(text) {
     if (/^\s*>/.test(line)) { end = i; break; }
     const matched = cutPatterns.some((pattern, index) => {
       if (!pattern.test(line)) return false;
-      if (index === 3) return /^\s*wrote:\s*$/i.test(lines[i + 1] || "");
-      if (index === 4) return lines.slice(i + 1, i + 5).some(next => /^\s*(sent|date|to|subject):\s/i.test(next));
+      if (index === 3) return /^.{0,120}wrote:\s*$/i.test(lines[i + 1] || "");
+      if (index === 4) return lines.slice(i + 1, i + 5).some(next => /^\s*(sent|date):\s/i.test(next));
       return true;
     });
     if (matched) { end = i; break; }
   }
-  const stripped = lines.slice(0, end).join("\n").replace(/\n{3,}/g, "\n\n").trim();
-  return stripped || source.trim().slice(0, 4000);
+  // When nothing new remains, return "" rather than our own quoted email.
+  return lines.slice(0, end).join("\n").replace(/\n{3,}/g, "\n\n").trim();
 }
 
 /** Outside text written to a cell: trimmed to length, and never read by Sheets as a formula. */
@@ -5519,29 +5533,63 @@ function inboundReplyEmails_(value) {
   return Array.from(new Set(found));
 }
 
+/** A delivery report: from a mail daemon, or a bounce-style subject that is not a person's "Re:". */
 function inboundReplyIsBounce_(message) {
   const from = String(message.from_address || "").toLowerCase();
   const subject = String(message.subject || "");
-  return /^(mailer-daemon|postmaster|mail-daemon|mailerdaemon)@/.test(from)
-    || /(undeliver|delivery status notification|delivery has failed|mail delivery (failed|failure|subsystem)|returned mail|failure notice|could not be delivered|delivery failure)/i.test(subject);
+  if (/^(mailer-daemon|postmaster|mail-daemon|mailerdaemon)@/.test(from)) return true;
+  if (/^\s*(re|aw|sv)\s*:/i.test(subject)) return false;
+  return /(undeliver|delivery status notification|delivery has failed|mail delivery (failed|failure|subsystem)|returned mail|failure notice|could not be delivered|delivery failure)/i.test(subject);
 }
 
-function inboundReplyHardBounce_(text) {
+/** The report's own text, before the copy of our original message it usually quotes. */
+function inboundReplyBounceHead_(text) {
   const body = String(text || "");
-  if (/(delay(ed)?|will (be )?retr|temporar(y|ily)|still trying|has not yet been delivered)/i.test(body)) return false;
-  return /(\b55[0-4]\b|5\.\d\.\d|does not exist|doesn't exist|user unknown|unknown user|no such (user|recipient)|mailbox (is )?(unavailable|not found|disabled)|address rejected|recipient (address )?rejected|invalid recipient|account (has been )?disabled|not a valid|could not be found)/i.test(body);
+  const marker = body.search(/^\s*(-{2,}\s*(original|forwarded) message|original message|received:\s|return-path:\s|content-type:\s*message\/rfc822|message-id:\s)/im);
+  return marker > 0 ? body.slice(0, marker) : body;
 }
 
-/** A plain "stop" reply. Kept strict: "Stop by anytime" or a sentence that merely mentions stopping is left to staff. */
+/**
+ * "hard": the address does not exist (enhanced status 5.1.x or the usual user-unknown wording);
+ * "blocked": the receiving server refused our mail (5.7.x policy/DMARC/spam, full mailbox) — the address may be fine;
+ * "delayed": still being retried; "unknown": anything else. Only "hard" may mark an address bad.
+ */
+function inboundReplyBounceKind_(text) {
+  const head = inboundReplyBounceHead_(text);
+  if (/^\s*action:\s*delayed/im.test(head) || /^\s*status:\s*4\./im.test(head) || /(has been delayed|delivery (is |has been )?delayed|will (be )?retr(y|ied)|still trying|has not yet been delivered)/i.test(head)) return "delayed";
+  if (/(\b5\.7\.\d{1,3}\b|\b5\.2\.2\b|\b552\b|\bdmarc\b|\bspam|blocked|blacklist|blocklist|reputation|mailbox (is )?full|over quota|out of storage|message rejected)/i.test(head)) return "blocked";
+  if (/\b5\.1\.\d{1,3}\b/.test(head) || /^\s*status:\s*5\.1\./im.test(head) || /(does not exist|doesn't exist|user unknown|unknown user|no such (user|recipient|mailbox)|mailbox (not found|unavailable|does not exist)|address rejected|recipient (address )?rejected|invalid recipient|recipient not found|account (has been )?disabled|address couldn't be found|could not be found)/i.test(head)) return "hard";
+  return "unknown";
+}
+
+/** A sign-off line that may follow a one-word reply: "Sent from my iPhone", "Thanks", a name, a phone or email. */
+function inboundReplySignoffLine_(line) {
+  const text = String(line || "").trim();
+  if (/^(sent from my .{0,40}|get outlook for .{0,20}|sent (via|with|from) .{0,40}|thanks?( you| so much)?[.!]*|thank you[.!]*|cheers[.!]*|(kind |best )?regards[.!,]*|best( wishes)?[.!,]*|sincerely[.!,]*|-{1,2}|—)$/i.test(text)) return true;
+  if (/^[+()\d\s.\-]{7,20}$/.test(text)) return true;
+  if (/^[^\s@]+@[^\s@]+\.[a-z]{2,}$/i.test(text)) return true;
+  if (/^(www\.|https?:\/\/)\S+$/i.test(text)) return true;
+  const words = text.split(/\s+/);
+  return words.length <= 3 && words.every(word => /^[A-Z][A-Za-z.'&\-]*,?$/.test(word));
+}
+
+/** True when the reply's first line passes the test and every other line is only a sign-off. */
+function inboundReplyIsOnly_(replyText, firstLineTest) {
+  const lines = String(replyText || "").split("\n").map(line => line.trim()).filter(Boolean);
+  if (!lines.length || !firstLineTest(lines[0])) return false;
+  return lines.slice(1).every(inboundReplySignoffLine_);
+}
+
+/** A reply that is only "stop" (the outreach footer's opt-out). "Stop by Friday" or "Unsubscribe … can you send pricing?" go to the skill. */
 function inboundReplyIsStop_(replyText) {
-  const firstLine = String(replyText || "").split("\n").map(line => line.trim()).find(Boolean) || "";
-  const normalized = firstLine.toLowerCase().replace(/[^a-z' ]+/g, " ").replace(/\s+/g, " ").trim();
-  return /^(please )?(stop|unsubscribe|opt out|remove|remove me|stop emailing( me)?|stop sending( me)?( emails)?|take me off( your| this| the)?( email| mailing)?( list)?|remove me from( your| this| the)?( email| mailing)?( list)?)( please| thanks| thank you)?$/.test(normalized);
+  return inboundReplyIsOnly_(replyText, line => {
+    const normalized = line.toLowerCase().replace(/[^a-z' ]+/g, " ").replace(/\s+/g, " ").trim();
+    return /^(please )?(stop|unsubscribe|opt out|remove|remove me|stop emailing( me)?|stop sending( me)?( emails)?|take me off( your| this| the)?( email| mailing)?( list)?|remove me from( your| this| the)?( email| mailing)?( list)?)( please| thanks| thank you)?$/.test(normalized);
+  });
 }
 
 function inboundReplyIsCocktails_(replyText) {
-  const firstLine = String(replyText || "").split("\n").map(line => line.trim()).find(Boolean) || "";
-  return /^\W*cocktails?\W*$/i.test(firstLine);
+  return inboundReplyIsOnly_(replyText, line => /^\W*cocktails?\W*$/i.test(line));
 }
 
 function inboundReplyLooksAutomatic_(message, detail) {
@@ -5553,6 +5601,9 @@ function inboundReplyLooksAutomatic_(message, detail) {
 function inboundReplyIndex_() {
   const settings = getOutreachCampaignSettings_();
   const own = new Set(INBOUND_REPLY_OWN_ADDRESSES.concat([settings["Sender address"], settings["Test recipient"]].map(value => String(value || "").trim().toLowerCase())).filter(Boolean));
+  // The Inbox is karl@'s whole mailbox; only mail addressed to sales@ (the outreach sender) is considered.
+  const sales = new Set(["sales@sturgeonspirits.com", String(settings["Sender address"] || "").trim().toLowerCase()].filter(Boolean));
+  const ownDomains = new Set(Array.from(own).map(address => address.split("@")[1]).filter(Boolean));
   const records = getAllRowsAsObjects_(getOutreachSheet_(OUTREACH_SHEET_NAME)).map((row, index) => ({
     source_row:index + 2,
     account_id:String(row.account_id || "").trim(),
@@ -5572,7 +5623,7 @@ function inboundReplyIndex_() {
     alternates.forEach(email => remember(byEmail, email, record));
     [record.email].concat(alternates).forEach(email => {
       const domain = email.split("@")[1] || "";
-      if (domain && !INBOUND_REPLY_FREE_MAIL_DOMAINS.includes(domain)) remember(byDomain, domain, record);
+      if (domain && !INBOUND_REPLY_FREE_MAIL_DOMAINS.includes(domain) && !ownDomains.has(domain)) remember(byDomain, domain, record);
     });
   });
   const byAccount = new Map(records.filter(record => record.account_id).map(record => [record.account_id, record]));
@@ -5592,13 +5643,16 @@ function inboundReplyIndex_() {
       }
       const subjectKey = send.subject.toLowerCase().replace(/\s+/g, " ").trim();
       if (subjectKey) {
-        const prior = subjects.get(subjectKey);
-        if (!prior || (at && (!prior.at || at.getTime() > prior.at.getTime()))) subjects.set(subjectKey, send);
+        // Remember every account a subject went to: a subject shared by several businesses identifies none.
+        const prior = subjects.get(subjectKey) || { send:null, accounts:new Set() };
+        if (send.account_id) prior.accounts.add(send.account_id);
+        if (!prior.send || (at && (!prior.send.at || at.getTime() > prior.send.at.getTime()))) prior.send = send;
+        subjects.set(subjectKey, prior);
       }
     });
   }
   const newsletter = new Map(newsletterContacts_().map(contact => [String(contact.email || "").trim().toLowerCase(), contact]));
-  return { own:own, records:records, byEmail:byEmail, byDomain:byDomain, byAccount:byAccount, sends:sends, subjects:subjects, newsletter:newsletter };
+  return { own:own, sales:sales, records:records, byEmail:byEmail, byDomain:byDomain, byAccount:byAccount, sends:sends, subjects:subjects, newsletter:newsletter };
 }
 
 function inboundReplyPickRecord_(candidates, index, email) {
@@ -5614,7 +5668,11 @@ function inboundReplyPickRecord_(candidates, index, email) {
 function matchInboundReply_(message, index, detailText) {
   const from = String(message.from_address || "").toLowerCase();
   if (!from || index.own.has(from)) return null;
-  if (inboundReplyIsBounce_(message)) {
+  const isBounce = inboundReplyIsBounce_(message);
+  // Bounces go to the envelope sender; every other message must be addressed (To or Cc) to sales@.
+  if (!isBounce && !(message.to_addresses || []).some(address => index.sales.has(String(address).toLowerCase()))) return null;
+  const isReply = /^\s*(re|aw|sv)\s*:/i.test(String(message.subject || ""));
+  if (isBounce) {
     const addresses = inboundReplyEmails_(detailText || message.summary).filter(email => !index.own.has(email) && !/^(mailer-daemon|postmaster)@/.test(email));
     const bounced = addresses.find(email => index.byEmail.has(email) || index.sends.has(email) || index.newsletter.has(email));
     if (!bounced) return null;
@@ -5631,6 +5689,8 @@ function matchInboundReply_(message, index, detailText) {
     const record = contact.account_id ? index.byAccount.get(String(contact.account_id)) || null : null;
     return { record:record, email:from, matched_by:"Newsletter contact", send:send, newsletter:contact };
   }
+  // Possible matches below: listed for staff, never applied automatically.
+  if (!isReply) return null;
   const domain = from.split("@")[1] || "";
   const domainRecords = index.byDomain.get(domain) || [];
   const domainAccounts = new Set(domainRecords.map(record => record.account_id || `row-${record.source_row}`));
@@ -5638,12 +5698,11 @@ function matchInboundReply_(message, index, detailText) {
     return { record:domainRecords[0], email:from, matched_by:"Same company email domain", send:index.sends.get(domainRecords[0].email) || null, newsletter:null };
   }
   const subjectKey = String(message.subject || "").replace(/^\s*((re|aw|sv|fw|fwd)\s*:\s*)+/i, "").toLowerCase().replace(/\s+/g, " ").trim();
-  const subjectSend = subjectKey && /^\s*(re|aw|sv)\s*:/i.test(String(message.subject || "")) ? index.subjects.get(subjectKey) : null;
-  if (subjectSend) return { record:index.byAccount.get(subjectSend.account_id) || null, email:from, matched_by:"Reply to our subject line", send:subjectSend, newsletter:null };
-  if (/^\s*(re|aw|sv)\s*:/i.test(String(message.subject || "")) && (message.to_addresses || []).some(address => index.own.has(address))) {
-    return { record:null, email:from, matched_by:"Reply to sales@ (no business match)", send:null, newsletter:null };
+  const subjectEntry = subjectKey ? index.subjects.get(subjectKey) : null;
+  if (subjectEntry && subjectEntry.send && subjectEntry.accounts.size === 1) {
+    return { record:index.byAccount.get(subjectEntry.send.account_id) || null, email:from, matched_by:"Reply to our subject line", send:subjectEntry.send, newsletter:null };
   }
-  return null;
+  return { record:null, email:from, matched_by:"Reply to sales@ (no business match)", send:null, newsletter:null };
 }
 
 function inboundReplyBusinessDayAt_(from, addDays, hour) {
@@ -5670,6 +5729,19 @@ function inboundReplyRespondBy_(category, received) {
   return null;
 }
 
+/**
+ * Writes back only the cells that changed in a row read with getValues(). Rewriting the whole row would
+ * turn apostrophe-protected text ('=…, '+1 920…) into live formulas and overwrite cells another writer
+ * (staff, the skill) changed in the meantime.
+ */
+function writeChangedRowCells_(sheet, rowNumber, originalValues, values) {
+  values.forEach((value, index) => {
+    const before = originalValues[index];
+    const same = value instanceof Date && before instanceof Date ? value.getTime() === before.getTime() : value === before;
+    if (!same) sheet.getRange(rowNumber, index + 1).setValue(value);
+  });
+}
+
 /** Writes Status "Replied" and clears Next Follow-Up so no automatic follow-up goes out after a person's answer. */
 function pauseOutreachFollowUpsForReply_(record, receivedAt, summary) {
   const sheet = getOutreachSheet_(OUTREACH_SHEET_NAME);
@@ -5679,6 +5751,7 @@ function pauseOutreachFollowUpsForReply_(record, receivedAt, summary) {
     const h = getHeaderMap_(sheet);
     const range = sheet.getRange(record.source_row, 1, 1, sheet.getLastColumn());
     const values = range.getValues()[0];
+    const originalValues = values.slice();
     if (h.account_id !== undefined && String(values[h.account_id] || "").trim() !== record.account_id) return "";
     const status = String(h.status !== undefined ? values[h.status] : "").trim().toLowerCase();
     if (!INBOUND_REPLY_PAUSABLE_STATUSES.includes(status)) return "";
@@ -5691,7 +5764,7 @@ function pauseOutreachFollowUpsForReply_(record, receivedAt, summary) {
       values[h.notes] = prior ? `${prior}\n${note}` : note;
     }
     if (h.record_updated_at !== undefined) values[h.record_updated_at] = new Date();
-    range.setValues([values]);
+    writeChangedRowCells_(sheet, record.source_row, originalValues, values);
     return "Follow-ups paused (status Replied)";
   } finally {
     lock.releaseLock();
@@ -5719,36 +5792,75 @@ function recordInboundReplyEngagement_(match, eventType, receivedAt) {
   sheet.appendRow(values);
 }
 
-/** The safe stops, applied without a click. Returns a short description of what changed. */
+/**
+ * The safe stops, applied without a click: { text, applied }. Only strong matches change a Directory row.
+ * "applied" says whether the stop actually took effect, so a failed opt-out is never filed as handled.
+ */
 function applyInboundReplySafeStops_(match, classification, receivedAt) {
   const actions = [];
   const record = match.record;
   const actor = "Reply checker";
+  if (!INBOUND_REPLY_STRONG_MATCHES.includes(match.matched_by)) {
+    return { text:record ? "Possible match - not applied" : "", applied:false };
+  }
   if (classification.category === "Bounce") {
-    // A delayed-delivery notice changes nothing; only a hard bounce for the row's current email is applied.
-    if (!classification.hard_bounce) return "";
+    // Only an address that does not exist is marked bad; blocked, delayed and unclear reports change nothing.
+    if (classification.bounce_kind !== "hard") return { text:"", applied:false };
+    let applied = false;
     if (record && record.email && record.email === match.email) {
       try {
         apiUpdateOutreachOutcome_({ source_row:record.source_row, business:record.business, account_id:record.account_id, outcome:"Bad address", staff_name:actor, notes:`Email to ${match.email} bounced (applied automatically by the reply checker).` });
         actions.push("Marked Bad address");
+        applied = true;
       } catch (error) { actions.push(`Bad address not applied: ${String(error.message || error)}`); }
     }
-    if (match.newsletter && unsubscribeNewsletterContactByEmail_(match.email, actor)) actions.push("Newsletter contact unsubscribed (bounced)");
-    return actions.join("; ");
+    if (match.newsletter && unsubscribeNewsletterContactByEmail_(match.email, actor)) { actions.push("Newsletter contact unsubscribed (bounced)"); if (!record) applied = true; }
+    return { text:actions.join("; "), applied:applied };
   }
   if (classification.category === "Unsubscribe" && classification.classifier === "Rules") {
+    let directoryApplied = false;
     if (record) {
       try {
         apiUpdateOutreachOutcome_({ source_row:record.source_row, business:record.business, account_id:record.account_id, outcome:"Unsubscribed", staff_name:actor, notes:`Replied "stop" from ${match.email} (applied automatically by the reply checker).` });
         actions.push("Unsubscribed (Do Not Email ticked)");
+        directoryApplied = true;
       } catch (error) { actions.push(`Unsubscribe not applied: ${String(error.message || error)}`); }
     }
-    if (unsubscribeNewsletterContactByEmail_(match.email, actor)) actions.push("Newsletter contact unsubscribed");
-    return actions.join("; ");
+    const newsletterApplied = unsubscribeNewsletterContactByEmail_(match.email, actor);
+    if (newsletterApplied) actions.push("Newsletter contact unsubscribed");
+    if (!actions.length) actions.push("Nothing found to unsubscribe automatically");
+    // With a Directory row, that row must be unsubscribed; otherwise the newsletter contact must be.
+    return { text:actions.join("; "), applied:record ? directoryApplied : newsletterApplied };
   }
-  if (!record) return "";
-  if (classification.category === "Out of office") return "";
-  return pauseOutreachFollowUpsForReply_(record, receivedAt, classification.summary);
+  if (!record || classification.category === "Out of office" || classification.no_pause) return { text:"", applied:false };
+  const text = pauseOutreachFollowUpsForReply_(record, receivedAt, classification.summary);
+  return { text:text, applied:!!text };
+}
+
+/** Status, priority and respond-by once the safe stops have run. */
+function inboundReplyOutcomeFields_(classification, stops, receivedAt) {
+  const rule = INBOUND_REPLY_CATEGORY_RULES[classification.category] || INBOUND_REPLY_CATEGORY_RULES["Needs reading"];
+  const review = label => ({ status:"New", priority:label, respond_by:inboundReplyBusinessDayAt_(receivedAt, 1, 17) });
+  const handled = { status:"Handled", priority:INBOUND_REPLY_PRIORITY_LABELS.none, respond_by:"" };
+  if (classification.category === "Unsubscribe") return classification.classifier === "Rules" && stops.applied ? handled : review("Confirm unsubscribe");
+  if (classification.category === "Bounce") {
+    if (classification.bounce_kind === "delayed") return handled;
+    return classification.bounce_kind === "hard" && stops.applied ? handled : review("Review bounce");
+  }
+  if (rule.respond === "none") return handled;
+  return { status:"New", priority:INBOUND_REPLY_PRIORITY_LABELS[rule.respond], respond_by:inboundReplyRespondBy_(classification.category, receivedAt) || "" };
+}
+
+/** Zoho IDs are 19-digit numbers; written with a leading apostrophe they stay exact text instead of a rounded double. */
+function inboundReplyIdText_(value) {
+  const text = String(value || "").trim();
+  return text ? `'${text}` : "";
+}
+
+/** Writes named cells of one Inbound Replies row (never the whole row). */
+function setInboundReplyCells_(sheet, rowNumber, changes) {
+  const h = getHeaderMap_(sheet);
+  Object.keys(changes).forEach(key => { if (h[key] !== undefined) sheet.getRange(rowNumber, h[key] + 1).setValue(changes[key]); });
 }
 
 function inboundReplyStoredIds_(sheet) {
@@ -5785,28 +5897,37 @@ function checkInboundReplies_(trigger) {
     const stored = inboundReplyStoredIds_(sheet);
     const index = inboundReplyIndex_();
     let checkpoint = sinceMs;
+    const advance = receivedMs => {
+      // Saved after every message, so a failure part-way never re-reads (or re-applies) earlier ones.
+      checkpoint = Math.max(checkpoint, receivedMs || 0);
+      properties.setProperty(INBOUND_REPLY_SINCE_PROPERTY, String(checkpoint));
+    };
+    const readMessage = message => {
+      try { return callOutreachMailer_({ action:"getInboxMessage", message_id:message.message_id, folder_id:message.folder_id }); }
+      catch (error) { return { text:String(message.summary || ""), automatic:false, bulk:false, header_error:true, text_truncated:false, read_error:String(error.message || error) }; }
+    };
     for (const message of messages) {
       if (Date.now() - started > INBOUND_REPLY_RUN_BUDGET_MS) { summary.more_available = true; break; }
+      const messageId = String(message.message_id);
       const receivedMs = Number(message.received_ms || 0);
-      if (stored.has(String(message.message_id))) { checkpoint = Math.max(checkpoint, receivedMs); continue; }
+      if (stored.has(messageId)) { advance(receivedMs); continue; }
       let detail = null;
       let match = matchInboundReply_(message, index, "");
       if (!match && inboundReplyIsBounce_(message)) {
-        try { detail = callOutreachMailer_({ action:"getInboxMessage", message_id:message.message_id, folder_id:message.folder_id }); }
-        catch (error) { detail = { text:String(message.summary || ""), automatic:false, text_truncated:false, read_error:String(error.message || error) }; }
+        detail = readMessage(message);
         match = matchInboundReply_(message, index, detail.text);
       }
-      if (!match) { summary.skipped += 1; checkpoint = Math.max(checkpoint, receivedMs); continue; }
-      if (!detail) {
-        // One unreadable message (deleted, moved) must not stop every later check: fall back to Zoho's summary.
-        try { detail = callOutreachMailer_({ action:"getInboxMessage", message_id:message.message_id, folder_id:message.folder_id }); }
-        catch (error) { detail = { text:String(message.summary || ""), automatic:false, text_truncated:false, read_error:String(error.message || error) }; }
-      }
+      if (!match) { summary.skipped += 1; advance(receivedMs); continue; }
+      if (!detail) detail = readMessage(message);
+      // A mailing-list or newsletter message from a matched address is not a reply.
+      if (detail.bulk && !match.bounce) { summary.skipped += 1; advance(receivedMs); continue; }
       const receivedAt = new Date(receivedMs || Date.now());
       const replyText = stripQuotedReply_(detail.text || message.summary || "");
       let classification;
       if (match.bounce) {
-        classification = { category:"Bounce", summary:`Email to ${match.email} ${inboundReplyHardBounce_(detail.text) ? "bounced" : "was delayed"}.`, classifier:"Rules", hard_bounce:inboundReplyHardBounce_(detail.text) };
+        const kind = inboundReplyBounceKind_(detail.text);
+        const wording = { hard:"bounced: the address does not exist", blocked:"was refused by the receiving server (policy, spam filter or full mailbox); the address may still be good", delayed:"was delayed; the server is still trying", unknown:"could not be delivered; read the bounce message" }[kind];
+        classification = { category:"Bounce", summary:`Email to ${match.email} ${wording}.`, classifier:"Rules", bounce_kind:kind };
       } else if (inboundReplyIsStop_(replyText)) {
         classification = { category:"Unsubscribe", summary:"Asked to stop receiving emails.", classifier:"Rules" };
       } else if (inboundReplyIsCocktails_(replyText)) {
@@ -5814,55 +5935,73 @@ function checkInboundReplies_(trigger) {
       } else if (inboundReplyLooksAutomatic_(message, detail)) {
         classification = { category:"Out of office", summary:"Automatic reply.", classifier:"Rules" };
       } else {
-        // Left for the sort-inbound-replies skill; the reply still pauses follow-ups below.
-        classification = { category:"Needs reading", summary:"", classifier:"Awaiting skill" };
+        // Left for the sort-inbound-replies skill. It still pauses follow-ups, unless the headers could
+        // not be read (it might be an automatic reply).
+        classification = { category:"Needs reading", summary:"", classifier:"Awaiting skill", no_pause:!!detail.header_error };
       }
       const rule = INBOUND_REPLY_CATEGORY_RULES[classification.category] || INBOUND_REPLY_CATEGORY_RULES["Needs reading"];
-      const respondBy = inboundReplyRespondBy_(classification.category, receivedAt);
+      const record = match.record || {};
+      // 1) Catalogue the reply under the script lock, re-checking that no other run stored it first.
+      const lock = LockService.getScriptLock();
+      if (!lock.tryLock(15000)) { summary.more_available = true; break; }
+      let rowNumber = 0;
+      try {
+        if (outreachRowsMatchingCell_(sheet, ["zoho_message_id", "Zoho Message ID"], messageId).length) { stored.add(messageId); advance(receivedMs); continue; }
+        const h = getHeaderMap_(sheet);
+        const values = Array(sheet.getLastColumn()).fill("");
+        const set = (key, value) => { if (h[key] !== undefined) values[h[key]] = value; };
+        set("reply_id", permanentId_("RPL"));
+        set("received_at", receivedAt);
+        set("from", inboundReplyCellText_(match.email, 200));
+        set("from_name", inboundReplyCellText_(message.from_name, 200));
+        set("subject", inboundReplyCellText_(message.subject, 500));
+        const body = replyText || "(No new text above the quoted message.)";
+        set("reply_text", inboundReplyCellText_(`${body.slice(0, 8000)}${detail.text_truncated ? "\n[Message truncated]" : ""}${detail.read_error ? "\n[Full message could not be read; showing Zoho's summary]" : ""}`, 8200));
+        set("account_id", record.account_id || String(match.newsletter?.account_id || ""));
+        set("source_row", record.source_row || "");
+        set("business", record.business || String(match.newsletter?.organization || ""));
+        set("relationship", record.relationship || "");
+        set("matched_by", match.matched_by);
+        set("last_sent_stage", match.send ? match.send.stage : "");
+        set("last_sent_at", match.send && match.send.at ? match.send.at : "");
+        set("category", classification.category);
+        set("summary", inboundReplyCellText_(classification.summary || "", 700));
+        set("suggested_outcome", rule.outcome);
+        set("priority", INBOUND_REPLY_PRIORITY_LABELS[rule.respond]);
+        set("auto_action", "Pending automatic changes");
+        set("classifier", classification.classifier);
+        set("status", "New");
+        set("zoho_message_id", inboundReplyIdText_(messageId));
+        set("zoho_folder_id", inboundReplyIdText_(message.folder_id));
+        set("thread_id", inboundReplyIdText_(message.thread_id));
+        set("app_version", APP_VERSION);
+        sheet.appendRow(values);
+        rowNumber = sheet.getLastRow();
+      } finally {
+        lock.releaseLock();
+      }
+      stored.add(messageId);
+      summary.added += 1;
+      // 2) Side effects, then the row's final status. If this part fails the row stays New with
+      //    "Pending automatic changes", which staff see; the message is never processed twice.
       const automaticReply = classification.category === "Bounce" || classification.category === "Out of office";
       if (!automaticReply) recordInboundReplyEngagement_(match, "reply", receivedAt);
       else if (classification.category === "Bounce") recordInboundReplyEngagement_(match, "bounce", receivedAt);
-      const autoAction = applyInboundReplySafeStops_(match, classification, receivedAt);
-      if (autoAction) summary.auto_actions += 1;
-      // An unsubscribe the AI spotted (not a plain "stop") is only suggested, so it stays open for a click.
-      const confirmUnsubscribe = classification.category === "Unsubscribe" && classification.classifier !== "Rules";
-      const handledAutomatically = rule.respond === "none" && !confirmUnsubscribe;
-      const h = getHeaderMap_(sheet);
-      const values = Array(sheet.getLastColumn()).fill("");
-      const set = (key, value) => { if (h[key] !== undefined) values[h[key]] = value; };
-      const record = match.record || {};
-      set("reply_id", permanentId_("RPL"));
-      set("received_at", receivedAt);
-      set("from", inboundReplyCellText_(match.email, 200));
-      set("from_name", inboundReplyCellText_(message.from_name, 200));
-      set("subject", inboundReplyCellText_(message.subject, 500));
-      set("reply_text", inboundReplyCellText_(`${replyText.slice(0, 8000)}${detail.text_truncated ? "\n[Message truncated]" : ""}${detail.read_error ? "\n[Full message could not be read; showing Zoho's summary]" : ""}`, 8200));
-      set("account_id", record.account_id || String(match.newsletter?.account_id || ""));
-      set("source_row", record.source_row || "");
-      set("business", record.business || String(match.newsletter?.organization || ""));
-      set("relationship", record.relationship || "");
-      set("matched_by", match.matched_by);
-      set("last_sent_stage", match.send ? match.send.stage : "");
-      set("last_sent_at", match.send && match.send.at ? match.send.at : "");
-      set("category", classification.category);
-      set("summary", inboundReplyCellText_(classification.summary || "", 700));
-      set("suggested_outcome", rule.outcome);
-      set("priority", confirmUnsubscribe ? "Confirm unsubscribe" : INBOUND_REPLY_PRIORITY_LABELS[rule.respond]);
-      set("respond_by", confirmUnsubscribe ? inboundReplyBusinessDayAt_(receivedAt, 1, 17) : respondBy || "");
-      set("auto_action", autoAction);
-      set("classifier", classification.classifier);
-      set("status", handledAutomatically ? "Handled" : "New");
-      if (handledAutomatically) { set("handled_at", new Date()); set("handled_by", "Reply checker"); set("handled_note", "No reply needed"); }
-      set("zoho_message_id", String(message.message_id));
-      set("zoho_folder_id", String(message.folder_id || ""));
-      set("thread_id", String(message.thread_id || ""));
-      set("app_version", APP_VERSION);
-      sheet.appendRow(values);
-      stored.add(String(message.message_id));
-      summary.added += 1;
-      checkpoint = Math.max(checkpoint, receivedMs);
+      const stops = applyInboundReplySafeStops_(match, classification, receivedAt);
+      if (stops.applied) summary.auto_actions += 1;
+      const fields = inboundReplyOutcomeFields_(classification, stops, receivedAt);
+      const handled = fields.status === "Handled";
+      setInboundReplyCells_(sheet, rowNumber, {
+        auto_action:inboundReplyCellText_(stops.text, 500),
+        status:fields.status,
+        priority:fields.priority,
+        respond_by:fields.respond_by,
+        handled_at:handled ? new Date() : "",
+        handled_by:handled ? "Reply checker" : "",
+        handled_note:handled ? "No reply needed" : "",
+      });
+      advance(receivedMs);
     }
-    properties.setProperty(INBOUND_REPLY_SINCE_PROPERTY, String(checkpoint));
     if (summary.added || summary.auto_actions) bumpReadCacheVersion_();
   } catch (error) {
     summary.error = String(error && error.message || error).slice(0, 500);
@@ -5944,22 +6083,26 @@ function apiGetInboundReplies_() {
 }
 
 /** Marks a reply handled or dismissed (or reopens it). Identified by Reply ID, never by row alone. */
-function resolveInboundReply_(replyId, status, staffName, note) {
+function resolveInboundReply_(replyId, status, staffName, note, expectedAccountId) {
   const allowed = ["Handled", "Dismissed", "New"];
   if (!allowed.includes(status)) throw new Error("Choose Handled, Dismissed or New.");
   const sheet = getInboundRepliesSheet_(false);
   if (!sheet) throw new Error("No replies have been recorded yet.");
   const rows = outreachRowsMatchingCell_(sheet, ["reply_id", "Reply ID"], String(replyId || "").trim());
   if (!rows.length) throw new Error("Reply not found. Refresh and try again.");
-  const h = getHeaderMap_(sheet);
   const rowNumber = rows[0].__source_row;
-  const values = sheet.getRange(rowNumber, 1, 1, sheet.getLastColumn()).getValues()[0];
-  values[h.status] = status;
-  if (h.handled_at !== undefined) values[h.handled_at] = status === "New" ? "" : new Date();
-  if (h.handled_by !== undefined) values[h.handled_by] = status === "New" ? "" : staffName;
-  if (h.handled_note !== undefined) values[h.handled_note] = status === "New" ? "" : inboundReplyCellText_(note, 500);
-  sheet.getRange(rowNumber, 1, 1, values.length).setValues([values]);
-  return inboundReplyRecord_(Object.fromEntries(Object.keys(h).map(key => [key, values[h[key]]])), rowNumber);
+  if (expectedAccountId !== undefined && String(rows[0].account_id || "").trim() !== String(expectedAccountId || "").trim()) {
+    throw new Error("That reply belongs to a different business.");
+  }
+  // Only the four status cells are written; the rest of the row (outside text, the skill's cells) is untouched.
+  const changes = {
+    status:status,
+    handled_at:status === "New" ? "" : new Date(),
+    handled_by:status === "New" ? "" : inboundReplyCellText_(staffName, 120),
+    handled_note:status === "New" ? "" : inboundReplyCellText_(note, 500),
+  };
+  setInboundReplyCells_(sheet, rowNumber, changes);
+  return inboundReplyRecord_(Object.assign({}, rows[0], changes), rowNumber);
 }
 
 function apiResolveInboundReply_(p) {
@@ -6741,6 +6884,7 @@ function apiUpdateOutreachOutcome_(p) {
     const h = getHeaderMap_(sheet);
     const rowRange = sheet.getRange(rowNumber, 1, 1, sheet.getLastColumn());
     const values = rowRange.getValues()[0];
+    const originalValues = values.slice();
     const current = {};
     Object.keys(h).forEach(key => current[key] = values[h[key]]);
     const currentBusiness = String(outreachValue_(current, ["business", "business_name"]) || "").trim();
@@ -6770,7 +6914,7 @@ function apiUpdateOutreachOutcome_(p) {
         SpreadsheetApp.newDataValidation().requireValueInList(OUTREACH_OUTCOME_VALUES, true).setAllowInvalid(false).build()
       );
     }
-    rowRange.setValues([values]);
+    writeChangedRowCells_(sheet, rowNumber, originalValues, values);
 
     if (outreachIsCocktailListOutcome_(outcome)) {
       upsertNewsletterFromCocktailReply_({
@@ -6789,7 +6933,7 @@ function apiUpdateOutreachOutcome_(p) {
     // Logged from the Replies view: the reply is handled by the same save.
     let reply = null;
     if (p.reply_id) {
-      try { reply = resolveInboundReply_(p.reply_id, "Handled", String(p.staff_name || "Staff"), `Outcome: ${outcome}`); }
+      try { reply = resolveInboundReply_(p.reply_id, "Handled", String(p.staff_name || "Staff"), `Outcome: ${outcome}`, accountId); }
       catch (error) { console.warn(`Outcome saved; reply ${p.reply_id} could not be marked handled: ${String(error.message || error)}`); }
     }
     return { message:"Outcome saved.", account_id:accountId, source_row:rowNumber, status:outreachStatusForOutcome_(outcome), reply:reply };
@@ -6822,6 +6966,7 @@ function apiLogOutreachContact_(p) {
     const h = getHeaderMap_(sheet);
     const range = sheet.getRange(rowNumber, 1, 1, sheet.getLastColumn());
     const values = range.getValues()[0];
+    const originalValues = values.slice();
     const current = {}; Object.keys(h).forEach(key => current[key] = values[h[key]]);
     const business = String(outreachValue_(current, ["business", "business_name"]) || "").trim();
     const email = String(outreachValue_(current, ["email", "email_address"]) || "").trim();
@@ -6856,7 +7001,7 @@ function apiLogOutreachContact_(p) {
     const datedNote = `${Utilities.formatDate(contactDate, Session.getScriptTimeZone(), "yyyy-MM-dd")} — ${noteDetail || "Contact logged"}`;
     set(["notes"], priorNotes ? `${priorNotes}\n${datedNote}` : datedNote);
     set(["record_updated_at"], new Date());
-    range.setValues([values]);
+    writeChangedRowCells_(sheet, rowNumber, originalValues, values);
     if (outcome && outreachIsCocktailListOutcome_(outcome)) {
       upsertNewsletterFromCocktailReply_({
         account_id:accountId,

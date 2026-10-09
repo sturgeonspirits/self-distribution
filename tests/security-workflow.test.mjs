@@ -748,57 +748,85 @@ test("Inbound reply checker: matching, quoted-text removal, stop rules, respond-
   const fn = name => { const start = backend.indexOf(`\nfunction ${name}(`) + 1; assert.ok(start > 0, name); const end = backend.slice(start + 1).search(/\n(function |const |let |\/\/ ----)/); return backend.slice(start, start + 1 + end); };
   const INBOUND_CATEGORY_RULES_TEXT = backend.slice(backend.indexOf("const INBOUND_REPLY_CATEGORY_RULES = {"), backend.indexOf("const INBOUND_REPLY_PRIORITY_LABELS"));
   const constBlock = name => { const start = backend.indexOf(`\nconst ${name} = `) + 1; assert.ok(start > 0, name); const end = backend.slice(start + 1).search(/\n(function |const |let |\/\/ ----)/); return backend.slice(start, start + 1 + end); };
-  const consts = ["INBOUND_REPLY_OWN_ADDRESSES", "INBOUND_REPLY_FREE_MAIL_DOMAINS", "INBOUND_REPLY_CATEGORY_RULES", "INBOUND_REPLY_PRIORITY_LABELS", "INBOUND_REPLY_PAUSABLE_STATUSES"].map(constBlock).join("\n");
-  const names = ["stripQuotedReply_", "inboundReplyEmails_", "inboundReplyIsBounce_", "inboundReplyHardBounce_", "inboundReplyIsStop_", "inboundReplyIsCocktails_", "inboundReplyLooksAutomatic_", "inboundReplyPickRecord_", "matchInboundReply_", "inboundReplyBusinessDayAt_", "inboundReplyRespondBy_", "applyInboundReplySafeStops_"];
+  const consts = ["INBOUND_REPLY_OWN_ADDRESSES", "INBOUND_REPLY_FREE_MAIL_DOMAINS", "INBOUND_REPLY_CATEGORY_RULES", "INBOUND_REPLY_PRIORITY_LABELS", "INBOUND_REPLY_STRONG_MATCHES", "INBOUND_REPLY_PAUSABLE_STATUSES"].map(constBlock).join("\n");
+  const names = ["stripQuotedReply_", "inboundReplyEmails_", "inboundReplyIsBounce_", "inboundReplyBounceHead_", "inboundReplyBounceKind_", "inboundReplySignoffLine_", "inboundReplyIsOnly_", "inboundReplyIsStop_", "inboundReplyIsCocktails_", "inboundReplyLooksAutomatic_", "inboundReplyPickRecord_", "matchInboundReply_", "inboundReplyBusinessDayAt_", "inboundReplyRespondBy_", "applyInboundReplySafeStops_", "inboundReplyOutcomeFields_", "inboundReplyIdText_"];
   const calls = { outcomes:[], unsubscribed:[], paused:[] };
+  let outcomeFails = false; let newsletterChanges = true;
   const api = new Function("apiUpdateOutreachOutcome_", "unsubscribeNewsletterContactByEmail_", "pauseOutreachFollowUpsForReply_",
     `${consts}\n${names.map(fn).join("\n")}\nreturn { ${names.map(name => `${name}:${name}`).join(", ")} };`)(
-    p => { calls.outcomes.push(p); return { message:"Outcome saved." }; },
-    email => { calls.unsubscribed.push(email); return true; },
+    p => { if (outcomeFails) throw new Error("Another outreach update is in progress."); calls.outcomes.push(p); return { message:"Outcome saved." }; },
+    email => { calls.unsubscribed.push(email); return newsletterChanges; },
     record => { calls.paused.push(record.source_row); return "Follow-ups paused (status Replied)"; });
 
   // Only the sender's new text is kept.
   assert.equal(api.stripQuotedReply_("Yes, please bring samples Tuesday.\n\nOn Tue, Oct 7, 2026 at 3:32 PM Sturgeon Spirits <sales@sturgeonspirits.com>\nwrote:\n> Hi Pat,"), "Yes, please bring samples Tuesday.");
   assert.equal(api.stripQuotedReply_("Send 2 cases.\nOn Tue, Oct 7, 2026 at 3:32 PM Karl wrote:\nHi"), "Send 2 cases.");
+  assert.equal(api.stripQuotedReply_("Sounds good.\nOn Tue, Oct 7, 2026 at 3:32 PM Sturgeon Spirits <\nsales@sturgeonspirits.com> wrote:\nHi"), "Sounds good.", "a Gmail attribution wrapped over two lines");
   assert.equal(api.stripQuotedReply_("Thanks!\n\nFrom: Sturgeon Spirits <sales@sturgeonspirits.com>\nSent: Tuesday\nTo: Pat\nSubject: Hi"), "Thanks!");
   assert.equal(api.stripQuotedReply_("Call me.\n---- On Tue, 07 Oct 2026 15:32:00 -0500 Sturgeon Spirits <sales@sturgeonspirits.com> wrote ----\nHi"), "Call me.");
+  assert.equal(api.stripQuotedReply_("See below.\n============ Forwarded message ============\nFrom: x"), "See below.");
   assert.equal(api.stripQuotedReply_("From the kitchen: yes!\nWe love it."), "From the kitchen: yes!\nWe love it.", "a body line starting with From: is not a quote header");
+  assert.equal(api.stripQuotedReply_("Hi,\nFrom: the kitchen manager\nTo: whoever handles orders\nWe need 2 cases."), "Hi,\nFrom: the kitchen manager\nTo: whoever handles orders\nWe need 2 cases.", "From:/To: lines without an address are kept");
+  assert.equal(api.stripQuotedReply_("> On Tue we wrote\n> Hi Pat"), "", "nothing new → empty, never our own quoted email");
 
-  // "stop" is applied only when the reply is nothing but a stop request.
-  ["STOP", "Stop.", "unsubscribe", "Please remove me from your list.", "Remove me", "take me off your mailing list please", "Stop emailing me"].forEach(text => assert.equal(api.inboundReplyIsStop_(text), true, text));
-  ["Stop by anytime!", "Please don't stop sending these", "We can't stop drinking the old fashioned", "Unsubscribe my partner, not me", ""].forEach(text => assert.equal(api.inboundReplyIsStop_(text), false, text));
+  // "stop" is applied only when the whole reply is a stop request (plus sign-off lines).
+  ["STOP", "Stop.", "STOP!", "unsubscribe", "remove", "Remove me please", "Opt out", "Please remove me from your list.", "take me off your mailing list please", "Stop emailing me",
+    "Stop\nSent from my iPhone", "Unsubscribe\n\nThanks,\nPat Smith\n920-555-1212", "stop\n--\nKarl's Bar"].forEach(text => assert.equal(api.inboundReplyIsStop_(text), true, JSON.stringify(text)));
+  ["Stop by anytime!", "Please don't stop sending these", "unsubscribe John", "stop by Friday", "Please stop emailing us.",
+    "Stop\nby on Friday, we'd love a tasting", "Unsubscribe\n\nActually, can you send pricing?", "Remove\nthe old address, use pat@bar.com", "Stop\nCall me Monday", ""].forEach(text => assert.equal(api.inboundReplyIsStop_(text), false, JSON.stringify(text)));
   assert.equal(api.inboundReplyIsCocktails_("Cocktails!\n\nSent from my iPhone"), true);
   assert.equal(api.inboundReplyIsCocktails_("Cocktails sound fun, call me"), false);
-  assert.equal(api.inboundReplyHardBounce_("550 5.1.1 The email account that you tried to reach does not exist."), true);
-  assert.equal(api.inboundReplyHardBounce_("Delivery to the following recipient has been delayed. We will retry."), false);
+  assert.equal(api.inboundReplyIsCocktails_("Cocktails\nAnd can you price 3 cases?"), false);
+
+  // Bounces: only "the address does not exist" may mark an address bad.
+  assert.equal(api.inboundReplyBounceKind_("550 5.1.1 The email account that you tried to reach does not exist."), "hard");
+  assert.equal(api.inboundReplyBounceKind_("Reporting-MTA: dns; mx\nAction: failed\nStatus: 5.1.10\nRecipientNotFound"), "hard");
+  assert.equal(api.inboundReplyBounceKind_("550 5.7.1 Message rejected due to DMARC policy"), "blocked");
+  assert.equal(api.inboundReplyBounceKind_("554 5.7.1 Service unavailable; client host blocked using Spamhaus"), "blocked");
+  assert.equal(api.inboundReplyBounceKind_("552 5.2.2 The recipient's inbox is out of storage space."), "blocked");
+  assert.equal(api.inboundReplyBounceKind_("Delivery to the following recipient has been delayed. We will retry."), "delayed");
+  assert.equal(api.inboundReplyBounceKind_("Action: delayed\nStatus: 4.4.1"), "delayed");
+  assert.equal(api.inboundReplyBounceKind_("This is not a temporary problem; we will not retry.\n550 5.1.1 user unknown"), "hard", "'temporary' in the report no longer vetoes a hard bounce");
+  assert.equal(api.inboundReplyBounceKind_("550 5.1.1 user unknown\n----- Original message -----\nWe will retry your tasting next week"), "hard", "our own quoted wording is ignored");
+  assert.equal(api.inboundReplyBounceKind_("Your message could not be delivered."), "unknown");
+  assert.equal(api.inboundReplyIsBounce_({ from_address:"pat@bar.com", subject:"Re: Returned mail – can you resend?" }), false, "a person's Re: is not a bounce");
+  assert.equal(api.inboundReplyIsBounce_({ from_address:"mailer-daemon@googlemail.com", subject:"Delivery Status Notification (Failure)" }), true);
 
   // Matching.
   const fox = { source_row:175, account_id:"ACC-FOX", business:"Fox and Crow", email:"info@facbistro.com", relationship:"Current customer", status:"Existing customer", last_emailed:null };
   const gmailBar = { source_row:20, account_id:"ACC-BAR", business:"Corner Bar", email:"cornerbar@gmail.com", relationship:"Prospect", status:"Sent", last_emailed:null };
+  const lakeside = { source_row:40, account_id:"ACC-LAKE", business:"Lakeside Supper Club", email:"lakeside@new.rr.com", relationship:"Prospect", status:"Sent", last_emailed:null };
   const twinA = { source_row:30, account_id:"ACC-A", business:"Festival Foods Oshkosh", email:"a@festfoods.com", relationship:"Current customer", status:"Existing customer", last_emailed:null };
   const twinB = { source_row:31, account_id:"ACC-B", business:"Festival Foods Neenah", email:"b@festfoods.com", relationship:"Current customer", status:"Existing customer", last_emailed:null };
   const send = { email:"cornerbar@gmail.com", account_id:"ACC-BAR", stage:"Follow-up 1", subject:"A signature drink for Corner Bar", at:new Date("2026-10-06T15:00:00Z") };
+  const campaignSend = { email:"roxy@roxy.test", account_id:"ACC-ROXY", stage:"Initial", subject:"Fall cocktail ideas from Sturgeon Spirits", at:new Date("2026-10-06T15:00:00Z") };
   const index = {
     own:new Set(["sales@sturgeonspirits.com", "karl@sturgeonspirits.com"]),
-    byEmail:new Map([["info@facbistro.com", [fox]], ["contactus@facbistro.com", [fox]], ["cornerbar@gmail.com", [gmailBar]], ["a@festfoods.com", [twinA]], ["b@festfoods.com", [twinB]]]),
-    byDomain:new Map([["facbistro.com", [fox, fox]], ["festfoods.com", [twinA, twinB]]]),
-    byAccount:new Map([["ACC-FOX", fox], ["ACC-BAR", gmailBar], ["ACC-A", twinA], ["ACC-B", twinB]]),
+    sales:new Set(["sales@sturgeonspirits.com"]),
+    byEmail:new Map([["info@facbistro.com", [fox]], ["contactus@facbistro.com", [fox]], ["cornerbar@gmail.com", [gmailBar]], ["a@festfoods.com", [twinA]], ["b@festfoods.com", [twinB]], ["lakeside@new.rr.com", [lakeside]]]),
+    byDomain:new Map([["facbistro.com", [fox, fox]], ["festfoods.com", [twinA, twinB]], ["new.rr.com", [lakeside]]]),
+    byAccount:new Map([["ACC-FOX", fox], ["ACC-BAR", gmailBar], ["ACC-A", twinA], ["ACC-B", twinB], ["ACC-LAKE", lakeside]]),
     sends:new Map([["cornerbar@gmail.com", send]]),
-    subjects:new Map([["a signature drink for corner bar", send]]),
+    subjects:new Map([["a signature drink for corner bar", { send:send, accounts:new Set(["ACC-BAR"]) }], ["fall cocktail ideas from sturgeon spirits", { send:campaignSend, accounts:new Set(["ACC-ROXY", "ACC-BAR", "ACC-LAKE"]) }]]),
     newsletter:new Map([["pat@example.test", { email:"pat@example.test", account_id:"", organization:"Pat's Pub" }]]),
   };
   const message = (from, subject, extra = {}) => Object.assign({ from_address:from, subject:subject, summary:"", to_addresses:["sales@sturgeonspirits.com"] }, extra);
   assert.equal(api.matchInboundReply_(message("info@facbistro.com", "Re: order"), index, "").record, fox);
+  assert.equal(api.matchInboundReply_(message("info@facbistro.com", "Dinner Friday?", { to_addresses:["karl@sturgeonspirits.com"] }), index, ""), null, "mail to karl@ only is never read");
+  assert.equal(api.matchInboundReply_(message("info@facbistro.com", "Order", { to_addresses:["karl@sturgeonspirits.com", "sales@sturgeonspirits.com"] }), index, "").matched_by, "Sender email", "sales@ in To or Cc is enough");
   assert.equal(api.matchInboundReply_(message("contactus@facbistro.com", "Hello"), index, "").matched_by, "Alternate email in notes");
-  assert.equal(api.matchInboundReply_(message("patrick@facbistro.com", "Order"), index, "").matched_by, "Same company email domain");
-  assert.equal(api.matchInboundReply_(message("someone@festfoods.com", "Order"), index, ""), null, "a domain shared by two accounts matches neither");
+  assert.equal(api.matchInboundReply_(message("patrick@facbistro.com", "Re: Order"), index, "").matched_by, "Same company email domain");
+  assert.equal(api.matchInboundReply_(message("jsmith1952@new.rr.com", "Where can I buy your gin?"), index, ""), null, "a domain match needs a Re: subject");
+  assert.equal(api.matchInboundReply_(message("someone@festfoods.com", "Re: Order"), index, "").record, null, "a domain shared by two accounts matches neither");
   assert.equal(api.matchInboundReply_(message("friend@gmail.com", "Hello"), index, ""), null, "free-mail domains never match by domain");
   assert.equal(api.matchInboundReply_(message("sales@sturgeonspirits.com", "Re: test"), index, ""), null, "our own messages are ignored");
   assert.equal(api.matchInboundReply_(message("owner2@gmail.com", "RE: A signature drink for Corner Bar"), index, "").record, gmailBar);
+  const shared = api.matchInboundReply_(message("someone@gmail.com", "Re: Fall cocktail ideas from Sturgeon Spirits"), index, "");
+  assert.equal(shared.record, null, "a subject sent to several businesses identifies none");
+  assert.equal(shared.matched_by, "Reply to sales@ (no business match)");
   assert.equal(api.matchInboundReply_(message("pat@example.test", "Re: Cocktail list"), index, "").matched_by, "Newsletter contact");
-  assert.equal(api.matchInboundReply_(message("stranger@example.org", "Re: something"), index, "").matched_by, "Reply to sales@ (no business match)");
   assert.equal(api.matchInboundReply_(message("vendor@example.org", "Invoice 123"), index, ""), null, "ordinary inbox mail is not catalogued");
-  const bounce = api.matchInboundReply_(message("mailer-daemon@googlemail.com", "Delivery Status Notification (Failure)"), index, "Your message to cornerbar@gmail.com could not be delivered. 550 5.1.1 user unknown");
+  const bounce = api.matchInboundReply_(message("mailer-daemon@googlemail.com", "Delivery Status Notification (Failure)", { to_addresses:[] }), index, "Your message to cornerbar@gmail.com could not be delivered. 550 5.1.1 user unknown");
   assert.equal(bounce.bounce, true); assert.equal(bounce.email, "cornerbar@gmail.com"); assert.equal(bounce.record, gmailBar);
 
   // Respond-by: hot replies same business day when received by 3 PM, otherwise next business day.
@@ -812,34 +840,102 @@ test("Inbound reply checker: matching, quoted-text removal, stop rules, respond-
   assert.equal(api.inboundReplyRespondBy_("Not interested", at("2026-10-07T10:00:00")), null);
   assert.equal(api.inboundReplyRespondBy_("Out of office", at("2026-10-07T10:00:00")), null);
 
-  // Safe stops.
+  // Safe stops: only strong matches change anything, and a stop that did not take effect stays open.
   const when = new Date("2026-10-07T15:00:00Z");
-  api.applyInboundReplySafeStops_({ record:gmailBar, email:"cornerbar@gmail.com", newsletter:null }, { category:"Unsubscribe", classifier:"Rules" }, when);
-  assert.equal(calls.outcomes.at(-1).outcome, "Unsubscribed");
-  assert.deepEqual(calls.unsubscribed.at(-1), "cornerbar@gmail.com");
+  const rulesStop = { category:"Unsubscribe", classifier:"Rules" };
+  let stops = api.applyInboundReplySafeStops_({ record:gmailBar, email:"cornerbar@gmail.com", matched_by:"Sender email", newsletter:null }, rulesStop, when);
+  assert.equal(calls.outcomes.at(-1).outcome, "Unsubscribed"); assert.equal(stops.applied, true);
+  assert.equal(api.inboundReplyOutcomeFields_(rulesStop, stops, when).status, "Handled");
+  outcomeFails = true;
+  stops = api.applyInboundReplySafeStops_({ record:gmailBar, email:"cornerbar@gmail.com", matched_by:"Sender email", newsletter:null }, rulesStop, when);
+  outcomeFails = false;
+  assert.equal(stops.applied, false, "a newsletter change alone does not count when the Directory row was not unsubscribed");
+  assert.match(stops.text, /Unsubscribe not applied: Another outreach update/);
+  let fields = api.inboundReplyOutcomeFields_(rulesStop, stops, when);
+  assert.equal(fields.status, "New"); assert.equal(fields.priority, "Confirm unsubscribe"); assert.ok(fields.respond_by instanceof Date);
+  newsletterChanges = false;
+  stops = api.applyInboundReplySafeStops_({ record:null, email:"stranger@example.org", matched_by:"Sender email", newsletter:null }, rulesStop, when);
+  newsletterChanges = true;
+  assert.equal(stops.applied, false); assert.equal(api.inboundReplyOutcomeFields_(rulesStop, stops, when).priority, "Confirm unsubscribe", "a stop with nothing to unsubscribe stays open");
   const outcomesBefore = calls.outcomes.length;
-  assert.equal(api.applyInboundReplySafeStops_({ record:gmailBar, email:"cornerbar@gmail.com", newsletter:null }, { category:"Unsubscribe", classifier:"Claude skill", summary:"" }, when), "Follow-ups paused (status Replied)", "an unsubscribe found by the skill is only suggested; the reply still pauses follow-ups");
+  const pausesBefore = calls.paused.length;
+  for (const weak of ["Same company email domain", "Reply to our subject line", "Reply to sales@ (no business match)"]) {
+    stops = api.applyInboundReplySafeStops_({ record:lakeside, email:"jsmith1952@new.rr.com", matched_by:weak, newsletter:null }, rulesStop, when);
+    assert.equal(stops.applied, false, weak);
+    assert.equal(stops.text, "Possible match - not applied");
+    assert.equal(api.inboundReplyOutcomeFields_(rulesStop, stops, when).priority, "Confirm unsubscribe");
+    api.applyInboundReplySafeStops_({ record:lakeside, email:"jsmith1952@new.rr.com", matched_by:weak, newsletter:null }, { category:"Needs reading", classifier:"Awaiting skill", summary:"" }, when);
+  }
+  assert.equal(calls.outcomes.length, outcomesBefore, "possible matches never unsubscribe");
+  assert.equal(calls.paused.length, pausesBefore, "possible matches never pause follow-ups");
+  stops = api.applyInboundReplySafeStops_({ record:gmailBar, email:"cornerbar@gmail.com", matched_by:"Sender email", newsletter:null }, { category:"Unsubscribe", classifier:"Claude skill", summary:"" }, when);
+  assert.equal(stops.text, "Follow-ups paused (status Replied)", "an unsubscribe found by the skill is only suggested; the reply still pauses follow-ups");
   assert.equal(calls.outcomes.length, outcomesBefore);
-  assert.equal(api.applyInboundReplySafeStops_({ record:gmailBar, email:"cornerbar@gmail.com", newsletter:null, bounce:true }, { category:"Bounce", hard_bounce:false }, when), "", "a delayed delivery changes nothing");
-  assert.equal(api.applyInboundReplySafeStops_({ record:fox, email:"contactus@facbistro.com", newsletter:null, bounce:true }, { category:"Bounce", hard_bounce:true }, when), "", "a bounce for an alternate address does not mark the main email bad");
-  assert.equal(api.applyInboundReplySafeStops_({ record:gmailBar, email:"cornerbar@gmail.com", newsletter:null, bounce:true }, { category:"Bounce", hard_bounce:true }, when), "Marked Bad address");
-  assert.equal(calls.outcomes.at(-1).outcome, "Bad address");
-  assert.equal(api.applyInboundReplySafeStops_({ record:fox, email:"info@facbistro.com" }, { category:"Out of office" }, when), "", "an automatic reply changes nothing");
-  assert.equal(api.applyInboundReplySafeStops_({ record:gmailBar, email:"cornerbar@gmail.com" }, { category:"Needs reading", classifier:"Awaiting skill", summary:"" }, when), "Follow-ups paused (status Replied)", "an unsorted reply from a person still pauses follow-ups");
-  assert.equal(api.applyInboundReplySafeStops_({ record:null, email:"stranger@example.org" }, { category:"Interested", summary:"" }, when), "");
-  // The pause only touches rows waiting on our email.
+  const bounceMatch = { record:gmailBar, email:"cornerbar@gmail.com", matched_by:"Bounce for address", newsletter:null, bounce:true };
+  for (const kind of ["blocked", "delayed", "unknown"]) {
+    stops = api.applyInboundReplySafeStops_(bounceMatch, { category:"Bounce", bounce_kind:kind }, when);
+    assert.equal(stops.applied, false, kind);
+  }
+  assert.equal(calls.outcomes.length, outcomesBefore, "only a hard bounce marks an address bad");
+  assert.equal(api.inboundReplyOutcomeFields_({ category:"Bounce", bounce_kind:"blocked" }, { applied:false }, when).priority, "Review bounce");
+  assert.equal(api.inboundReplyOutcomeFields_({ category:"Bounce", bounce_kind:"delayed" }, { applied:false }, when).status, "Handled");
+  assert.equal(api.applyInboundReplySafeStops_({ record:fox, email:"contactus@facbistro.com", matched_by:"Bounce for address", newsletter:null, bounce:true }, { category:"Bounce", bounce_kind:"hard" }, when).applied, false, "a bounce for an alternate address does not mark the main email bad");
+  stops = api.applyInboundReplySafeStops_(bounceMatch, { category:"Bounce", bounce_kind:"hard" }, when);
+  assert.equal(stops.text, "Marked Bad address"); assert.equal(calls.outcomes.at(-1).outcome, "Bad address");
+  assert.equal(api.inboundReplyOutcomeFields_({ category:"Bounce", bounce_kind:"hard" }, stops, when).status, "Handled");
+  assert.equal(api.applyInboundReplySafeStops_({ record:fox, email:"info@facbistro.com", matched_by:"Sender email" }, { category:"Out of office" }, when).applied, false, "an automatic reply changes nothing");
+  assert.equal(api.applyInboundReplySafeStops_({ record:gmailBar, email:"cornerbar@gmail.com", matched_by:"Sender email" }, { category:"Needs reading", classifier:"Awaiting skill", summary:"", no_pause:true }, when).applied, false, "unreadable headers: no pause");
+  assert.equal(api.applyInboundReplySafeStops_({ record:gmailBar, email:"cornerbar@gmail.com", matched_by:"Sender email" }, { category:"Needs reading", classifier:"Awaiting skill", summary:"" }, when).text, "Follow-ups paused (status Replied)", "an unsorted reply from a person still pauses follow-ups");
+  // The pause only touches rows waiting on our email, and writes only the cells it changes.
   assert.match(constBlock("INBOUND_REPLY_PAUSABLE_STATUSES"), /\["sent", "follow-up due", "follow-up sent", "reactivation sent", "reactivation due"\]/);
   assert.match(fn("pauseOutreachFollowUpsForReply_"), /if \(!INBOUND_REPLY_PAUSABLE_STATUSES\.includes\(status\)\) return "";/);
+  assert.match(fn("pauseOutreachFollowUpsForReply_"), /writeChangedRowCells_\(sheet, record\.source_row, originalValues, values\);/);
+  assert.doesNotMatch(fn("pauseOutreachFollowUpsForReply_"), /range\.setValues/);
+
+  // Zoho IDs stay exact text: a 19-digit ID does not survive Number().
+  const zohoId = "1709876209452100005";
+  assert.notEqual(String(Number(zohoId)), zohoId);
+  assert.equal(api.inboundReplyIdText_(zohoId), `'${zohoId}`);
+  assert.equal(api.inboundReplyIdText_(""), "");
+  const loop = fn("checkInboundReplies_");
+  ["zoho_message_id", "zoho_folder_id", "thread_id"].forEach(key => assert.match(loop, new RegExp(`set\\("${key}", inboundReplyIdText_\\(`)));
+  // Per-message lock, re-check, append before side effects, checkpoint after every message.
+  assert.match(loop, /if \(!lock\.tryLock\(15000\)\)/);
+  assert.match(loop, /if \(outreachRowsMatchingCell_\(sheet, \["zoho_message_id", "Zoho Message ID"\], messageId\)\.length\)/);
+  assert.ok(loop.indexOf("sheet.appendRow(values)") < loop.indexOf("applyInboundReplySafeStops_("), "the reply is stored before anything is changed");
+  assert.match(loop, /properties\.setProperty\(INBOUND_REPLY_SINCE_PROPERTY, String\(checkpoint\)\)/);
+  assert.match(loop, /if \(detail\.bulk && !match\.bounce\)/, "mailing-list mail is not a reply");
+  // Resolving a reply writes only its four status cells (never the outside text).
+  assert.match(fn("resolveInboundReply_"), /setInboundReplyCells_\(sheet, rowNumber, changes\);/);
+  assert.doesNotMatch(fn("resolveInboundReply_"), /setValues/);
+  assert.match(fn("resolveInboundReply_"), /That reply belongs to a different business/);
+  assert.match(fn("apiUpdateOutreachOutcome_"), /`Outcome: \$\{outcome\}`, accountId\)/);
+  // Mailer: oldest 200 first, equal-millisecond messages included, list headers flagged as bulk.
+  assert.match(mailer, /if \(receivedMs && receivedMs < sinceMs\) \{ reachedOlder = true; return; \}/);
+  assert.match(mailer, /const listed = newer\.slice\(0, INBOX_MAX_MESSAGES\);/);
+  assert.match(mailer, /\^list-id:\/im\.test\(headers\) \|\| \/\^list-unsubscribe:\/im/);
+  assert.match(mailer, /header_error:headerError,/);
 
   // No AI calls from the Hub: unsorted replies wait as "Needs reading" for the sort-inbound-replies skill.
   assert.doesNotMatch(backend, /api\.anthropic\.com|ANTHROPIC_API_KEY|x-api-key/);
-  assert.match(fn("checkInboundReplies_"), /classification = \{ category:"Needs reading", summary:"", classifier:"Awaiting skill" \};/);
+  assert.match(fn("checkInboundReplies_"), /classification = \{ category:"Needs reading", summary:"", classifier:"Awaiting skill", no_pause:!!detail\.header_error \};/);
   const skill = await readFile(new URL(".claude/skills/sort-inbound-replies/SKILL.md", root), "utf8");
   assert.match(skill, /^---\nname: sort-inbound-replies\ndescription: /);
   ["Order or reorder", "Interested", "Schedule tasting", "Question", "Wants cocktail list", "Wrong contact", "Follow up later", "Not interested", "Unsubscribe", "Out of office", "Other"].forEach(category => {
     assert.ok(INBOUND_CATEGORY_RULES_TEXT.includes(`"${category}"`), category);
     assert.ok(skill.includes(`| ${category} |`), `skill covers ${category}`);
   });
+  // The skill's table matches the Hub: same suggested outcome and the priority the Replies view groups by.
+  const rules = new Function(`${constBlock("INBOUND_REPLY_CATEGORY_RULES")}\n${constBlock("INBOUND_REPLY_PRIORITY_LABELS")}\nreturn { rules:INBOUND_REPLY_CATEGORY_RULES, labels:INBOUND_REPLY_PRIORITY_LABELS };`)();
+  const skillRows = new Map(skill.split("\n").filter(line => /^\| [A-Z][^|]+ \| [^|]+ \| [^|]+ \| [^|]+ \|$/.test(line)).map(line => line.split("|").slice(1, -1).map(cell => cell.trim())).filter(cells => rules.rules[cells[0]]).map(cells => [cells[0], cells]));
+  assert.equal(skillRows.size, 11);
+  skillRows.forEach((cells, category) => {
+    const expectedOutcome = rules.rules[category].outcome || "*(blank)*";
+    const expectedPriority = category === "Unsubscribe" ? "Confirm unsubscribe" : rules.labels[rules.rules[category].respond];
+    assert.equal(cells[2], expectedOutcome, `${category} outcome`);
+    assert.equal(cells[3], expectedPriority, `${category} priority`);
+  });
+  assert.match(skill, /2026-11-02T12:00:00-06:00/, "the daylight-time example uses the due date's offset");
   // Wiring: read-only mailer actions, checkpointed runs, 15-minute trigger, background "check now", staff actions.
   assert.match(mailer, /if \(action === 'listInboxMessages'\)/);
   assert.match(mailer, /if \(action === 'getInboxMessage'\)/);
@@ -851,8 +947,8 @@ test("Inbound reply checker: matching, quoted-text removal, stop rules, respond-
   assert.match(fn("installInboundReplyChecker"), /everyMinutes\(15\)/);
   assert.match(fn("apiCheckInboundReplies_"), /timeBased\(\)\.after\(1000\)\.create\(\)/);
   assert.match(fn("checkInboundReplies_"), /properties\.setProperty\(INBOUND_REPLY_SINCE_PROPERTY, String\(checkpoint\)\)/);
-  assert.match(fn("checkInboundReplies_"), /if \(stored\.has\(String\(message\.message_id\)\)\)/, "a message is catalogued once");
-  assert.match(fn("checkInboundReplies_"), /const confirmUnsubscribe = classification\.category === "Unsubscribe" && classification\.classifier !== "Rules";/);
+  assert.match(fn("checkInboundReplies_"), /if \(stored\.has\(messageId\)\) \{ advance\(receivedMs\); continue; \}/, "a message is catalogued once");
+  assert.match(fn("inboundReplyOutcomeFields_"), /if \(classification\.category === "Unsubscribe"\) return classification\.classifier === "Rules" && stops\.applied \? handled : review\("Confirm unsubscribe"\);/);
   assert.match(backend, /case "inboundReplies": res = apiGetInboundReplies_\(\); break;/);
   assert.match(backend, /case "resolveInboundReply": res = apiResolveInboundReply_\(body\); break;/);
   assert.match(backend, /case "checkInboundReplies": res = apiCheckInboundReplies_\(\); break;/);
@@ -862,7 +958,7 @@ test("Inbound reply checker: matching, quoted-text removal, stop rules, respond-
   assert.equal(cellText("=IMPORTXML(\"https://evil.test\")", 100), "'=IMPORTXML(\"https://evil.test\")");
   assert.equal(cellText("+1 555", 100), "'+1 555");
   assert.equal(cellText("Thanks!", 3), "Tha");
-  assert.equal((fn("checkInboundReplies_").match(/catch \(error\) \{ detail = \{ text:String\(message\.summary/g) || []).length, 2);
+  assert.match(fn("checkInboundReplies_"), /catch \(error\) \{ return \{ text:String\(message\.summary \|\| ""\), automatic:false, bulk:false, header_error:true/, "an unreadable message falls back to Zoho's summary and never pauses follow-ups");
   assert.match(fn("repairHubStructure_"), /getInboundRepliesSheet_\(true\);/);
   ["inboundReplies", "resolveInboundReply", "checkInboundReplies"].forEach(action => {
     assert.match(proxy, new RegExp(`\\["${action}", "outreach"\\]`));
@@ -1701,7 +1797,7 @@ test("source contains formula protection, global error listeners, and recoverabl
   assert.match(backend, /const OUTREACH_OUTCOME_VALUES = \[/);
   assert.match(backend, /"Wrong contact", "Bad address", "Not interested", "Unsubscribed"/);
   assert.match(backend, /requireValueInList\(OUTREACH_OUTCOME_VALUES, true\)/);
-  assert.match(backend, /rowRange\.setValues\(\[values\]\)/);
+  assert.match(backend.slice(backend.indexOf("\nfunction apiUpdateOutreachOutcome_("), backend.indexOf("\nfunction apiLogOutreachContact_(")), /writeChangedRowCells_\(sheet, rowNumber, originalValues, values\);/, "an outcome save writes only the changed cells");
   assert.match(index, /Number\(campaign\.counts\?\.Blocked \|\| 0\)/);
   assert.match(await readFile(new URL("netlify/functions/inventory.js", root), "utf8"), /"sendOutreachCampaignBatch"/);
   assert.match(mailer, /if \(!testMode && !isValidEmail_\(email\)\)/);

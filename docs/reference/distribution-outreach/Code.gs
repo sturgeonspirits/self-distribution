@@ -4,10 +4,12 @@
  * VERSION: 2026.10.09.28-APP
  *
  * CHANGES IN THIS VERSION
- * - Adds two Hub-only, read-only actions for the Hub's reply checker. listInboxMessages returns Inbox messages
- *   received after a given time (newest 200 at most) with sender, recipients, subject and Zoho's short summary.
+ * - Adds two Hub-only, read-only actions for the Hub's reply checker. listInboxMessages returns the oldest 200 Inbox
+ *   messages received since a given time (scanning up to 1,000) with sender, recipients, subject and Zoho's summary,
+ *   and more_available when there are more.
  *   getInboxMessage returns one message's plain text (first 20,000 characters) and whether its headers declare it
- *   automatic (Auto-Submitted, X-Autoreply, auto-reply precedence). Neither sends, moves, marks read or deletes mail.
+ *   automatic (Auto-Submitted, X-Autoreply, auto-reply precedence) or bulk (List-Id, List-Unsubscribe, bulk/list
+ *   precedence), and header_error when the headers could not be read. Neither sends, moves, marks read or deletes mail.
  * - Reading the Inbox needs two more Zoho scopes. Run "1. Connect Zoho" once with a grant code generated for
  *   ZohoMail.accounts.READ,ZohoMail.messages.CREATE,ZohoMail.messages.READ,ZohoMail.folders.READ. Sending keeps
  *   working with the old token until then; only the reply checker reports the missing scope.
@@ -655,8 +657,9 @@ function sendPaymentReminderRequest_(body) {
 // ---------- Inbox reading for the Hub's reply checker (2026.10.09.28-APP) ----------
 // Read-only: lists Inbox messages received after since_ms. The Hub matches them to businesses,
 // classifies them and decides what to do; this project only talks to Zoho.
-const INBOX_PAGE_SIZE = 50;
+const INBOX_PAGE_SIZE = 200;
 const INBOX_MAX_MESSAGES = 200;
+const INBOX_MAX_SCANNED = 1000;
 const INBOX_TEXT_LIMIT = 20000;
 
 function zohoGet_(path, settings) {
@@ -718,9 +721,11 @@ function emailAddressesIn_(value) {
 function automaticMessageFlags_(headerText) {
   const headers = String(headerText || '');
   const autoSubmitted = /^auto-submitted:\s*(?!no\b)\S+/im.test(headers);
-  const autoReply = /^x-autoreply:/im.test(headers) || /^x-autorespond:/im.test(headers) || /^precedence:\s*(auto_reply|bulk|junk)/im.test(headers);
+  const autoReply = /^x-autoreply:/im.test(headers) || /^x-autorespond:/im.test(headers) || /^precedence:\s*auto_reply/im.test(headers);
+  // Mailing lists and newsletters (a business's own blast) are not replies to us.
+  const bulk = /^list-id:/im.test(headers) || /^list-unsubscribe:/im.test(headers) || /^precedence:\s*(bulk|list|junk)/im.test(headers);
   const inReplyTo = (headers.match(/^in-reply-to:\s*(.+)$/im) || [])[1] || '';
-  return { automatic:autoSubmitted || autoReply, in_reply_to:String(inReplyTo).trim().slice(0, 500) };
+  return { automatic:autoSubmitted || autoReply, bulk:bulk, in_reply_to:String(inReplyTo).trim().slice(0, 500) };
 }
 
 function listInboxMessagesRequest_(body) {
@@ -729,18 +734,27 @@ function listInboxMessagesRequest_(body) {
   if (!accountId) throw new Error('Zoho account ID is not set. Run Distribution Outreach PILOT > 2. Test Zoho connection.');
   const sinceMs = Math.max(0, Number(body.since_ms) || 0);
   const folderId = inboxFolderId_(settings, accountId);
-  const listed = [];
+  // Pages newest-first back to since_ms (up to 1,000 messages), then returns the OLDEST 200. The Hub
+  // processes them oldest first and checkpoints each one, so the next call continues where it stopped
+  // instead of skipping everything older than the newest 200. A message received in the same
+  // millisecond as the checkpoint is included again; the Hub de-duplicates by message ID.
+  const newer = [];
   let reachedOlder = false;
-  for (let start = 1; !reachedOlder && listed.length < INBOX_MAX_MESSAGES; start += INBOX_PAGE_SIZE) {
+  let scanned = 0;
+  for (let start = 1; !reachedOlder && scanned < INBOX_MAX_SCANNED; start += INBOX_PAGE_SIZE) {
     const page = zohoGet_('/accounts/' + encodeURIComponent(accountId) + '/messages/view?folderId=' + encodeURIComponent(folderId) + '&start=' + start + '&limit=' + INBOX_PAGE_SIZE + '&sortBy=date&sortorder=false&includeto=true', settings);
     const rows = Array.isArray(page.data) ? page.data : [];
+    scanned += rows.length;
     rows.forEach(function (row) {
       const receivedMs = Number(row.receivedTime || row.sentDateInGMT || 0);
-      if (receivedMs && receivedMs <= sinceMs) { reachedOlder = true; return; }
-      if (listed.length < INBOX_MAX_MESSAGES) listed.push(row);
+      if (receivedMs && receivedMs < sinceMs) { reachedOlder = true; return; }
+      newer.push(row);
     });
-    if (rows.length < INBOX_PAGE_SIZE) break;
+    if (rows.length < INBOX_PAGE_SIZE) { reachedOlder = true; break; }
   }
+  newer.sort(function (a, b) { return Number(a.receivedTime || a.sentDateInGMT || 0) - Number(b.receivedTime || b.sentDateInGMT || 0); });
+  const listed = newer.slice(0, INBOX_MAX_MESSAGES);
+  const moreAvailable = newer.length > INBOX_MAX_MESSAGES || !reachedOlder;
   const messages = listed.map(function (row) {
     const fromText = decodeHtmlEntities_(row.fromAddress || '');
     return {
@@ -755,7 +769,7 @@ function listInboxMessagesRequest_(body) {
       summary:decodeHtmlEntities_(row.summary || '').slice(0, 1000),
     };
   });
-  return { messages:messages, folder_id:folderId, more_available:listed.length >= INBOX_MAX_MESSAGES && !reachedOlder };
+  return { messages:messages, folder_id:folderId, more_available:moreAvailable };
 }
 
 function getInboxMessageRequest_(body) {
@@ -766,14 +780,17 @@ function getInboxMessageRequest_(body) {
   if (!accountId || !/^\d+$/.test(messageId) || !/^\d+$/.test(folderId)) throw new Error('A Zoho message and folder ID are required.');
   const path = '/accounts/' + encodeURIComponent(accountId) + '/folders/' + encodeURIComponent(folderId) + '/messages/' + encodeURIComponent(messageId);
   const text = htmlToText_(findValueByKey_(zohoGet_(path + '/content', settings), ['content']) || '');
-  let flags = { automatic:false, in_reply_to:'' };
+  let flags = { automatic:false, bulk:false, in_reply_to:'' };
+  let headerError = false;
   try { flags = automaticMessageFlags_(findValueByKey_(zohoGet_(path + '/header', settings), ['headerContent']) || ''); }
-  catch (error) { /* Headers are optional; the Hub also checks the subject and text. */ }
+  catch (error) { headerError = true; /* The Hub then does not pause follow-ups: it might be an automatic reply. */ }
   return {
     message_id:messageId,
     text:text.slice(0, INBOX_TEXT_LIMIT),
     text_truncated:text.length > INBOX_TEXT_LIMIT,
     automatic:!!flags.automatic,
+    bulk:!!flags.bulk,
+    header_error:headerError,
     in_reply_to:flags.in_reply_to,
   };
 }
