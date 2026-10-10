@@ -13,6 +13,8 @@
  * - Reading the Inbox needs two more Zoho scopes. Run "1. Connect Zoho" once with a grant code generated for
  *   ZohoMail.accounts.READ,ZohoMail.messages.CREATE,ZohoMail.messages.READ,ZohoMail.folders.READ. Sending keeps
  *   working with the old token until then; only the reply checker reports the missing scope.
+ * - "1. Connect Zoho" now asks for the grant code first, then offers to reuse the saved Client ID and Secret, so the
+ *   code that was just copied is pasted before anything else is copied.
  *
  * CHANGES IN 2026.10.08.27-APP
  * - Do Not Email typed as text ("TRUE", "Yes", "1") is now also honoured by the menu paths: refreshFollowupStatuses
@@ -798,12 +800,24 @@ function getInboxMessageRequest_(body) {
 function connectZoho() {
   assertStagingEnvironment_();
   const ui = SpreadsheetApp.getUi();
-  const clientId = promptRequired_(ui, 'Zoho connection', 'Paste the Client ID from your Zoho Self Client.');
-  if (clientId === null) return;
-  const clientSecret = promptRequired_(ui, 'Zoho connection', 'Paste the Client Secret. It will be stored in Apps Script properties, not in the spreadsheet.');
-  if (clientSecret === null) return;
+  // The grant code is asked for first: it is what was just copied, and it expires within minutes.
   const grantCode = promptRequired_(ui, 'Zoho connection', 'Paste the short-lived authorization code generated with scopes ZohoMail.accounts.READ,ZohoMail.messages.CREATE,ZohoMail.messages.READ,ZohoMail.folders.READ');
   if (grantCode === null) return;
+  // Reuse the saved Client ID and Secret when they exist, so nothing else has to be copied.
+  const saved = PropertiesService.getScriptProperties().getProperties();
+  let clientId = '';
+  let clientSecret = '';
+  if (saved.ZOHO_CLIENT_ID && saved.ZOHO_CLIENT_SECRET) {
+    const reuse = ui.alert('Zoho connection', 'Use the Client ID and Client Secret already saved in this project?\n\nChoose No only if the code was generated in a different Zoho Self Client.', ui.ButtonSet.YES_NO_CANCEL);
+    if (reuse === ui.Button.CANCEL || reuse === ui.Button.CLOSE) return;
+    if (reuse === ui.Button.YES) { clientId = saved.ZOHO_CLIENT_ID; clientSecret = saved.ZOHO_CLIENT_SECRET; }
+  }
+  if (!clientId) {
+    clientId = promptRequired_(ui, 'Zoho connection', 'Paste the Client ID from the same Zoho Self Client.');
+    if (clientId === null) return;
+    clientSecret = promptRequired_(ui, 'Zoho connection', 'Paste the Client Secret. It will be stored in Apps Script properties, not in the spreadsheet.');
+    if (clientSecret === null) return;
+  }
 
   const settings = getSettings_();
   const response = UrlFetchApp.fetch(settings['Zoho accounts URL'] + '/oauth/v2/token', {

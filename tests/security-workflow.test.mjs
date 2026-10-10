@@ -944,6 +944,10 @@ test("Inbound reply checker: matching, quoted-text removal, stop rules, respond-
   const inboxCode = mailer.slice(mailer.indexOf("// ---------- Inbox reading"), mailer.indexOf("function connectZoho() {"));
   assert.doesNotMatch(inboxCode, /method: '(post|put|delete|patch)'/i, "the Inbox code only reads");
   assert.match(mailer, /ZohoMail\.messages\.READ,ZohoMail\.folders\.READ'\);/);
+  // Connect Zoho asks for the just-copied grant code first, then offers the saved Client ID and Secret.
+  const connect = mailer.slice(mailer.indexOf("function connectZoho() {"), mailer.indexOf("function testZohoConnection() {"));
+  assert.ok(connect.indexOf("authorization code") < connect.indexOf("Client ID"), "grant code is asked for before the Client ID");
+  assert.match(connect, /if \(saved\.ZOHO_CLIENT_ID && saved\.ZOHO_CLIENT_SECRET\)/);
   assert.match(fn("installInboundReplyChecker"), /everyMinutes\(15\)/);
   assert.match(fn("apiCheckInboundReplies_"), /timeBased\(\)\.after\(1000\)\.create\(\)/);
   assert.match(fn("checkInboundReplies_"), /properties\.setProperty\(INBOUND_REPLY_SINCE_PROPERTY, String\(checkpoint\)\)/);
