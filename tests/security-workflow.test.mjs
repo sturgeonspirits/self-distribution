@@ -913,6 +913,18 @@ test("Inbound reply checker: matching, quoted-text removal, stop rules, respond-
   // Mailer: oldest 200 first, equal-millisecond messages included, list headers flagged as bulk.
   assert.match(mailer, /if \(receivedMs && receivedMs < sinceMs\) \{ reachedOlder = true; return; \}/);
   assert.match(mailer, /const listed = newer\.slice\(0, INBOX_MAX_MESSAGES\);/);
+  // The Inbox and its subfolders (Inbox/Sales, where a Zoho filter files sales@ mail) are all read.
+  const folderFn = new Function("CacheService", "zohoGet_", `${mailer.slice(mailer.indexOf("function inboxFolders_("), mailer.indexOf("function decodeHtmlEntities_("))}\nreturn inboxFolders_;`)(
+    { getScriptCache:() => ({ get:() => null, put:() => {} }) },
+    () => ({ data:[
+      { folderId:"1", folderName:"Inbox", folderType:"Inbox", path:"/Inbox" },
+      { folderId:"2", folderName:"Sales", path:"/Inbox/Sales" },
+      { folderId:"3", folderName:"Old", parentFolderId:"2" },
+      { folderId:"4", folderName:"Orders", path:"/Orders" },
+      { folderId:"5", folderName:"Spam", folderType:"Spam", path:"/Spam" },
+    ] }));
+  assert.deepEqual(folderFn({}, "acct").map(folder => folder.id), ["1", "2", "3"]);
+  assert.match(mailer, /folders\.forEach\(function \(folder\) \{\s*let reachedOlder = false;/);
   assert.match(mailer, /\^list-id:\/im\.test\(headers\) \|\| \/\^list-unsubscribe:\/im/);
   assert.match(mailer, /header_error:headerError,/);
 

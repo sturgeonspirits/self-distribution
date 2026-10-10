@@ -1,9 +1,15 @@
 /**
  * Sturgeon Spirits Distribution Outreach
  *
- * VERSION: 2026.10.09.28-APP
+ * VERSION: 2026.10.10.29-APP
  *
  * CHANGES IN THIS VERSION
+ * - The reply checker reads the Inbox and every folder inside it (for example Inbox/Sales, where a Zoho filter files
+ *   sales@ mail), not only the Inbox itself. Each folder is paged back to the checkpoint (up to 2,000 messages per
+ *   folder) and the oldest 200 across all of them are returned. After deploying, delete the INBOUND_REPLY_SINCE_MS
+ *   Script Property in the Inventory API project once, so the Hub re-reads the last 14 days.
+ *
+ * CHANGES IN 2026.10.09.28-APP
  * - Adds two Hub-only, read-only actions for the Hub's reply checker. listInboxMessages returns the oldest 200 Inbox
  *   messages received since a given time (scanning up to 1,000) with sender, recipients, subject and Zoho's summary,
  *   and more_available when there are more.
@@ -90,7 +96,7 @@
  * Sends through the authenticated Zoho Mail API account.
  */
 
-const OUTREACH_VERSION = '2026.10.09.28-APP';
+const OUTREACH_VERSION = '2026.10.10.29-APP';
 const NURTURE_CHECK_IN_DUPLICATE_COOLDOWN_DAYS = 60;
 
 const OUTREACH = Object.freeze({
@@ -661,7 +667,7 @@ function sendPaymentReminderRequest_(body) {
 // classifies them and decides what to do; this project only talks to Zoho.
 const INBOX_PAGE_SIZE = 200;
 const INBOX_MAX_MESSAGES = 200;
-const INBOX_MAX_SCANNED = 1000;
+const INBOX_MAX_SCANNED = 2000;
 const INBOX_TEXT_LIMIT = 20000;
 
 function zohoGet_(path, settings) {
@@ -683,17 +689,36 @@ function zohoGet_(path, settings) {
   return json;
 }
 
-function inboxFolderId_(settings, accountId) {
+/** The Inbox and every folder nested inside it (Zoho filters often file sales@ mail into Inbox/Sales). */
+function inboxFolders_(settings, accountId) {
   const cache = CacheService.getScriptCache();
-  const cached = cache.get('ZOHO_INBOX_FOLDER_ID');
-  if (cached) return cached;
+  const cached = cache.get('ZOHO_INBOX_FOLDERS');
+  if (cached) { try { return JSON.parse(cached); } catch (error) { /* read again below */ } }
   const json = zohoGet_('/accounts/' + encodeURIComponent(accountId) + '/folders', settings);
   const folders = Array.isArray(json.data) ? json.data : [];
   const inbox = folders.find(function (folder) { return String(folder.folderType || '').toLowerCase() === 'inbox'; })
     || folders.find(function (folder) { return String(folder.folderName || '').toLowerCase() === 'inbox'; });
   if (!inbox || !inbox.folderId) throw new Error('The Zoho Inbox folder was not found.');
-  cache.put('ZOHO_INBOX_FOLDER_ID', String(inbox.folderId), 21600);
-  return String(inbox.folderId);
+  const inboxPath = String(inbox.path || ('/' + (inbox.folderName || 'Inbox'))).replace(/\/+$/, '');
+  const ids = [String(inbox.folderId)];
+  // Children by path ("/Inbox/Sales") or by parent ID, repeated so grandchildren are included too.
+  let added = true;
+  while (added) {
+    added = false;
+    folders.forEach(function (folder) {
+      const id = String(folder.folderId || '');
+      if (!id || ids.indexOf(id) >= 0) return;
+      const path = String(folder.path || '');
+      const parent = String(folder.parentFolderId || '');
+      if ((path && path.indexOf(inboxPath + '/') === 0) || (parent && ids.indexOf(parent) >= 0)) { ids.push(id); added = true; }
+    });
+  }
+  const result = ids.map(function (id) {
+    const folder = folders.find(function (item) { return String(item.folderId) === id; }) || {};
+    return { id:id, name:String(folder.path || folder.folderName || id) };
+  });
+  cache.put('ZOHO_INBOX_FOLDERS', JSON.stringify(result), 21600);
+  return result;
 }
 
 function decodeHtmlEntities_(value) {
@@ -735,33 +760,38 @@ function listInboxMessagesRequest_(body) {
   const accountId = String(settings['Zoho account ID'] || '').trim();
   if (!accountId) throw new Error('Zoho account ID is not set. Run Distribution Outreach PILOT > 2. Test Zoho connection.');
   const sinceMs = Math.max(0, Number(body.since_ms) || 0);
-  const folderId = inboxFolderId_(settings, accountId);
-  // Pages newest-first back to since_ms (up to 1,000 messages), then returns the OLDEST 200. The Hub
-  // processes them oldest first and checkpoints each one, so the next call continues where it stopped
-  // instead of skipping everything older than the newest 200. A message received in the same
-  // millisecond as the checkpoint is included again; the Hub de-duplicates by message ID.
+  const folders = inboxFolders_(settings, accountId);
+  // Pages each folder newest-first back to since_ms (up to 2,000 messages per folder), then returns the
+  // OLDEST 200 across all folders. The Hub processes them oldest first and checkpoints each one, so the
+  // next call continues where it stopped. A message received in the same millisecond as the checkpoint
+  // is included again; the Hub de-duplicates by message ID.
   const newer = [];
-  let reachedOlder = false;
-  let scanned = 0;
-  for (let start = 1; !reachedOlder && scanned < INBOX_MAX_SCANNED; start += INBOX_PAGE_SIZE) {
-    const page = zohoGet_('/accounts/' + encodeURIComponent(accountId) + '/messages/view?folderId=' + encodeURIComponent(folderId) + '&start=' + start + '&limit=' + INBOX_PAGE_SIZE + '&sortBy=date&sortorder=false&includeto=true', settings);
-    const rows = Array.isArray(page.data) ? page.data : [];
-    scanned += rows.length;
-    rows.forEach(function (row) {
-      const receivedMs = Number(row.receivedTime || row.sentDateInGMT || 0);
-      if (receivedMs && receivedMs < sinceMs) { reachedOlder = true; return; }
-      newer.push(row);
-    });
-    if (rows.length < INBOX_PAGE_SIZE) { reachedOlder = true; break; }
-  }
+  let allReachedOlder = true;
+  folders.forEach(function (folder) {
+    let reachedOlder = false;
+    let scanned = 0;
+    for (let start = 1; !reachedOlder && scanned < INBOX_MAX_SCANNED; start += INBOX_PAGE_SIZE) {
+      const page = zohoGet_('/accounts/' + encodeURIComponent(accountId) + '/messages/view?folderId=' + encodeURIComponent(folder.id) + '&start=' + start + '&limit=' + INBOX_PAGE_SIZE + '&sortBy=date&sortorder=false&includeto=true', settings);
+      const rows = Array.isArray(page.data) ? page.data : [];
+      scanned += rows.length;
+      rows.forEach(function (row) {
+        const receivedMs = Number(row.receivedTime || row.sentDateInGMT || 0);
+        if (receivedMs && receivedMs < sinceMs) { reachedOlder = true; return; }
+        if (!row.folderId) row.folderId = folder.id;
+        newer.push(row);
+      });
+      if (rows.length < INBOX_PAGE_SIZE) { reachedOlder = true; break; }
+    }
+    if (!reachedOlder) allReachedOlder = false;
+  });
   newer.sort(function (a, b) { return Number(a.receivedTime || a.sentDateInGMT || 0) - Number(b.receivedTime || b.sentDateInGMT || 0); });
   const listed = newer.slice(0, INBOX_MAX_MESSAGES);
-  const moreAvailable = newer.length > INBOX_MAX_MESSAGES || !reachedOlder;
+  const moreAvailable = newer.length > INBOX_MAX_MESSAGES || !allReachedOlder;
   const messages = listed.map(function (row) {
     const fromText = decodeHtmlEntities_(row.fromAddress || '');
     return {
       message_id:String(row.messageId || ''),
-      folder_id:String(row.folderId || folderId),
+      folder_id:String(row.folderId || ''),
       thread_id:String(row.threadId || ''),
       received_ms:Number(row.receivedTime || row.sentDateInGMT || 0),
       from_address:(emailAddressesIn_(fromText)[0] || emailAddressesIn_(row.sender || '')[0] || ''),
@@ -771,7 +801,7 @@ function listInboxMessagesRequest_(body) {
       summary:decodeHtmlEntities_(row.summary || '').slice(0, 1000),
     };
   });
-  return { messages:messages, folder_id:folderId, more_available:moreAvailable };
+  return { messages:messages, folders:folders.map(function (folder) { return folder.name; }), more_available:moreAvailable };
 }
 
 function getInboxMessageRequest_(body) {
