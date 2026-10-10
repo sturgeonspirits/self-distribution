@@ -921,13 +921,15 @@ test("Inbound reply checker: matching, quoted-text removal, stop rules, respond-
     { folderId:"4", folderName:"Orders", path:"/Orders" },
     { folderId:"5", folderName:"Spam", folderType:"Spam", path:"/Spam" },
   ] });
-  const folderFn = (withSales, property) => new Function("CacheService", "PropertiesService", "zohoGet_", `${mailer.slice(mailer.indexOf("function inboxFolders_("), mailer.indexOf("function decodeHtmlEntities_("))}\nreturn inboxFolders_;`)(
+  const folderFn = (withSales, property) => new Function("CacheService", "PropertiesService", "zohoGet_", "OUTREACH_VERSION", `${mailer.slice(mailer.indexOf("function inboxFolders_("), mailer.indexOf("function decodeHtmlEntities_("))}\nreturn inboxFolders_;`)(
     { getScriptCache:() => ({ get:() => null, put:() => {} }) },
     { getScriptProperties:() => ({ getProperty:() => property || null }) },
-    () => folderList(withSales));
+    () => folderList(withSales), "test");
   assert.deepEqual(folderFn(true)({}, "acct").map(folder => folder.id), ["2"], "only Inbox/Sales by default");
   assert.deepEqual(folderFn(false)({}, "acct").map(folder => folder.id), ["1", "3"], "no Sales folder: the Inbox and everything in it");
   assert.deepEqual(folderFn(true, "Sales, Old")({}, "acct").map(folder => folder.id), ["2", "3"], "REPLY_CHECK_FOLDERS can name several");
+  assert.match(mailer, /const cacheKey = 'ZOHO_REPLY_FOLDERS_' \+ OUTREACH_VERSION \+ '_' \+ folderSetting/, "the folder list is cached per version and setting");
+  assert.match(mailer, /if \(Date\.now\(\) - started > INBOX_LIST_BUDGET_MS\) throw new Error/);
   assert.match(mailer, /return emailAddressesIn_\(String\(row\.toAddress \|\| ''\) \+ ' ' \+ String\(row\.ccAddress \|\| ''\)\)\.indexOf\(salesAddress\) >= 0;/, "only mail to sales@ (and bounces) is returned");
   assert.match(mailer, /folders\.forEach\(function \(folder\) \{\s*let reachedOlder = false;/);
   assert.match(mailer, /\^list-id:\/im\.test\(headers\) \|\| \/\^list-unsubscribe:\/im/);

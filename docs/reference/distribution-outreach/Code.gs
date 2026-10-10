@@ -1,9 +1,15 @@
 /**
  * Sturgeon Spirits Distribution Outreach
  *
- * VERSION: 2026.10.10.30-APP
+ * VERSION: 2026.10.10.31-APP
  *
  * CHANGES IN THIS VERSION
+ * - Fix: .30 still scanned the whole Inbox because it reused the folder list .29 had cached for six hours under the
+ *   same key. The cache key now includes the version and the REPLY_CHECK_FOLDERS value. Listing also stops itself
+ *   after 4 minutes with a clear error instead of being cut off by Apps Script (which the Hub saw as an unreadable
+ *   response).
+ *
+ * CHANGES IN 2026.10.10.30-APP
  * - Faster reply checks. Scanning 14 days of the whole Inbox (13,000+ messages) used nearly all of the Hub's run time,
  *   so a check processed only one reply. The checker now reads only the Inbox subfolder(s) named in the
  *   REPLY_CHECK_FOLDERS Script Property (default "Sales", where the Zoho filter files sales@ mail), falling back to the
@@ -103,7 +109,7 @@
  * Sends through the authenticated Zoho Mail API account.
  */
 
-const OUTREACH_VERSION = '2026.10.10.30-APP';
+const OUTREACH_VERSION = '2026.10.10.31-APP';
 const NURTURE_CHECK_IN_DUPLICATE_COOLDOWN_DAYS = 60;
 
 const OUTREACH = Object.freeze({
@@ -675,6 +681,7 @@ function sendPaymentReminderRequest_(body) {
 const INBOX_PAGE_SIZE = 200;
 const INBOX_MAX_MESSAGES = 200;
 const INBOX_MAX_SCANNED = 2000;
+const INBOX_LIST_BUDGET_MS = 4 * 60 * 1000;
 const INBOX_TEXT_LIMIT = 20000;
 
 function zohoGet_(path, settings) {
@@ -699,7 +706,9 @@ function zohoGet_(path, settings) {
 /** The Inbox and every folder nested inside it (Zoho filters often file sales@ mail into Inbox/Sales). */
 function inboxFolders_(settings, accountId) {
   const cache = CacheService.getScriptCache();
-  const cached = cache.get('ZOHO_INBOX_FOLDERS');
+  const folderSetting = String(PropertiesService.getScriptProperties().getProperty('REPLY_CHECK_FOLDERS') || 'Sales');
+  const cacheKey = 'ZOHO_REPLY_FOLDERS_' + OUTREACH_VERSION + '_' + folderSetting.replace(/[^A-Za-z0-9]+/g, '_').slice(0, 60);
+  const cached = cache.get(cacheKey);
   if (cached) { try { return JSON.parse(cached); } catch (error) { /* read again below */ } }
   const json = zohoGet_('/accounts/' + encodeURIComponent(accountId) + '/folders', settings);
   const folders = Array.isArray(json.data) ? json.data : [];
@@ -707,7 +716,7 @@ function inboxFolders_(settings, accountId) {
     || folders.find(function (folder) { return String(folder.folderName || '').toLowerCase() === 'inbox'; });
   if (!inbox || !inbox.folderId) throw new Error('The Zoho Inbox folder was not found.');
   const inboxPath = String(inbox.path || ('/' + (inbox.folderName || 'Inbox'))).replace(/\/+$/, '');
-  const wanted = String(PropertiesService.getScriptProperties().getProperty('REPLY_CHECK_FOLDERS') || 'Sales')
+  const wanted = folderSetting
     .split(',').map(function (name) { return name.trim().toLowerCase().replace(/^\/+|\/+$/g, ''); }).filter(Boolean);
   const ids = [String(inbox.folderId)];
   // Children by path ("/Inbox/Sales") or by parent ID, repeated so grandchildren are included too.
@@ -732,7 +741,7 @@ function inboxFolders_(settings, accountId) {
     return folder.id !== String(inbox.folderId) && wanted.some(function (name) { return name === folder.short || name === path || 'inbox/' + name === path; });
   });
   const result = (chosen.length ? chosen : all).map(function (folder) { return { id:folder.id, name:folder.name }; });
-  cache.put('ZOHO_INBOX_FOLDERS', JSON.stringify(result), 21600);
+  cache.put(cacheKey, JSON.stringify(result), 21600);
   return result;
 }
 
@@ -782,10 +791,13 @@ function listInboxMessagesRequest_(body) {
   // is included again; the Hub de-duplicates by message ID.
   const newer = [];
   let allReachedOlder = true;
+  const started = Date.now();
   folders.forEach(function (folder) {
     let reachedOlder = false;
     let scanned = 0;
     for (let start = 1; !reachedOlder && scanned < INBOX_MAX_SCANNED; start += INBOX_PAGE_SIZE) {
+      // Stop well before Apps Script's 6-minute limit so the Hub gets a readable error, not a cut-off response.
+      if (Date.now() - started > INBOX_LIST_BUDGET_MS) throw new Error('Listing ' + folder.name + ' took too long (' + scanned + ' messages scanned). Narrow REPLY_CHECK_FOLDERS.');
       const page = zohoGet_('/accounts/' + encodeURIComponent(accountId) + '/messages/view?folderId=' + encodeURIComponent(folder.id) + '&start=' + start + '&limit=' + INBOX_PAGE_SIZE + '&sortBy=date&sortorder=false&includeto=true', settings);
       const rows = Array.isArray(page.data) ? page.data : [];
       scanned += rows.length;
