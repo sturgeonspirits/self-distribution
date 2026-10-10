@@ -8,8 +8,8 @@ Read this file before inspecting the repository or changing the application. Upd
 
 | Component | Source version | Deployment state |
 | --- | --- | --- |
-| Netlify web app and staff proxy | `2026.10.10.43-WEB` on `codex/work` | **Promoted to production 2026-10-10** (Replies: Answered — log outcome, No outcome needed, answered-in-Zoho count, no Bad address preselect on Review bounce). Confirm the site reports `.43-WEB`. |
-| Inventory API Apps Script | `2026.10.10.41-APP` on `codex/work` | **Deployed 2026-10-10** (bounce fix: 5.1.7/5.1.8 and "sender address rejected" are refusals, not hard bounces, so they no longer mark a good address Bad automatically). |
+| Netlify web app and staff proxy | `2026.10.10.44-WEB` on `codex/work` | **Ready, not promoted** (Replies redesign phase 1: one question per card, new groups, Late only for unanswered replies, address problems without deadlines, Record result / Close buttons, one reused Zoho window). Production is `.43-WEB`. Needs Hub `.42-APP` first. |
+| Inventory API Apps Script | `2026.10.10.42-APP` on `codex/work` | **Ready to deploy** (Replies redesign phase 1: a plain-words verdict on each bounce, display only). `.41` deployed 2026-10-10 (5.1.7/5.1.8 refusals no longer mark an address Bad). |
 | Distribution Outreach Apps Script | `2026.10.10.32-APP` in `docs/reference/distribution-outreach/Code.gs` | **Deployed 2026-10-10** (`listSentInThreads`; reads only Inbox/Sales via `REPLY_CHECK_FOLDERS`, default `Sales`). Zoho reconnected with read scopes 2026-10-10. |
 | Public customer Netlify proxy | `2026.10.08.5-WEB` | **Deployed 2026-10-08** with the Netlify release. Forwards only the action on GET and drops server-only fields on POST; retries only a failed/non-JSON `listSkus` catalog read once; customer submissions remain single-attempt. |
 | Badger invoice parser (tracker-bound Apps Script) | `2026.10.08.3` in `docs/reference/badger-parser/Code.gs` | **Live tracker: `2026.10.08.3` installed and first Badger import done, 2026-10-08.** Apply Badger corrections fixed SS0161 ($162 → $243) and SS0101/SS0102 (duplicated lines); the 18 OCR customer-name differences were left as they are because the Sales Data customer table uses those spellings. Import: 165 listed, 0 new, 160 linked, 3 corrected, 2 void not imported. **Daily source switched to Badger, 2026-10-08** (the 5:45 am trigger now imports from Badger; invoice PDFs are no longer needed). Sales Data customer table rows 36–38 (J–L) added for Badger's spellings "Woodchuck's Bar and Grill", "Cujak's Wine and Spirits" and "Roscoe Oshkosh Inc, dba Red's Piggly Widdly" (straight apostrophe); both Sales Data checks read None. Staging tracker not updated. Watch: a new Badger product spelling may need a row in the Sales Data product table (N–O). |
@@ -268,7 +268,7 @@ Latest completed changes:
 | Customer order request | `order.html` |
 | Staff Netlify proxy | `netlify/functions/inventory.js` |
 | Public Netlify proxy | `netlify/functions/customer.js` |
-| Inventory API Apps Script | `apps-script/Code.gs` |
+| Inventory API Apps Script | `2026.10.10.42-APP` on `codex/work` | **Ready to deploy** (Replies redesign phase 1: a plain-words verdict on each bounce, display only). `.41` deployed 2026-10-10 (5.1.7/5.1.8 refusals no longer mark an address Bad). |
 | Distribution Outreach Apps Script | `docs/reference/distribution-outreach/Code.gs` |
 | Regression tests | `tests/security-workflow.test.mjs` |
 | Netlify routes | `netlify.toml` |

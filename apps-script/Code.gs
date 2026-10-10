@@ -1,8 +1,12 @@
 /*********************************
  * Inventory API (JSON) for Netlify
- * App version: 2026.10.10.41-APP
+ * App version: 2026.10.10.42-APP
  *
  * CHANGES IN THIS VERSION
+ * - Replies view (web 2026.10.10.44-WEB): each bounce now carries a plain-words verdict (`bounce`: dead, probably dead,
+ *   refused, delayed or unknown, and whether the receiver refused OUR sending address). Display only; it changes no data.
+ *
+ * CHANGES IN 2026.10.10.41-APP
  * - Bounce fix: a bounce saying the receiver refused OUR sending address or domain (5.1.7, 5.1.8, "Sender address
  *   rejected/blocked") is now "refused", not a hard bounce, so it no longer marks a good address Bad automatically.
  *   Such refusals usually point at our own mail setup (SPF/DKIM/DMARC).
@@ -433,7 +437,7 @@
  * - Use only in the staging inventory backend until testing is complete.
  *********************************/
 
-const APP_VERSION = "2026.10.10.41-APP";
+const APP_VERSION = "2026.10.10.42-APP";
 
 const SHEET_NAMES = {
   STORES: "Stores",
@@ -6202,7 +6206,35 @@ function inboundReplyRecord_(row, rowNumber) {
     outcome_logged:String(row.outcome_logged || ""),
     needs_outcome:inboundReplyNeedsOutcome_(row),
     zoho_message_id:String(row.zoho_message_id || ""),
+    bounce:String(row.category || "") === "Bounce" ? inboundReplyBounceProblem_(row.reply_text) : null,
   };
+}
+
+/**
+ * A bounce in plain words for the Replies view: { verdict, words, sender }. Display only; it never changes data.
+ * verdict: "dead" (the address is gone), "probably_dead" (their mail server can't be reached), "refused" (their server
+ * refused our email; the address is probably fine), "delayed" (still retrying) or "unknown". sender: true when the
+ * receiver refused OUR sending address or domain, which points at our own mail setup.
+ */
+function inboundReplyBounceProblem_(text) {
+  const head = inboundReplyBounceHead_(text);
+  const kind = inboundReplyBounceKind_(text);
+  if (kind === "delayed") return { verdict:"delayed", words:"Delivery was delayed; Zoho kept retrying.", sender:false };
+  if (kind === "blocked") {
+    if (/(\b5\.1\.[78]\b|sender('s)? (address|domain|system address))/i.test(head)) {
+      return { verdict:"refused", words:"Their server rejected our sending address. That usually points at our email setup, not their address.", sender:true };
+    }
+    if (/(\b5\.2\.2\b|mailbox (is )?full|over quota|out of storage)/i.test(head)) return { verdict:"refused", words:"Their mailbox is full, so the email bounced. The address is probably fine.", sender:false };
+    if (/yahoo|\b552\b/i.test(head)) return { verdict:"refused", words:"Their server refused the email: usually a spam filter, sometimes a full mailbox.", sender:false };
+    return { verdict:"refused", words:"Their server refused the email (spam filter or policy). The address is probably fine.", sender:false };
+  }
+  if (/(group .{0,40}may not exist|group you tried to contact)/i.test(head)) return { verdict:"dead", words:"This address doesn't exist (their email group was removed).", sender:false };
+  if (/(mailbox|account) (is |has been )?(disabled|deactivated|suspended|closed)/i.test(head)) return { verdict:"dead", words:"This mailbox has been shut off.", sender:false };
+  if (kind === "hard") return { verdict:"dead", words:"This address doesn't exist.", sender:false };
+  if (/(host (not |un)reachable|host not found|no route to host|connection (timed out|refused)|domain (not found|does not exist)|unrouteable|no mx)/i.test(head)) {
+    return { verdict:"probably_dead", words:"Their mail server couldn't be reached, so Zoho gave up.", sender:false };
+  }
+  return { verdict:"unknown", words:"The email couldn't be delivered. Read the bounce for details.", sender:false };
 }
 
 /** Zoho Mail's web address for the configured data center (https://mail.zoho.com/api → https://mail.zoho.com/zm/). */

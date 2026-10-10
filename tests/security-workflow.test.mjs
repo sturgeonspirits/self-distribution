@@ -793,6 +793,15 @@ test("Inbound reply checker: matching, quoted-text removal, stop rules, respond-
   assert.equal(api.inboundReplyBounceKind_("Action: failed\nStatus: 5.1.8\nDiagnostic-Code: smtp; 553 Bad sender's system address"), "blocked", "5.1.8 without the word blocked");
   assert.equal(api.inboundReplyBounceKind_("553 5.1.7 Sender address rejected: Domain not found"), "blocked");
   assert.equal(api.inboundReplyBounceKind_("550 5.1.10 RESOLVER.ADR.RecipientNotFound"), "hard", "5.1.10 is still a dead mailbox");
+  // Plain-words verdicts for the Replies view, from the live Oct 6 bounces.
+  const problem = new Function(`${fn("inboundReplyBounceHead_")}\n${fn("inboundReplyBounceKind_")}\n${fn("inboundReplyBounceProblem_")}\nreturn inboundReplyBounceProblem_;`)();
+  assert.equal(problem("info@jimandlindas.net, ERROR CODE :421 - Host not reachable.\nStatus: 421\nAction: failed").verdict, "probably_dead");
+  assert.equal(problem("We're writing to let you know that the group you tried to contact (thebaravenue) may not exist").verdict, "dead");
+  assert.equal(problem("ERROR CODE :554 - 30 Sorry, your message to bobtralen@sbcglobal.net cannot be delivered. This mailbox is disabled (554.30).").verdict, "dead");
+  assert.deepEqual(problem("info@peabodysalehouse.com, ERROR CODE :554 - 5.1.8 Sender Address Blocked"), { verdict:"refused", words:"Their server rejected our sending address. That usually points at our email setup, not their address.", sender:true });
+  assert.equal(problem("fountaintavern@yahoo.com, ERROR CODE :552 - 1 Requested mail action abort").verdict, "refused");
+  assert.equal(problem("550 5.1.1 The email account that you tried to reach does not exist.").verdict, "dead");
+  assert.equal(problem("Action: delayed\nStatus: 4.4.1").verdict, "delayed");
   assert.equal(api.inboundReplyIsBounce_({ from_address:"pat@bar.com", subject:"Re: Returned mail – can you resend?" }), false, "a person's Re: is not a bounce");
   assert.equal(api.inboundReplyIsBounce_({ from_address:"mailer-daemon@googlemail.com", subject:"Delivery Status Notification (Failure)" }), true);
 
@@ -988,7 +997,8 @@ test("Inbound reply checker: matching, quoted-text removal, stop rules, respond-
   // Only a hard bounce suggests "Bad address"; the card never pre-selects an outcome on a bounce under review.
   assert.match(fn("checkInboundReplies_"), /set\("suggested_outcome", classification\.category === "Bounce" && classification\.bounce_kind !== "hard" \? "" : rule\.outcome\);/);
   assert.match(html, /return reply\.priority === "Review bounce" \? "" : String\(reply\.suggested_outcome \|\| ""\);/);
-  assert.match(html, /button\.dataset\.outcome === replySuggestedOutcome\(fromReply\)/);
+  assert.match(html, /const preselect = options && options\.outcome !== undefined \? options\.outcome : replySuggestedOutcome\(fromReply\);/);
+  assert.match(html, /button\.dataset\.outcome === preselect\)/);
 
   // Answered replies stay listed until an outcome is logged; alt emails are learned from replies.
   const trackApi = new Function("Utilities", "Session", "getInboundRepliesSheet_", "outreachRowsMatchingCell_", "setInboundReplyCells_",
@@ -1032,8 +1042,26 @@ test("Inbound reply checker: matching, quoted-text removal, stop rules, respond-
   assert.match(fn("apiLogOutreachContact_"), /recordInboundReplyOutcome_\(accountId, outcome, String\(p\.staff_name \|\| "Staff"\), ""\)/);
   assert.match(fn("apiResolveInboundReply_"), /if \(p\.no_outcome\) \{/);
   assert.match(backend, /"Zoho Folder ID", "Thread ID", "App Version", "Outcome Logged",/);
-  assert.match(html, /\{ title:"Answered — log outcome", items:replies\.filter\(reply => reply\.needs_outcome\) \}/);
-  assert.match(html, /const canLogOutcome = \(open \|\| reply\.needs_outcome\) && !!reply\.source_row && !!reply\.business;/);
+  assert.match(html, /\{ key:"results", title:"Results to record", [^\n]*items:replies\.filter\(reply => reply\.needs_outcome\)/);
+  // Replies view (2026.10.10.44-WEB): Late only for a person's reply past its answer-by time; never bounces, stop requests or results.
+  const webFn = name => { const start = html.indexOf(`\n  function ${name}(`) + 1; assert.ok(start > 0, name); const end = html.slice(start + 1).search(/\n  (async )?function |\n  \/\/ /); return html.slice(start, start + 1 + end); };
+  const repliesWeb = new Function(`const REPLY_GUESS_MATCHES = [];\n${webFn("replyIsBounce")}\n${webFn("replyIsStopRequest")}\n${webFn("replyIsPerson")}\n${webFn("replyIsLate")}\n${webFn("replyGroups")}\nreturn { late:replyIsLate, groups:replyGroups };`)();
+  const past = new Date(Date.now() - 3600e3).toISOString(), future = new Date(Date.now() + 3600e3).toISOString();
+  const replyFixtures = [
+    { reply_id:"late", status:"New", category:"Question", priority:"Respond soon", respond_by:past, received_at:past },
+    { reply_id:"soon", status:"New", category:"Question", priority:"Respond soon", respond_by:future, received_at:past },
+    { reply_id:"unsorted", status:"New", category:"Needs reading", priority:"Respond soon", respond_by:future, received_at:past },
+    { reply_id:"bounce", status:"New", category:"Bounce", priority:"Review bounce", respond_by:past, received_at:past },
+    { reply_id:"stop", status:"New", category:"Unsubscribe", priority:"Confirm unsubscribe", respond_by:past, received_at:past },
+    { reply_id:"later", status:"New", category:"Follow up later", priority:"Optional reply", respond_by:"", received_at:past },
+    { reply_id:"answered", status:"Handled", needs_outcome:true, category:"Interested", priority:"Respond today", respond_by:past, received_at:past },
+    { reply_id:"done", status:"Handled", category:"Bounce", priority:"No reply needed", received_at:past },
+  ];
+  assert.deepEqual(replyFixtures.filter(repliesWeb.late).map(reply => reply.reply_id), ["late"], "only an unanswered person reply goes late");
+  const grouped = Object.fromEntries(repliesWeb.groups(replyFixtures).map(group => [group.key, group.items.map(reply => reply.reply_id)]));
+  assert.deepEqual(grouped, { today:["late", "unsorted"], soon:["soon"], stop:["stop"], address:["bounce"], results:["answered"], optional:["later"], done:["done"] });
+  assert.doesNotMatch(html, /data-reply-action="(handled|reopen)"|Reply by email|Not a reply<|Mark handled/, "the old buttons are gone");
+  assert.match(html, /window\.open\("", "zohomail"\)/, "Answer in Zoho reuses one Zoho window");
   assert.match(html, /if \(repliesAwaitingOutcomeFor\(selectedOutreachRecord\.account_id, res\.reply\?\.reply_id\)\) loadOutreachReplies\(\)/, "other answered replies of the business refresh");
   assert.match(html, /if \(\$\("contactLogOutcome"\)\.value && repliesAwaitingOutcomeFor\(record\.account_id\)\) loadOutreachReplies\(\)/, "Log contact with an outcome refreshes Replies");
 

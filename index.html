@@ -1,10 +1,10 @@
 <!doctype html>
-<!-- App version: 2026.10.10.43-WEB -->
+<!-- App version: 2026.10.10.44-WEB -->
 <html>
 <head>
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover"/>
-  <meta name="app-version" content="2026.10.10.43-WEB" />
+  <meta name="app-version" content="2026.10.10.44-WEB" />
   <meta name="theme-color" content="#536f77" />
   <link rel="icon" href="/assets/distribution-hub-icon.svg" type="image/svg+xml" />
   <link rel="manifest" href="/site.webmanifest" />
@@ -363,7 +363,34 @@
     .replyGroupTitle{margin:10px 2px 0;font-size:13px;font-weight:700;color:var(--muted)}
     .replySummary{margin:6px 0 0;font-size:14px}
     .replyText{margin:6px 0 0;padding:8px;border-radius:6px;background:#f9fafb;white-space:pre-wrap;overflow-wrap:anywhere;font-size:13px;max-height:320px;overflow:auto}
-    .replyCard.overdue{border-color:var(--red-line)}
+    .replyCard.overdue{border-color:var(--red-line);border-left:4px solid var(--red)}
+    .replyTiles{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:8px}
+    .replyTile{padding:8px 10px;border:1px solid var(--line);border-radius:8px;background:#fff}
+    .replyTile.red{background:var(--red-bg);border-color:var(--red-line);color:var(--red)}
+    .replyTileNumber{font-size:24px;font-weight:900;line-height:1.1}
+    .replyTile.zero .replyTileNumber{color:#9ca3af}
+    .replyTileLabel{font-size:12px;font-weight:800}
+    .replyCheckRow{display:flex;flex-wrap:wrap;gap:8px;align-items:center;justify-content:space-between}
+    .replyCheckRow .actionBtn{min-height:36px}
+    .replyGroupTitle span{color:var(--muted);font-weight:700}
+    .replyGroupTitle{font-size:15px;color:var(--text);margin-top:16px}
+    .replyGroupNote{margin:0 2px 6px;font-size:12px;color:var(--muted)}
+    .replyBusinessLink{all:unset;cursor:pointer;border-bottom:1px dotted #9ca3af}
+    .replyBusinessLink:focus-visible{outline:2px solid var(--blue);outline-offset:2px}
+    .replyProblem{color:var(--red);font-weight:700}
+    .replyExcerpt{font-style:italic;color:#374151}
+    .replyGuess{margin:8px 0 0;padding:8px 10px;border:1px solid var(--amber-line);border-radius:6px;background:var(--amber-bg);font-size:13px}
+    .replyWaiting{display:flex;flex-wrap:wrap;gap:8px;align-items:center;justify-content:space-between;margin:8px 0 0;padding:6px 10px;border:1px solid var(--blue-line);border-radius:6px;background:var(--blue-bg);color:var(--blue);font-size:12px;font-weight:700}
+    .replyWaiting .actionBtn{min-height:30px;padding:4px 10px}
+    .replyBanner{margin:0 0 8px;padding:10px 12px;border:1px solid var(--red-line);border-radius:8px;background:var(--red-bg);color:#7f1d1d;font-size:13px}
+    .replyHint{margin-top:6px;font-size:12px;color:var(--muted)}
+    .replyActions .actionBtn.primary{background:var(--primary);border-color:var(--primary);color:#fff}
+    .replyActions .actionBtn.danger{color:var(--red);border-color:var(--red-line)}
+    .replyActions .actionBtn.primary.danger{background:var(--red);border-color:var(--red);color:#fff}
+    .replyLink{all:unset;cursor:pointer;color:var(--blue);font-size:13px;font-weight:700;align-self:center;justify-self:start}
+    .replyDoneRow{display:flex;justify-content:space-between;gap:10px;align-items:center;margin-top:6px;padding:8px 12px;border:1px solid var(--line);border-radius:8px;background:#fff}
+    .replyDoneRow .actionBtn{min-height:34px;padding:4px 10px}
+    @media (max-width:640px){.replyTiles{grid-template-columns:1fr 1fr}}
     .outreachEmpty{
       padding:26px 18px;
       text-align:center;
@@ -2542,7 +2569,7 @@
   <dialog id="outcomeDialog">
     <div class="dlgHeader">
       <div>
-        <div class="dlgTitle">Log outcome</div>
+        <div class="dlgTitle" id="outcomeDialogTitle">Log outcome</div>
         <div class="smallMuted" id="outcomeBusiness"></div>
       </div>
       <button id="closeOutcomeBtn" type="button">Close</button>
@@ -2566,6 +2593,7 @@
       <textarea id="outcomeNotes" placeholder="What did they say? Who should follow up?"></textarea>
       <div class="status" id="outcomeStatus"></div>
       <div class="dlgActions">
+        <button id="outcomeNothingBtn" type="button" hidden>Close, nothing to record</button>
         <button class="primary" id="saveOutcomeBtn" type="button" disabled>Save outcome</button>
       </div>
     </div>
@@ -2704,7 +2732,7 @@
 
   <footer style="max-width:1200px;margin:18px auto 120px;padding:0 12px;text-align:center;color:#6b7280;font-size:12px;">
     Designed by <a href="https://scriptspirit.dev" target="_blank" rel="noopener noreferrer" style="color:#1d4ed8;text-decoration:none;font-weight:700;">Script Spirit</a>
-<span id="appVersionFooter"> • Version 2026.10.10.43-WEB</span>
+<span id="appVersionFooter"> • Version 2026.10.10.44-WEB</span>
   </footer>
 
 
@@ -2727,7 +2755,7 @@
   window.addEventListener("unhandledrejection", e => console.error("Unhandled promise rejection:", e.reason));
   window.addEventListener("error", e => console.error("Unhandled error:", e.error || e.message));
   const $ = (id) => document.getElementById(id);
-  const APP_VERSION = "2026.10.10.43-WEB";
+  const APP_VERSION = "2026.10.10.44-WEB";
   $("appVersionFooter").textContent = ` • Version ${APP_VERSION}`;
   function screenCacheKey(screen){ return `distribution_hub:${APP_VERSION}:${staffSession?.email || "unknown"}:${screen}`; }
   function readScreenCache(screen){
@@ -4095,7 +4123,7 @@
     return `https://www.google.com/maps/dir/?api=1&destination=${encodeURIComponent(destination)}`;
   }
 
-  // ---------- Replies (inbound reply checker, 2026.10.10.43-WEB) ----------
+  // ---------- Replies (inbound reply checker, 2026.10.10.44-WEB) ----------
   async function loadOutreachReplies(){
     if (outreachRepliesLoading) return outreachRepliesLoading;
     outreachRepliesLoading = (async () => {
@@ -4130,31 +4158,89 @@
     if (outreachView === "replies") renderOutreach();
   }
 
-  function replyIsOverdue(reply){
-    return reply.status === "New" && reply.respond_by && Date.parse(reply.respond_by) < Date.now();
+  // Each card asks one question; its buttons are the answers. "Late" means only one thing: a person replied and the
+  // answer-by time passed without an answer. Bounces, stop requests and results to record never go late.
+  const REPLY_GUESS_MATCHES = ["Same company email domain", "Reply to our subject line"];
+
+  function replyIsBounce(reply){ return reply.category === "Bounce"; }
+  function replyIsStopRequest(reply){ return reply.status === "New" && (reply.priority === "Confirm unsubscribe" || reply.category === "Unsubscribe"); }
+  function replyIsPerson(reply){ return reply.status === "New" && !replyIsBounce(reply) && !replyIsStopRequest(reply); }
+
+  function replyIsLate(reply){
+    return replyIsPerson(reply)
+      && ["Respond today", "Respond soon"].includes(reply.priority)
+      && !!reply.respond_by && Date.parse(reply.respond_by) < Date.now();
   }
 
-  function replyRespondByLabel(reply){
-    if (!reply.respond_by) return reply.priority || "";
-    const due = new Date(reply.respond_by);
-    const today = new Date();
-    const sameDay = due.toDateString() === today.toDateString();
-    const time = due.toLocaleTimeString([], { hour:"numeric", minute:"2-digit" });
-    if (replyIsOverdue(reply)) return `Overdue since ${sameDay ? time : `${formatOutreachDate(reply.respond_by)} ${time}`}`;
-    return `Respond by ${sameDay ? `today ${time}` : `${due.toLocaleDateString(undefined, { weekday:"short" })} ${formatOutreachDate(reply.respond_by)} ${time}`}`;
+  function replyGroups(replies){
+    const byDue = (a, b) => (Date.parse(a.respond_by) || Number.MAX_SAFE_INTEGER) - (Date.parse(b.respond_by) || Number.MAX_SAFE_INTEGER) || String(b.received_at).localeCompare(String(a.received_at));
+    const byReceived = (a, b) => String(b.received_at).localeCompare(String(a.received_at));
+    const person = replies.filter(replyIsPerson);
+    // Unsorted replies wait in Answer today, so an order can't hide in a slower group before it is sorted.
+    const today = person.filter(reply => replyIsLate(reply) || reply.priority === "Respond today" || reply.category === "Needs reading");
+    const soon = person.filter(reply => !today.includes(reply) && reply.priority === "Respond soon");
+    return [
+      { key:"today", title:"Answer today", note:"They want to buy, taste or meet, plus any reply not sorted yet. Due 5 PM if it came in before 3 PM, otherwise noon the next business day.", items:today.sort(byDue) },
+      { key:"soon", title:"Answer by tomorrow", note:"Questions, cocktail list requests, wrong contact, unclear. Due 5 PM the next business day.", items:soon.sort(byDue) },
+      { key:"stop", title:"Asked to stop emails", note:"A reply that seems to ask us to stop. A plain \"stop\" is handled automatically. The law gives 10 business days to honour it.", items:replies.filter(replyIsStopRequest).sort(byReceived) },
+      { key:"address", title:"Address problems", note:"Our email didn't arrive. No deadline and never late.", items:replies.filter(reply => reply.status === "New" && replyIsBounce(reply)).sort(byReceived) },
+      { key:"results", title:"Results to record", note:"You answered these from sales@. Record how it went so the business card and follow-ups are right. No deadline.", items:replies.filter(reply => reply.needs_outcome).sort(byReceived) },
+      { key:"optional", title:"Answer if you want", note:"\"Not now\" or \"no thanks\". No deadline and never late.", items:person.filter(reply => !today.includes(reply) && !soon.includes(reply)).sort(byReceived) },
+      { key:"done", title:"Done (last 30 days)", note:"Undo reopens a card.", items:replies.filter(reply => reply.status !== "New" && !reply.needs_outcome).sort(byReceived) },
+    ];
   }
 
-  function replyCategoryBadge(category){
-    if (["Order or reorder", "Interested", "Schedule tasting"].includes(category)) return "green";
-    if (["Unsubscribe", "Bounce", "Not interested"].includes(category)) return "red";
-    if (["Question", "Wrong contact", "Needs reading", "Wants cocktail list"].includes(category)) return "amber";
+  function replyWhen(value){
+    const date = new Date(value);
+    if (isNaN(date.getTime())) return "";
+    const time = date.toLocaleTimeString([], { hour:"numeric", minute:"2-digit" });
+    if (date.toDateString() === new Date().toDateString()) return `today ${time}`;
+    return `${date.toLocaleDateString(undefined, { weekday:"short" })} ${formatOutreachDate(value)} ${time}`;
+  }
+
+  function replyDueTag(reply){
+    if (!replyIsPerson(reply) || !reply.respond_by || !["Respond today", "Respond soon"].includes(reply.priority)) return "";
+    if (replyIsLate(reply)) return `<span class="badge red">${escapeHtml(`Late · was due ${replyWhen(reply.respond_by)}`)}</span>`;
+    return `<span class="badge ${reply.priority === "Respond today" ? "amber" : ""}">${escapeHtml(`Answer by ${replyWhen(reply.respond_by)}`)}</span>`;
+  }
+
+  /** 10 business days after the stop request arrived: a reminder, never "Late". */
+  function replyHonourBy(reply){
+    const date = new Date(reply.received_at);
+    if (isNaN(date.getTime())) return null;
+    let added = 0;
+    while (added < 10) { date.setDate(date.getDate() + 1); if (date.getDay() !== 0 && date.getDay() !== 6) added += 1; }
+    date.setHours(17, 0, 0, 0);
+    return date;
+  }
+
+  function replyKindLabel(reply){
+    if (replyIsBounce(reply)) return "Address problem";
+    if (replyIsStopRequest(reply)) return "Stop emails?";
+    return ({ "Order or reorder":"Wants to order", "Schedule tasting":"Tasting", "Needs reading":"Not sorted yet", "Follow up later":"Not now", "Out of office":"Automatic reply", "Wants cocktail list":"Cocktail list", "Unsubscribe":"Stop emails?" })[reply.category] || reply.category || "Reply";
+  }
+
+  function replyKindBadge(reply){
+    if (replyIsBounce(reply)) return "red";
+    if (["Order or reorder", "Interested", "Schedule tasting"].includes(reply.category)) return "blue";
+    if (["Question", "Wrong contact", "Wants cocktail list"].includes(reply.category)) return "amber";
     return "";
   }
 
-  function replyReceivedLabel(reply){
-    const received = new Date(reply.received_at);
-    if (isNaN(received.getTime())) return "";
-    return `${formatOutreachDate(reply.received_at)} ${received.toLocaleTimeString([], { hour:"numeric", minute:"2-digit" })}`;
+  function replyStageLabel(stage){
+    const text = String(stage || "").trim();
+    if (!text) return "";
+    if (/^initial$/i.test(text)) return "first email";
+    return text.charAt(0).toLowerCase() + text.slice(1);
+  }
+
+  function replyBounceVerdictTag(reply){
+    const verdict = reply.bounce?.verdict || "unknown";
+    if (verdict === "dead") return `<span class="badge red">Almost certainly bad</span>`;
+    if (verdict === "probably_dead") return `<span class="badge amber">Probably bad</span>`;
+    if (verdict === "refused") return `<span class="badge amber">Refused us · address probably fine</span>`;
+    if (verdict === "delayed") return `<span class="badge">Delayed</span>`;
+    return `<span class="badge">Unclear</span>`;
   }
 
   // A bounce under review (refused, delayed or unclear) never pre-selects an outcome, including rows stored earlier.
@@ -4162,43 +4248,151 @@
     return reply.priority === "Review bounce" ? "" : String(reply.suggested_outcome || "");
   }
 
-  function replyCardHtml(reply){
-    const open = reply.status === "New";
-    const subject = String(reply.subject || "").replace(/^\s*((re|aw|sv)\s*:\s*)+/i, "");
-    const mailto = `mailto:${encodeURIComponent(reply.from)}?subject=${encodeURIComponent(`Re: ${subject}`)}`;
+  function replyZohoLink(reply){
     const zohoUrl = outreachRepliesMeta?.zoho_mail_url || "https://mail.zoho.com/zm/";
-    const zohoLink = reply.zoho_message_id ? `${zohoUrl}#mail/folder/inbox/p/${encodeURIComponent(reply.zoho_message_id)}` : zohoUrl;
-    const canLogOutcome = (open || reply.needs_outcome) && !!reply.source_row && !!reply.business;
+    return reply.zoho_message_id ? `${zohoUrl}#mail/folder/inbox/p/${encodeURIComponent(reply.zoho_message_id)}` : zohoUrl;
+  }
+
+  // Every "Answer in Zoho" reuses one Zoho window instead of opening a new one each time. The named window is first
+  // opened blank (same origin) so its opener can be cut before it navigates to Zoho.
+  function openReplyInZoho(url){
+    let win = null;
+    try { win = window.open("", "zohomail"); } catch (error) { win = null; }
+    if (!win) { window.open(url, "_blank", "noopener"); return; }
+    try { win.opener = null; } catch (error) { /* an already-open Zoho window can't be changed; it is Zoho's own page */ }
+    win.location.href = url;
+    try { win.focus(); } catch (error) { /* focus is best effort */ }
+  }
+
+  function replyOpenedAt(replyId){
+    try { return JSON.parse(localStorage.getItem("replyOpenedInZoho") || "{}")[replyId] || ""; } catch (error) { return ""; }
+  }
+
+  function rememberReplyOpened(replyId){
+    try {
+      const opened = JSON.parse(localStorage.getItem("replyOpenedInZoho") || "{}");
+      opened[replyId] = new Date().toISOString();
+      Object.keys(opened).forEach(key => { if (Date.now() - Date.parse(opened[key]) > 3 * 24 * 60 * 60 * 1000) delete opened[key]; });
+      localStorage.setItem("replyOpenedInZoho", JSON.stringify(opened));
+    } catch (error) { /* the waiting note is a convenience only */ }
+  }
+
+  function replyAnswerButton(primary){
+    return `<button class="actionBtn ${primary ? "primary" : ""}" type="button" data-reply-action="zoho"><i data-lucide="reply"></i><span>Answer in Zoho</span></button>`;
+  }
+
+  function replyDoneText(reply){
+    const when = reply.handled_at ? ` · ${formatOutreachDate(reply.handled_at)}` : "";
+    const by = reply.handled_by && !/^(reply checker|claude skill)$/i.test(reply.handled_by) ? ` by ${reply.handled_by}` : "";
+    if (reply.outcome_logged) return `Result recorded: ${reply.outcome_logged}`;
+    if (/^Outcome: /.test(reply.handled_note || "")) return `Result recorded: ${reply.handled_note.replace(/^Outcome: /, "")}${when}${by}`;
+    if (/marked bad address/i.test(reply.auto_action || "")) return `Address didn't exist, so the Hub marked it bad automatically${when}`;
+    if (/unsubscribed/i.test(reply.auto_action || "")) return `They asked to stop, so the Hub unsubscribed them automatically${when}`;
+    if (reply.category === "Out of office") return `Automatic reply, so nothing needed${when}`;
+    if (replyIsBounce(reply) && reply.bounce?.verdict === "delayed") return `Delivery delayed; Zoho kept retrying, so nothing needed${when}`;
+    if (reply.status === "Dismissed") return `Not from a business we email${when}${by}`;
+    return `${reply.handled_note || "Closed"}${when}${by}`;
+  }
+
+  /** True when closing this reply changed the business (so Undo can't put that part back on its own). */
+  function replyChangedBusiness(reply){
+    return !!reply.outcome_logged || /^Outcome: /.test(reply.handled_note || "") || /marked bad address|unsubscribed/i.test(reply.auto_action || "");
+  }
+
+  function replyDoneRowHtml(reply){
     return `
-      <article class="outreachCard replyCard ${replyIsOverdue(reply) ? "overdue" : ""}" data-reply-id="${escapeHtml(reply.reply_id)}">
+      <div class="replyDoneRow" data-reply-id="${escapeHtml(reply.reply_id)}">
+        <div><strong>${escapeHtml(reply.business || reply.from_name || reply.from)}</strong><div class="smallMuted">${escapeHtml(replyDoneText(reply))}</div></div>
+        <button class="actionBtn" type="button" data-reply-action="undo"><i data-lucide="rotate-ccw"></i><span>Undo</span></button>
+      </div>`;
+  }
+
+  function replyCardHtml(reply){
+    const bounce = replyIsBounce(reply);
+    const stop = replyIsStopRequest(reply);
+    const person = replyIsPerson(reply);
+    const results = !!reply.needs_outcome;
+    const hasBusiness = !!reply.source_row && !!reply.business;
+    const suggested = replySuggestedOutcome(reply);
+    const late = replyIsLate(reply);
+    const name = reply.business || (bounce ? reply.from : "Unknown sender");
+    const nameHtml = hasBusiness
+      ? `<button class="replyBusinessLink" type="button" data-reply-action="business">${escapeHtml(name)}</button>`
+      : escapeHtml(name);
+    const sentWhen = reply.last_sent_at ? ` on ${formatOutreachDate(reply.last_sent_at)}` : "";
+    const who = bounce
+      ? `Sent to ${reply.from}${reply.last_sent_stage ? ` · ${replyStageLabel(reply.last_sent_stage)}${sentWhen}` : ""}`
+      : `From ${[reply.from_name && reply.from_name.toLowerCase() !== reply.from.toLowerCase() ? reply.from_name : "", reply.from].filter(Boolean).join(" · ")}`;
+    const excerpt = String(reply.reply_text || "").replace(/\s+/g, " ").trim();
+    const what = bounce
+      ? `<p class="replySummary replyProblem">${escapeHtml(reply.bounce?.words || reply.summary || "The email couldn't be delivered.")}</p>`
+      : reply.category === "Needs reading" || !reply.summary
+        ? `<p class="replySummary replyExcerpt">${escapeHtml(`"${excerpt.slice(0, 160)}${excerpt.length > 160 ? "…" : ""}"`)}</p>`
+        : `<p class="replySummary">${escapeHtml(reply.summary)}</p>`;
+    const guessKind = REPLY_GUESS_MATCHES.includes(reply.matched_by) ? (reply.matched_by === "Same company email domain" ? "the email's domain" : "the subject line") : "";
+    const guess = guessKind && hasBusiness && (person || stop || results)
+      ? `<div class="replyGuess"><strong>Is this the right business?</strong> We matched it by ${escapeHtml(guessKind)}, not the exact address. Recording a result confirms it and saves ${escapeHtml(reply.from)} on this business.</div>`
+      : "";
+    const noMatch = !hasBusiness && !bounce && (person || stop)
+      ? `<div class="replyGuess"><strong>Which business is this from?</strong> It answers one of our emails, but the address isn't on any business. If it isn't from a business we email, close it below.</div>`
+      : "";
+    const opened = person ? replyOpenedAt(reply.reply_id) : "";
+    const waiting = opened
+      ? `<div class="replyWaiting"><span>${escapeHtml(`Opened in Zoho ${replyWhen(opened)} — waiting for your answer`)}</span><button class="actionBtn" type="button" data-reply-action="check"><span>Check now</span></button></div>`
+      : "";
+    const honour = stop ? replyHonourBy(reply) : null;
+    const tags = [
+      replyDueTag(reply),
+      honour ? `<span class="badge ${honour.getTime() < Date.now() ? "red" : ""}">${escapeHtml(`Honour by ${formatOutreachDate(honour.toISOString())}`)}</span>` : "",
+      bounce ? replyBounceVerdictTag(reply) : "",
+      results && reply.handled_at ? `<span class="badge green">${escapeHtml(`You answered ${formatOutreachDate(reply.handled_at)}`)}</span>` : "",
+      `<span class="badge">${escapeHtml(`${bounce ? "Bounced" : "Received"} ${bounce ? formatOutreachDate(reply.received_at) : replyWhen(reply.received_at)}`)}</span>`,
+      reply.relationship ? `<span class="badge blue">${escapeHtml(reply.relationship)}</span>` : "",
+      !bounce && reply.last_sent_stage ? `<span class="badge">${escapeHtml(`Replying to: ${replyStageLabel(reply.last_sent_stage)}`)}</span>` : "",
+    ].join("");
+    let actions = "";
+    if (results) {
+      actions = `
+        <button class="actionBtn primary" type="button" data-reply-action="result"><i data-lucide="clipboard-check"></i><span>${escapeHtml(suggested ? `Record: ${suggested}` : "Record result…")}</span></button>
+        ${suggested ? `<button class="actionBtn" type="button" data-reply-action="result-other"><span>Different result…</span></button>` : ""}
+        <button class="actionBtn" type="button" data-reply-action="no-outcome"><span>Close, nothing to record</span></button>`;
+    } else if (stop) {
+      actions = hasBusiness
+        ? `<button class="actionBtn primary" type="button" data-reply-action="stop"><span>Stop emailing them</span></button>
+           <button class="actionBtn" type="button" data-reply-action="not-interested"><span>Just not interested</span></button>
+           <button class="actionBtn" type="button" data-reply-action="keep-emailing"><span>Keep emailing…</span></button>`
+        : `<button class="actionBtn" type="button" data-reply-action="dismiss"><span>Not from a business we email</span></button>`;
+    } else if (bounce) {
+      const likelyDead = ["dead", "probably_dead"].includes(reply.bounce?.verdict);
+      actions = `
+        ${hasBusiness ? `<button class="actionBtn ${likelyDead ? "primary danger" : "danger"}" type="button" data-reply-action="address-bad"><span>Address is bad</span></button>` : ""}
+        <button class="actionBtn" type="button" data-reply-action="address-fine"><span>Address is fine (keep emailing)</span></button>
+        <button class="replyLink" type="button" data-reply-action="zoho-view">View bounce</button>`;
+    } else if (person) {
+      const optional = !["Respond today", "Respond soon"].includes(reply.priority) && reply.category !== "Needs reading";
+      actions = optional && hasBusiness && suggested
+        ? `<button class="actionBtn primary" type="button" data-reply-action="result"><span>${escapeHtml(`Record: ${suggested}`)}</span></button>
+           ${replyAnswerButton(false)}
+           <button class="actionBtn" type="button" data-reply-action="result-other"><span>Different result…</span></button>`
+        : `${replyAnswerButton(true)}
+           <button class="actionBtn" type="button" data-reply-action="close"><span>Close without answering…</span></button>
+           ${!hasBusiness ? `<button class="actionBtn" type="button" data-reply-action="dismiss"><span>Not from a business we email</span></button>` : ""}`;
+    }
+    return `
+      <article class="outreachCard replyCard ${late ? "overdue" : ""}" data-reply-id="${escapeHtml(reply.reply_id)}">
         <div class="outreachCardTop">
           <div>
-            <div class="businessName">${escapeHtml(reply.business || reply.from_name || reply.from)}</div>
-            <div class="contactLine">${escapeHtml([reply.from_name, reply.from].filter(Boolean).join(" • "))}</div>
+            <div class="businessName">${nameHtml}</div>
+            <div class="contactLine">${escapeHtml(who)}</div>
           </div>
-          <span class="badge ${replyCategoryBadge(reply.category)}">${escapeHtml(reply.category || "Reply")}</span>
+          <span class="badge ${replyKindBadge(reply)}">${escapeHtml(replyKindLabel(reply))}</span>
         </div>
-        ${reply.summary ? `<p class="replySummary">${escapeHtml(reply.summary)}</p>` : ""}
-        <div class="outreachMeta">
-          <span class="badge">${escapeHtml(`Received ${replyReceivedLabel(reply)}`)}</span>
-          ${open && (reply.respond_by || reply.priority) ? `<span class="badge ${replyIsOverdue(reply) ? "red" : reply.priority === "Respond today" ? "amber" : ""}">${escapeHtml(replyRespondByLabel(reply))}</span>` : ""}
-          ${reply.relationship ? `<span class="badge blue">${escapeHtml(reply.relationship)}</span>` : ""}
-          ${reply.last_sent_stage ? `<span class="badge">${escapeHtml(`Answering: ${reply.last_sent_stage}`)}</span>` : ""}
-          ${reply.auto_action ? `<span class="badge ${/possible match|not applied|nothing found|pending/i.test(reply.auto_action) ? "amber" : "green"}">${escapeHtml(reply.auto_action)}</span>` : ""}
-          ${!open ? `<span class="badge ${reply.needs_outcome ? "green" : ""}">${escapeHtml(`${reply.status}${reply.handled_by ? ` by ${reply.handled_by}` : ""}${reply.handled_note ? ` — ${reply.handled_note}` : ""}`)}</span>` : ""}
-          ${reply.needs_outcome ? `<span class="badge amber">Outcome not logged yet</span>` : ""}
-          ${reply.outcome_logged ? `<span class="badge blue">${escapeHtml(`Outcome: ${reply.outcome_logged}`)}</span>` : ""}
-          ${!reply.business ? `<span class="badge amber">${escapeHtml(reply.matched_by || "No business match")}</span>` : ""}
-        </div>
-        <details><summary>${escapeHtml(reply.subject || "(no subject)")}</summary><div class="replyText">${escapeHtml(reply.reply_text || "")}</div><div class="smallMuted">Matched by: ${escapeHtml(reply.matched_by || "")}${reply.classifier ? ` • Sorted by: ${escapeHtml(reply.classifier)}` : ""}</div></details>
-        <div class="outreachActions">
-          ${open ? `<a class="actionBtn primary actionPrimary" href="${escapeHtml(zohoLink)}" target="_blank" rel="noopener noreferrer"><i data-lucide="reply"></i><span>Open in Zoho Mail</span></a>` : ""}
-          ${open ? `<a class="actionBtn" href="${escapeHtml(mailto)}"><i data-lucide="mail"></i><span>Reply by email</span></a>` : ""}
-          ${canLogOutcome ? `<button class="actionBtn" type="button" data-reply-action="outcome"><i data-lucide="clipboard-check"></i><span>${escapeHtml(replySuggestedOutcome(reply) ? `Log outcome: ${replySuggestedOutcome(reply)}` : "Log outcome")}</span></button>` : ""}
-          ${open ? `<button class="actionBtn" type="button" data-reply-action="handled"><i data-lucide="check"></i><span>Mark handled</span></button>` : ""}
-          ${reply.needs_outcome ? `<button class="actionBtn" type="button" data-reply-action="no-outcome"><i data-lucide="check"></i><span>No outcome needed</span></button>` : ""}
-          ${open ? `<button class="actionBtn" type="button" data-reply-action="dismiss"><i data-lucide="x"></i><span>Not a reply</span></button>` : `<button class="actionBtn" type="button" data-reply-action="reopen"><i data-lucide="rotate-ccw"></i><span>Reopen</span></button>`}
-        </div>
+        ${guess}${noMatch}${waiting}
+        ${what}
+        <div class="outreachMeta">${tags}</div>
+        <details><summary>${bounce ? "Read the bounce" : "Read their email"}</summary><div class="replyText">${escapeHtml(reply.reply_text || "")}</div><div class="smallMuted">${escapeHtml(reply.subject || "(no subject)")} · Matched by: ${escapeHtml(reply.matched_by || "")}${reply.classifier ? ` · Sorted by: ${escapeHtml(reply.classifier)}` : ""}</div></details>
+        <div class="outreachActions replyActions">${actions}</div>
+        ${person && actions.includes("data-reply-action=\"zoho\"") ? `<div class="replyHint">Answer from sales@, not karl@, so the Hub can see your answer.</div>` : ""}
       </article>`;
   }
 
@@ -4208,41 +4402,58 @@
     const replies = (outreachData.replies || []).filter(reply => !query || [
       reply.business, reply.from, reply.from_name, reply.subject, reply.summary, reply.category, reply.reply_text, reply.relationship,
     ].some(value => String(value || "").toLowerCase().includes(query)));
-    const open = replies.filter(reply => reply.status === "New");
-    const byDue = (a, b) => (Date.parse(a.respond_by) || Number.MAX_SAFE_INTEGER) - (Date.parse(b.respond_by) || Number.MAX_SAFE_INTEGER) || String(b.received_at).localeCompare(String(a.received_at));
-    const groups = [
-      { title:"Respond today", items:open.filter(reply => replyIsOverdue(reply) || reply.priority === "Respond today").sort(byDue) },
-      { title:"Respond soon", items:open.filter(reply => !replyIsOverdue(reply) && ["Respond soon", "Confirm unsubscribe", "Review bounce"].includes(reply.priority)).sort(byDue) },
-      { title:"Optional reply", items:open.filter(reply => !replyIsOverdue(reply) && !["Respond today", "Respond soon", "Confirm unsubscribe", "Review bounce"].includes(reply.priority)).sort(byDue) },
-      { title:"Answered — log outcome", items:replies.filter(reply => reply.needs_outcome) },
-      { title:"Handled in the last 30 days", items:replies.filter(reply => reply.status !== "New" && !reply.needs_outcome) },
-    ];
-    $("outreachAudienceCount").textContent = `${open.length} open repl${open.length === 1 ? "y" : "ies"}`;
+    const groups = replyGroups(replies);
+    const all = outreachData.replies || [];
+    const toAnswer = all.filter(replyIsPerson).length;
+    const late = all.filter(replyIsLate).length;
+    const addressProblems = all.filter(reply => reply.status === "New" && replyIsBounce(reply)).length;
+    const resultsToRecord = all.filter(reply => reply.needs_outcome).length;
+    $("outreachAudienceCount").textContent = `${toAnswer} to answer`;
     const lastRun = meta?.last_run;
-    const lastRunText = lastRun?.at
-      ? `Last checked ${formatOutreachDate(lastRun.at)} ${new Date(lastRun.at).toLocaleTimeString([], { hour:"numeric", minute:"2-digit" })}${lastRun.error ? ` — failed: ${lastRun.error}` : ` — ${Number(lastRun.added || 0)} new${Number(lastRun.answered || 0) ? `, ${Number(lastRun.answered)} answered in Zoho` : ""}${lastRun.scan_capped ? " (Sent folder scan hit its limit)" : ""}`}`
-      : "The Inbox has not been checked yet.";
+    const lastRunText = !lastRun?.at
+      ? "sales@ hasn't been checked yet."
+      : lastRun.error
+        ? `The check at ${replyWhen(lastRun.at)} failed: ${lastRun.error}`
+        : `Checked sales@ ${replyWhen(lastRun.at)}: ${[Number(lastRun.added || 0) ? `${Number(lastRun.added)} new` : "nothing new", Number(lastRun.answered || 0) ? `${Number(lastRun.answered)} answered in Zoho` : ""].filter(Boolean).join(", ")}${lastRun.scan_capped ? " (the Sent folder scan hit its limit)" : ""}. Checks again every 15 minutes.`;
     const warnings = [];
     if (meta && meta.checker_installed === false) warnings.push("Automatic checks are off: run installInboundReplyChecker() once in the Inventory API project.");
-    if (Number(meta?.awaiting_skill || 0)) warnings.push(`${Number(meta.awaiting_skill)} repl${Number(meta.awaiting_skill) === 1 ? "y needs" : "ies need"} reading: ask Claude to "sort inbound replies" to fill in the category, summary and respond-by time.`);
-    if (meta && meta.mailer_configured === false) warnings.push("The Distribution Outreach mailer is not configured, so the Inbox cannot be read.");
+    if (Number(meta?.awaiting_skill || 0)) warnings.push(`${Number(meta.awaiting_skill)} repl${Number(meta.awaiting_skill) === 1 ? "y isn't" : "ies aren't"} sorted yet: ask Claude to "sort inbound replies".`);
+    if (meta && meta.mailer_configured === false) warnings.push("The Distribution Outreach mailer is not configured, so sales@ can't be read.");
+    const tile = (number, label, hint, tone) => `<div class="replyTile ${tone}"><div class="replyTileNumber">${number}</div><div class="replyTileLabel">${escapeHtml(label)}</div><div class="smallMuted">${escapeHtml(hint)}</div></div>`;
     const panel = `
       <div class="replyPanel">
-        <div class="replyCounts">
-          <span class="badge ${Number(meta?.counts?.overdue || 0) ? "red" : ""}">${Number(meta?.counts?.overdue || 0)} overdue</span>
-          <span class="badge amber">${Number(meta?.counts?.respond_today || 0)} respond today</span>
-          <span class="badge">${Number(meta?.counts?.open || 0)} open</span>
-          <button class="actionBtn" type="button" data-reply-action="check"><i data-lucide="inbox"></i><span>Check Inbox now</span></button>
+        <div class="replyTiles">
+          ${tile(toAnswer, "To answer", "People waiting on your reply", toAnswer ? "" : "zero")}
+          ${tile(late, "Late", "You missed the answer-by time", late ? "red" : "zero")}
+          ${addressProblems ? tile(addressProblems, "Address problems", "Emails that didn't arrive", "") : ""}
+          ${resultsToRecord ? tile(resultsToRecord, "Results to record", "You answered; say how it went", "") : ""}
         </div>
-        <div class="smallMuted">${escapeHtml(lastRunText)}</div>
+        <div class="replyCheckRow"><span class="smallMuted">${escapeHtml(lastRunText)}</span><button class="actionBtn" type="button" data-reply-action="check"><i data-lucide="inbox"></i><span>Check for new replies</span></button></div>
         ${warnings.map(text => `<div class="smallMuted" style="color:var(--amber)">${escapeHtml(text)}</div>`).join("")}
       </div>`;
+    // Two or more refusals within 7 days point at our own mail setup, not at each business's filter.
+    const weekAgo = Date.now() - 7 * 24 * 60 * 60 * 1000;
+    const refusals = all.filter(reply => reply.status === "New" && replyIsBounce(reply) && reply.bounce?.verdict === "refused" && (Date.parse(reply.received_at) || 0) >= weekAgo);
+    const banner = refusals.length >= 2
+      ? `<div class="replyBanner"><strong>${escapeHtml(`${refusals.length} servers refused email from sales@ this week (${refusals.map(reply => reply.business || reply.from).join(", ")}).`)}</strong> That usually points at sturgeonspirits.com's email setup, not at their filters. Check SPF, DKIM and DMARC in Zoho's admin console and run the seed test (send the outreach email to your own Gmail, Yahoo and Outlook) before deciding on these.</div>`
+      : "";
     const body = !meta
-      ? `<div class="outreachEmpty"><strong>Loading replies…</strong><span>Replies to sales@ appear here with a respond-by time.</span></div>`
-      : groups.filter(group => group.items.length).map(group => `<div class="replyGroupTitle">${escapeHtml(group.title)} (${group.items.length})</div>${group.items.map(replyCardHtml).join("")}`).join("")
+      ? `<div class="outreachEmpty"><strong>Loading replies…</strong><span>Replies to sales@ appear here with an answer-by time.</span></div>`
+      : groups.filter(group => group.items.length).map(group => `
+          <div class="replyGroupTitle">${escapeHtml(group.title)} <span>${group.items.length}</span></div>
+          <div class="replyGroupNote">${escapeHtml(group.note)}</div>
+          ${group.key === "address" ? banner : ""}
+          ${group.items.map(group.key === "done" ? replyDoneRowHtml : replyCardHtml).join("")}`).join("")
         || `<div class="outreachEmpty"><strong>No replies yet</strong><span>Replies from businesses and contacts you email appear here, sorted by how soon to answer.</span></div>`;
     $("outreachList").innerHTML = panel + body;
     refreshIcons();
+  }
+
+  async function resolveReplyFromCard(reply, status, note, extra){
+    const res = await staffApiPost({ action:"resolveInboundReply", reply_id:reply.reply_id, status:status, note:note || "", ...(extra || {}) });
+    if (!res.ok) throw new Error(res.error || "The reply could not be updated.");
+    patchReplyLocally(res.reply);
+    toast(res.message || "Reply updated");
   }
 
   async function handleReplyAction(button){
@@ -4251,8 +4462,8 @@
       button.disabled = true;
       try {
         const res = await staffApiPost({ action:"checkInboundReplies" });
-        if (!res.ok) throw new Error(res.error || "The Inbox check could not start.");
-        toast(res.message || "Checking the Inbox now.");
+        if (!res.ok) throw new Error(res.error || "The check could not start.");
+        toast(res.message || "Checking sales@ now.");
         setTimeout(() => loadOutreachReplies().catch(handleOutreachLoadError), 45000);
       } finally { button.disabled = false; }
       return;
@@ -4260,18 +4471,40 @@
     const card = button.closest("[data-reply-id]");
     const reply = (outreachData.replies || []).find(item => item.reply_id === card?.dataset.replyId);
     if (!reply) return;
-    if (action === "outcome") {
-      openOutcomeDialogForRecord({ source_row:reply.source_row, account_id:reply.account_id, business:reply.business }, reply);
+    const record = { source_row:reply.source_row, account_id:reply.account_id, business:reply.business };
+    if (action === "business") return openBusinessDetailForRecord(record);
+    if (action === "zoho" || action === "zoho-view") {
+      openReplyInZoho(replyZohoLink(reply));
+      if (action === "zoho") { rememberReplyOpened(reply.reply_id); if (outreachView === "replies") renderOutreach(); }
       return;
     }
-    const status = action === "handled" || action === "no-outcome" ? "Handled" : action === "dismiss" ? "Dismissed" : "New";
+    if (action === "result") return openOutcomeDialogForRecord(record, reply);
+    if (action === "result-other") return openOutcomeDialogForRecord(record, reply, { outcome:"" });
+    if (action === "address-bad") return openOutcomeDialogForRecord(record, reply, { outcome:"Bad address" });
+    if (action === "stop") return openOutcomeDialogForRecord(record, reply, { outcome:"Unsubscribed" });
+    if (action === "not-interested") return openOutcomeDialogForRecord(record, reply, { outcome:"Not interested" });
+    if (action === "close") {
+      if (reply.source_row && reply.business) return openOutcomeDialogForRecord(record, reply, { closing:true });
+      button.disabled = true;
+      try { await resolveReplyFromCard(reply, "Handled", "Closed without answering"); } finally { button.disabled = false; }
+      return;
+    }
+    let status = "Handled", note = "", extra = null;
+    if (action === "no-outcome") extra = { no_outcome:true };
+    else if (action === "dismiss") { status = "Dismissed"; note = "Not from a business we email"; }
+    else if (action === "address-fine") note = "Address is fine (keep emailing)";
+    else if (action === "keep-emailing") {
+      if (!confirm("They asked to stop. Keep emailing them anyway?")) return;
+      note = "Kept emailing after a stop request";
+    } else if (action === "undo") {
+      const message = replyChangedBusiness(reply)
+        ? "Undo reopens this card. What was already changed on the business (for example Bad address or a recorded result) stays as it is; change that on the business card. Reopen it?"
+        : "Reopen this card?";
+      if (!confirm(message)) return;
+      status = "New";
+    } else return;
     button.disabled = true;
-    try {
-      const res = await staffApiPost({ action:"resolveInboundReply", reply_id:reply.reply_id, status:status, note:action === "dismiss" ? "Not a reply to our email" : "", ...(action === "no-outcome" ? { no_outcome:true } : {}) });
-      if (!res.ok) throw new Error(res.error || "The reply could not be updated.");
-      patchReplyLocally(res.reply);
-      toast(res.message || "Reply updated");
-    } finally { button.disabled = false; }
+    try { await resolveReplyFromCard(reply, status, note, extra); } finally { button.disabled = false; }
   }
 
   function renderNewsletterContacts(){
@@ -5482,6 +5715,8 @@
   function openOutcomeDialog(record){
     selectedOutreachRecord = record;
     selectedOutcome = "";
+    $("outcomeDialogTitle").textContent = outcomeReplyId ? "Record result" : "Log outcome";
+    $("outcomeNothingBtn").hidden = !outcomeReplyId;
     $("outcomeBusiness").textContent = outreachBusinessName(record);
     $("outcomeNotes").value = "";
     $("outcomeFollowUpDate").value = "";
@@ -5491,11 +5726,14 @@
     if (!$("outcomeDialog").open) $("outcomeDialog").showModal();
   }
 
-  async function openOutcomeDialogForRecord(record, fromReply){
+  // From a reply card: options.outcome preselects a result ("" for none; omitted = the reply's suggested result).
+  async function openOutcomeDialogForRecord(record, fromReply, options){
     const requestId = ++outreachOutcomeOpenRequest;
     selectedOutreachRecord = null;
     selectedOutcome = "";
     outcomeReplyId = fromReply?.reply_id || "";
+    $("outcomeDialogTitle").textContent = fromReply ? "Record result" : "Log outcome";
+    $("outcomeNothingBtn").hidden = !fromReply;
     $("outcomeBusiness").textContent = `${outreachBusinessName(record)} — loading…`;
     $("outcomeNotes").value = "";
     $("outcomeFollowUpDate").value = "";
@@ -5508,10 +5746,12 @@
       if (requestId !== outreachOutcomeOpenRequest || !$("outcomeDialog").open) return;
       openOutcomeDialog(fullRecord);
       if (fromReply) {
-        const suggested = Array.from(document.querySelectorAll(".outcomeOption")).find(button => button.dataset.outcome === replySuggestedOutcome(fromReply));
+        const preselect = options && options.outcome !== undefined ? options.outcome : replySuggestedOutcome(fromReply);
+        const suggested = Array.from(document.querySelectorAll(".outcomeOption")).find(button => button.dataset.outcome === preselect);
         if (suggested) selectOutcome(suggested);
         if (!$("outcomeNotes").value) $("outcomeNotes").value = `Email reply ${formatOutreachDate(fromReply.received_at)}: ${fromReply.summary || fromReply.category}`.slice(0, 1000);
-        $("outcomeStatus").textContent = "Saving also marks the reply handled.";
+        const learnsEmail = REPLY_GUESS_MATCHES.includes(fromReply.matched_by) && fromReply.from && fromReply.category !== "Bounce";
+        $("outcomeStatus").textContent = `Saving also closes the reply${learnsEmail ? ` and saves ${fromReply.from} as an email for ${outreachBusinessName(record)}` : ""}.`;
       }
     } catch (error) {
       if (requestId !== outreachOutcomeOpenRequest || !$("outcomeDialog").open) return;
@@ -8012,6 +8252,19 @@
     if (button) selectOutcome(button);
   });
   $("saveOutcomeBtn").addEventListener("click", saveOutreachOutcome);
+  // Close the reply this dialog came from without recording anything on the business.
+  $("outcomeNothingBtn").addEventListener("click", async () => {
+    const reply = (outreachData.replies || []).find(item => item.reply_id === outcomeReplyId);
+    if (!reply) { $("outcomeDialog").close(); return; }
+    $("outcomeNothingBtn").disabled = true;
+    try {
+      if (reply.needs_outcome) await resolveReplyFromCard(reply, "Handled", "", { no_outcome:true });
+      else await resolveReplyFromCard(reply, "Handled", "Closed without answering, nothing to record");
+      $("outcomeDialog").close();
+    } catch (error) {
+      $("outcomeStatus").textContent = error.message || String(error);
+    } finally { $("outcomeNothingBtn").disabled = false; }
+  });
   $("closeOutcomeBtn").addEventListener("click", () => $("outcomeDialog").close());
   $("closeContactLogBtn").addEventListener("click", () => $("contactLogDialog").close());
   $("saveContactLogBtn").addEventListener("click", saveContactLog);
