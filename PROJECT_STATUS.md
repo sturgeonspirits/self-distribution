@@ -8,7 +8,7 @@ Read this file before inspecting the repository or changing the application. Upd
 
 | Component | Source version | Deployment state |
 | --- | --- | --- |
-| Netlify web app and staff proxy | `2026.10.10.44-WEB` on `codex/work` | **Ready, not promoted** (Replies redesign phase 1: one question per card, new groups, Late only for unanswered replies, address problems without deadlines, Record result / Close buttons, one reused Zoho window). Production is `.43-WEB`. Needs Hub `.42-APP` first. |
+| Netlify web app and staff proxy | `2026.10.10.44-WEB` on `codex/work` | **Promoted to production 2026-10-10** (Replies redesign phase 1: one question per card, new groups, Late only for unanswered replies, address problems without deadlines, Record result / Close buttons, one reused Zoho window). Bounce verdicts and the refusal banner need Hub `.42-APP`. Confirm the site reports `.44-WEB`. |
 | Inventory API Apps Script | `2026.10.10.42-APP` on `codex/work` | **Ready to deploy** (Replies redesign phase 1: a plain-words verdict on each bounce, display only). `.41` deployed 2026-10-10 (5.1.7/5.1.8 refusals no longer mark an address Bad). |
 | Distribution Outreach Apps Script | `2026.10.10.32-APP` in `docs/reference/distribution-outreach/Code.gs` | **Deployed 2026-10-10** (`listSentInThreads`; reads only Inbox/Sales via `REPLY_CHECK_FOLDERS`, default `Sales`). Zoho reconnected with read scopes 2026-10-10. |
 | Public customer Netlify proxy | `2026.10.08.5-WEB` | **Deployed 2026-10-08** with the Netlify release. Forwards only the action on GET and drops server-only fields on POST; retries only a failed/non-JSON `listSkus` catalog read once; customer submissions remain single-attempt. |
