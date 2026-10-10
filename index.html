@@ -1,10 +1,10 @@
 <!doctype html>
-<!-- App version: 2026.10.09.41-WEB -->
+<!-- App version: 2026.10.10.42-WEB -->
 <html>
 <head>
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover"/>
-  <meta name="app-version" content="2026.10.09.41-WEB" />
+  <meta name="app-version" content="2026.10.10.42-WEB" />
   <meta name="theme-color" content="#536f77" />
   <link rel="icon" href="/assets/distribution-hub-icon.svg" type="image/svg+xml" />
   <link rel="manifest" href="/site.webmanifest" />
@@ -2704,7 +2704,7 @@
 
   <footer style="max-width:1200px;margin:18px auto 120px;padding:0 12px;text-align:center;color:#6b7280;font-size:12px;">
     Designed by <a href="https://scriptspirit.dev" target="_blank" rel="noopener noreferrer" style="color:#1d4ed8;text-decoration:none;font-weight:700;">Script Spirit</a>
-<span id="appVersionFooter"> • Version 2026.10.09.41-WEB</span>
+<span id="appVersionFooter"> • Version 2026.10.10.42-WEB</span>
   </footer>
 
 
@@ -2727,7 +2727,7 @@
   window.addEventListener("unhandledrejection", e => console.error("Unhandled promise rejection:", e.reason));
   window.addEventListener("error", e => console.error("Unhandled error:", e.error || e.message));
   const $ = (id) => document.getElementById(id);
-  const APP_VERSION = "2026.10.09.41-WEB";
+  const APP_VERSION = "2026.10.10.42-WEB";
   $("appVersionFooter").textContent = ` • Version ${APP_VERSION}`;
   function screenCacheKey(screen){ return `distribution_hub:${APP_VERSION}:${staffSession?.email || "unknown"}:${screen}`; }
   function readScreenCache(screen){
@@ -4095,7 +4095,7 @@
     return `https://www.google.com/maps/dir/?api=1&destination=${encodeURIComponent(destination)}`;
   }
 
-  // ---------- Replies (inbound reply checker, 2026.10.09.41-WEB) ----------
+  // ---------- Replies (inbound reply checker, 2026.10.10.42-WEB) ----------
   async function loadOutreachReplies(){
     if (outreachRepliesLoading) return outreachRepliesLoading;
     outreachRepliesLoading = (async () => {
@@ -4152,6 +4152,11 @@
     return `${formatOutreachDate(reply.received_at)} ${received.toLocaleTimeString([], { hour:"numeric", minute:"2-digit" })}`;
   }
 
+  // A bounce under review (refused, delayed or unclear) never pre-selects an outcome, including rows stored earlier.
+  function replySuggestedOutcome(reply){
+    return reply.priority === "Review bounce" ? "" : String(reply.suggested_outcome || "");
+  }
+
   function replyCardHtml(reply){
     const open = reply.status === "New";
     const subject = String(reply.subject || "").replace(/^\s*((re|aw|sv)\s*:\s*)+/i, "");
@@ -4182,7 +4187,7 @@
         <div class="outreachActions">
           ${open ? `<a class="actionBtn primary actionPrimary" href="${escapeHtml(zohoLink)}" target="_blank" rel="noopener noreferrer"><i data-lucide="reply"></i><span>Open in Zoho Mail</span></a>` : ""}
           ${open ? `<a class="actionBtn" href="${escapeHtml(mailto)}"><i data-lucide="mail"></i><span>Reply by email</span></a>` : ""}
-          ${canLogOutcome ? `<button class="actionBtn" type="button" data-reply-action="outcome"><i data-lucide="clipboard-check"></i><span>${escapeHtml(reply.suggested_outcome ? `Log outcome: ${reply.suggested_outcome}` : "Log outcome")}</span></button>` : ""}
+          ${canLogOutcome ? `<button class="actionBtn" type="button" data-reply-action="outcome"><i data-lucide="clipboard-check"></i><span>${escapeHtml(replySuggestedOutcome(reply) ? `Log outcome: ${replySuggestedOutcome(reply)}` : "Log outcome")}</span></button>` : ""}
           ${open ? `<button class="actionBtn" type="button" data-reply-action="handled"><i data-lucide="check"></i><span>Mark handled</span></button>` : ""}
           ${open ? `<button class="actionBtn" type="button" data-reply-action="dismiss"><i data-lucide="x"></i><span>Not a reply</span></button>` : `<button class="actionBtn" type="button" data-reply-action="reopen"><i data-lucide="rotate-ccw"></i><span>Reopen</span></button>`}
         </div>
@@ -4206,7 +4211,7 @@
     $("outreachAudienceCount").textContent = `${open.length} open repl${open.length === 1 ? "y" : "ies"}`;
     const lastRun = meta?.last_run;
     const lastRunText = lastRun?.at
-      ? `Last checked ${formatOutreachDate(lastRun.at)} ${new Date(lastRun.at).toLocaleTimeString([], { hour:"numeric", minute:"2-digit" })}${lastRun.error ? ` — failed: ${lastRun.error}` : ` — ${Number(lastRun.added || 0)} new`}`
+      ? `Last checked ${formatOutreachDate(lastRun.at)} ${new Date(lastRun.at).toLocaleTimeString([], { hour:"numeric", minute:"2-digit" })}${lastRun.error ? ` — failed: ${lastRun.error}` : ` — ${Number(lastRun.added || 0)} new${Number(lastRun.answered || 0) ? `, ${Number(lastRun.answered)} answered in Zoho` : ""}${lastRun.scan_capped ? " (Sent folder scan hit its limit)" : ""}`}`
       : "The Inbox has not been checked yet.";
     const warnings = [];
     if (meta && meta.checker_installed === false) warnings.push("Automatic checks are off: run installInboundReplyChecker() once in the Inventory API project.");
@@ -5494,7 +5499,7 @@
       if (requestId !== outreachOutcomeOpenRequest || !$("outcomeDialog").open) return;
       openOutcomeDialog(fullRecord);
       if (fromReply) {
-        const suggested = Array.from(document.querySelectorAll(".outcomeOption")).find(button => button.dataset.outcome === fromReply.suggested_outcome);
+        const suggested = Array.from(document.querySelectorAll(".outcomeOption")).find(button => button.dataset.outcome === replySuggestedOutcome(fromReply));
         if (suggested) selectOutcome(suggested);
         if (!$("outcomeNotes").value) $("outcomeNotes").value = `Email reply ${formatOutreachDate(fromReply.received_at)}: ${fromReply.summary || fromReply.category}`.slice(0, 1000);
         $("outcomeStatus").textContent = "Saving also marks the reply handled.";

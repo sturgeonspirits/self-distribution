@@ -1,8 +1,17 @@
 /*********************************
  * Inventory API (JSON) for Netlify
- * App version: 2026.10.09.38-APP
+ * App version: 2026.10.10.39-APP
  *
  * CHANGES IN THIS VERSION
+ * - Replies answered from Zoho are closed automatically. After each check, open replies (Status New, a Thread ID, not a
+ *   bounce or unsubscribe, not "Confirm unsubscribe" / "Review bounce") are compared with the Sent folder through the
+ *   mailer's listSentInThreads (2026.10.10.32-APP): a message sent from sales@ in the same thread after the reply was
+ *   received marks it Handled ("Answered in Zoho <date>", Handled At = the sent time) and writes an audit line. Only the
+ *   four status cells are written. A failure here is logged and never fails the check; the run summary and "Last
+ *   checked" show how many were answered, and warn when the Sent scan hit its cap.
+ * - Bounces that were refused or unclear no longer suggest "Bad address"; only a hard bounce does.
+ *
+ * CHANGES IN 2026.10.09.38-APP
  * - Inbound reply checker. Every 15 minutes (installInboundReplyChecker() once) the Hub asks the Distribution Outreach
  *   mailer (2026.10.09.28-APP) for new Inbox messages addressed (To/Cc) to sales@ and keeps the ones that answer us:
  *   from a Directory email or an "Alt email" in Notes, an address we emailed, a Newsletter contact, or a bounce naming
@@ -407,7 +416,7 @@
  * - Use only in the staging inventory backend until testing is complete.
  *********************************/
 
-const APP_VERSION = "2026.10.09.38-APP";
+const APP_VERSION = "2026.10.10.39-APP";
 
 const SHEET_NAMES = {
   STORES: "Stores",
@@ -5863,6 +5872,67 @@ function setInboundReplyCells_(sheet, rowNumber, changes) {
   Object.keys(changes).forEach(key => { if (h[key] !== undefined) sheet.getRange(rowNumber, h[key] + 1).setValue(changes[key]); });
 }
 
+// ---------- Replies answered from Zoho (2026.10.10.39-APP) ----------
+const INBOUND_REPLY_ANSWER_SKIP_CATEGORIES = ["Bounce", "Unsubscribe"];
+const INBOUND_REPLY_ANSWER_SKIP_PRIORITIES = ["Confirm unsubscribe", "Review bounce"];
+const INBOUND_REPLY_ANSWER_LOOKBACK_DAYS = 30;
+
+/** Whether a reply row can be closed by an email sent from Zoho (bounces and unsubscribes need a decision in the Hub). */
+function inboundReplyAnswerable_(row) {
+  return String(row.status || "").trim() === "New"
+    && !!String(row.thread_id || "").trim()
+    && !INBOUND_REPLY_ANSWER_SKIP_CATEGORIES.includes(String(row.category || "").trim())
+    && !INBOUND_REPLY_ANSWER_SKIP_PRIORITIES.includes(String(row.priority || "").trim());
+}
+
+/**
+ * The sent message that answered a reply: same thread, sent from sales@, after the reply arrived (the original
+ * outreach email is in the same thread but earlier, so it never counts). Earliest such message, or null.
+ */
+function inboundReplyAnsweredBy_(row, sentRows, senderSet) {
+  if (!inboundReplyAnswerable_(row)) return null;
+  const thread = String(row.thread_id || "").trim();
+  const received = outreachDate_(row.received_at);
+  if (!received) return null;
+  const answers = (sentRows || []).filter(sent => String(sent.thread_id || "") === thread
+    && senderSet.has(String(sent.from_address || "").trim().toLowerCase())
+    && Number(sent.sent_ms) > received.getTime());
+  answers.sort((a, b) => Number(a.sent_ms) - Number(b.sent_ms));
+  return answers[0] || null;
+}
+
+/** Closes open replies that were answered from Zoho. Returns { answered, scan_capped }. */
+function closeAnsweredInboundReplies_(sheet) {
+  if (!sheet || sheet.getLastRow() < 2) return { answered:0, scan_capped:false };
+  const rows = getAllRowsAsObjects_(sheet).map((row, index) => Object.assign(row, { __row:index + 2 })).filter(inboundReplyAnswerable_);
+  if (!rows.length) return { answered:0, scan_capped:false };
+  const floor = Date.now() - INBOUND_REPLY_ANSWER_LOOKBACK_DAYS * 24 * 60 * 60 * 1000;
+  const oldest = Math.min.apply(null, rows.map(row => { const date = outreachDate_(row.received_at); return date ? date.getTime() : Date.now(); }));
+  const threadIds = Array.from(new Set(rows.map(row => String(row.thread_id).trim())));
+  const listing = callOutreachMailer_({ action:"listSentInThreads", since_ms:Math.max(oldest, floor), thread_ids:threadIds });
+  const settings = getOutreachCampaignSettings_();
+  const senderSet = new Set(["sales@sturgeonspirits.com", String(settings["Sender address"] || "").trim().toLowerCase()].filter(Boolean));
+  let answered = 0;
+  rows.forEach(row => {
+    const sent = inboundReplyAnsweredBy_(row, listing.rows || [], senderSet);
+    if (!sent) return;
+    // Re-find the row by Reply ID in case rows moved since they were read.
+    const current = outreachRowsMatchingCell_(sheet, ["reply_id", "Reply ID"], String(row.reply_id || ""));
+    if (!current.length || String(current[0].status || "").trim() !== "New") return;
+    const sentAt = new Date(Number(sent.sent_ms));
+    const label = Utilities.formatDate(sentAt, Session.getScriptTimeZone(), "MMM d h:mm a");
+    setInboundReplyCells_(sheet, current[0].__source_row, {
+      status:"Handled",
+      handled_at:sentAt,
+      handled_by:"Reply checker",
+      handled_note:`Answered in Zoho ${label}`,
+    });
+    appendAudit_("CLOSE_INBOUND_REPLY_ANSWERED", "Reply", String(row.reply_id || ""), String(row.account_id || ""), "Reply checker", INBOUND_REPLIES_SHEET_NAME, INBOUND_REPLIES_SHEET_NAME, "Completed", `Answered in Zoho ${label} (message ${sent.message_id})`);
+    answered += 1;
+  });
+  return { answered:answered, scan_capped:!!listing.scan_capped };
+}
+
 function inboundReplyStoredIds_(sheet) {
   if (!sheet || sheet.getLastRow() < 2) return new Set();
   const h = getHeaderMap_(sheet);
@@ -5887,7 +5957,7 @@ function checkInboundReplies_(trigger) {
   const started = Date.now();
   const properties = PropertiesService.getScriptProperties();
   const sinceMs = Number(properties.getProperty(INBOUND_REPLY_SINCE_PROPERTY) || 0) || (started - INBOUND_REPLY_LOOKBACK_DAYS * 24 * 60 * 60 * 1000);
-  const summary = { at:new Date().toISOString(), trigger:trigger, checked:0, added:0, auto_actions:0, skipped:0, error:"", more_available:false };
+  const summary = { at:new Date().toISOString(), trigger:trigger, checked:0, added:0, auto_actions:0, skipped:0, answered:0, scan_capped:false, error:"", more_available:false };
   try {
     const listing = callOutreachMailer_({ action:"listInboxMessages", since_ms:sinceMs });
     const messages = (listing.messages || []).filter(message => message && message.message_id).sort((a, b) => Number(a.received_ms || 0) - Number(b.received_ms || 0));
@@ -5966,7 +6036,8 @@ function checkInboundReplies_(trigger) {
         set("last_sent_at", match.send && match.send.at ? match.send.at : "");
         set("category", classification.category);
         set("summary", inboundReplyCellText_(classification.summary || "", 700));
-        set("suggested_outcome", rule.outcome);
+        // Only a bounce saying the address does not exist suggests "Bad address".
+        set("suggested_outcome", classification.category === "Bounce" && classification.bounce_kind !== "hard" ? "" : rule.outcome);
         set("priority", INBOUND_REPLY_PRIORITY_LABELS[rule.respond]);
         set("auto_action", "Pending automatic changes");
         set("classifier", classification.classifier);
@@ -6002,7 +6073,17 @@ function checkInboundReplies_(trigger) {
       });
       advance(receivedMs);
     }
-    if (summary.added || summary.auto_actions) bumpReadCacheVersion_();
+    // Close replies answered from Zoho, if the run still has time. A failure here never fails the check.
+    if (Date.now() - started < INBOUND_REPLY_RUN_BUDGET_MS) {
+      try {
+        const closed = closeAnsweredInboundReplies_(sheet);
+        summary.answered = closed.answered;
+        summary.scan_capped = closed.scan_capped;
+      } catch (error) {
+        console.error(`Closing answered replies failed: ${String(error && error.message || error)}`);
+      }
+    }
+    if (summary.added || summary.auto_actions || summary.answered) bumpReadCacheVersion_();
   } catch (error) {
     summary.error = String(error && error.message || error).slice(0, 500);
     throw error;
@@ -6012,7 +6093,7 @@ function checkInboundReplies_(trigger) {
     cache.remove(INBOUND_REPLY_RUNNING_CACHE_KEY);
   }
   return {
-    message:`Checked ${summary.checked} new Inbox message(s): ${summary.added} repl${summary.added === 1 ? "y" : "ies"} added${summary.auto_actions ? `, ${summary.auto_actions} applied automatically` : ""}.${summary.more_available ? " More messages are waiting; they are picked up on the next check." : ""}`,
+    message:`Checked ${summary.checked} new Inbox message(s): ${summary.added} repl${summary.added === 1 ? "y" : "ies"} added${summary.auto_actions ? `, ${summary.auto_actions} applied automatically` : ""}${summary.answered ? `, ${summary.answered} answered in Zoho` : ""}.${summary.more_available ? " More messages are waiting; they are picked up on the next check." : ""}${summary.scan_capped ? " The Sent folder scan hit its limit; some answers may not be seen." : ""}`,
     last_run:summary,
   };
 }

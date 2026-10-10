@@ -1,9 +1,15 @@
 /**
  * Sturgeon Spirits Distribution Outreach
  *
- * VERSION: 2026.10.10.31-APP
+ * VERSION: 2026.10.10.32-APP
  *
  * CHANGES IN THIS VERSION
+ * - Adds the Hub-only, read-only listSentInThreads action so the Hub can close replies already answered from Zoho. It
+ *   pages the Sent folder (folderType "Sent") newest first back to since_ms (at most 2,000 messages) and returns only
+ *   messages in the requested threads that were sent from the sender address (sales@): thread ID, message ID, sent
+ *   time, from and to addresses, with IDs kept as strings. scan_capped is true when the cap was reached first.
+ *
+ * CHANGES IN 2026.10.10.31-APP
  * - Fix: .30 still scanned the whole Inbox because it reused the folder list .29 had cached for six hours under the
  *   same key. The cache key now includes the version and the REPLY_CHECK_FOLDERS value. Listing also stops itself
  *   after 4 minutes with a clear error instead of being cut off by Apps Script (which the Hub saw as an unreadable
@@ -109,7 +115,7 @@
  * Sends through the authenticated Zoho Mail API account.
  */
 
-const OUTREACH_VERSION = '2026.10.10.31-APP';
+const OUTREACH_VERSION = '2026.10.10.32-APP';
 const NURTURE_CHECK_IN_DUPLICATE_COOLDOWN_DAYS = 60;
 
 const OUTREACH = Object.freeze({
@@ -254,6 +260,7 @@ function doPost(e) {
     if (action === 'sendPaymentReminder') return appJson_(Object.assign({ ok:true, version:OUTREACH_VERSION }, sendPaymentReminderRequest_(body)));
     if (action === 'listInboxMessages') return appJson_(Object.assign({ ok:true, version:OUTREACH_VERSION }, listInboxMessagesRequest_(body)));
     if (action === 'getInboxMessage') return appJson_(Object.assign({ ok:true, version:OUTREACH_VERSION }, getInboxMessageRequest_(body)));
+    if (action === 'listSentInThreads') return appJson_(Object.assign({ ok:true, version:OUTREACH_VERSION }, listSentInThreadsRequest_(body)));
     throw new Error('Unsupported app mailer action.');
   } catch (error) {
     return appJson_({ ok:false, version:OUTREACH_VERSION, error:String(error.message || error) });
@@ -838,6 +845,66 @@ function listInboxMessagesRequest_(body) {
     };
   });
   return { messages:messages, folders:folders.map(function (folder) { return folder.name; }), more_available:moreAvailable };
+}
+
+/** The Sent folder's ID (folderType "Sent"), cached per version. */
+function sentFolderId_(settings, accountId) {
+  const cache = CacheService.getScriptCache();
+  const cacheKey = 'ZOHO_SENT_FOLDER_' + OUTREACH_VERSION;
+  const cached = cache.get(cacheKey);
+  if (cached) return cached;
+  const json = zohoGet_('/accounts/' + encodeURIComponent(accountId) + '/folders', settings);
+  const folders = Array.isArray(json.data) ? json.data : [];
+  const sent = folders.find(function (folder) { return String(folder.folderType || '').toLowerCase() === 'sent'; });
+  if (!sent || !sent.folderId) throw new Error('The Zoho Sent folder was not found.');
+  cache.put(cacheKey, String(sent.folderId), 21600);
+  return String(sent.folderId);
+}
+
+/**
+ * Read-only: messages in the Sent folder, sent from sales@ since since_ms, that belong to one of the
+ * given threads. The Hub uses them to close replies that were answered from Zoho.
+ */
+function listSentInThreadsRequest_(body) {
+  const settings = getSettings_();
+  const accountId = String(settings['Zoho account ID'] || '').trim();
+  if (!accountId) throw new Error('Zoho account ID is not set. Run Distribution Outreach PILOT > 2. Test Zoho connection.');
+  const sinceMs = Math.max(0, Number(body.since_ms) || 0);
+  const threadIds = {};
+  (Array.isArray(body.thread_ids) ? body.thread_ids : []).forEach(function (id) {
+    const text = String(id || '').trim();
+    if (/^\d+$/.test(text)) threadIds[text] = true;
+  });
+  if (!Object.keys(threadIds).length) return { rows:[], scan_capped:false };
+  const sender = String(settings['Sender address'] || OUTREACH.EXPECTED_SENDER_ALIAS).trim().toLowerCase();
+  const folderId = sentFolderId_(settings, accountId);
+  const rows = [];
+  const started = Date.now();
+  let reachedOlder = false;
+  let scanned = 0;
+  for (let start = 1; !reachedOlder && scanned < INBOX_MAX_SCANNED; start += INBOX_PAGE_SIZE) {
+    if (Date.now() - started > INBOX_LIST_BUDGET_MS) break;
+    const page = zohoGet_('/accounts/' + encodeURIComponent(accountId) + '/messages/view?folderId=' + encodeURIComponent(folderId) + '&start=' + start + '&limit=' + INBOX_PAGE_SIZE + '&sortBy=date&sortorder=false&includeto=true', settings);
+    const pageRows = Array.isArray(page.data) ? page.data : [];
+    scanned += pageRows.length;
+    pageRows.forEach(function (row) {
+      const sentMs = Number(row.receivedTime || row.sentDateInGMT || 0);
+      if (sentMs && sentMs < sinceMs) { reachedOlder = true; return; }
+      const threadId = String(row.threadId || '');
+      if (!threadIds[threadId]) return;
+      const from = emailAddressesIn_(decodeHtmlEntities_(row.fromAddress || ''))[0] || '';
+      if (from !== sender) return;
+      rows.push({
+        thread_id:threadId,
+        message_id:String(row.messageId || ''),
+        sent_ms:sentMs,
+        from_address:from,
+        to_addresses:emailAddressesIn_(String(row.toAddress || '') + ' ' + String(row.ccAddress || '')),
+      });
+    });
+    if (pageRows.length < INBOX_PAGE_SIZE) { reachedOlder = true; break; }
+  }
+  return { rows:rows, scan_capped:!reachedOlder };
 }
 
 function getInboxMessageRequest_(body) {

@@ -935,6 +935,51 @@ test("Inbound reply checker: matching, quoted-text removal, stop rules, respond-
   assert.match(mailer, /\^list-id:\/im\.test\(headers\) \|\| \/\^list-unsubscribe:\/im/);
   assert.match(mailer, /header_error:headerError,/);
 
+  // Replies answered from Zoho close themselves (live threads from the 10 Oct probe as fixtures).
+  const answeredApi = new Function(`${constBlock("INBOUND_REPLY_ANSWER_SKIP_CATEGORIES")}\n${constBlock("INBOUND_REPLY_ANSWER_SKIP_PRIORITIES")}\n${fn("outreachDate_")}\n${fn("inboundReplyAnswerable_")}\n${fn("inboundReplyAnsweredBy_")}\nreturn { answeredBy:inboundReplyAnsweredBy_ };`)();
+  const sales = new Set(["sales@sturgeonspirits.com"]);
+  const utc = text => Date.parse(`${text}Z`);
+  const live = [
+    { name:"Takiza", thread:"1791314733154150100", received:"2026-10-06T21:32:00", original:"2026-10-06T19:25:00", answer:"2026-10-07T00:02:00" },
+    { name:"Cinders", thread:"1791315022793149500", received:"2026-10-07T16:17:00", original:"2026-10-06T19:30:00", answer:"2026-10-07T22:08:00" },
+    { name:"The Plaza", thread:"1791392318676166300", received:"2026-10-08T14:46:00", original:"2026-10-06T19:00:00", answer:"2026-10-09T19:21:00" },
+    { name:"Gabe's", thread:"1791315675361125900", received:"2026-10-08T15:00:00", original:"2026-10-06T19:00:00", answer:"2026-10-09T19:22:00" },
+  ];
+  const sentRows = live.flatMap(item => [
+    { thread_id:item.thread, message_id:`${item.thread}1`, sent_ms:utc(item.original), from_address:"sales@sturgeonspirits.com" },
+    { thread_id:item.thread, message_id:`${item.thread}2`, sent_ms:utc(item.answer), from_address:"sales@sturgeonspirits.com" },
+  ]);
+  live.forEach(item => {
+    const row = { status:"New", thread_id:item.thread, category:"Needs reading", priority:"Respond soon", received_at:new Date(utc(item.received)) };
+    const answer = answeredApi.answeredBy(row, sentRows, sales);
+    assert.ok(answer, `${item.name} answered`);
+    assert.equal(answer.sent_ms, utc(item.answer), `${item.name}: the answer, never the earlier original outreach`);
+    assert.equal(answeredApi.answeredBy(row, sentRows.filter(sent => sent.sent_ms !== utc(item.answer)), sales), null, `${item.name}: the original outreach alone does not count`);
+  });
+  const openRow = { status:"New", thread_id:live[0].thread, category:"Interested", priority:"Respond today", received_at:new Date(utc(live[0].received)) };
+  assert.equal(answeredApi.answeredBy(openRow, [{ thread_id:"999", sent_ms:utc("2026-10-09T00:00:00"), from_address:"sales@sturgeonspirits.com" }], sales), null, "a different thread");
+  assert.equal(answeredApi.answeredBy(openRow, [{ thread_id:live[0].thread, sent_ms:utc("2026-10-09T00:00:00"), from_address:"karl@sturgeonspirits.com" }], sales), null, "a later message from karl@, not sales@");
+  assert.equal(answeredApi.answeredBy({ ...openRow, priority:"Review bounce", category:"Bounce" }, sentRows, sales), null, "a Review bounce row is never closed");
+  assert.equal(answeredApi.answeredBy({ ...openRow, priority:"Confirm unsubscribe", category:"Needs reading" }, sentRows, sales), null, "a Confirm unsubscribe row is never closed");
+  assert.equal(answeredApi.answeredBy({ ...openRow, category:"Unsubscribe" }, sentRows, sales), null);
+  assert.equal(answeredApi.answeredBy({ ...openRow, status:"Handled" }, sentRows, sales), null);
+  assert.equal(answeredApi.answeredBy({ ...openRow, thread_id:"" }, sentRows, sales), null);
+  const closeStep = fn("closeAnsweredInboundReplies_");
+  assert.match(closeStep, /setInboundReplyCells_\(sheet, current\[0\]\.__source_row, \{/, "only the status cells are written");
+  assert.doesNotMatch(closeStep, /setValues/);
+  assert.match(closeStep, /handled_note:`Answered in Zoho \$\{label\}`/);
+  assert.match(closeStep, /appendAudit_\("CLOSE_INBOUND_REPLY_ANSWERED"/);
+  assert.match(fn("checkInboundReplies_"), /try \{\s*const closed = closeAnsweredInboundReplies_\(sheet\);[\s\S]*?\} catch \(error\) \{\s*console\.error\(`Closing answered replies failed/, "a failure closing replies never fails the check");
+  const sentList = mailer.slice(mailer.indexOf("function listSentInThreadsRequest_("), mailer.indexOf("function getInboxMessageRequest_("));
+  assert.match(mailer, /if \(action === 'listSentInThreads'\)/);
+  assert.doesNotMatch(sentList, /method: '(post|put|delete|patch)'/i, "the Sent listing only reads");
+  assert.match(sentList, /if \(from !== sender\) return;/);
+  assert.match(sentList, /return \{ rows:rows, scan_capped:!reachedOlder \};/);
+  // Only a hard bounce suggests "Bad address"; the card never pre-selects an outcome on a bounce under review.
+  assert.match(fn("checkInboundReplies_"), /set\("suggested_outcome", classification\.category === "Bounce" && classification\.bounce_kind !== "hard" \? "" : rule\.outcome\);/);
+  assert.match(html, /return reply\.priority === "Review bounce" \? "" : String\(reply\.suggested_outcome \|\| ""\);/);
+  assert.match(html, /button\.dataset\.outcome === replySuggestedOutcome\(fromReply\)/);
+
   // No AI calls from the Hub: unsorted replies wait as "Needs reading" for the sort-inbound-replies skill.
   assert.doesNotMatch(backend, /api\.anthropic\.com|ANTHROPIC_API_KEY|x-api-key/);
   assert.match(fn("checkInboundReplies_"), /classification = \{ category:"Needs reading", summary:"", classifier:"Awaiting skill", no_pause:!!detail\.header_error \};/);
