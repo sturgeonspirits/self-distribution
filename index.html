@@ -4116,6 +4116,10 @@
     $("outreachRepliesCount").textContent = open;
   }
 
+  function repliesAwaitingOutcomeFor(accountId, exceptReplyId){
+    return (outreachData.replies || []).some(reply => reply.needs_outcome && reply.account_id === accountId && reply.reply_id !== exceptReplyId);
+  }
+
   function patchReplyLocally(updated){
     if (!updated?.reply_id) return;
     const list = outreachData.replies || [];
@@ -5906,8 +5910,8 @@
       });
       if (!res.ok) throw new Error(res.error || "Outcome could not be saved.");
       if (res.reply) patchReplyLocally(res.reply);
-      // Logging an outcome anywhere also records it on that business's answered replies.
-      else if ((outreachData.replies || []).some(reply => reply.needs_outcome && reply.account_id === selectedOutreachRecord.account_id)) loadOutreachReplies().catch(() => {});
+      // Logging an outcome also records it on that business's other answered replies: reload to show them.
+      if (repliesAwaitingOutcomeFor(selectedOutreachRecord.account_id, res.reply?.reply_id)) loadOutreachReplies().catch(() => {});
       if (res.alt_email_added) toast(`Saved ${res.alt_email_added} as an alternate email`);
       patchOutreachRecordLocally(selectedOutreachRecord.source_row, {
         outcome:selectedOutcome,
@@ -5951,6 +5955,7 @@
     try {
       const res = await staffApiPost({ action:"logOutreachContact", account_id:record.account_id, source_row:record.source_row, business:record.business, contact_date:$("contactLogDate").value, channel:$("contactLogChannel").value, staff_name:staffName, contact_person:$("contactLogPerson").value.trim(), outcome:$("contactLogOutcome").value, next_follow_up:$("contactLogFollowUp").value, notes:$("contactLogNotes").value.trim() });
       if (!res.ok) throw new Error(res.error || "Contact could not be saved.");
+      if ($("contactLogOutcome").value && repliesAwaitingOutcomeFor(record.account_id)) loadOutreachReplies().catch(() => {});
       patchOutreachRecordLocally(record.source_row, { status:res.status || record.status, next_follow_up:res.next_follow_up || record.next_follow_up, last_emailed:$("contactLogChannel").value === "Email outside app" ? $("contactLogDate").value : record.last_emailed, next_email:$("contactLogChannel").value === "Email outside app" && String(record.next_email || "").toLowerCase() === "initial" ? "Follow-up 1" : record.next_email });
       $("contactLogDialog").close();
       renderOutreach();

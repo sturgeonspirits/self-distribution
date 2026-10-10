@@ -8,6 +8,8 @@
  *   column "Outcome Logged" is filled when an outcome is logged from the reply, from Log outcome on the business, or
  *   from Log contact with an outcome (every reply of that business waiting for an outcome), or when staff choose
  *   "No outcome needed".
+ * - Reopen on a reply records "Reopened by <staff>" with the time (Status stays New), and "Answered in Zoho" only closes
+ *   a reopened reply again for a message sent after the reopen.
  * - Alt emails are learned: logging an outcome from a reply sent from an address that isn't the business's email (and
  *   isn't already in its Notes, a bounce, a mail daemon or our own domain) adds "Alt email: <address>" to the Notes, so
  *   later replies from that person match the business.
@@ -5955,9 +5957,12 @@ function inboundReplyAnsweredBy_(row, sentRows, senderSet) {
   const thread = String(row.thread_id || "").trim();
   const received = outreachDate_(row.received_at);
   if (!received) return null;
+  // A reply reopened by staff is only closed again by a message sent after the reopen.
+  const reopened = /^Reopened/i.test(String(row.handled_note || "").trim()) ? outreachDate_(row.handled_at) : null;
+  const after = Math.max(received.getTime(), reopened ? reopened.getTime() : 0);
   const answers = (sentRows || []).filter(sent => String(sent.thread_id || "") === thread
     && senderSet.has(String(sent.from_address || "").trim().toLowerCase())
-    && Number(sent.sent_ms) > received.getTime());
+    && Number(sent.sent_ms) > after);
   answers.sort((a, b) => Number(a.sent_ms) - Number(b.sent_ms));
   return answers[0] || null;
 }
@@ -6240,11 +6245,12 @@ function resolveInboundReply_(replyId, status, staffName, note, expectedAccountI
     throw new Error("That reply belongs to a different business.");
   }
   // Only the four status cells are written; the rest of the row (outside text, the skill's cells) is untouched.
+  // Reopening records when and by whom, so "Answered in Zoho" only closes it again for a newer sent message.
   const changes = {
     status:status,
-    handled_at:status === "New" ? "" : new Date(),
-    handled_by:status === "New" ? "" : inboundReplyCellText_(staffName, 120),
-    handled_note:status === "New" ? "" : inboundReplyCellText_(note, 500),
+    handled_at:new Date(),
+    handled_by:inboundReplyCellText_(staffName, 120),
+    handled_note:status === "New" ? inboundReplyCellText_(`Reopened by ${staffName}`, 500) : inboundReplyCellText_(note, 500),
   };
   setInboundReplyCells_(sheet, rowNumber, changes);
   return inboundReplyRecord_(Object.assign({}, rows[0], changes), rowNumber);

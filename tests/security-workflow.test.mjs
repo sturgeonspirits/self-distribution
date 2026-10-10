@@ -964,6 +964,12 @@ test("Inbound reply checker: matching, quoted-text removal, stop rules, respond-
   assert.equal(answeredApi.answeredBy({ ...openRow, category:"Unsubscribe" }, sentRows, sales), null);
   assert.equal(answeredApi.answeredBy({ ...openRow, status:"Handled" }, sentRows, sales), null);
   assert.equal(answeredApi.answeredBy({ ...openRow, thread_id:"" }, sentRows, sales), null);
+  // Reopen sticks: a reopened reply is closed again only by a message sent after the reopen.
+  const reopenedRow = { ...openRow, category:"Needs reading", priority:"Respond soon", handled_note:"Reopened by Karl", handled_at:new Date(utc("2026-10-10T19:00:00")) };
+  const takizaAnswer = [{ thread_id:live[0].thread, sent_ms:utc(live[0].answer), from_address:"sales@sturgeonspirits.com" }];
+  assert.equal(answeredApi.answeredBy(reopenedRow, takizaAnswer, sales), null, "the earlier answer does not close a reopened reply");
+  assert.ok(answeredApi.answeredBy(reopenedRow, takizaAnswer.concat([{ thread_id:live[0].thread, sent_ms:utc("2026-10-11T15:00:00"), from_address:"sales@sturgeonspirits.com" }]), sales), "a newer answer does");
+  assert.match(fn("resolveInboundReply_"), /handled_note:status === "New" \? inboundReplyCellText_\(`Reopened by \$\{staffName\}`, 500\)/);
   const closeStep = fn("closeAnsweredInboundReplies_");
   assert.match(closeStep, /setInboundReplyCells_\(sheet, current\[0\]\.__source_row, \{/, "only the status cells are written");
   assert.doesNotMatch(closeStep, /setValues/);
@@ -1024,6 +1030,8 @@ test("Inbound reply checker: matching, quoted-text removal, stop rules, respond-
   assert.match(backend, /"Zoho Folder ID", "Thread ID", "App Version", "Outcome Logged",/);
   assert.match(html, /\{ title:"Answered — log outcome", items:replies\.filter\(reply => reply\.needs_outcome\) \}/);
   assert.match(html, /const canLogOutcome = \(open \|\| reply\.needs_outcome\) && !!reply\.source_row && !!reply\.business;/);
+  assert.match(html, /if \(repliesAwaitingOutcomeFor\(selectedOutreachRecord\.account_id, res\.reply\?\.reply_id\)\) loadOutreachReplies\(\)/, "other answered replies of the business refresh");
+  assert.match(html, /if \(\$\("contactLogOutcome"\)\.value && repliesAwaitingOutcomeFor\(record\.account_id\)\) loadOutreachReplies\(\)/, "Log contact with an outcome refreshes Replies");
 
   // No AI calls from the Hub: unsorted replies wait as "Needs reading" for the sort-inbound-replies skill.
   assert.doesNotMatch(backend, /api\.anthropic\.com|ANTHROPIC_API_KEY|x-api-key/);
