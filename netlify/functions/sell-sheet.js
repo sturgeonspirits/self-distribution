@@ -1,8 +1,8 @@
-// App version: 2026.10.10.42-WEB
+// App version: 2026.10.10.43-WEB
 import { createHmac, timingSafeEqual } from "node:crypto";
 import { requireStaffSession } from "./auth.js";
 
-const APP_VERSION = "2026.10.10.42-WEB";
+const APP_VERSION = "2026.10.10.43-WEB";
 const ACCESS_SECONDS = 90 * 24 * 60 * 60;
 
 function headers() {

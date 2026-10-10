@@ -909,7 +909,7 @@ test("Inbound reply checker: matching, quoted-text removal, stop rules, respond-
   assert.match(fn("resolveInboundReply_"), /setInboundReplyCells_\(sheet, rowNumber, changes\);/);
   assert.doesNotMatch(fn("resolveInboundReply_"), /setValues/);
   assert.match(fn("resolveInboundReply_"), /That reply belongs to a different business/);
-  assert.match(fn("apiUpdateOutreachOutcome_"), /`Outcome: \$\{outcome\}`, accountId\)/);
+  assert.match(fn("apiUpdateOutreachOutcome_"), /reply = recordInboundReplyOutcome_\(accountId, outcome, String\(p\.staff_name \|\| "Staff"\), p\.reply_id \|\| ""\);/);
   // Mailer: oldest 200 first, equal-millisecond messages included, list headers flagged as bulk.
   assert.match(mailer, /if \(receivedMs && receivedMs < sinceMs\) \{ reachedOlder = true; return; \}/);
   assert.match(mailer, /const listed = newer\.slice\(0, INBOX_MAX_MESSAGES\);/);
@@ -980,6 +980,51 @@ test("Inbound reply checker: matching, quoted-text removal, stop rules, respond-
   assert.match(html, /return reply\.priority === "Review bounce" \? "" : String\(reply\.suggested_outcome \|\| ""\);/);
   assert.match(html, /button\.dataset\.outcome === replySuggestedOutcome\(fromReply\)/);
 
+  // Answered replies stay listed until an outcome is logged; alt emails are learned from replies.
+  const trackApi = new Function("Utilities", "Session", "getInboundRepliesSheet_", "outreachRowsMatchingCell_", "setInboundReplyCells_",
+    `${fn("inboundReplyCellText_")}\n${fn("outreachDate_")}\n${fn("inboundReplyNeedsOutcome_")}\n${fn("inboundReplyAltEmailLine_")}\n${fn("inboundReplyRecord_")}\n${fn("recordInboundReplyOutcome_")}\nreturn { needs:inboundReplyNeedsOutcome_, alt:inboundReplyAltEmailLine_, record:recordInboundReplyOutcome_ };`)(
+    { formatDate:() => "Oct 10" }, { getScriptTimeZone:() => "America/Chicago" },
+    () => ({}),
+    (sheet, keys, account) => trackRows.filter(row => row.account_id === account),
+    (sheet, rowNumber, changes) => trackWrites.push({ rowNumber, changes }));
+  const answered = { status:"Handled", handled_note:"Answered in Zoho Oct 7 5:08 PM", outcome_logged:"", source_row:433 };
+  assert.equal(trackApi.needs(answered), true);
+  assert.equal(trackApi.needs({ ...answered, outcome_logged:"Schedule tasting · Oct 10 · Karl" }), false);
+  assert.equal(trackApi.needs({ ...answered, handled_note:"No reply needed" }), false, "only replies answered from Zoho");
+  assert.equal(trackApi.needs({ ...answered, status:"New" }), false);
+  assert.equal(trackApi.needs({ ...answered, source_row:"" }), false, "no business, no outcome to log");
+  const plaza = { from:"heather@theplazaneenah.com", from_name:"heather@theplazaneenah.com", category:"Needs reading" };
+  assert.equal(trackApi.alt(plaza, "info@theplazaneenah.com", "", "2026-10-10"), "2026-10-10 - Alt email: heather@theplazaneenah.com (from an email reply)");
+  assert.equal(trackApi.alt({ ...plaza, from_name:"Heather Higgins" }, "info@theplazaneenah.com", "", "2026-10-10"), "2026-10-10 - Alt email: heather@theplazaneenah.com (Heather Higgins, from an email reply)");
+  assert.equal(trackApi.alt(plaza, "heather@theplazaneenah.com", "", "2026-10-10"), "", "the business's own email");
+  assert.equal(trackApi.alt(plaza, "info@theplazaneenah.com", "2026-10-10 - Alt email: heather@theplazaneenah.com (Heather Higgins)", "2026-10-10"), "", "already in Notes");
+  assert.equal(trackApi.alt({ ...plaza, category:"Bounce" }, "info@x.com", "", "2026-10-10"), "", "a bounced address is never learned");
+  assert.equal(trackApi.alt({ ...plaza, from:"mailer-daemon@mail.zoho.com" }, "info@x.com", "", "2026-10-10"), "");
+  assert.equal(trackApi.alt({ ...plaza, from:"karl@sturgeonspirits.com" }, "info@x.com", "", "2026-10-10"), "");
+  const trackRows = [
+    { __source_row:10, reply_id:"R1", account_id:"ACC-C", status:"Handled", handled_note:"Answered in Zoho Oct 7", outcome_logged:"", source_row:433 },
+    { __source_row:11, reply_id:"R2", account_id:"ACC-C", status:"New", handled_note:"", outcome_logged:"", source_row:433 },
+    { __source_row:12, reply_id:"R3", account_id:"ACC-C", status:"Handled", handled_note:"No reply needed", outcome_logged:"", source_row:433 },
+    { __source_row:13, reply_id:"R4", account_id:"ACC-OTHER", status:"New", handled_note:"", outcome_logged:"", source_row:9 },
+  ];
+  const trackWrites = [];
+  const fromReply = trackApi.record("ACC-C", "Schedule tasting", "Karl", "R2");
+  assert.equal(fromReply.reply_id, "R2"); assert.equal(fromReply.status, "Handled"); assert.equal(fromReply.handled_note, "Outcome: Schedule tasting");
+  assert.deepEqual(trackWrites.map(write => write.rowNumber), [10, 11], "the reply itself and the answered reply waiting for an outcome; nothing else");
+  assert.equal(trackWrites[0].changes.status, undefined, "an answered reply keeps its Answered in Zoho note");
+  assert.equal(trackWrites[0].changes.outcome_logged, "Schedule tasting · Oct 10 · Karl");
+  trackWrites.length = 0;
+  assert.equal(trackApi.record("ACC-C", "Interested", "Karl", ""), null, "logged from the business: no reply selected");
+  assert.deepEqual(trackWrites.map(write => write.rowNumber), [10]);
+  assert.throws(() => trackApi.record("ACC-C", "Interested", "Karl", "R4"), /different business/);
+  assert.match(fn("apiUpdateOutreachOutcome_"), /altLine = inboundReplyAltEmailLine_\(found\[0\], currentEmail, priorNotes, today\)/);
+  assert.match(fn("apiUpdateOutreachOutcome_"), /if \(found\.length && String\(found\[0\]\.account_id \|\| ""\)\.trim\(\) === accountId\)/, "an alt email is learned only from this business's own reply");
+  assert.match(fn("apiLogOutreachContact_"), /recordInboundReplyOutcome_\(accountId, outcome, String\(p\.staff_name \|\| "Staff"\), ""\)/);
+  assert.match(fn("apiResolveInboundReply_"), /if \(p\.no_outcome\) \{/);
+  assert.match(backend, /"Zoho Folder ID", "Thread ID", "App Version", "Outcome Logged",/);
+  assert.match(html, /\{ title:"Answered — log outcome", items:replies\.filter\(reply => reply\.needs_outcome\) \}/);
+  assert.match(html, /const canLogOutcome = \(open \|\| reply\.needs_outcome\) && !!reply\.source_row && !!reply\.business;/);
+
   // No AI calls from the Hub: unsorted replies wait as "Needs reading" for the sort-inbound-replies skill.
   assert.doesNotMatch(backend, /api\.anthropic\.com|ANTHROPIC_API_KEY|x-api-key/);
   assert.match(fn("checkInboundReplies_"), /classification = \{ category:"Needs reading", summary:"", classifier:"Awaiting skill", no_pause:!!detail\.header_error \};/);
@@ -1020,7 +1065,7 @@ test("Inbound reply checker: matching, quoted-text removal, stop rules, respond-
   assert.match(backend, /case "inboundReplies": res = apiGetInboundReplies_\(\); break;/);
   assert.match(backend, /case "resolveInboundReply": res = apiResolveInboundReply_\(body\); break;/);
   assert.match(backend, /case "checkInboundReplies": res = apiCheckInboundReplies_\(\); break;/);
-  assert.match(fn("apiUpdateOutreachOutcome_"), /if \(p\.reply_id\) \{\s*try \{ reply = resolveInboundReply_\(p\.reply_id, "Handled"/, "the outcome save also handles the reply, and a missing reply never fails the saved outcome");
+  assert.match(fn("apiUpdateOutreachOutcome_"), /try \{ reply = recordInboundReplyOutcome_\([^;]+;\s*\}\s*catch \(error\) \{ console\.warn/, "the outcome save also handles the reply, and a missing reply never fails the saved outcome");
   // Outside text never becomes a formula, and one unreadable message never stops later checks.
   const cellText = new Function(`${fn("inboundReplyCellText_")}\nreturn inboundReplyCellText_;`)();
   assert.equal(cellText("=IMPORTXML(\"https://evil.test\")", 100), "'=IMPORTXML(\"https://evil.test\")");

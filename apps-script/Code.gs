@@ -1,8 +1,18 @@
 /*********************************
  * Inventory API (JSON) for Netlify
- * App version: 2026.10.10.39-APP
+ * App version: 2026.10.10.40-APP
  *
  * CHANGES IN THIS VERSION
+ * - "Answered — log outcome": a reply closed as "Answered in Zoho" stays listed (with Log outcome) until an outcome is
+ *   recorded for it, so answered emails leave the to-do list but the business doesn't get lost. The new Inbound Replies
+ *   column "Outcome Logged" is filled when an outcome is logged from the reply, from Log outcome on the business, or
+ *   from Log contact with an outcome (every reply of that business waiting for an outcome), or when staff choose
+ *   "No outcome needed".
+ * - Alt emails are learned: logging an outcome from a reply sent from an address that isn't the business's email (and
+ *   isn't already in its Notes, a bounce, a mail daemon or our own domain) adds "Alt email: <address>" to the Notes, so
+ *   later replies from that person match the business.
+ *
+ * CHANGES IN 2026.10.10.39-APP
  * - Replies answered from Zoho are closed automatically. After each check, open replies (Status New, a Thread ID, not a
  *   bounce or unsubscribe, not "Confirm unsubscribe" / "Review bounce") are compared with the Sent folder through the
  *   mailer's listSentInThreads (2026.10.10.32-APP): a message sent from sales@ in the same thread after the reply was
@@ -416,7 +426,7 @@
  * - Use only in the staging inventory backend until testing is complete.
  *********************************/
 
-const APP_VERSION = "2026.10.10.39-APP";
+const APP_VERSION = "2026.10.10.40-APP";
 
 const SHEET_NAMES = {
   STORES: "Stores",
@@ -5435,7 +5445,7 @@ const INBOUND_REPLY_HEADERS = [
   "Reply ID", "Received At", "From", "From Name", "Subject", "Reply Text", "Account ID", "Source Row", "Business",
   "Relationship", "Matched By", "Last Sent Stage", "Last Sent At", "Category", "Summary", "Suggested Outcome", "Priority",
   "Respond By", "Auto Action", "Classifier", "Status", "Handled At", "Handled By", "Handled Note", "Zoho Message ID",
-  "Zoho Folder ID", "Thread ID", "App Version",
+  "Zoho Folder ID", "Thread ID", "App Version", "Outcome Logged",
 ];
 const INBOUND_REPLY_CHECK_HANDLER = "runInboundReplyCheck";
 const INBOUND_REPLY_LOOKBACK_DAYS = 14;
@@ -5872,6 +5882,57 @@ function setInboundReplyCells_(sheet, rowNumber, changes) {
   Object.keys(changes).forEach(key => { if (h[key] !== undefined) sheet.getRange(rowNumber, h[key] + 1).setValue(changes[key]); });
 }
 
+// ---------- Outcome tracking and learned alt emails (2026.10.10.40-APP) ----------
+/** A reply answered from Zoho whose business still has no outcome recorded from it. */
+function inboundReplyNeedsOutcome_(row) {
+  return String(row.status || "").trim() === "Handled"
+    && /^Answered in Zoho/i.test(String(row.handled_note || "").trim())
+    && !String(row.outcome_logged || "").trim()
+    && Number(row.source_row || 0) > 0;
+}
+
+/**
+ * The Notes line to add when an outcome is logged from a reply sent from another address, or "".
+ * Never for bounces, mail daemons, our own domain, the business's own email or an address already in Notes.
+ */
+function inboundReplyAltEmailLine_(reply, directoryEmail, priorNotes, dateText) {
+  const from = String(reply.from || "").trim().toLowerCase();
+  if (!/^[^\s@]+@[^\s@]+\.[a-z]{2,}$/i.test(from)) return "";
+  if (String(reply.category || "").trim() === "Bounce") return "";
+  if (/^(mailer-daemon|postmaster|mail-daemon|mailerdaemon)@/.test(from)) return "";
+  if (from.endsWith("@sturgeonspirits.com")) return "";
+  if (from === String(directoryEmail || "").trim().toLowerCase()) return "";
+  if (String(priorNotes || "").toLowerCase().includes(from)) return "";
+  const name = String(reply.from_name || "").replace(/[\r\n]+/g, " ").trim();
+  const label = name && name.toLowerCase() !== from ? ` (${name}, from an email reply)` : " (from an email reply)";
+  return `${dateText} - Alt email: ${from}${label}`;
+}
+
+/**
+ * Records an outcome on the business's replies: the reply it was logged from (handled if still open) and every
+ * reply of that account waiting for an outcome. Writes only status and Outcome Logged cells.
+ * Returns the record of replyId, or null.
+ */
+function recordInboundReplyOutcome_(accountId, outcome, staffName, replyId) {
+  const sheet = getInboundRepliesSheet_(false);
+  if (!sheet || !accountId) return null;
+  const now = new Date();
+  const logged = inboundReplyCellText_(`${outcome} · ${Utilities.formatDate(now, Session.getScriptTimeZone(), "MMM d")} · ${staffName}`, 200);
+  let selected = null;
+  outreachRowsMatchingCell_(sheet, ["account_id", "Account ID"], accountId).forEach(row => {
+    const isTarget = !!replyId && String(row.reply_id || "") === String(replyId);
+    if (!isTarget && !inboundReplyNeedsOutcome_(row)) return;
+    const changes = { outcome_logged:logged };
+    if (isTarget && String(row.status || "").trim() === "New") {
+      Object.assign(changes, { status:"Handled", handled_at:now, handled_by:inboundReplyCellText_(staffName, 120), handled_note:inboundReplyCellText_(`Outcome: ${outcome}`, 500) });
+    }
+    setInboundReplyCells_(sheet, row.__source_row, changes);
+    if (isTarget) selected = inboundReplyRecord_(Object.assign({}, row, changes), row.__source_row);
+  });
+  if (replyId && !selected) throw new Error("That reply belongs to a different business.");
+  return selected;
+}
+
 // ---------- Replies answered from Zoho (2026.10.10.39-APP) ----------
 const INBOUND_REPLY_ANSWER_SKIP_CATEGORIES = ["Bounce", "Unsubscribe"];
 const INBOUND_REPLY_ANSWER_SKIP_PRIORITIES = ["Confirm unsubscribe", "Review bounce"];
@@ -6126,6 +6187,8 @@ function inboundReplyRecord_(row, rowNumber) {
     handled_at:iso(row.handled_at),
     handled_by:String(row.handled_by || ""),
     handled_note:String(row.handled_note || ""),
+    outcome_logged:String(row.outcome_logged || ""),
+    needs_outcome:inboundReplyNeedsOutcome_(row),
     zoho_message_id:String(row.zoho_message_id || ""),
   };
 }
@@ -6144,7 +6207,7 @@ function apiGetInboundReplies_() {
   const cutoff = Date.now() - 30 * 24 * 60 * 60 * 1000;
   const replies = !sheet || sheet.getLastRow() < 2 ? [] : getAllRowsAsObjects_(sheet)
     .map((row, index) => inboundReplyRecord_(row, index + 2))
-    .filter(reply => reply.reply_id && (reply.status === "New" || (Date.parse(reply.received_at) || 0) >= cutoff));
+    .filter(reply => reply.reply_id && (reply.status === "New" || reply.needs_outcome || (Date.parse(reply.received_at) || 0) >= cutoff));
   replies.sort((a, b) => String(b.received_at).localeCompare(String(a.received_at)));
   const now = Date.now();
   const open = replies.filter(reply => reply.status === "New");
@@ -6152,6 +6215,7 @@ function apiGetInboundReplies_() {
     replies:replies,
     counts:{
       open:open.length,
+      needs_outcome:replies.filter(reply => reply.needs_outcome).length,
       respond_today:open.filter(reply => reply.priority === INBOUND_REPLY_PRIORITY_LABELS.today).length,
       overdue:open.filter(reply => reply.respond_by && Date.parse(reply.respond_by) < now).length,
     },
@@ -6190,6 +6254,17 @@ function apiResolveInboundReply_(p) {
   if (!p) throw new Error("Missing body");
   requireFields_(p, ["reply_id", "status"]);
   const staffName = authenticatedActor_(p, "Staff");
+  if (p.no_outcome) {
+    // An answered reply that needs no outcome: only Outcome Logged is written.
+    const sheet = getInboundRepliesSheet_(false);
+    const rows = sheet ? outreachRowsMatchingCell_(sheet, ["reply_id", "Reply ID"], String(p.reply_id || "").trim()) : [];
+    if (!rows.length) throw new Error("Reply not found. Refresh and try again.");
+    const changes = { outcome_logged:inboundReplyCellText_(`No outcome needed · ${Utilities.formatDate(new Date(), Session.getScriptTimeZone(), "MMM d")} · ${staffName}`, 200) };
+    setInboundReplyCells_(sheet, rows[0].__source_row, changes);
+    const record = inboundReplyRecord_(Object.assign({}, rows[0], changes), rows[0].__source_row);
+    appendAudit_("RESOLVE_INBOUND_REPLY", "Reply", record.reply_id, record.account_id, staffName, INBOUND_REPLIES_SHEET_NAME, INBOUND_REPLIES_SHEET_NAME, "Completed", "No outcome needed");
+    return { message:"Marked as needing no outcome.", reply:record };
+  }
   const reply = resolveInboundReply_(p.reply_id, String(p.status), staffName, publicText_(p.note || "", 500, "Note"));
   appendAudit_("RESOLVE_INBOUND_REPLY", "Reply", reply.reply_id, reply.account_id, staffName, INBOUND_REPLIES_SHEET_NAME, INBOUND_REPLIES_SHEET_NAME, "Completed", reply.status);
   return { message:`Reply marked ${reply.status === "New" ? "open" : reply.status.toLowerCase()}.`, reply:reply };
@@ -6984,11 +7059,19 @@ function apiUpdateOutreachOutcome_(p) {
     setRowValue(["record_updated_at"], new Date());
     if (followUpDate) setRowValue(["next_follow-up", "next_follow_up"], followUpDate);
     if (["Not interested", "Unsubscribed"].includes(outcome)) setRowValue(["do_not_email", "do_not_contact"], true);
-    if (p.notes) {
-      const priorNotes = String(outreachValue_(current, ["notes"]) || "").trim();
-      const datedNote = `${Utilities.formatDate(new Date(), Session.getScriptTimeZone(), "yyyy-MM-dd")} - ${String(p.notes).trim()}`;
-      setRowValue(["notes"], priorNotes ? `${priorNotes}\n${datedNote}` : datedNote);
+    const today = Utilities.formatDate(new Date(), Session.getScriptTimeZone(), "yyyy-MM-dd");
+    const priorNotes = String(outreachValue_(current, ["notes"]) || "").trim();
+    // Logged from a reply sent from another address: remember that address so later replies match this business.
+    let altLine = "";
+    if (p.reply_id) {
+      try {
+        const repliesSheet = getInboundRepliesSheet_(false);
+        const found = repliesSheet ? outreachRowsMatchingCell_(repliesSheet, ["reply_id", "Reply ID"], String(p.reply_id).trim()) : [];
+        if (found.length && String(found[0].account_id || "").trim() === accountId) altLine = inboundReplyAltEmailLine_(found[0], currentEmail, priorNotes, today);
+      } catch (error) { console.warn(`Alt email not learned from reply ${p.reply_id}: ${String(error.message || error)}`); }
     }
+    const newNoteLines = [p.notes ? `${today} - ${String(p.notes).trim()}` : "", altLine].filter(Boolean);
+    if (newNoteLines.length) setRowValue(["notes"], [priorNotes].concat(newNoteLines).filter(Boolean).join("\n"));
 
     if (h.outcome !== undefined) {
       sheet.getRange(rowNumber, h.outcome + 1).setDataValidation(
@@ -7011,13 +7094,12 @@ function apiUpdateOutreachOutcome_(p) {
 
     appendOutreachActivity_({ account_id:accountId, business:currentBusiness, email:currentEmail }, outcome, String(p.notes || ""));
     appendAudit_("UPDATE_OUTREACH_OUTCOME", "Account", accountId, accountId, String(p.staff_name || "Staff"), OUTREACH_SHEET_NAME, OUTREACH_SHEET_NAME, "Completed", outcome);
-    // Logged from the Replies view: the reply is handled by the same save.
+    // The reply it was logged from is handled, and every reply of this business waiting for an outcome gets it.
     let reply = null;
-    if (p.reply_id) {
-      try { reply = resolveInboundReply_(p.reply_id, "Handled", String(p.staff_name || "Staff"), `Outcome: ${outcome}`, accountId); }
-      catch (error) { console.warn(`Outcome saved; reply ${p.reply_id} could not be marked handled: ${String(error.message || error)}`); }
-    }
-    return { message:"Outcome saved.", account_id:accountId, source_row:rowNumber, status:outreachStatusForOutcome_(outcome), reply:reply };
+    try { reply = recordInboundReplyOutcome_(accountId, outcome, String(p.staff_name || "Staff"), p.reply_id || ""); }
+    catch (error) { console.warn(`Outcome saved; replies not updated: ${String(error.message || error)}`); }
+    const altEmail = altLine ? (altLine.match(/Alt email: (\S+)/) || [])[1] || "" : "";
+    return { message:altEmail ? `Outcome saved. ${altEmail} added as an alternate email.` : "Outcome saved.", account_id:accountId, source_row:rowNumber, status:outreachStatusForOutcome_(outcome), reply:reply, alt_email_added:altEmail };
   } finally {
     lock.releaseLock();
   }
@@ -7104,6 +7186,10 @@ function apiLogOutreachContact_(p) {
     activitySet("staff", String(p.staff_name)); activitySet("mailer_version", APP_VERSION);
     activity.appendRow(activityRow);
     appendAudit_("LOG_OUTREACH_CONTACT", "Account", accountId, accountId, String(p.staff_name), OUTREACH_SHEET_NAME, OUTREACH_ACTIVITY_SHEET_NAME, "Completed", `${channel}${outcome ? `; ${outcome}` : ""}`);
+    if (outcome) {
+      try { recordInboundReplyOutcome_(accountId, outcome, String(p.staff_name || "Staff"), ""); }
+      catch (error) { console.warn(`Contact logged; replies not updated: ${String(error.message || error)}`); }
+    }
     return { message:"Contact logged.", account_id:accountId, source_row:rowNumber, status:outcome ? outreachStatusForOutcome_(outcome) : (channel === "Email outside app" ? "Sent" : String(outreachValue_(current, ["status"]) || "")), next_follow_up:followUpText || automaticFollowUpText };
   } finally { lock.releaseLock(); }
 }

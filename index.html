@@ -1,10 +1,10 @@
 <!doctype html>
-<!-- App version: 2026.10.10.42-WEB -->
+<!-- App version: 2026.10.10.43-WEB -->
 <html>
 <head>
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover"/>
-  <meta name="app-version" content="2026.10.10.42-WEB" />
+  <meta name="app-version" content="2026.10.10.43-WEB" />
   <meta name="theme-color" content="#536f77" />
   <link rel="icon" href="/assets/distribution-hub-icon.svg" type="image/svg+xml" />
   <link rel="manifest" href="/site.webmanifest" />
@@ -2704,7 +2704,7 @@
 
   <footer style="max-width:1200px;margin:18px auto 120px;padding:0 12px;text-align:center;color:#6b7280;font-size:12px;">
     Designed by <a href="https://scriptspirit.dev" target="_blank" rel="noopener noreferrer" style="color:#1d4ed8;text-decoration:none;font-weight:700;">Script Spirit</a>
-<span id="appVersionFooter"> • Version 2026.10.10.42-WEB</span>
+<span id="appVersionFooter"> • Version 2026.10.10.43-WEB</span>
   </footer>
 
 
@@ -2727,7 +2727,7 @@
   window.addEventListener("unhandledrejection", e => console.error("Unhandled promise rejection:", e.reason));
   window.addEventListener("error", e => console.error("Unhandled error:", e.error || e.message));
   const $ = (id) => document.getElementById(id);
-  const APP_VERSION = "2026.10.10.42-WEB";
+  const APP_VERSION = "2026.10.10.43-WEB";
   $("appVersionFooter").textContent = ` • Version ${APP_VERSION}`;
   function screenCacheKey(screen){ return `distribution_hub:${APP_VERSION}:${staffSession?.email || "unknown"}:${screen}`; }
   function readScreenCache(screen){
@@ -4095,7 +4095,7 @@
     return `https://www.google.com/maps/dir/?api=1&destination=${encodeURIComponent(destination)}`;
   }
 
-  // ---------- Replies (inbound reply checker, 2026.10.10.42-WEB) ----------
+  // ---------- Replies (inbound reply checker, 2026.10.10.43-WEB) ----------
   async function loadOutreachReplies(){
     if (outreachRepliesLoading) return outreachRepliesLoading;
     outreachRepliesLoading = (async () => {
@@ -4110,7 +4110,8 @@
   }
 
   function updateRepliesTabCount(){
-    const open = (outreachData.replies || []).filter(reply => reply.status === "New").length;
+    // Open replies plus answered ones still waiting for an outcome.
+    const open = (outreachData.replies || []).filter(reply => reply.status === "New" || reply.needs_outcome).length;
     $("outreachRepliesCount").hidden = !open;
     $("outreachRepliesCount").textContent = open;
   }
@@ -4163,7 +4164,7 @@
     const mailto = `mailto:${encodeURIComponent(reply.from)}?subject=${encodeURIComponent(`Re: ${subject}`)}`;
     const zohoUrl = outreachRepliesMeta?.zoho_mail_url || "https://mail.zoho.com/zm/";
     const zohoLink = reply.zoho_message_id ? `${zohoUrl}#mail/folder/inbox/p/${encodeURIComponent(reply.zoho_message_id)}` : zohoUrl;
-    const canLogOutcome = open && !!reply.source_row && !!reply.business;
+    const canLogOutcome = (open || reply.needs_outcome) && !!reply.source_row && !!reply.business;
     return `
       <article class="outreachCard replyCard ${replyIsOverdue(reply) ? "overdue" : ""}" data-reply-id="${escapeHtml(reply.reply_id)}">
         <div class="outreachCardTop">
@@ -4180,7 +4181,9 @@
           ${reply.relationship ? `<span class="badge blue">${escapeHtml(reply.relationship)}</span>` : ""}
           ${reply.last_sent_stage ? `<span class="badge">${escapeHtml(`Answering: ${reply.last_sent_stage}`)}</span>` : ""}
           ${reply.auto_action ? `<span class="badge ${/possible match|not applied|nothing found|pending/i.test(reply.auto_action) ? "amber" : "green"}">${escapeHtml(reply.auto_action)}</span>` : ""}
-          ${!open ? `<span class="badge">${escapeHtml(`${reply.status}${reply.handled_by ? ` by ${reply.handled_by}` : ""}${reply.handled_note ? ` — ${reply.handled_note}` : ""}`)}</span>` : ""}
+          ${!open ? `<span class="badge ${reply.needs_outcome ? "green" : ""}">${escapeHtml(`${reply.status}${reply.handled_by ? ` by ${reply.handled_by}` : ""}${reply.handled_note ? ` — ${reply.handled_note}` : ""}`)}</span>` : ""}
+          ${reply.needs_outcome ? `<span class="badge amber">Outcome not logged yet</span>` : ""}
+          ${reply.outcome_logged ? `<span class="badge blue">${escapeHtml(`Outcome: ${reply.outcome_logged}`)}</span>` : ""}
           ${!reply.business ? `<span class="badge amber">${escapeHtml(reply.matched_by || "No business match")}</span>` : ""}
         </div>
         <details><summary>${escapeHtml(reply.subject || "(no subject)")}</summary><div class="replyText">${escapeHtml(reply.reply_text || "")}</div><div class="smallMuted">Matched by: ${escapeHtml(reply.matched_by || "")}${reply.classifier ? ` • Sorted by: ${escapeHtml(reply.classifier)}` : ""}</div></details>
@@ -4189,6 +4192,7 @@
           ${open ? `<a class="actionBtn" href="${escapeHtml(mailto)}"><i data-lucide="mail"></i><span>Reply by email</span></a>` : ""}
           ${canLogOutcome ? `<button class="actionBtn" type="button" data-reply-action="outcome"><i data-lucide="clipboard-check"></i><span>${escapeHtml(replySuggestedOutcome(reply) ? `Log outcome: ${replySuggestedOutcome(reply)}` : "Log outcome")}</span></button>` : ""}
           ${open ? `<button class="actionBtn" type="button" data-reply-action="handled"><i data-lucide="check"></i><span>Mark handled</span></button>` : ""}
+          ${reply.needs_outcome ? `<button class="actionBtn" type="button" data-reply-action="no-outcome"><i data-lucide="check"></i><span>No outcome needed</span></button>` : ""}
           ${open ? `<button class="actionBtn" type="button" data-reply-action="dismiss"><i data-lucide="x"></i><span>Not a reply</span></button>` : `<button class="actionBtn" type="button" data-reply-action="reopen"><i data-lucide="rotate-ccw"></i><span>Reopen</span></button>`}
         </div>
       </article>`;
@@ -4206,7 +4210,8 @@
       { title:"Respond today", items:open.filter(reply => replyIsOverdue(reply) || reply.priority === "Respond today").sort(byDue) },
       { title:"Respond soon", items:open.filter(reply => !replyIsOverdue(reply) && ["Respond soon", "Confirm unsubscribe", "Review bounce"].includes(reply.priority)).sort(byDue) },
       { title:"Optional reply", items:open.filter(reply => !replyIsOverdue(reply) && !["Respond today", "Respond soon", "Confirm unsubscribe", "Review bounce"].includes(reply.priority)).sort(byDue) },
-      { title:"Handled in the last 30 days", items:replies.filter(reply => reply.status !== "New") },
+      { title:"Answered — log outcome", items:replies.filter(reply => reply.needs_outcome) },
+      { title:"Handled in the last 30 days", items:replies.filter(reply => reply.status !== "New" && !reply.needs_outcome) },
     ];
     $("outreachAudienceCount").textContent = `${open.length} open repl${open.length === 1 ? "y" : "ies"}`;
     const lastRun = meta?.last_run;
@@ -4255,10 +4260,10 @@
       openOutcomeDialogForRecord({ source_row:reply.source_row, account_id:reply.account_id, business:reply.business }, reply);
       return;
     }
-    const status = action === "handled" ? "Handled" : action === "dismiss" ? "Dismissed" : "New";
+    const status = action === "handled" || action === "no-outcome" ? "Handled" : action === "dismiss" ? "Dismissed" : "New";
     button.disabled = true;
     try {
-      const res = await staffApiPost({ action:"resolveInboundReply", reply_id:reply.reply_id, status:status, note:action === "dismiss" ? "Not a reply to our email" : "" });
+      const res = await staffApiPost({ action:"resolveInboundReply", reply_id:reply.reply_id, status:status, note:action === "dismiss" ? "Not a reply to our email" : "", ...(action === "no-outcome" ? { no_outcome:true } : {}) });
       if (!res.ok) throw new Error(res.error || "The reply could not be updated.");
       patchReplyLocally(res.reply);
       toast(res.message || "Reply updated");
@@ -5901,6 +5906,9 @@
       });
       if (!res.ok) throw new Error(res.error || "Outcome could not be saved.");
       if (res.reply) patchReplyLocally(res.reply);
+      // Logging an outcome anywhere also records it on that business's answered replies.
+      else if ((outreachData.replies || []).some(reply => reply.needs_outcome && reply.account_id === selectedOutreachRecord.account_id)) loadOutreachReplies().catch(() => {});
+      if (res.alt_email_added) toast(`Saved ${res.alt_email_added} as an alternate email`);
       patchOutreachRecordLocally(selectedOutreachRecord.source_row, {
         outcome:selectedOutcome,
         status:res.status || selectedOutreachRecord.status,
