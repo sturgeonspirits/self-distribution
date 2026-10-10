@@ -789,6 +789,10 @@ test("Inbound reply checker: matching, quoted-text removal, stop rules, respond-
   assert.equal(api.inboundReplyBounceKind_("This is not a temporary problem; we will not retry.\n550 5.1.1 user unknown"), "hard", "'temporary' in the report no longer vetoes a hard bounce");
   assert.equal(api.inboundReplyBounceKind_("550 5.1.1 user unknown\n----- Original message -----\nWe will retry your tasting next week"), "hard", "our own quoted wording is ignored");
   assert.equal(api.inboundReplyBounceKind_("Your message could not be delivered."), "unknown");
+  assert.equal(api.inboundReplyBounceKind_("554 5.1.8 Sender Address Blocked"), "blocked", "a refused sender is not a dead mailbox");
+  assert.equal(api.inboundReplyBounceKind_("Action: failed\nStatus: 5.1.8\nDiagnostic-Code: smtp; 553 Bad sender's system address"), "blocked", "5.1.8 without the word blocked");
+  assert.equal(api.inboundReplyBounceKind_("553 5.1.7 Sender address rejected: Domain not found"), "blocked");
+  assert.equal(api.inboundReplyBounceKind_("550 5.1.10 RESOLVER.ADR.RecipientNotFound"), "hard", "5.1.10 is still a dead mailbox");
   assert.equal(api.inboundReplyIsBounce_({ from_address:"pat@bar.com", subject:"Re: Returned mail – can you resend?" }), false, "a person's Re: is not a bounce");
   assert.equal(api.inboundReplyIsBounce_({ from_address:"mailer-daemon@googlemail.com", subject:"Delivery Status Notification (Failure)" }), true);
 

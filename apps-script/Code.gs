@@ -1,8 +1,13 @@
 /*********************************
  * Inventory API (JSON) for Netlify
- * App version: 2026.10.10.40-APP
+ * App version: 2026.10.10.41-APP
  *
  * CHANGES IN THIS VERSION
+ * - Bounce fix: a bounce saying the receiver refused OUR sending address or domain (5.1.7, 5.1.8, "Sender address
+ *   rejected/blocked") is now "refused", not a hard bounce, so it no longer marks a good address Bad automatically.
+ *   Such refusals usually point at our own mail setup (SPF/DKIM/DMARC).
+ *
+ * CHANGES IN 2026.10.10.40-APP
  * - "Answered — log outcome": a reply closed as "Answered in Zoho" stays listed (with Log outcome) until an outcome is
  *   recorded for it, so answered emails leave the to-do list but the business doesn't get lost. The new Inbound Replies
  *   column "Outcome Logged" is filled when an outcome is logged from the reply, from Log outcome on the business, or
@@ -428,7 +433,7 @@
  * - Use only in the staging inventory backend until testing is complete.
  *********************************/
 
-const APP_VERSION = "2026.10.10.40-APP";
+const APP_VERSION = "2026.10.10.41-APP";
 
 const SHEET_NAMES = {
   STORES: "Stores",
@@ -5578,7 +5583,9 @@ function inboundReplyBounceHead_(text) {
 function inboundReplyBounceKind_(text) {
   const head = inboundReplyBounceHead_(text);
   if (/^\s*action:\s*delayed/im.test(head) || /^\s*status:\s*4\./im.test(head) || /(has been delayed|delivery (is |has been )?delayed|will (be )?retr(y|ied)|still trying|has not yet been delivered)/i.test(head)) return "delayed";
-  if (/(\b5\.7\.\d{1,3}\b|\b5\.2\.2\b|\b552\b|\bdmarc\b|\bspam|blocked|blacklist|blocklist|reputation|mailbox (is )?full|over quota|out of storage|message rejected)/i.test(head)) return "blocked";
+  // x.1.7 / x.1.8 and "sender address rejected" mean the receiver refused OUR sending address or domain, not that their
+  // mailbox is gone, so they must never reach the 5.1.x hard rule below (which marks the address Bad automatically).
+  if (/(\b5\.1\.[78]\b|sender('s)? (address|domain)( was| is)? (rejected|blocked|refused|denied)|\b5\.7\.\d{1,3}\b|\b5\.2\.2\b|\b552\b|\bdmarc\b|\bspam|blocked|blacklist|blocklist|reputation|mailbox (is )?full|over quota|out of storage|message rejected)/i.test(head)) return "blocked";
   if (/\b5\.1\.\d{1,3}\b/.test(head) || /^\s*status:\s*5\.1\./im.test(head) || /(does not exist|doesn't exist|user unknown|unknown user|no such (user|recipient|mailbox)|mailbox (not found|unavailable|does not exist)|address rejected|recipient (address )?rejected|invalid recipient|recipient not found|account (has been )?disabled|address couldn't be found|could not be found)/i.test(head)) return "hard";
   return "unknown";
 }
