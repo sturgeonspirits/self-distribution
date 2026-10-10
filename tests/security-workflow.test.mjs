@@ -914,16 +914,21 @@ test("Inbound reply checker: matching, quoted-text removal, stop rules, respond-
   assert.match(mailer, /if \(receivedMs && receivedMs < sinceMs\) \{ reachedOlder = true; return; \}/);
   assert.match(mailer, /const listed = newer\.slice\(0, INBOX_MAX_MESSAGES\);/);
   // The Inbox and its subfolders (Inbox/Sales, where a Zoho filter files sales@ mail) are all read.
-  const folderFn = new Function("CacheService", "zohoGet_", `${mailer.slice(mailer.indexOf("function inboxFolders_("), mailer.indexOf("function decodeHtmlEntities_("))}\nreturn inboxFolders_;`)(
+  const folderList = withSales => ({ data:[
+    { folderId:"1", folderName:"Inbox", folderType:"Inbox", path:"/Inbox" },
+    ...(withSales ? [{ folderId:"2", folderName:"Sales", path:"/Inbox/Sales" }] : []),
+    { folderId:"3", folderName:"Old", parentFolderId:withSales ? "2" : "1" },
+    { folderId:"4", folderName:"Orders", path:"/Orders" },
+    { folderId:"5", folderName:"Spam", folderType:"Spam", path:"/Spam" },
+  ] });
+  const folderFn = (withSales, property) => new Function("CacheService", "PropertiesService", "zohoGet_", `${mailer.slice(mailer.indexOf("function inboxFolders_("), mailer.indexOf("function decodeHtmlEntities_("))}\nreturn inboxFolders_;`)(
     { getScriptCache:() => ({ get:() => null, put:() => {} }) },
-    () => ({ data:[
-      { folderId:"1", folderName:"Inbox", folderType:"Inbox", path:"/Inbox" },
-      { folderId:"2", folderName:"Sales", path:"/Inbox/Sales" },
-      { folderId:"3", folderName:"Old", parentFolderId:"2" },
-      { folderId:"4", folderName:"Orders", path:"/Orders" },
-      { folderId:"5", folderName:"Spam", folderType:"Spam", path:"/Spam" },
-    ] }));
-  assert.deepEqual(folderFn({}, "acct").map(folder => folder.id), ["1", "2", "3"]);
+    { getScriptProperties:() => ({ getProperty:() => property || null }) },
+    () => folderList(withSales));
+  assert.deepEqual(folderFn(true)({}, "acct").map(folder => folder.id), ["2"], "only Inbox/Sales by default");
+  assert.deepEqual(folderFn(false)({}, "acct").map(folder => folder.id), ["1", "3"], "no Sales folder: the Inbox and everything in it");
+  assert.deepEqual(folderFn(true, "Sales, Old")({}, "acct").map(folder => folder.id), ["2", "3"], "REPLY_CHECK_FOLDERS can name several");
+  assert.match(mailer, /return emailAddressesIn_\(String\(row\.toAddress \|\| ''\) \+ ' ' \+ String\(row\.ccAddress \|\| ''\)\)\.indexOf\(salesAddress\) >= 0;/, "only mail to sales@ (and bounces) is returned");
   assert.match(mailer, /folders\.forEach\(function \(folder\) \{\s*let reachedOlder = false;/);
   assert.match(mailer, /\^list-id:\/im\.test\(headers\) \|\| \/\^list-unsubscribe:\/im/);
   assert.match(mailer, /header_error:headerError,/);

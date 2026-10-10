@@ -1,9 +1,16 @@
 /**
  * Sturgeon Spirits Distribution Outreach
  *
- * VERSION: 2026.10.10.29-APP
+ * VERSION: 2026.10.10.30-APP
  *
  * CHANGES IN THIS VERSION
+ * - Faster reply checks. Scanning 14 days of the whole Inbox (13,000+ messages) used nearly all of the Hub's run time,
+ *   so a check processed only one reply. The checker now reads only the Inbox subfolder(s) named in the
+ *   REPLY_CHECK_FOLDERS Script Property (default "Sales", where the Zoho filter files sales@ mail), falling back to the
+ *   Inbox and all its subfolders when none of them exists. Only messages addressed (To/Cc) to the sender address or sent
+ *   by a mail daemon (bounces) are returned.
+ *
+ * CHANGES IN 2026.10.10.29-APP
  * - The reply checker reads the Inbox and every folder inside it (for example Inbox/Sales, where a Zoho filter files
  *   sales@ mail), not only the Inbox itself. Each folder is paged back to the checkpoint (up to 2,000 messages per
  *   folder) and the oldest 200 across all of them are returned. After deploying, delete the INBOUND_REPLY_SINCE_MS
@@ -96,7 +103,7 @@
  * Sends through the authenticated Zoho Mail API account.
  */
 
-const OUTREACH_VERSION = '2026.10.10.29-APP';
+const OUTREACH_VERSION = '2026.10.10.30-APP';
 const NURTURE_CHECK_IN_DUPLICATE_COOLDOWN_DAYS = 60;
 
 const OUTREACH = Object.freeze({
@@ -700,6 +707,8 @@ function inboxFolders_(settings, accountId) {
     || folders.find(function (folder) { return String(folder.folderName || '').toLowerCase() === 'inbox'; });
   if (!inbox || !inbox.folderId) throw new Error('The Zoho Inbox folder was not found.');
   const inboxPath = String(inbox.path || ('/' + (inbox.folderName || 'Inbox'))).replace(/\/+$/, '');
+  const wanted = String(PropertiesService.getScriptProperties().getProperty('REPLY_CHECK_FOLDERS') || 'Sales')
+    .split(',').map(function (name) { return name.trim().toLowerCase().replace(/^\/+|\/+$/g, ''); }).filter(Boolean);
   const ids = [String(inbox.folderId)];
   // Children by path ("/Inbox/Sales") or by parent ID, repeated so grandchildren are included too.
   let added = true;
@@ -713,10 +722,16 @@ function inboxFolders_(settings, accountId) {
       if ((path && path.indexOf(inboxPath + '/') === 0) || (parent && ids.indexOf(parent) >= 0)) { ids.push(id); added = true; }
     });
   }
-  const result = ids.map(function (id) {
+  const all = ids.map(function (id) {
     const folder = folders.find(function (item) { return String(item.folderId) === id; }) || {};
-    return { id:id, name:String(folder.path || folder.folderName || id) };
+    return { id:id, name:String(folder.path || folder.folderName || id), short:String(folder.folderName || '').toLowerCase() };
   });
+  // Only the named subfolders (default "Sales") when they exist; otherwise the Inbox and everything in it.
+  const chosen = all.filter(function (folder) {
+    const path = folder.name.toLowerCase().replace(/^\/+|\/+$/g, '');
+    return folder.id !== String(inbox.folderId) && wanted.some(function (name) { return name === folder.short || name === path || 'inbox/' + name === path; });
+  });
+  const result = (chosen.length ? chosen : all).map(function (folder) { return { id:folder.id, name:folder.name }; });
   cache.put('ZOHO_INBOX_FOLDERS', JSON.stringify(result), 21600);
   return result;
 }
@@ -784,6 +799,15 @@ function listInboxMessagesRequest_(body) {
     }
     if (!reachedOlder) allReachedOlder = false;
   });
+  // Only mail addressed to sales@ (the sender address) and bounce reports are of interest to the Hub.
+  const salesAddress = String(settings['Sender address'] || OUTREACH.EXPECTED_SENDER_ALIAS).trim().toLowerCase();
+  const relevant = newer.filter(function (row) {
+    const from = emailAddressesIn_(decodeHtmlEntities_(row.fromAddress || ''))[0] || '';
+    if (/^(mailer-daemon|postmaster|mail-daemon|mailerdaemon)@/.test(from)) return true;
+    return emailAddressesIn_(String(row.toAddress || '') + ' ' + String(row.ccAddress || '')).indexOf(salesAddress) >= 0;
+  });
+  newer.length = 0;
+  Array.prototype.push.apply(newer, relevant);
   newer.sort(function (a, b) { return Number(a.receivedTime || a.sentDateInGMT || 0) - Number(b.receivedTime || b.sentDateInGMT || 0); });
   const listed = newer.slice(0, INBOX_MAX_MESSAGES);
   const moreAvailable = newer.length > INBOX_MAX_MESSAGES || !allReachedOlder;
