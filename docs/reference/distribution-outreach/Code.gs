@@ -1,9 +1,18 @@
 /**
  * Sturgeon Spirits Distribution Outreach
  *
- * VERSION: 2026.10.10.32-APP
+ * VERSION: 2026.10.12.33-APP
  *
  * CHANGES IN THIS VERSION
+ * - Adds the Hub-only sendWelcomeEmail action: the welcome email with the ordering link that staff review and send
+ *   after approving a wholesale application. It is a transactional reply to the customer's own application, so the
+ *   Directory "Do Not Email" box (which keeps current customers out of sales outreach) does not block it. It is still
+ *   refused for an address the Directory row has marked Bad address, Unsubscribed or Do not contact, and for an
+ *   invalid address. It uses the "Order online invite" stage, so the Hub never sends that address the prospect
+ *   introduction or a second order-online invite from a campaign. Same idempotency receipts and Activity Log row as
+ *   every other app send.
+ *
+ * CHANGES IN 2026.10.10.32-APP
  * - Adds the Hub-only, read-only listSentInThreads action so the Hub can close replies already answered from Zoho. It
  *   pages the Sent folder (folderType "Sent") newest first back to since_ms (at most 2,000 messages) and returns only
  *   messages in the requested threads that were sent from the sender address (sales@): thread ID, message ID, sent
@@ -115,7 +124,7 @@
  * Sends through the authenticated Zoho Mail API account.
  */
 
-const OUTREACH_VERSION = '2026.10.10.32-APP';
+const OUTREACH_VERSION = '2026.10.12.33-APP';
 const NURTURE_CHECK_IN_DUPLICATE_COOLDOWN_DAYS = 60;
 
 const OUTREACH = Object.freeze({
@@ -255,6 +264,7 @@ function doPost(e) {
     if (action === 'appMailerStatus') return appJson_(Object.assign({ ok:true, version:OUTREACH_VERSION }, appMailerStatus_()));
     if (action === 'sendAppEmail') return appJson_(Object.assign({ ok:true, version:OUTREACH_VERSION }, sendAppEmailRequest_(body, false)));
     if (action === 'sendNewsletterEmail') return appJson_(Object.assign({ ok:true, version:OUTREACH_VERSION }, sendNewsletterEmailRequest_(body)));
+    if (action === 'sendWelcomeEmail') return appJson_(Object.assign({ ok:true, version:OUTREACH_VERSION }, sendAppEmailRequest_(body, false, validateWelcomeRecipient_)));
     if (action === 'sendCustomerEmail') return appJson_(Object.assign({ ok:true, version:OUTREACH_VERSION }, sendAppEmailRequest_(body, false, validateCustomerLead_)));
     if (action === 'sendAppTestEmail') return appJson_(Object.assign({ ok:true, version:OUTREACH_VERSION }, sendAppEmailRequest_(body, true)));
     if (action === 'sendPaymentReminder') return appJson_(Object.assign({ ok:true, version:OUTREACH_VERSION }, sendPaymentReminderRequest_(body)));
@@ -452,6 +462,33 @@ function validateCustomerLead_(body, testMode) {
     return result.indexOf('SENT') >= 0 && result.indexOf('TEST') < 0 && intended === email && String(item.message_stage || item.stage || '').trim() === CUSTOMER_INVITE_STAGE;
   });
   if (!testMode && alreadySent) throw new Error('The order-online invite was already sent to this address.');
+  return { sheet:sheet, row:row, rowNumber:rowNumber, business:business, email:email, stage:CUSTOMER_INVITE_STAGE };
+}
+
+// Welcome email after an approved wholesale application. The recipient is the email the customer
+// gave on the application, which can differ from the Directory row's email when the application
+// was matched to an existing account. "Do Not Email" is ignored on purpose: approval ticks it to keep
+// current customers out of sales outreach, and this message answers the customer's own application.
+function validateWelcomeRecipient_(body, testMode) {
+  if (String(body.message_stage || '').trim() !== CUSTOMER_INVITE_STAGE) throw new Error('Welcome emails must use the Order online invite stage.');
+  const sheet = assertStagingEnvironment_().getSheetByName(OUTREACH.LEADS_SHEET);
+  const rowNumber = Number(body.source_row);
+  if (!Number.isInteger(rowNumber) || rowNumber < OUTREACH.FIRST_DATA_ROW || rowNumber > sheet.getLastRow()) throw new Error('Customer row was not found.');
+  const row = sheet.getRange(rowNumber, 1, 1, Math.max(sheet.getLastColumn(), OUTREACH.COL.LAST_DATA_COLUMN)).getValues()[0];
+  const business = String(row[OUTREACH.COL.BUSINESS - 1] || '').trim();
+  const rowEmail = String(row[OUTREACH.COL.EMAIL - 1] || '').trim().toLowerCase();
+  const rowAccountId = String(row[OUTREACH.COL.ACCOUNT_ID - 1] || '').trim();
+  const email = String(body.recipient || '').trim().toLowerCase();
+  if (business !== String(body.business || '').trim()) throw new Error('Customer row changed. Refresh the Hub before sending.');
+  if (rowAccountId && String(body.account_id || '').trim() && rowAccountId !== String(body.account_id).trim()) throw new Error('Customer account changed. Refresh the Hub before sending.');
+  if (!testMode && !isValidEmail_(email)) throw new Error('Recipient email is invalid.');
+  if (!testMode && email === rowEmail) {
+    const status = String(row[OUTREACH.COL.STATUS - 1] || '').trim().toLowerCase();
+    const outcome = String(row[OUTREACH.COL.OUTCOME - 1] || '').trim().toLowerCase();
+    if (['bad address', 'unsubscribed', 'do not contact'].indexOf(status) >= 0 || ['bad address', 'unsubscribed', 'do not contact'].indexOf(outcome) >= 0) {
+      throw new Error('This address is marked ' + (status || outcome) + ' in the Directory. Fix the email before sending.');
+    }
+  }
   return { sheet:sheet, row:row, rowNumber:rowNumber, business:business, email:email, stage:CUSTOMER_INVITE_STAGE };
 }
 

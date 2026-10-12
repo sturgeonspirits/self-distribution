@@ -1,9 +1,9 @@
-// App version: 2026.10.10.44-WEB
+// App version: 2026.10.12.45-WEB
 import { gunzipSync } from "node:zlib";
 import { requireStaffSession } from "./auth.js";
 import { fetchWithDriveRelay, relayConfig } from "../lib/drive-relay.js";
 
-const APP_VERSION = "2026.10.10.44-WEB";
+const APP_VERSION = "2026.10.12.45-WEB";
 const STAFF_ACTIONS = new Set([
   "outreachDashboard",
   "outreachRecord",
@@ -48,6 +48,8 @@ const STAFF_ACTIONS = new Set([
   "adoptBadgerInvoice",
   "failBadgerInvoiceCreation",
   "updateCustomerApplication",
+  "previewApplicationWelcome",
+  "sendApplicationWelcome",
   "updateOnlineOrderRequest",
   "createOutreachBusiness",
   "importOutreachBusinesses",
@@ -79,7 +81,7 @@ const READ_UPSTREAM_TIMEOUT_MS = 11500;
 // Sends use the established 24-second single-attempt window; never retry an
 // uncertain send because the original request may still be holding the lock.
 const SEND_UPSTREAM_TIMEOUT_MS = 24000;
-const SEND_ACTIONS = new Set(["sendOutreachEmail", "sendOutreachTestEmail", "sendOutreachCampaignBatch", "sendBadgerPaymentReminder", "createBadgerInvoice"]);
+const SEND_ACTIONS = new Set(["sendOutreachEmail", "sendOutreachTestEmail", "sendOutreachCampaignBatch", "sendBadgerPaymentReminder", "sendApplicationWelcome", "createBadgerInvoice"]);
 const SNAPSHOT_ACTIONS = new Set(["createOutreachCampaign"]);
 // Actions allowed over GET: the same list as READ_ACTIONS in apps-script/Code.gs. Anything that
 // changes data must be a POST, so a link or image tag cannot trigger it with a staff cookie.

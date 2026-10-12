@@ -1,10 +1,10 @@
 <!doctype html>
-<!-- App version: 2026.10.10.44-WEB -->
+<!-- App version: 2026.10.12.45-WEB -->
 <html>
 <head>
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover"/>
-  <meta name="app-version" content="2026.10.10.44-WEB" />
+  <meta name="app-version" content="2026.10.12.45-WEB" />
   <meta name="theme-color" content="#536f77" />
   <link rel="icon" href="/assets/distribution-hub-icon.svg" type="image/svg+xml" />
   <link rel="manifest" href="/site.webmanifest" />
@@ -2732,7 +2732,7 @@
 
   <footer style="max-width:1200px;margin:18px auto 120px;padding:0 12px;text-align:center;color:#6b7280;font-size:12px;">
     Designed by <a href="https://scriptspirit.dev" target="_blank" rel="noopener noreferrer" style="color:#1d4ed8;text-decoration:none;font-weight:700;">Script Spirit</a>
-<span id="appVersionFooter"> • Version 2026.10.10.44-WEB</span>
+<span id="appVersionFooter"> • Version 2026.10.12.45-WEB</span>
   </footer>
 
 
@@ -2755,7 +2755,7 @@
   window.addEventListener("unhandledrejection", e => console.error("Unhandled promise rejection:", e.reason));
   window.addEventListener("error", e => console.error("Unhandled error:", e.error || e.message));
   const $ = (id) => document.getElementById(id);
-  const APP_VERSION = "2026.10.10.44-WEB";
+  const APP_VERSION = "2026.10.12.45-WEB";
   $("appVersionFooter").textContent = ` • Version ${APP_VERSION}`;
   function screenCacheKey(screen){ return `distribution_hub:${APP_VERSION}:${staffSession?.email || "unknown"}:${screen}`; }
   function readScreenCache(screen){
@@ -3693,7 +3693,7 @@
         <div class="full"><div class="status" id="customerRecordStatusMessage"></div><div class="dlgActions">${record.workflow_status === "Confirmed" && !record.badger_invoice_number ? '<button id="previewBadgerInvoiceBtn" type="button">Create Badger invoice</button>' : ""}<button class="primary" id="saveCustomerRecordBtn" type="button">Save order</button></div></div>
       </div>` : `
       <div class="workflowEditGrid">
-        <div><label for="customerRecordStatus">Application status</label><select id="customerRecordStatus">${selectOptionsHtml(APPLICATION_STATUSES, record.workflow_status || "New")}</select></div>
+        <div><label for="customerRecordStatus">Application status</label><select id="customerRecordStatus">${selectOptionsHtml(APPLICATION_STATUSES, record.workflow_status || "New")}</select><p class="smallMuted">Approved sets up the account and ordering link, then shows the welcome email for you to edit and send. Account active means the welcome email went out.</p></div>
         <div><label for="customerRecordAssigned">Assigned to</label><input id="customerRecordAssigned" value="${escapeHtml(record.assigned_to || "")}" /></div>
         <div class="full"><label for="customerRecordAccountId">Account ID</label><input id="customerRecordAccountId" value="${escapeHtml(record.account_id || "")}" placeholder="Leave blank to match or create during activation" /></div>
         <div><label for="customerRecordCustomerId">Customer ID</label><input id="customerRecordCustomerId" value="${escapeHtml(record.customer_id || "")}" /></div>
@@ -3701,6 +3701,7 @@
         <div><label for="customerRecordInventoryStoreId">Inventory store ID</label><input id="customerRecordInventoryStoreId" value="${escapeHtml(record.inventory_store_id || "")}" placeholder="Generated if blank" /></div>
         <label class="full checkLabel"><input id="customerRecordInventoryTracking" type="checkbox" ${record.inventory_tracking ? "checked" : ""} /><span>Track shelf and back-stock inventory for this customer.</span></label>
         <div class="full"><label for="customerRecordStaffNotes">Staff notes</label><textarea id="customerRecordStaffNotes" maxlength="4000">${escapeHtml(record.staff_notes || "")}</textarea></div>
+        ${applicationWelcomeHtml(record)}
         <div class="full"><div class="status" id="customerRecordStatusMessage"></div><div class="dlgActions"><button class="primary" id="saveCustomerRecordBtn" type="button">Save application</button></div></div>
       </div>`;
 
@@ -3712,6 +3713,81 @@
       </div>${editor}`;
     $("customerRecordDialog").showModal();
     refreshIcons();
+  }
+
+  function applicationWelcomeHtml(record){
+    if (!["Approved", "Account active"].includes(record.workflow_status)) return "";
+    if (record.welcome_email_sent_at) {
+      return `<div class="full"><p class="smallMuted">Welcome email sent ${escapeHtml(formatOutreachDate(record.welcome_email_sent_at) || "")} to ${escapeHtml(record.welcome_email_recipient || "the customer")}${record.welcome_email_sent_by ? ` by ${escapeHtml(record.welcome_email_sent_by)}` : ""}.</p><div class="dlgActions"><button id="reviewWelcomeEmailBtn" type="button" data-send-again="1">Send welcome email again</button></div></div>`;
+    }
+    return `<div class="full"><p class="smallMuted"><strong>Welcome email not sent yet.</strong> The customer doesn't have the ordering link until it goes out.</p><div class="dlgActions"><button class="primary" id="reviewWelcomeEmailBtn" type="button">Review welcome email</button></div></div>`;
+  }
+
+  async function previewApplicationWelcome(sendAgain){
+    const record = selectedCustomerRecord;
+    if (!record?.application_id) return;
+    $("customerRecordTitle").textContent = "Welcome email";
+    $("customerRecordSubtitle").textContent = `Edit, then send • ${record.business_name || record.legal_business_name || record.application_id}`;
+    $("customerRecordBody").innerHTML = `<div class="status">Preparing the welcome email…</div>`;
+    try {
+      const draft = await staffApiPost({ action:"previewApplicationWelcome", application_id:record.application_id });
+      if (!draft.ok) throw new Error(draft.error || "The welcome email could not be prepared.");
+      const resend = !!(sendAgain || draft.already_sent_at);
+      $("customerRecordBody").innerHTML = `
+        <div class="dlgBodyInner">
+          ${draft.already_sent_at ? `<p class="smallMuted">Already sent ${escapeHtml(formatOutreachDate(draft.already_sent_at) || "")} to ${escapeHtml(draft.already_sent_to || "the customer")}. Sending again sends another copy.</p>` : ""}
+          <label for="welcomeRecipient">To</label>
+          <input id="welcomeRecipient" type="email" value="${escapeHtml(draft.recipient || "")}" autocomplete="off" />
+          <label for="welcomeSubject">Subject</label>
+          <input id="welcomeSubject" maxlength="200" value="${escapeHtml(draft.subject || "")}" />
+          <label for="welcomeBody">Message</label>
+          <textarea class="emailEditor" id="welcomeBody" maxlength="10000">${escapeHtml(draft.body_text || "")}</textarea>
+          <p class="smallMuted">Ordering link for this customer (keep it in the message): <a href="${escapeHtml(draft.ordering_url)}" target="_blank" rel="noopener noreferrer">${escapeHtml(draft.ordering_url)}</a></p>
+          <p class="smallMuted">Sent from sales@ through Zoho. The Sturgeon logo is added at the bottom. Nothing is sent until you click Send.</p>
+          <div class="dlgActions"><button id="backToCustomerRecordBtn" type="button">Not now</button><button class="primary" id="sendWelcomeEmailBtn" type="button" data-send-again="${resend ? "1" : ""}" data-ordering-url="${escapeHtml(draft.ordering_url)}">${resend ? "Send again" : "Send welcome email"}</button></div>
+          <div class="status" id="welcomeEmailStatus" role="status"></div>
+        </div>`;
+      $("sendWelcomeEmailBtn").dataset.token = `WEL-${String(window.crypto?.randomUUID?.() || `${Date.now()}-${Math.random()}`).replace(/[^A-Za-z0-9_-]/g, "")}`;
+      refreshIcons();
+    } catch (error) {
+      $("customerRecordBody").innerHTML = `<div class="status">${escapeHtml(error?.message || String(error))}</div><div class="dlgActions"><button id="backToCustomerRecordBtn" type="button">Back</button></div>`;
+      if (error?.staffAuth) handleCustomerError(error);
+    }
+  }
+
+  async function sendApplicationWelcome(){
+    const record = selectedCustomerRecord;
+    const button = $("sendWelcomeEmailBtn");
+    if (!record?.application_id || !button) return;
+    const status = $("welcomeEmailStatus");
+    const staffName = $("customerStaffName").value.trim();
+    if (!staffName) return status.textContent = "Enter your staff name (top of the Orders & Accounts screen) before sending.";
+    const recipient = $("welcomeRecipient").value.trim();
+    const subject = $("welcomeSubject").value.trim();
+    const body = $("welcomeBody").value.trim();
+    if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(recipient)) return status.textContent = "Enter a valid email address in To.";
+    if (!subject) return status.textContent = "Add a subject.";
+    if (!body.includes(button.dataset.orderingUrl)) return status.textContent = "Keep the ordering link in the message. It is how the customer orders.";
+    button.disabled = true;
+    status.textContent = "Sending through Zoho…";
+    try {
+      const result = await staffApiPost({
+        action:"sendApplicationWelcome", application_id:record.application_id, recipient, subject, body_text:body,
+        idempotency_token:button.dataset.token, send_again:button.dataset.sendAgain === "1", staff_name:staffName,
+      });
+      if (!result.ok) throw new Error(result.error || "The welcome email was not sent.");
+      status.textContent = "Sent.";
+      await loadCustomerWorkQueue();
+      const refreshed = (customerData.applications || []).find(item => item.application_id === record.application_id);
+      $("customerRecordDialog").close();
+      if (refreshed) selectedCustomerRecord = refreshed;
+      toast(`Welcome email sent to ${recipient}`);
+    } catch (error) {
+      const message = error?.message || String(error);
+      status.textContent = message;
+      if (error?.staffAuth) handleCustomerError(error);
+      if (!/Do not send again/i.test(message)) button.disabled = false;
+    }
   }
 
   function paymentReminderToken(){
@@ -4004,6 +4080,13 @@
       if (!result.ok) throw new Error(result.error || "The record could not be saved.");
       $("customerRecordStatusMessage").textContent = "Saved";
       await loadCustomerWorkQueue();
+      if (!isOrder && result.welcome_needed) {
+        const refreshed = (customerData.applications || []).find(item => item.application_id === selectedCustomerRecord.application_id);
+        if (refreshed) selectedCustomerRecord = refreshed;
+        toast("Application approved. Review the welcome email.");
+        await previewApplicationWelcome(false);
+        return;
+      }
       $("customerRecordDialog").close();
       toast(isOrder ? "Order updated" : "Application updated");
     } catch (error) {
@@ -4123,7 +4206,7 @@
     return `https://www.google.com/maps/dir/?api=1&destination=${encodeURIComponent(destination)}`;
   }
 
-  // ---------- Replies (inbound reply checker, 2026.10.10.44-WEB) ----------
+  // ---------- Replies (inbound reply checker, 2026.10.12.45-WEB) ----------
   async function loadOutreachReplies(){
     if (outreachRepliesLoading) return outreachRepliesLoading;
     outreachRepliesLoading = (async () => {
@@ -8117,6 +8200,8 @@
     if (event.target.closest("[data-payment-reminder-resolution]")) resolvePaymentReminder(event.target.closest("[data-payment-reminder-resolution]"));
     if (event.target.closest("#backToCustomerRecordBtn") && selectedCustomerRecord) openCustomerRecord(selectedCustomerRecord);
     if (event.target.closest("#sendPaymentReminderBtn")) sendPaymentReminder();
+    if (event.target.closest("#reviewWelcomeEmailBtn")) previewApplicationWelcome(event.target.closest("#reviewWelcomeEmailBtn").dataset.sendAgain === "1");
+    if (event.target.closest("#sendWelcomeEmailBtn")) sendApplicationWelcome();
     if (event.target.closest("#linkBadgerInvoiceBtn")) saveBadgerInvoiceLink("link");
     if (event.target.closest("#ignoreBadgerInvoiceBtn")) saveBadgerInvoiceLink("ignore");
     if (event.target.closest("#closeBadgerInvoiceLinkBtn")) { selectedBadgerInvoice = null; $("customerRecordDialog").close(); }

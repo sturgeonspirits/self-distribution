@@ -1,8 +1,22 @@
 /*********************************
  * Inventory API (JSON) for Netlify
- * App version: 2026.10.10.42-APP
+ * App version: 2026.10.12.43-APP
  *
  * CHANGES IN THIS VERSION
+ * - Approving a wholesale application now sets the customer up: saving an application as "Approved" does what
+ *   "Account active" used to do (links or creates the Directory account, creates the ordering link, sets up the
+ *   inventory store when tracking is ticked). Customer ID is no longer required; it can be added later.
+ * - Welcome email: new staff actions previewApplicationWelcome (returns the drafted welcome email with the
+ *   customer's ordering link) and sendApplicationWelcome (sends the staff-reviewed text through the Distribution
+ *   Outreach mailer's sendWelcomeEmail action, mailer 2026.10.12.33-APP or later). Nothing is sent without staff
+ *   clicking Send in the Hub. The draft text can be overridden with the Campaign Settings keys "Welcome email subject"
+ *   and "Welcome email body" ({{First Name}}, {{Business Name}}, {{Ordering Link}}). The message must keep the
+ *   ordering link. A sent welcome records Welcome Email Sent At / Sent By / Recipient / Message ID on the application,
+ *   sets the program's Ordering Invite Date, and moves the application to "Account active" (which now means approved
+ *   and welcomed). A second send needs an explicit "Send again".
+ * - The ordering link now also carries the business name and ordering email, so the order page fills them in.
+ *
+ * CHANGES IN 2026.10.10.42-APP
  * - Replies view (web 2026.10.10.44-WEB): each bounce now carries a plain-words verdict (`bounce`: dead, probably dead,
  *   refused, delayed or unknown, and whether the receiver refused OUR sending address). Display only; it changes no data.
  *
@@ -437,7 +451,7 @@
  * - Use only in the staging inventory backend until testing is complete.
  *********************************/
 
-const APP_VERSION = "2026.10.10.42-APP";
+const APP_VERSION = "2026.10.12.43-APP";
 
 const SHEET_NAMES = {
   STORES: "Stores",
@@ -1408,7 +1422,7 @@ function handle_(e, body, isGet) {
   try {
     assertAuthorized_(e, body);
     if (!action) {
-      return json_({ ok:true, service:"sturgeon-distribution-hub", version:APP_VERSION, actions:["initData","listSkus","sellSheet","addSkuToStore","upsertProduct","submitCounts","createReorder","managerGrid","salesSinceCount","updateStoreContacts","outreachDashboard","outreachRecord","outreachSendStatus","outreachNewsletterContacts","outreachCampaigns","outreachCampaign","previewOutreachCampaign","createOutreachCampaign","updateOutreachCampaignRecipient","setOutreachCampaignRecipientExclusion","setOutreachCampaignRecipientExclusions","approveOutreachCampaign","reopenOutreachCampaign","reconcileCampaignSends","rebuildCampaignRecipients","sendOutreachCampaignBatch","scheduleOutreachCampaign","cancelOutreachCampaignSchedule","saveOutreachDraft","sendOutreachEmail","sendOutreachTestEmail","updateOutreachOutcome","logOutreachContact","updateOutreachBusiness","updateOutreachPrograms","createOutreachBusiness","importOutreachBusinesses","recalculateOutreachMiles","backfillEngagementDetails","upsertNewsletterContact","submitCustomerApplication","submitOnlineOrderRequest","customerWorkQueue","customerAccountIndex","linkBadgerInvoice","syncBadgerStatus","markBadgerInvoicePayment","recordBadgerCheck","resolvePaymentReminder","badgerReconcilePreview","applyBadgerReconcile","previewBadgerPaymentReminder","sendBadgerPaymentReminder","previewBadgerInvoice","createBadgerInvoice","adoptBadgerInvoice","failBadgerInvoiceCreation","updateCustomerApplication","updateOnlineOrderRequest","hubSystemStatus","salesReport","inboundReplies","resolveInboundReply","checkInboundReplies","initializeHardenedHub","repairHubStructure","reconcileIntegrations"] });
+      return json_({ ok:true, service:"sturgeon-distribution-hub", version:APP_VERSION, actions:["initData","listSkus","sellSheet","addSkuToStore","upsertProduct","submitCounts","createReorder","managerGrid","salesSinceCount","updateStoreContacts","outreachDashboard","outreachRecord","outreachSendStatus","outreachNewsletterContacts","outreachCampaigns","outreachCampaign","previewOutreachCampaign","createOutreachCampaign","updateOutreachCampaignRecipient","setOutreachCampaignRecipientExclusion","setOutreachCampaignRecipientExclusions","approveOutreachCampaign","reopenOutreachCampaign","reconcileCampaignSends","rebuildCampaignRecipients","sendOutreachCampaignBatch","scheduleOutreachCampaign","cancelOutreachCampaignSchedule","saveOutreachDraft","sendOutreachEmail","sendOutreachTestEmail","updateOutreachOutcome","logOutreachContact","updateOutreachBusiness","updateOutreachPrograms","createOutreachBusiness","importOutreachBusinesses","recalculateOutreachMiles","backfillEngagementDetails","upsertNewsletterContact","submitCustomerApplication","submitOnlineOrderRequest","customerWorkQueue","customerAccountIndex","linkBadgerInvoice","syncBadgerStatus","markBadgerInvoicePayment","recordBadgerCheck","resolvePaymentReminder","badgerReconcilePreview","applyBadgerReconcile","previewBadgerPaymentReminder","sendBadgerPaymentReminder","previewBadgerInvoice","createBadgerInvoice","adoptBadgerInvoice","failBadgerInvoiceCreation","updateCustomerApplication","previewApplicationWelcome","sendApplicationWelcome","updateOnlineOrderRequest","hubSystemStatus","salesReport","inboundReplies","resolveInboundReply","checkInboundReplies","initializeHardenedHub","repairHubStructure","reconcileIntegrations"] });
     }
 
     // A link or image tag can trigger a GET, so only read actions are accepted that way.
@@ -1475,6 +1489,8 @@ function handle_(e, body, isGet) {
       case "adoptBadgerInvoice": res = apiAdoptBadgerInvoice_(body); break;
       case "failBadgerInvoiceCreation": res = apiFailBadgerInvoiceCreation_(body); break;
       case "updateCustomerApplication": res = apiUpdateCustomerApplication_(body); break;
+      case "previewApplicationWelcome": res = apiPreviewApplicationWelcome_(body); invalidateReadCache = false; break;
+      case "sendApplicationWelcome": res = apiSendApplicationWelcome_(body); break;
       case "updateOnlineOrderRequest": res = apiUpdateOnlineOrderRequest_(body); break;
       case "hubSystemStatus": res = apiGetHubSystemStatus_(); break;
       case "salesReport": res = apiGetSalesReport_(); break;
@@ -7851,6 +7867,9 @@ function customerApplicationRecord_(row) {
     inventory_store_id:String(row.inventory_store_id || ""),
     inventory_route:String(row.inventory_route || ""),
     data_sync_status:String(row.data_sync_status || ""),
+    welcome_email_sent_at:row.welcome_email_sent_at || "",
+    welcome_email_sent_by:String(row.welcome_email_sent_by || ""),
+    welcome_email_recipient:String(row.welcome_email_recipient || ""),
   };
 }
 
@@ -9855,7 +9874,7 @@ function rewritePublicSiteUrls() {
   return { changed:changed, unchanged:unchanged };
 }
 
-function upsertActiveAccountProgram_(account, customerId, applicationId, staffName) {
+function upsertActiveAccountProgram_(account, customerId, applicationId, staffName, prefill) {
   const sheet = getOutreachProgramSheet_(true);
   const h = getHeaderMap_(sheet);
   const key = `account::${account.account_id}`;
@@ -9868,7 +9887,7 @@ function upsertActiveAccountProgram_(account, customerId, applicationId, staffNa
   set("business_name", account.business); set("email", account.email); set("ordering_status", "Active");
   set("ordering_customer_id", customerId); set("ordering_invite_date", now);
   const settings = getOutreachCampaignSettings_();
-  set("ordering_portal_url", `${publicSiteUrl_(settings)}/order.html?account_id=${encodeURIComponent(account.account_id)}&customer_id=${encodeURIComponent(customerId || "")}`);
+  set("ordering_portal_url", applicationOrderingUrl_(settings, account.account_id, customerId, prefill?.business || account.business, prefill?.email || account.email));
   set("updated_at", now); set("updated_by", staffName); set("notes", `Activated from application ${applicationId}`); set("app_version", APP_VERSION);
   sheet.getRange(index >= 0 ? index + 2 : sheet.getLastRow() + 1, 1, 1, values.length).setValues([values]);
 }
@@ -9919,7 +9938,7 @@ function synchronizeApplicationAccount_(application, p, staffName) {
   directory.getRange(account.source_row, 1, 1, row.length).setValues([row]);
   account = accountIdentityFromRows_(getAllRowsAsObjects_(directory)).by_id.get(account.account_id);
   const customerId = publicText_(p.customer_id, 80, "Customer ID");
-  upsertActiveAccountProgram_(account, customerId, application.application_id, staffName);
+  upsertActiveAccountProgram_(account, customerId, application.application_id, staffName, { business:application.business_name || application.legal_business_name, email:application.ordering_email || application.primary_email });
   const storeId = ensureInventoryStoreForApplication_(Object.assign({}, application, { account_id:account.account_id }), customerId, toBool_(p.inventory_tracking), p.inventory_store_id, p.inventory_route);
   appendAudit_("ACTIVATE_ACCOUNT", "Application", application.application_id, account.account_id, staffName, CUSTOMER_APPLICATIONS_SHEET_NAME, OUTREACH_SHEET_NAME, "Completed", `Customer ID ${customerId}; inventory store ${storeId || "not enabled"}.`);
   return { account_id:account.account_id, account_link_status:"Linked and active", inventory_store_id:storeId, data_sync_status:storeId ? "Directory, ordering and inventory store synchronized" : "Directory and ordering synchronized" };
@@ -10010,7 +10029,6 @@ function apiUpdateCustomerApplication_(p) {
     const previousStatus = String(row[h.workflow_status] || "New");
     const business = String(row[h.business_name] || row[h.legal_business_name] || "");
     const customerId = publicText_(p.customer_id, 80, "Customer ID");
-    if (status === "Account active" && !customerId) throw new Error("Customer ID is required before activating an account.");
     const set = (key, value) => { if (h[key] !== undefined) sheet.getRange(rowNumber, h[key] + 1).setValue(value); };
     set("workflow_status", status);
     set("customer_id", customerId);
@@ -10023,7 +10041,7 @@ function apiUpdateCustomerApplication_(p) {
     set("review_updated_by", staffName);
     let accountId = publicText_(p.account_id || (h.account_id !== undefined ? row[h.account_id] : ""), 80, "Account ID");
     let sync = null;
-    if (status === "Account active") {
+    if (APPLICATION_ACTIVE_STATUSES.includes(status)) {
       const record = customerApplicationRecord_(Object.assign({ source_row:rowNumber }, Object.keys(h).reduce((item, key) => {
         item[key] = row[h[key]];
         return item;
@@ -10043,7 +10061,153 @@ function apiUpdateCustomerApplication_(p) {
     }
     appendCustomerWorkflowLog_("Application", applicationId, accountId, business, previousStatus, status, staffName, `Customer ID: ${customerId}; inventory tracking: ${toBool_(p.inventory_tracking) ? "yes" : "no"}`);
     appendAudit_("UPDATE_APPLICATION", "Application", applicationId, accountId, staffName, CUSTOMER_APPLICATIONS_SHEET_NAME, CUSTOMER_APPLICATIONS_SHEET_NAME, "Completed", `${previousStatus} to ${status}`);
-    return { message:"Application updated.", application_id:applicationId, account_id:accountId, workflow_status:status, synchronization:sync };
+    const welcomeSentAt = h.welcome_email_sent_at !== undefined ? row[h.welcome_email_sent_at] : "";
+    return { message:"Application updated.", application_id:applicationId, account_id:accountId, workflow_status:status, synchronization:sync,
+      welcome_needed:APPLICATION_ACTIVE_STATUSES.includes(status) && !welcomeSentAt };
+  } finally {
+    lock.releaseLock();
+  }
+}
+
+// "Approved" and "Account active" both mean the customer is set up to order. "Account active" is set
+// automatically once the welcome email with the ordering link has been sent.
+const APPLICATION_ACTIVE_STATUSES = ["Approved", "Account active"];
+const WELCOME_HEADERS = ["Welcome Email Sent At", "Welcome Email Sent By", "Welcome Email Recipient", "Welcome Email Message ID"];
+const WELCOME_DEFAULT_SUBJECT = "Your Sturgeon Spirits wholesale account is ready";
+const WELCOME_DEFAULT_BODY = [
+  "Hi {{First Name}},",
+  "Thanks for applying. Your wholesale account for {{Business Name}} is approved, and you can order from Sturgeon Spirits anytime.",
+  "Here is your ordering link:\n{{Ordering Link}}",
+  "Bookmark it. It is set up for {{Business Name}}, so you just choose products and quantities. You can order by the bottle or by the case, and one bottle is the minimum.",
+  "We deliver and send the invoice. As Wisconsin's distribution rules require, the invoice directs payment to Badger State Cooperative. Sturgeon Spirits stays your contact for everything else.",
+  "Questions? Reply to this email or call 920-267-5192.",
+  "Karl Loewenstein\nSturgeon Spirits",
+].join("\n\n");
+
+function applicationOrderingUrl_(settings, accountId, customerId, business, email) {
+  const params = [["account_id", accountId], ["customer_id", customerId || ""], ["business", business || ""], ["email", email || ""]]
+    .filter(([key, value]) => key === "account_id" || key === "customer_id" || String(value || "").trim())
+    .map(([key, value]) => `${key}=${encodeURIComponent(String(value || "").trim())}`);
+  return `${publicSiteUrl_(settings)}/order.html?${params.join("&")}`;
+}
+
+function welcomeTextToHtml_(text) {
+  return String(text || "").replace(/\r\n/g, "\n").trim().split(/\n{2,}/).filter(Boolean).map(block => {
+    const html = escapeOutreachHtml_(block).replace(/https:\/\/[^\s<]+/g, url => {
+      const clean = url.replace(/[.,;:)]+$/, "");
+      return `<a href="${clean}">${clean}</a>${url.slice(clean.length)}`;
+    });
+    return `<p>${html.replace(/\n/g, "<br>")}</p>`;
+  }).join("");
+}
+
+function applicationForWelcome_(applicationId) {
+  const sheet = getCustomerApplicationsSheet_(false);
+  if (!sheet) throw new Error("Customer Applications sheet is missing.");
+  ensureHeaderColumns_(sheet, WELCOME_HEADERS);
+  const rowNumber = findRecordRow_(sheet, "application_id", applicationId);
+  if (!rowNumber) throw new Error("Application not found.");
+  const h = getHeaderMap_(sheet);
+  const row = sheet.getRange(rowNumber, 1, 1, sheet.getLastColumn()).getValues()[0];
+  const record = customerApplicationRecord_(Object.assign({ source_row:rowNumber }, Object.keys(h).reduce((item, key) => { item[key] = row[h[key]]; return item; }, {})));
+  if (!APPLICATION_ACTIVE_STATUSES.includes(record.workflow_status)) throw new Error("Approve the application before sending the welcome email.");
+  if (!record.account_id) throw new Error("This application is not linked to an account yet. Save it as Approved first.");
+  const account = accountIdentityLookup_().by_id.get(record.account_id);
+  if (!account) throw new Error("The linked account was not found in the Directory.");
+  const program = outreachProgramMap_().get(record.account_id);
+  const orderingUrl = String(program?.ordering_portal_url || "").trim();
+  if (!/^https:\/\/\S+$/i.test(orderingUrl)) throw new Error("The account has no ordering link yet. Save the application as Approved again.");
+  return { sheet, rowNumber, h, record, account, orderingUrl };
+}
+
+function apiPreviewApplicationWelcome_(p) {
+  requireFields_(p || {}, ["application_id"]);
+  const { record, orderingUrl } = applicationForWelcome_(publicText_(p.application_id, 80, "Application ID"));
+  const settings = getOutreachCampaignSettings_();
+  const contact = String(record.primary_contact_name || "").trim();
+  const business = outreachDisplayBusinessName_(record.business_name || record.legal_business_name || "your business");
+  const values = { "first name":contact ? contact.split(/\s+/)[0] : "there", "business name":business, "ordering link":orderingUrl };
+  const fill = text => String(text || "").replace(/\{\{\s*([^}]+?)\s*\}\}/g, (match, key) => values[key.toLowerCase()] ?? match);
+  const subject = fill(String(settings["Welcome email subject"] || "").trim() || WELCOME_DEFAULT_SUBJECT);
+  let bodyText = fill(String(settings["Welcome email body"] || "").trim() || WELCOME_DEFAULT_BODY);
+  if (!bodyText.includes(orderingUrl)) bodyText += `\n\nYour ordering link:\n${orderingUrl}`;
+  return {
+    application_id:record.application_id, account_id:record.account_id, business:business,
+    recipient:String(record.ordering_email || record.primary_email || "").trim().toLowerCase(),
+    subject:subject, body_text:bodyText, ordering_url:orderingUrl,
+    already_sent_at:record.welcome_email_sent_at || "", already_sent_by:record.welcome_email_sent_by || "",
+    already_sent_to:record.welcome_email_recipient || "",
+  };
+}
+
+function apiSendApplicationWelcome_(p) {
+  if (!p) throw new Error("Missing welcome email.");
+  requireFields_(p, ["application_id", "recipient", "subject", "body_text", "idempotency_token", "staff_name"]);
+  const token = String(p.idempotency_token || "").trim();
+  if (!/^[A-Za-z0-9_-]{20,160}$/.test(token)) throw new Error("A valid idempotency token is required.");
+  const staffName = publicText_(p.staff_name, 120, "Staff name");
+  const recipient = String(p.recipient || "").trim().toLowerCase();
+  if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(recipient)) throw new Error("Enter a valid recipient email.");
+  const subject = String(p.subject || "").trim();
+  if (!subject || subject.length > 200) throw new Error("The subject must be 1 to 200 characters.");
+  const bodyText = String(p.body_text || "").replace(/\r\n/g, "\n").trim();
+  if (!bodyText || bodyText.length > 10000) throw new Error("The message must be 1 to 10,000 characters.");
+
+  const lock = LockService.getScriptLock();
+  if (!lock.tryLock(10000)) throw new Error("Another customer update is in progress. Try again in a moment.");
+  let acceptedMessageId = "";
+  let accepted = false;
+  try {
+    const { sheet, rowNumber, h, record, account, orderingUrl } = applicationForWelcome_(publicText_(p.application_id, 80, "Application ID"));
+    if (!bodyText.includes(orderingUrl)) throw new Error("Keep the ordering link in the message. It is how the customer orders.");
+    if (record.welcome_email_sent_at && !toBool_(p.send_again)) {
+      throw new Error(`The welcome email was already sent to ${record.welcome_email_recipient || "this customer"}. Use Send again to send another.`);
+    }
+    const settings = getOutreachCampaignSettings_();
+    const website = String(settings["Website URL"] || "").trim();
+    const logo = String(settings["Logo URL"] || "").trim();
+    const footer = website && logo ? `<p><a href="${escapeOutreachHtml_(website)}"><img src="${escapeOutreachHtml_(logo)}" alt="Sturgeon Spirits"></a></p>` : "";
+    const result = callOutreachMailer_({
+      action:"sendWelcomeEmail",
+      idempotency_token:token,
+      account_id:account.account_id,
+      source_row:account.source_row,
+      business:account.business,
+      recipient:recipient,
+      message_stage:OUTREACH_CUSTOMER_INVITE_STAGE,
+      subject:subject,
+      html:welcomeTextToHtml_(bodyText) + footer,
+      requested_by:staffName,
+    });
+    if (!result.accepted) throw new Error("Zoho did not accept the email.");
+    accepted = true;
+    acceptedMessageId = String(result.message_id || "");
+    const sentAt = result.sent_at && !isNaN(new Date(result.sent_at).getTime()) ? new Date(result.sent_at) : new Date();
+    const set = (key, value) => { if (h[key] !== undefined) sheet.getRange(rowNumber, h[key] + 1).setValue(value); };
+    set("welcome_email_sent_at", sentAt);
+    set("welcome_email_sent_by", staffName);
+    set("welcome_email_recipient", recipient);
+    set("welcome_email_message_id", acceptedMessageId ? `'${acceptedMessageId}` : "");
+    set("workflow_status", "Account active");
+    set("review_updated_at", sentAt);
+    set("review_updated_by", staffName);
+    const programs = getOutreachProgramSheet_(false);
+    if (programs && programs.getLastRow() >= 2) {
+      const ph = getHeaderMap_(programs);
+      const ids = programs.getRange(2, ph.account_id + 1, programs.getLastRow() - 1, 1).getValues();
+      const index = ids.findIndex(item => String(item[0] || "") === account.account_id);
+      if (index >= 0 && ph.ordering_invite_date !== undefined) programs.getRange(index + 2, ph.ordering_invite_date + 1).setValue(sentAt);
+    }
+    appendCustomerWorkflowLog_("Application", record.application_id, account.account_id, record.business_name, record.workflow_status, "Account active", staffName, `Welcome email sent to ${recipient}${result.idempotent ? " (replayed receipt)" : ""}`);
+    appendAudit_("SEND_WELCOME_EMAIL", "Application", record.application_id, account.account_id, staffName, CUSTOMER_APPLICATIONS_SHEET_NAME, "Distribution Outreach", "Completed", `Message ${acceptedMessageId || "without ID"} to ${recipient}`);
+    if (result.partial_failure) appendAudit_("SEND_WELCOME_EMAIL_PARTIAL", "Application", record.application_id, account.account_id, staffName, "Distribution Outreach", "Activity Log", "Needs recovery", String(result.partial_failure));
+    return { message:"Welcome email sent.", accepted:true, message_id:acceptedMessageId, workflow_status:"Account active", idempotent:!!result.idempotent };
+  } catch (error) {
+    if (accepted) {
+      appendAudit_("SEND_WELCOME_EMAIL_PARTIAL", "Application", String(p.application_id || ""), "", staffName, "Distribution Outreach", CUSTOMER_APPLICATIONS_SHEET_NAME, "Needs recovery", `Zoho accepted message ${acceptedMessageId || "without ID"}; ${String(error.message || error)}`);
+      throw new Error(`Zoho accepted the welcome email${acceptedMessageId ? ` (${acceptedMessageId})` : ""}, but recording it needs recovery. Do not send again.`);
+    }
+    throw error;
   } finally {
     lock.releaseLock();
   }
