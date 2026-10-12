@@ -1,8 +1,14 @@
 /*********************************
  * Inventory API (JSON) for Netlify
- * App version: 2026.10.12.45-APP
+ * App version: 2026.10.12.46-APP
  *
  * CHANGES IN THIS VERSION
+ * - Added to Badger is a checkbox only: Badger shows no customer number to members, so the window no longer asks for
+ *   one. The Hub still learns a customer's Badger ID from their first invoice (entered by hand in Badger, then linked
+ *   by the daily sync); the invoice error now says exactly that. A Badger Customer ID typed into the Directory by hand
+ *   is still used.
+ *
+ * CHANGES IN 2026.10.12.45-APP
  * - Added to Badger: the application window has an "Added to Badger" checkbox and an optional Badger customer number.
  *   Saving writes them to the application and to the customer's Directory row ("Added to Badger", "Badger Customer
  *   ID" columns, created at the end of each sheet when first used). Badger invoice creation already reads the
@@ -490,7 +496,7 @@
  * - Use only in the staging inventory backend until testing is complete.
  *********************************/
 
-const APP_VERSION = "2026.10.12.45-APP";
+const APP_VERSION = "2026.10.12.46-APP";
 
 const SHEET_NAMES = {
   STORES: "Stores",
@@ -8873,7 +8879,7 @@ function badgerCustomerIdForAccount_(accountId, account) {
   const paymentAccount = account || currentBadgerPaymentAccount_(accountId, false);
   const match = (paymentAccount.invoices || []).filter(invoice => invoice.badger_match_status === "Matched" && /^\d+$/.test(String(invoice.customer_id || "")))
     .sort((a, b) => recordTimestamp_(b.invoice_date) - recordTimestamp_(a.invoice_date))[0];
-  if (!match) throw new Error("Add this customer in Badger, then enter their Badger customer number on their application (Orders & Accounts) and save. Or invoice them once by hand in Badger.");
+  if (!match) throw new Error("This customer has no invoice in Badger yet. Add them at badgerstatecoop.com if needed, enter their first invoice there by hand, and after the daily Badger sync links it, the Hub can create their invoices.");
   return String(match.customer_id);
 }
 

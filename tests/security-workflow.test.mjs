@@ -1236,7 +1236,7 @@ test("welcome email: the send is recorded before the status change, and a refuse
   assert.match(backend, /try \{ ensureApplicationStatusValidation_\(sheet, h\); \} catch \(error\) \{ console\.warn\("Application status dropdown not widened/);
 });
 
-test("Added to Badger: the application saves it to the Directory row that Badger invoice creation reads", async () => {
+test("Added to Badger: a checkbox on the application, saved to the Directory row", async () => {
   const backend = await readFile(new URL("apps-script/Code.gs", root), "utf8");
   const index = await readFile(new URL("index.html", root), "utf8");
   const update = backend.slice(backend.indexOf("function apiUpdateCustomerApplication_"), backend.indexOf("function apiUpdateOnlineOrderRequest_"));
@@ -1246,6 +1246,7 @@ test("Added to Badger: the application saves it to the Directory row that Badger
   assert.match(backend, /const override = String\(directoryRow\.badger_customer_id \|\| ""\)\.trim\(\);/, "invoice creation reads the Directory's Badger Customer ID");
   assert.match(index, /id="customerRecordBadgerAdded" type="checkbox"/);
   assert.match(index, /badger_added:\$\("customerRecordBadgerAdded"\)\.checked/);
+  assert.doesNotMatch(index, /customerRecordBadgerCustomerId/, "Badger shows members no customer number, so the window does not ask for one");
   assert.match(index, /label:"Badger", value:record\.added_to_badger/);
 });
 
