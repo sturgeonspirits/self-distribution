@@ -22,6 +22,8 @@
  *   Ordering Invite Date). Stored Email Editor text that still mentions the account form or approval is replaced by
  *   the new default wording automatically; edited text is kept. A Directory row without an Account ID is left out
  *   ("No Account ID on the Directory row"). The invite no longer needs Customer application URL.
+ * - Invite eligibility: "set up for online ordering" now means the link was actually emailed (an Order online invite or
+ *   welcome send to that address). Accounts activated earlier without an email are no longer left out of the invite.
  *
  * CHANGES IN 2026.10.10.42-APP
  * - Replies view (web 2026.10.10.44-WEB): each bounce now carries a plain-words verdict (`bounce`: dead, probably dead,
@@ -4303,8 +4305,9 @@ function customerInviteEligibility_(record) {
   else if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) reasons.push("Recipient email is invalid");
   if (record.do_not_email) reasons.push("Do Not Email is ticked");
   if (optOut.includes(status) || optOut.includes(outcome)) reasons.push("Business is excluded from email");
-  if (String(record.program_ordering_status || "").trim().toLowerCase() === "active") reasons.push("Already set up for online ordering");
-  if (email && customerInviteSentEmails_().has(email)) reasons.push("Invite already sent");
+  // Only a link actually emailed counts. Accounts activated before 2026.10.12.43 were marked Active
+  // without ever being sent their link, so the program status alone must not leave them out.
+  if (email && customerInviteSentEmails_().has(email)) reasons.push(String(record.program_ordering_status || "").trim().toLowerCase() === "active" ? "Already has their ordering link" : "Invite already sent");
   if (confidence && !["confirmed", "published", "supplied"].includes(confidence)) reasons.push("Recipient email is not verified");
   const cooldown = email ? outreachCrossSendCooldownReason_(email, false) : "";
   if (cooldown) reasons.push(cooldown);
