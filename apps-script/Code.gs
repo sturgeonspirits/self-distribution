@@ -5368,7 +5368,7 @@ function apiSendOutreachCampaignBatch_(p) {
           try {
             // The invite carried their own ordering link, so the account is now set up for online ordering.
             upsertActiveAccountProgram_({ account_id:record.account_id, source_row:sourceRow, business:record.business, email:record.email },
-              record.ordering_customer_id || "", "order-online invite", staffName, { business:record.business, email:record.email, contact:record.contact });
+              record.ordering_customer_id || "", "order-online invite", staffName, { business:record.business, email:record.email, contact:record.contact, invite_date:acceptedAt });
           } catch (programError) {
             appendAudit_("CUSTOMER_INVITE_PROGRAM_PARTIAL", "Account", record.account_id, record.account_id, staffName, "Distribution Outreach", "Outreach Programs", "Needs recovery", `Invite sent but ordering status not saved: ${String(programError.message || programError)}`);
           }
@@ -9913,7 +9913,9 @@ function upsertActiveAccountProgram_(account, customerId, sourceLabel, staffName
   set("business_name", account.business); set("email", account.email); set("ordering_status", "Active");
   if (customerId || index < 0) set("ordering_customer_id", customerId);
   const keptCustomerId = customerId || (index >= 0 && h.ordering_customer_id !== undefined ? String(values[h.ordering_customer_id] || "") : "");
-  set("ordering_invite_date", now);
+  // Ordering Invite Date is when the customer was actually emailed their link (welcome or invite send),
+  // never the time of an activation or a later save.
+  if (prefill?.invite_date) set("ordering_invite_date", prefill.invite_date);
   const settings = getOutreachCampaignSettings_();
   set("ordering_portal_url", applicationOrderingUrl_(settings, account.account_id, keptCustomerId, prefill?.business || account.business, prefill?.email || account.email, prefill?.contact || ""));
   set("updated_at", now); set("updated_by", staffName); set("notes", `Activated from ${sourceLabel}`); set("app_version", APP_VERSION);
@@ -10069,7 +10071,18 @@ function apiUpdateCustomerApplication_(p) {
     set("review_updated_by", staffName);
     let accountId = publicText_(p.account_id || (h.account_id !== undefined ? row[h.account_id] : ""), 80, "Account ID");
     let sync = null;
-    if (APPLICATION_ACTIVE_STATUSES.includes(status)) {
+    // Activate on the first save as Approved/Account active, or when activation settings change.
+    // A later save (e.g. a staff-note edit) leaves the account, ordering link and dates alone.
+    const wasActive = APPLICATION_ACTIVE_STATUSES.includes(previousStatus) && String(h.account_link_status !== undefined ? row[h.account_link_status] : "") === "Linked and active";
+    const activationChanged = !wasActive
+      || (h.customer_id !== undefined && String(row[h.customer_id] || "") !== customerId)
+      || (h.inventory_tracking !== undefined && toBool_(row[h.inventory_tracking]) !== toBool_(p.inventory_tracking))
+      || (h.inventory_store_id !== undefined && String(row[h.inventory_store_id] || "") !== String(p.inventory_store_id || "").trim())
+      || (h.inventory_route !== undefined && String(row[h.inventory_route] || "") !== String(p.inventory_route || "").trim())
+      || (String(p.account_id || "").trim() && h.account_id !== undefined && String(row[h.account_id] || "") !== String(p.account_id).trim());
+    if (APPLICATION_ACTIVE_STATUSES.includes(status) && !activationChanged) {
+      if (h.account_id !== undefined) accountId = String(row[h.account_id] || accountId);
+    } else if (APPLICATION_ACTIVE_STATUSES.includes(status)) {
       const record = customerApplicationRecord_(Object.assign({ source_row:rowNumber }, Object.keys(h).reduce((item, key) => {
         item[key] = row[h[key]];
         return item;
