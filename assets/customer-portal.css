@@ -141,6 +141,8 @@ button:disabled{cursor:wait;opacity:.65}
 .actions{display:flex;gap:10px;align-items:center;flex-wrap:wrap}
 .status{min-height:22px;margin-top:12px;font-size:14px;font-weight:650;line-height:1.4}
 .status.error{padding:10px 12px;background:var(--danger-bg);color:var(--danger);border-radius:6px}
+.fieldError{display:block;margin-top:4px;font-size:13px;font-weight:650;color:var(--danger)}
+[aria-invalid="true"]{border-color:var(--danger)!important;outline-color:var(--danger)}
 .successPanel{padding:28px;border:1px solid #b9dfc8;background:var(--success-bg);border-radius:var(--radius)}
 .successPanel h2{margin:0 0 8px;color:var(--success)}
 .successPanel p{margin:7px 0;line-height:1.5}

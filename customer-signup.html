@@ -1,12 +1,12 @@
 <!doctype html>
-<!-- App version: 2026.09.17.28 -->
+<!-- App version: 2026.10.12.1 -->
 <html lang="en">
 <head>
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
-  <meta name="app-version" content="2026.09.17.28" />
+  <meta name="app-version" content="2026.10.12.1" />
   <title>Wholesale application | Sturgeon Distribution Hub</title>
-  <link rel="stylesheet" href="/assets/customer-portal.css?v=2026.09.17.28" />
+  <link rel="stylesheet" href="/assets/customer-portal.css?v=2026.10.12.1" />
 </head>
 <body>
   <header class="siteHeader">
@@ -59,7 +59,7 @@
             </select>
           </label>
           <label>Website <span class="hint">Optional</span>
-            <input name="website" type="url" maxlength="300" inputmode="url" autocomplete="url" />
+            <input name="website" type="text" maxlength="300" inputmode="url" autocomplete="url" autocapitalize="off" spellcheck="false" placeholder="yourbusiness.com" />
           </label>
           <label>Wisconsin seller's permit number
             <input name="seller_permit_number" required maxlength="30" inputmode="numeric" autocomplete="off" />
@@ -221,7 +221,7 @@
     "use strict";
     window.addEventListener("unhandledrejection", e => console.error("Unhandled promise rejection:", e.reason));
     window.addEventListener("error", e => console.error("Unhandled error:", e.error || e.message));
-    const APP_VERSION = "2026.09.17.28";
+    const APP_VERSION = "2026.10.12.1";
     const form = document.getElementById("customerForm");
     const status = document.getElementById("customerStatus");
     const submit = document.getElementById("submitCustomerBtn");
@@ -249,11 +249,51 @@
 
     billingSame.addEventListener("change", () => { billingFields.hidden = billingSame.checked; });
 
+    // Show a visible message instead of relying on the browser's validation bubble,
+    // which iPhone Safari often does not display (the customer only saw the page jump).
+    function fieldLabel(control){
+      if (control.name === "attested") return "the authorization checkbox";
+      const label = control.closest("label");
+      if (!label) return "a required field";
+      const text = [...label.childNodes].filter(n => n.nodeType === Node.TEXT_NODE).map(n => n.textContent).join(" ").trim();
+      return text || "a required field";
+    }
+    function clearFieldErrors(){
+      form.querySelectorAll(".fieldError").forEach(el => el.remove());
+      form.querySelectorAll("[aria-invalid]").forEach(el => el.removeAttribute("aria-invalid"));
+    }
+    function showFieldErrors(){
+      const invalid = [...form.querySelectorAll("input, select, textarea")].filter(c => !c.disabled && c.type !== "hidden" && !c.closest("[hidden]") && !c.checkValidity());
+      invalid.forEach(control => {
+        control.setAttribute("aria-invalid", "true");
+        const note = document.createElement("span");
+        note.className = "fieldError";
+        note.textContent = control.type === "checkbox" ? "Please check this box." : (control.validity.valueMissing ? "This is required." : control.validationMessage);
+        (control.type === "checkbox" ? control.closest("label") : control).insertAdjacentElement("afterend", note);
+      });
+      const first = invalid[0];
+      const names = [...new Set(invalid.map(fieldLabel))];
+      status.className = "status error";
+      status.textContent = `Please fix ${names.length === 1 ? "this field" : "these fields"} and submit again: ${names.join(", ")}.`;
+      if (first) {
+        first.scrollIntoView({ behavior:"smooth", block:"center" });
+        first.focus({ preventScroll:true });
+      }
+    }
+    form.addEventListener("input", event => {
+      if (event.target.getAttribute("aria-invalid") && event.target.checkValidity()) {
+        event.target.removeAttribute("aria-invalid");
+        const note = event.target.type === "checkbox" ? event.target.closest("label").nextElementSibling : event.target.nextElementSibling;
+        if (note && note.classList.contains("fieldError")) note.remove();
+      }
+    });
+
     form.addEventListener("submit", async event => {
       event.preventDefault();
       status.className = "status";
       status.textContent = "";
-      if (!form.reportValidity()) return;
+      clearFieldErrors();
+      if (!form.checkValidity()) { showFieldErrors(); return; }
       const data = new FormData(form);
       const payload = Object.fromEntries(data.entries());
       payload.action = "submitCustomerApplication";

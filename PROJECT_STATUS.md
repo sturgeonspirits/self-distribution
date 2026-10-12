@@ -1,6 +1,6 @@
 # Sturgeon Distribution Hub — Project Status
 
-Last updated: 2026-10-08
+Last updated: 2026-10-12
 
 Read this file before inspecting the repository or changing the application. Update it whenever a deployment, version, service URL, known issue, or required setup step changes. Never put secret values in this file.
 
@@ -11,6 +11,7 @@ Read this file before inspecting the repository or changing the application. Upd
 | Netlify web app and staff proxy | `2026.10.10.44-WEB` on `codex/work` | **Promoted to production 2026-10-10** (Replies redesign phase 1: one question per card, new groups, Late only for unanswered replies, address problems without deadlines, Record result / Close buttons, one reused Zoho window). Confirm the site reports `.44-WEB`. |
 | Inventory API Apps Script | `2026.10.10.42-APP` on `codex/work` | **Deployed 2026-10-10** (Replies redesign phase 1: a plain-words verdict on each bounce, display only; `.41` 5.1.7/5.1.8 refusals no longer mark an address Bad). |
 | Distribution Outreach Apps Script | `2026.10.10.32-APP` in `docs/reference/distribution-outreach/Code.gs` | **Deployed 2026-10-10** (`listSentInThreads`; reads only Inbox/Sales via `REPLY_CHECK_FOLDERS`, default `Sales`). Zoho reconnected with read scopes 2026-10-10. |
+| Public customer pages (`customer-signup.html`, `order.html`) | signup `2026.10.12.1`, order `2026.10.12.1-WEB` on `codex/work` | **Promoted to production 2026-10-12** (customer form fixes; pushed straight to production at Karl's request because a customer was blocked). Confirm `/customer-signup.html` reports `2026.10.12.1`. Static pages only; no Apps Script or proxy change. |
 | Public customer Netlify proxy | `2026.10.08.5-WEB` | **Deployed 2026-10-08** with the Netlify release. Forwards only the action on GET and drops server-only fields on POST; retries only a failed/non-JSON `listSkus` catalog read once; customer submissions remain single-attempt. |
 | Badger invoice parser (tracker-bound Apps Script) | `2026.10.08.3` in `docs/reference/badger-parser/Code.gs` | **Live tracker: `2026.10.08.3` installed and first Badger import done, 2026-10-08.** Apply Badger corrections fixed SS0161 ($162 → $243) and SS0101/SS0102 (duplicated lines); the 18 OCR customer-name differences were left as they are because the Sales Data customer table uses those spellings. Import: 165 listed, 0 new, 160 linked, 3 corrected, 2 void not imported. **Daily source switched to Badger, 2026-10-08** (the 5:45 am trigger now imports from Badger; invoice PDFs are no longer needed). Sales Data customer table rows 36–38 (J–L) added for Badger's spellings "Woodchuck's Bar and Grill", "Cujak's Wine and Spirits" and "Roscoe Oshkosh Inc, dba Red's Piggly Widdly" (straight apostrophe); both Sales Data checks read None. Staging tracker not updated. Watch: a new Badger product spelling may need a row in the Sales Data product table (N–O). |
 
@@ -29,6 +30,14 @@ Phase 5 deployment state: staging Inventory API `2026.10.01.5` and Netlify `2026
 - Outreach Campaigns UI: give **Create campaign** a visually distinct draft/primary color from the adjacent **Review campaign** buttons, so starting a new campaign cannot be mistaken for opening an existing one.
 
 Latest completed changes:
+
+- Customer form fixes (signup `2026.10.12.1`, order `2026.10.12.1-WEB`, `assets/customer-portal.css`; **promoted to production 2026-10-12**):
+  - Problem: a customer (The Wild Boar, Waupun) tried four times to submit the wholesale signup and was sent back up the page each time. The Website field was `type="url"`, which refuses `thewildboarwi.com` without `https://`; `reportValidity()` then jumped to that field and nothing was sent. iPhone Safari often hides the browser's message, so the page just jumped.
+  - Signup: Website is now a plain text field (`inputmode="url"`, placeholder `yourbusiness.com`); any domain or blank is accepted (the Apps Script already stored it as text).
+  - Order page: product lines left on "Choose a product" are now ignored instead of blocking the order (previously clicking **Add product** and not using the line made the order impossible to send). A chosen product needs a whole-number quantity 1–999.
+  - Both pages: no more silent jumps. A failed check shows a message by the submit button naming the field(s), a short note under each field, and scrolls to the first one; notes clear as the customer fixes them.
+  - Tested in headless Chromium with the server call intercepted: the customer's exact entries now submit; bare domain, https:// and blank websites all submit; missing/invalid fields and the unchecked authorization box show visible messages; an unused extra order line no longer blocks; quantities 0 and 1.5 show a message.
+  - Staff Hub (`index.html`) not changed: its URL-typed Website box saves with a button, not browser validation, so it cannot block. `sell-sheet.html` has no inputs.
 
 - Inbound reply checker (`2026.10.09.38-APP`, Distribution Outreach `2026.10.09.28-APP`, `2026.10.09.41-WEB`; merged into `codex/work`; second review: nothing blocking; **deployed 2026-10-10**): Outreach → **Replies**.
   - Every 15 minutes the Hub reads new Inbox messages through the mailer (read-only `listInboxMessages` / `getInboxMessage`; oldest 200 first, scanning up to 1,000) and keeps only mail addressed (To/Cc) to sales@ — karl@'s personal mail is never read into the sheet. Sure matches: a Directory email, a Notes "Alt email", an address we emailed, a Newsletter contact, or a bounce naming one of our recipients. Possible matches (listed, never acted on): a "Re:" from the only Directory business on that company domain (free-mail and our own domain excluded), or a "Re:" of a subject sent to exactly one business. Mailing-list mail (List-Id / List-Unsubscribe / bulk) is skipped. Each reply goes to the new **Inbound Replies** tab once (Zoho IDs stored as text) with the reply text (quoted history removed), business, how it matched, what we last sent, category, summary, suggested outcome, priority and respond-by time.

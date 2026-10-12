@@ -1,12 +1,12 @@
 <!doctype html>
-<!-- App version: 2026.10.05.20-WEB -->
+<!-- App version: 2026.10.12.1-WEB -->
 <html lang="en">
 <head>
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
-  <meta name="app-version" content="2026.10.05.20-WEB" />
+  <meta name="app-version" content="2026.10.12.1-WEB" />
   <title>Order request | Sturgeon Distribution Hub</title>
-  <link rel="stylesheet" href="/assets/customer-portal.css?v=2026.09.25.1" />
+  <link rel="stylesheet" href="/assets/customer-portal.css?v=2026.10.12.1" />
 </head>
 <body>
   <header class="siteHeader">
@@ -101,10 +101,10 @@
   <template id="orderLineTemplate">
     <div class="orderLine">
       <label class="productField">Product
-        <select class="productSelect" required></select>
+        <select class="productSelect"></select>
       </label>
       <label class="quantityField">Quantity
-        <input class="quantityInput" type="number" min="1" max="999" step="1" value="1" required inputmode="numeric" />
+        <input class="quantityInput" type="number" min="1" max="999" step="1" value="1" inputmode="numeric" />
       </label>
       <label>Unit
         <select class="unitSelect"><option>Bottles</option><option>Cases</option></select>
@@ -118,7 +118,7 @@
     "use strict";
     window.addEventListener("unhandledrejection", e => console.error("Unhandled promise rejection:", e.reason));
     window.addEventListener("error", e => console.error("Unhandled error:", e.error || e.message));
-    const APP_VERSION = "2026.10.05.20-WEB";
+    const APP_VERSION = "2026.10.12.1-WEB";
     const form = document.getElementById("orderForm");
     const linesEl = document.getElementById("orderLines");
     const loadingEl = document.getElementById("productLoading");
@@ -224,18 +224,79 @@
       }
     }
 
+    // Show visible messages instead of relying on the browser's validation bubble, which
+    // iPhone Safari often does not display. Product lines left on "Choose a product" are ignored.
+    function fieldLabel(control){
+      if (control.classList.contains("quantityInput")) return `Quantity (product ${[...linesEl.children].indexOf(control.closest(".orderLine")) + 1})`;
+      const label = control.closest("label");
+      const text = label ? [...label.childNodes].filter(n => n.nodeType === Node.TEXT_NODE).map(n => n.textContent).join(" ").trim() : "";
+      return text || "a required field";
+    }
+    function quantityProblem(input){
+      const line = input.closest(".orderLine");
+      if (!line.querySelector(".productSelect").value) return "";
+      const value = Number(input.value);
+      return Number.isInteger(value) && value >= 1 && value <= 999 && input.value.trim() !== "" ? "" : "Enter a whole number from 1 to 999.";
+    }
+    function clearFieldErrors(){
+      form.querySelectorAll(".fieldError").forEach(el => el.remove());
+      form.querySelectorAll("[aria-invalid]").forEach(el => el.removeAttribute("aria-invalid"));
+    }
+    function findProblems(){
+      const problems = [];
+      form.querySelectorAll("input, select, textarea").forEach(control => {
+        if (control.disabled || control.type === "hidden" || control.classList.contains("honeypot") || control.closest("[hidden]")) return;
+        if (control.classList.contains("quantityInput")) {
+          const message = quantityProblem(control);
+          if (message) problems.push({ control, message });
+          return;
+        }
+        if (control.classList.contains("productSelect") || control.classList.contains("unitSelect")) return;
+        if (!control.checkValidity()) problems.push({ control, message:control.validity.valueMissing ? "This is required." : control.validationMessage });
+      });
+      return problems;
+    }
+    function showProblems(problems, extra){
+      problems.forEach(({ control, message }) => {
+        control.setAttribute("aria-invalid", "true");
+        const note = document.createElement("span");
+        note.className = "fieldError";
+        note.textContent = message;
+        control.insertAdjacentElement("afterend", note);
+      });
+      const names = [...new Set(problems.map(item => fieldLabel(item.control)))];
+      status.className = "status error";
+      status.textContent = names.length
+        ? `Please fix ${names.length === 1 ? "this field" : "these fields"} and send again: ${names.join(", ")}.${extra ? ` ${extra}` : ""}`
+        : extra;
+      const first = problems[0] ? problems[0].control : linesEl.querySelector(".productSelect");
+      if (first) {
+        first.scrollIntoView({ behavior:"smooth", block:"center" });
+        first.focus({ preventScroll:true });
+      }
+    }
+    form.addEventListener("input", event => {
+      const target = event.target;
+      if (!target.getAttribute || !target.getAttribute("aria-invalid")) return;
+      const fixed = target.classList.contains("quantityInput") ? !quantityProblem(target) : target.checkValidity();
+      if (fixed) {
+        target.removeAttribute("aria-invalid");
+        const note = target.nextElementSibling;
+        if (note && note.classList.contains("fieldError")) note.remove();
+      }
+    });
+
     document.getElementById("addLineBtn").addEventListener("click", addLine);
     form.addEventListener("submit", async event => {
       event.preventDefault();
       status.className = "status";
       status.textContent = "";
-      if (!form.reportValidity()) return;
+      clearFieldErrors();
+      const problems = findProblems();
       const orderLines = collectLines();
-      if (!orderLines.length) {
-        status.className = "status error";
-        status.textContent = "Choose at least one product and quantity.";
-        return;
-      }
+      const anyChosen = [...linesEl.querySelectorAll(".productSelect")].some(select => select.value);
+      const noProducts = anyChosen ? "" : "Choose at least one product.";
+      if (problems.length || noProducts) { showProblems(problems, noProducts); return; }
       const data = new FormData(form);
       const payload = Object.fromEntries(data.entries());
       payload.action = "submitOnlineOrderRequest";
