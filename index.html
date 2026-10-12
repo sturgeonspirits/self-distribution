@@ -2547,7 +2547,7 @@
       <div class="modeNotice" style="margin-top:0"><i data-lucide="map-pin"></i><span>Choose the email stage first. Sales campaigns select recipients due for that stage and apply the location, fit, and optional criteria below. Preview first; creation only happens after you confirm the preview.</span></div>
       <div class="workflowEditGrid">
         <div class="full"><label>Campaign name</label><input id="outreachCampaignCriteriaName" maxlength="120" /></div>
-        <div><label>Campaign type</label><select id="outreachCampaignCriteriaType"><option value="sales_outreach" selected>Sales outreach</option><option value="cocktail_list">Cocktail list</option><option value="customer_invite">Current customers — order online invite</option></select></div>
+        <div><label>Campaign type</label><select id="outreachCampaignCriteriaType"><option value="sales_outreach" selected>Sales outreach</option><option value="cocktail_list">Cocktail list</option><option value="customer_invite">Current and lapsed customers — ordering link</option></select></div>
         <div data-campaign-sales-only><label>Stage</label><select id="outreachCampaignCriteriaStage"><option value="Initial" selected>Initial</option><option value="Follow-up 1">Follow-up 1 due</option><option value="Follow-up 2">Follow-up 2 due</option><option value="Nurture check-in">Nurture check-in due</option></select></div>
         <div data-campaign-sales-only><label>Only recipients of campaign (optional)</label><select id="outreachCampaignCriteriaSourceCampaign"><option value="">Any eligible recipient</option></select></div>
         <div data-campaign-sales-only><label>Center</label><select id="outreachCampaignCriteriaCenterType"><option value="distillery">Distillery (default)</option><option value="zip">ZIP</option><option value="city">City</option></select></div>
@@ -4896,7 +4896,7 @@
     const areaWarningCount = criteria && !["cocktail_list", "customer_invite"].includes(criteria.campaign_type) ? (campaign.recipients || []).filter(recipient => recipient.miles === null || recipient.miles === undefined || Number(recipient.miles) > maxMiles).length : 0;
     const criteriaSummary = !criteria ? "Legacy campaign • no stored criteria gate"
       : criteria.campaign_type === "cocktail_list" ? "Cocktail list • subscribed contacts"
-      : criteria.campaign_type === "customer_invite" ? "Current customers • order online invite"
+      : criteria.campaign_type === "customer_invite" ? "Current and lapsed customers • ordering link"
         : `${stage} • fit ≥${minFit} • ≤${maxMiles} mi of ${centerLabel}${criteria.source_campaign_id ? ` • from ${criteria.source_campaign_id}` : ""}`;
     $("outreachCampaignSubtitle").textContent = `${campaign.recipient_count} frozen recipients${excludedCount ? ` • ${excludedCount} excluded` : ""} • ${criteriaSummary}${areaWarningCount ? ` • ${areaWarningCount} need area review` : ""} • ${campaign.status}`;
     $("outreachCampaignNotice").textContent = campaign.status === "Review"

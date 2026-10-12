@@ -22,6 +22,11 @@
  *   Ordering Invite Date). Stored Email Editor text that still mentions the account form or approval is replaced by
  *   the new default wording automatically; edited text is kept. A Directory row without an Account ID is left out
  *   ("No Account ID on the Directory row"). The invite no longer needs Customer application URL.
+ * - Lapsed and win-back customers count as customers for the order-online invite (no Badger invoice in the last
+ *   12 months needed), and every outreach email to a Directory row with customer history (current, lapsed, win-back
+ *   or Existing customer status) links to that customer's own ordering page instead of the account form (tracked as
+ *   target "order" when tracking is configured). Everyone else's account-form link now carries everything the
+ *   Directory has (business, email, contact, phone, address, city, state, ZIP) so the form is filled in.
  * - Invite eligibility: "set up for online ordering" now means the link was actually emailed (an Order online invite or
  *   welcome send to that address). Accounts activated earlier without an email are no longer left out of the invite.
  *
@@ -2951,7 +2956,7 @@ function outreachRowsMatchingCell_(sheet, headerNames, value) {
 function apiRecordEmailEngagement_(p) {
   if (!p || String(p.event_type || "") !== "click") throw new Error("Only click engagement may be recorded.");
   const target = String(p.target || "").trim();
-  if (!["sell_sheet", "application"].includes(target)) throw new Error("Unknown email-link target.");
+  if (!["sell_sheet", "application", "order"].includes(target)) throw new Error("Unknown email-link target.");
   const accountId = String(p.account_id || "").trim();
   if (!accountId) throw new Error("Missing account ID.");
   const directory = getOutreachSheet_(OUTREACH_SHEET_NAME);
@@ -2984,7 +2989,7 @@ function apiRecordEmailEngagement_(p) {
   set("source", "Email link");
   set("target", target);
   set("stage", String(p.stage || "").trim());
-  set("link_url", target === "sell_sheet" ? "Sell sheet" : "Customer application");
+  set("link_url", target === "sell_sheet" ? "Sell sheet" : target === "order" ? "Ordering page" : "Customer application");
   set("confidence", possibleScanner ? "Possible link scanner" : "Signed link");
   set("app_version", APP_VERSION);
   engagement.appendRow(values);
@@ -3527,6 +3532,21 @@ function outreachTrackingUrl_(target, accountId, stage, settings, extras, testMo
   return `${baseUrl}${baseUrl.includes("?") ? "&" : "?"}${Object.keys(params).map(key => `${encodeURIComponent(key)}=${encodeURIComponent(params[key] || "")}`).join("&")}`;
 }
 
+// What the Directory already knows, passed to the account form or ordering page so the customer doesn't retype it.
+function outreachPrefillParams_(row) {
+  const value = keys => String(outreachValue_(row, keys) || "").trim();
+  return {
+    business:value(["business", "business_name"]),
+    email:value(["email", "email_address"]),
+    contact:value(["contact", "contact_name", "contact_person"]),
+    phone:value(["phone", "phone_number"]),
+    address:value(["address", "street_address"]),
+    city:value(["city"]),
+    state:value(["state"]),
+    zip:value(["zip_code", "zip", "postal_code"]),
+  };
+}
+
 function outreachMessage_(row, settings, draft, testMode) {
   const stage = String(outreachValue_(row, ["next_email", "stage"]) || "Initial");
   let keys;
@@ -3547,14 +3567,24 @@ function outreachMessage_(row, settings, draft, testMode) {
   const business = String(outreachValue_(row, ["business", "business_name"]) || "").trim();
   const email = String(outreachValue_(row, ["email", "email_address"]) || "").trim();
   const trackedSellSheet = outreachTrackingUrl_("sell_sheet", accountId, stage, settings, null, testMode);
+  const prefill = outreachPrefillParams_(row);
+  const prefillQuery = Object.keys(prefill).filter(key => prefill[key]).map(key => `${key}=${encodeURIComponent(prefill[key])}`).join("&");
   const directApplication = /^https:\/\/\S+$/i.test(applicationUrl)
-    ? `${applicationUrl}${applicationUrl.includes("?") ? "&" : "?"}account_id=${encodeURIComponent(accountId)}&business=${encodeURIComponent(business)}&email=${encodeURIComponent(email)}`
+    ? `${applicationUrl}${applicationUrl.includes("?") ? "&" : "?"}account_id=${encodeURIComponent(accountId)}${prefillQuery ? `&${prefillQuery}` : ""}`
     : "";
-  const trackedApplication = outreachTrackingUrl_("application", accountId, stage, settings, { business:business, email:email }, testMode);
-  const applicationSentence = stage === "Reactivation"
-    ? `If you'd like to set up online ordering with us, <a href="${escapeOutreachHtml_(trackedApplication || directApplication)}">complete our short wholesale account form</a>. It takes about five minutes.`
-    : `If you would like to get the account setup started, <a href="${escapeOutreachHtml_(trackedApplication || directApplication)}">complete our short wholesale customer application</a>.`;
-  const applicationLink = (trackedApplication || directApplication)
+  const trackedApplication = outreachTrackingUrl_("application", accountId, stage, settings, prefill, testMode);
+  // Anyone we have sold to gets their own ordering page instead of the account form.
+  const relationship = String(outreachValue_(row, ["relationship"]) || "").trim().toLowerCase();
+  const isPastCustomer = !!accountId && (OUTREACH_CUSTOMER_HISTORY_RELATIONSHIPS.includes(relationship) || String(outreachValue_(row, ["status"]) || "").trim().toLowerCase() === "existing customer");
+  const orderingLink = isPastCustomer
+    ? (outreachTrackingUrl_("order", accountId, stage, settings, prefill, testMode) || applicationOrderingUrl_(settings, accountId, "", business, email, prefill.contact))
+    : "";
+  const applicationSentence = isPastCustomer
+    ? `When you're ready to order, <a href="${escapeOutreachHtml_(orderingLink)}">use your ordering page</a>. It's already set up for ${escapeOutreachHtml_(outreachDisplayBusinessName_(business) || "your business")}, so there's nothing to fill out.`
+    : stage === "Reactivation"
+    ? `If you'd like to set up online ordering with us, <a href="${escapeOutreachHtml_(trackedApplication || directApplication)}">complete our short wholesale account form</a>. We've filled in what we already have.`
+    : `If you would like to get the account setup started, <a href="${escapeOutreachHtml_(trackedApplication || directApplication)}">complete our short wholesale customer application</a>. We've filled in what we already have.`;
+  const applicationLink = (isPastCustomer || trackedApplication || directApplication)
     ? `<p>${applicationSentence}</p>`
     : "";
   const template = String(settings[keys[1]] || "");
@@ -4252,7 +4282,8 @@ let __CUSTOMER_INVITE_SENT_EMAILS = null;
 function customerInviteReason_(record, badger) {
   const relationship = String(record.relationship || "").trim().toLowerCase();
   const status = String(record.status || "").trim().toLowerCase();
-  if (OUTREACH_CUSTOMER_RELATIONSHIPS.includes(relationship)) return String(record.relationship).trim();
+  // Anyone we have sold to (current, lapsed or win-back) gets their own ordering link; we already have their information.
+  if (OUTREACH_CUSTOMER_HISTORY_RELATIONSHIPS.includes(relationship)) return String(record.relationship).trim();
   if (status === "existing customer") return "Existing customer";
   if (record.account_id && badger.strong.has(record.account_id)) return "Badger invoice in the last 12 months";
   if (record.account_id && badger.name_only.has(record.account_id) && OUTREACH_CUSTOMER_HISTORY_RELATIONSHIPS.includes(relationship)) {

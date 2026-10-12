@@ -1,12 +1,12 @@
 <!doctype html>
-<!-- App version: 2026.10.12.1 -->
+<!-- App version: 2026.10.12.2 -->
 <html lang="en">
 <head>
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
-  <meta name="app-version" content="2026.10.12.1" />
+  <meta name="app-version" content="2026.10.12.2" />
   <title>Wholesale application | Sturgeon Distribution Hub</title>
-  <link rel="stylesheet" href="/assets/customer-portal.css?v=2026.10.12.1" />
+  <link rel="stylesheet" href="/assets/customer-portal.css?v=2026.10.12.2" />
 </head>
 <body>
   <header class="siteHeader">
@@ -221,7 +221,7 @@
     "use strict";
     window.addEventListener("unhandledrejection", e => console.error("Unhandled promise rejection:", e.reason));
     window.addEventListener("error", e => console.error("Unhandled error:", e.error || e.message));
-    const APP_VERSION = "2026.10.12.1";
+    const APP_VERSION = "2026.10.12.2";
     const form = document.getElementById("customerForm");
     const status = document.getElementById("customerStatus");
     const submit = document.getElementById("submitCustomerBtn");
@@ -242,6 +242,14 @@
       if (email) form.elements.ordering_email.defaultValue = email;
       if (email && !form.elements.primary_email.value) form.elements.primary_email.value = email;
       if (email && !form.elements.ordering_email.value) form.elements.ordering_email.value = email;
+      // Anything else the Directory already knows, so returning customers don't retype it.
+      [["contact", "primary_contact_name"], ["phone", "primary_phone"], ["address", "delivery_address_1"], ["city", "delivery_city"], ["state", "delivery_state"], ["zip", "delivery_zip"]].forEach(([param, field]) => {
+        let value = (link.get(param) || "").trim();
+        if (!value) return;
+        if (param === "state") { value = value.toUpperCase(); if (value === "WISCONSIN") value = "WI"; if (value.length !== 2) return; }
+        form.elements[field].defaultValue = value;
+        if (!form.elements[field].value || (param === "state" && form.elements[field].value === "WI")) form.elements[field].value = value;
+      });
     }
     applyLinkContext();
     window.addEventListener("pageshow", applyLinkContext);

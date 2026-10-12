@@ -1,8 +1,10 @@
 // App version: 2026.10.10.44-WEB
 import { createHmac, timingSafeEqual } from "node:crypto";
 
-const APP_VERSION = "2026.10.10.44-WEB";
-const TRACKED_TARGETS = new Set(["sell_sheet", "application"]);
+const APP_VERSION = "2026.10.12.45-WEB";
+const TRACKED_TARGETS = new Set(["sell_sheet", "application", "order"]);
+// Directory details carried through so the form or ordering page is filled in for the customer.
+const PREFILL_PARAMS = ["business", "email", "contact", "phone", "address", "city", "state", "zip"];
 const BOT_USER_AGENT = /(bot|crawler|spider|preview|slackbot|facebookexternalhit|linkedinbot|twitterbot|discordbot|whatsapp|googleimageproxy|proofpoint|mimecast|barracuda|urlscan|virustotal|safelinks|security|scanner|curl|wget)/i;
 const PUBLIC_SITE_URL_FALLBACK = "https://distribution.sturgeonspirits.com";
 const SELL_SHEET_ACCESS_SECONDS = 90 * 24 * 60 * 60;
@@ -52,10 +54,9 @@ function destinationFor(target, params, allowSellSheetAccess) {
     if (token) destination.searchParams.set("access", token);
     return destination.toString();
   }
-  const destination = new URL("/customer-signup.html", publicSiteUrl());
+  const destination = new URL(target === "order" ? "/order.html" : "/customer-signup.html", publicSiteUrl());
   destination.searchParams.set("account_id", params.get("a") || "");
-  destination.searchParams.set("business", params.get("business") || "");
-  destination.searchParams.set("email", params.get("email") || "");
+  PREFILL_PARAMS.forEach(key => { const value = params.get(key) || ""; if (value) destination.searchParams.set(key, value.slice(0, 200)); });
   return destination.toString();
 }
 
