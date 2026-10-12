@@ -1,10 +1,10 @@
 <!doctype html>
-<!-- App version: 2026.10.12.45-WEB -->
+<!-- App version: 2026.10.12.46-WEB -->
 <html>
 <head>
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover"/>
-  <meta name="app-version" content="2026.10.12.45-WEB" />
+  <meta name="app-version" content="2026.10.12.46-WEB" />
   <meta name="theme-color" content="#536f77" />
   <link rel="icon" href="/assets/distribution-hub-icon.svg" type="image/svg+xml" />
   <link rel="manifest" href="/site.webmanifest" />
@@ -2732,7 +2732,7 @@
 
   <footer style="max-width:1200px;margin:18px auto 120px;padding:0 12px;text-align:center;color:#6b7280;font-size:12px;">
     Designed by <a href="https://scriptspirit.dev" target="_blank" rel="noopener noreferrer" style="color:#1d4ed8;text-decoration:none;font-weight:700;">Script Spirit</a>
-<span id="appVersionFooter"> • Version 2026.10.12.45-WEB</span>
+<span id="appVersionFooter"> • Version 2026.10.12.46-WEB</span>
   </footer>
 
 
@@ -2755,7 +2755,7 @@
   window.addEventListener("unhandledrejection", e => console.error("Unhandled promise rejection:", e.reason));
   window.addEventListener("error", e => console.error("Unhandled error:", e.error || e.message));
   const $ = (id) => document.getElementById(id);
-  const APP_VERSION = "2026.10.12.45-WEB";
+  const APP_VERSION = "2026.10.12.46-WEB";
   $("appVersionFooter").textContent = ` • Version ${APP_VERSION}`;
   function screenCacheKey(screen){ return `distribution_hub:${APP_VERSION}:${staffSession?.email || "unknown"}:${screen}`; }
   function readScreenCache(screen){
@@ -2791,9 +2791,8 @@
   const OUTREACH_AUDIENCE_PRESETS = ["weekly", "distance_needed", "follow_up_due", "interested", "contact_issues"];
   const OUTREACH_FOLLOW_UP_OUTCOMES = ["Interested", "Schedule tasting", "Follow up later", "Visit in person"];
   const OUTREACH_INTERESTED_OUTCOMES = [...OUTREACH_FOLLOW_UP_OUTCOMES, "Tasting visit"];
-  let outreachAudiencePreset = OUTREACH_AUDIENCE_PRESETS.includes(localStorage.getItem("outreach_audience"))
-    ? localStorage.getItem("outreach_audience")
-    : "all";
+  // "Who to show" always starts on All businesses; the last choice is not restored.
+  let outreachAudiencePreset = "all";
   let outreachSort = ["recommended", "distance", "fit", "business"].includes(localStorage.getItem("outreach_sort"))
     ? localStorage.getItem("outreach_sort")
     : "recommended";
@@ -2838,7 +2837,8 @@
   let customerFilterText = "";
   // The pass-through panel is long; keep it collapsed unless staff open it, so search results stay in view.
   let badgerPassThroughOpen = false;
-  let customerStatusFilter = ["accounts", "invoices"].includes(customerView) ? "all" : "active";
+  // Every list starts on All (Karl, 2026-10-12); narrower filters are a choice, never the default.
+  let customerStatusFilter = "all";
   let customerLoaded = false;
   let customerWorkQueueLoadRequest = 0;
   let selectedCustomerRecord = null;
@@ -3208,7 +3208,7 @@
 
   function updateCustomerStatusOptions(){
     const options = customerStatusOptions();
-    if (!options.some(option => option.value === customerStatusFilter)) customerStatusFilter = ["accounts", "invoices"].includes(customerView) ? "all" : "active";
+    if (!options.some(option => option.value === customerStatusFilter)) customerStatusFilter = "all";
     $("customerStatusFilter").innerHTML = options.map(option =>
       `<option value="${escapeHtml(option.value)}" ${option.value === customerStatusFilter ? "selected" : ""}>${escapeHtml(option.label)}</option>`
     ).join("");
@@ -4206,7 +4206,7 @@
     return `https://www.google.com/maps/dir/?api=1&destination=${encodeURIComponent(destination)}`;
   }
 
-  // ---------- Replies (inbound reply checker, 2026.10.12.45-WEB) ----------
+  // ---------- Replies (inbound reply checker, 2026.10.10.44-WEB) ----------
   async function loadOutreachReplies(){
     if (outreachRepliesLoading) return outreachRepliesLoading;
     outreachRepliesLoading = (async () => {
@@ -4884,7 +4884,7 @@
     if (!res.ok) throw new Error(res.error || "Campaign could not be loaded.");
     selectedOutreachCampaign = res.campaign;
     const campaign = selectedOutreachCampaign;
-    if (campaignRecipientView.campaignId !== campaign.campaign_id) campaignRecipientView = { campaignId:campaign.campaign_id, search:"", filter:["Review", "Approved"].includes(campaign.status) ? "unsent" : "all", sort:"name", selected:new Set() };
+    if (campaignRecipientView.campaignId !== campaign.campaign_id) campaignRecipientView = { campaignId:campaign.campaign_id, search:"", filter:"all", sort:"name", selected:new Set() };
     selectedCampaignApprovalToken = campaign.approval_token || "";
     $("outreachCampaignTitle").textContent = campaign.name;
     const excludedCount = Number(campaign.counts?.Excluded || 0);
@@ -8084,13 +8084,13 @@
   });
   $("applicationsViewBtn").addEventListener("click", () => {
     customerView = "applications";
-    customerStatusFilter = "active";
+    customerStatusFilter = "all";
     localStorage.setItem("customer_work_view", customerView);
     renderCustomerWorkflow();
   });
   $("ordersViewBtn").addEventListener("click", () => {
     customerView = "online_requests";
-    customerStatusFilter = "active";
+    customerStatusFilter = "all";
     localStorage.setItem("customer_work_view", customerView);
     renderCustomerWorkflow();
   });
@@ -8226,7 +8226,6 @@
     outreachAudiencePreset = OUTREACH_AUDIENCE_PRESETS.includes($("outreachAudiencePreset").value)
       ? $("outreachAudiencePreset").value
       : "all";
-    localStorage.setItem("outreach_audience", outreachAudiencePreset);
     if (outreachAudiencePreset !== "all") {
       outreachView = "directory";
       localStorage.setItem("outreach_view", outreachView);

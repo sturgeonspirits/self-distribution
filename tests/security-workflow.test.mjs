@@ -1122,15 +1122,16 @@ test("Inbound reply checker: matching, quoted-text removal, stop rules, respond-
   assert.match(html, /\.\.\.\(outcomeReplyId \? \{ reply_id:outcomeReplyId \} : \{\}\)/);
 });
 
-test("Order online invite: audience, opt-outs, once per address, and the message always carries the form link and footer", async () => {
+test("Order online invite: current and lapsed customers, opt-outs, once per account, and the message carries their own ordering link and footer", async () => {
   const backend = await readFile(new URL("apps-script/Code.gs", root), "utf8");
   // Each function runs to the next top-level declaration (brace counting would trip on regex braces).
   const fn = name => { const start = backend.indexOf(`\nfunction ${name}(`) + 1; assert.ok(start > 0, name); const end = backend.slice(start + 1).search(/\n(function |const |let |\/\/ ----)/); return backend.slice(start, start + 1 + end); };
   const sentEmails = new Set(["invited@example.test"]);
-  const rules = new Function("OUTREACH_CUSTOMER_RELATIONSHIPS", "OUTREACH_CUSTOMER_HISTORY_RELATIONSHIPS", "customerInviteSentEmails_", "outreachCrossSendCooldownReason_",
-    `${fn("customerInviteReason_")}\n${fn("customerInviteIsCustomer_")}\n${fn("customerInviteEligibility_")}\nreturn { isCustomer:customerInviteIsCustomer_, reason:customerInviteReason_, eligibility:customerInviteEligibility_ };`)(
+  const sentAccounts = new Set(["ACC-WELCOMED"]);
+  const rules = new Function("OUTREACH_CUSTOMER_RELATIONSHIPS", "OUTREACH_CUSTOMER_HISTORY_RELATIONSHIPS", "customerInviteSentEmails_", "customerInviteSentAccounts_", "outreachCrossSendCooldownReason_",
+    `${fn("customerInviteReason_")}\n${fn("customerInviteIsCustomer_")}\n${fn("customerDoNotEmailIsAutomatic_")}\n${fn("customerInviteEligibility_")}\nreturn { isCustomer:customerInviteIsCustomer_, reason:customerInviteReason_, eligibility:customerInviteEligibility_ };`)(
     ["current customer", "customer", "existing customer"], ["current customer", "customer", "existing customer", "lapsed customer", "win-back due"],
-    () => sentEmails, email => email === "recent@example.test" ? "Another cocktail list email was sent within the last 14 days" : "");
+    () => sentEmails, () => sentAccounts, email => email === "recent@example.test" ? "Another cocktail list email was sent within the last 14 days" : "");
   assert.match(backend, /const OUTREACH_CUSTOMER_HISTORY_RELATIONSHIPS = OUTREACH_CUSTOMER_RELATIONSHIPS\.concat\(\["lapsed customer", "win-back due"\]\);/);
   const recent = { strong:new Set(["ACC-BADGER"]), name_only:new Map([["ACC-NAME", "FOX AND CROW"]]) };
   assert.ok(rules.isCustomer({ relationship:"Current customer" }, recent));
@@ -1139,48 +1140,65 @@ test("Order online invite: audience, opt-outs, once per address, and the message
   assert.ok(!rules.isCustomer({ relationship:"Prospect", account_id:"ACC-OTHER" }, recent));
   assert.equal(rules.reason({ relationship:"Prospect", account_id:"ACC-BADGER" }, recent), "Badger invoice in the last 12 months");
   assert.equal(rules.reason({ status:"Existing customer" }, recent), "Existing customer");
-  // A name-only Badger match counts only on a row with customer history.
-  assert.equal(rules.reason({ relationship:"Win-back due", account_id:"ACC-NAME" }, recent), "Win-back due with a Badger invoice in the last 12 months (matched by business name; Relationship may need updating)");
-  assert.equal(rules.reason({ relationship:"Lapsed customer", account_id:"ACC-NAME" }, recent), "Lapsed customer with a Badger invoice in the last 12 months (matched by business name; Relationship may need updating)");
+  // Lapsed and win-back customers get their ordering link on their own (Karl, 2026-10-12); no recent invoice needed.
+  assert.equal(rules.reason({ relationship:"Win-back due", account_id:"ACC-NAME" }, recent), "Win-back due");
+  assert.equal(rules.reason({ relationship:"Lapsed customer", account_id:"ACC-OTHER" }, recent), "Lapsed customer");
   assert.ok(!rules.isCustomer({ relationship:"Prospect", account_id:"ACC-NAME" }, recent), "a name-only match into a Prospect row is not invited");
   assert.ok(!rules.isCustomer({ relationship:"", account_id:"ACC-NAME" }, recent), "a name-only match into a blank Relationship is not invited");
-  assert.ok(!rules.isCustomer({ relationship:"Win-back due", account_id:"ACC-OTHER" }, recent), "Win-back due alone, without a recent invoice, is not a current customer");
-  assert.ok(!rules.isCustomer({ relationship:"Win-back due" }, recent), "no account id, no Badger match");
-  const ok = { email:"owner@bar.test", status:"Existing customer", outcome:"", do_not_email:false, program_ordering_status:"Not offered", email_confidence:"" };
+  assert.ok(rules.isCustomer({ relationship:"Win-back due", account_id:"ACC-OTHER" }, recent), "Win-back due counts without a recent invoice");
+  const ok = { account_id:"ACC-OK", email:"owner@bar.test", status:"Existing customer", relationship:"Current customer", outcome:"", do_not_email:false, customer_source:"", program_ordering_status:"Not offered", email_confidence:"" };
   assert.deepEqual(rules.eligibility(ok), []);
+  assert.deepEqual(rules.eligibility({ ...ok, account_id:"" }), ["No Account ID on the Directory row"], "no Account ID, no ordering link");
   assert.deepEqual(rules.eligibility({ ...ok, email:"" }), ["No email on file"]);
   assert.deepEqual(rules.eligibility({ ...ok, do_not_email:true }), ["Do Not Email is ticked"]);
+  // Review P1: the Do Not Email that approval ticks automatically does not block the customer's own link.
+  assert.deepEqual(rules.eligibility({ ...ok, do_not_email:true, customer_source:"Application APP-20261001-AB12" }), []);
+  assert.deepEqual(rules.eligibility({ ...ok, do_not_email:true, customer_source:"Application APP-1", outcome:"Unsubscribed" }), ["Business is excluded from email"], "a real opt-out still blocks");
+  assert.deepEqual(rules.eligibility({ ...ok, do_not_email:true, customer_source:"Application APP-1", relationship:"Prospect", status:"Sent" }), ["Do Not Email is ticked"], "the automatic rule needs customer history");
   assert.deepEqual(rules.eligibility({ ...ok, outcome:"Unsubscribed" }), ["Business is excluded from email"]);
-  assert.deepEqual(rules.eligibility({ ...ok, program_ordering_status:"Active" }), ["Already set up for online ordering"]);
+  // Only an emailed link counts as set up: accounts activated earlier without an email are still invited.
+  assert.deepEqual(rules.eligibility({ ...ok, program_ordering_status:"Active" }), []);
+  assert.deepEqual(rules.eligibility({ ...ok, program_ordering_status:"Active", email:"invited@example.test" }), ["Already has their ordering link"]);
   assert.deepEqual(rules.eligibility({ ...ok, email:"Invited@Example.test" }), ["Invite already sent"]);
+  // Review P2: a welcome or invite to any address of the account suppresses the account.
+  assert.deepEqual(rules.eligibility({ ...ok, account_id:"ACC-WELCOMED" }), ["Invite already sent"]);
   assert.deepEqual(rules.eligibility({ ...ok, email_confidence:"Guessed" }), ["Recipient email is not verified"]);
   assert.match(rules.eligibility({ ...ok, email:"recent@example.test" }).join(";"), /14 days/);
 
   const settings = { "Physical mailing address":"2663 Oregon St, Oshkosh WI", "Customer application URL":"https://distribution.example/customer-signup.html",
     "Customer invite subject":"Online ordering is open for {{Business Name}}", "Customer invite greeting":"Hi {{First Name}},", "Customer invite intro":"Thanks for carrying us at {{Business Name}}.",
     "Customer invite steps":"", "Customer invite link text":"Set up online ordering", "Customer invite sign-off":"Thanks" };
-  const inviteApi = new Function("OUTREACH_CUSTOMER_INVITE_STAGE", "outreachTrackingUrl_", "outreachDisplayBusinessName_", "outreachHtmlToPlainText_",
-    `${fn("escapeOutreachHtml_")}\n${fn("renderOutreachTemplate_")}\n${fn("outreachPlainTextToHtml_")}\n${fn("customerInviteFooterHtml_")}\n${fn("customerInviteValues_")}\n${fn("customerInviteMessage_")}\nreturn { message:customerInviteMessage_, footer:customerInviteFooterHtml_, plainToHtml:outreachPlainTextToHtml_ };`)(
-    "Order online invite", () => "", name => name, html => html.replace(/<\/p>/g, "\n\n").replace(/<[^>]+>/g, "").trim());
+  const constBlock = name => { const start = backend.indexOf(`\nconst ${name} = `) + 1; assert.ok(start > 0, name); return backend.slice(start, backend.indexOf("];\n", start) + 3); };
+  const legacyBlock = backend.slice(backend.indexOf("\nconst CUSTOMER_INVITE_LEGACY_TEXT = ") + 1, backend.indexOf("};\n", backend.indexOf("\nconst CUSTOMER_INVITE_LEGACY_TEXT = ")) + 3);
+  const inviteApi = new Function("OUTREACH_CUSTOMER_INVITE_STAGE", "outreachTrackingUrl_", "outreachDisplayBusinessName_", "outreachHtmlToPlainText_", "publicSiteUrl_",
+    `${constBlock("OUTREACH_CUSTOMER_INVITE_EDITOR_ROWS")}\n${legacyBlock}\n${fn("customerInviteSetting_")}\n${fn("applicationOrderingUrl_")}\n${fn("escapeOutreachHtml_")}\n${fn("renderOutreachTemplate_")}\n${fn("outreachPlainTextToHtml_")}\n${fn("customerInviteFooterHtml_")}\n${fn("customerInviteValues_")}\n${fn("customerInviteMessage_")}\nreturn { message:customerInviteMessage_, footer:customerInviteFooterHtml_, plainToHtml:outreachPlainTextToHtml_ };`)(
+    "Order online invite", () => "", name => name, html => html.replace(/<\/p>/g, "\n\n").replace(/<[^>]+>/g, "").trim(), () => "https://distribution.example");
   const message = inviteApi.message;
   const record = { account_id:"ACC-1", business:"Fox & Crow", email:"owner@fox.test", contact:"Pat Smith", city:"Oshkosh" };
   const m = message(record, settings);
   assert.equal(m.subject, "Online ordering is open for Fox & Crow");
   assert.match(m.html, /<p>Hi Pat,<\/p>/);
   assert.match(m.html, /<p>Thanks for carrying us at Fox &amp; Crow\.<\/p>/, "merged values are escaped; Email Editor text is used as written");
-  assert.match(m.html, /href="https:\/\/distribution\.example\/customer-signup\.html\?account_id=ACC-1&amp;business=Fox%20%26%20Crow&amp;email=owner%40fox\.test">Set up online ordering<\/a>/);
+  // Current customers get their own ordering page (filled in), never the account form; the old stored link text is replaced.
+  assert.match(m.html, /href="https:\/\/distribution\.example\/order\.html\?account_id=ACC-1&amp;customer_id=&amp;business=Fox%20%26%20Crow&amp;email=owner%40fox\.test&amp;contact=Pat%20Smith">Open your ordering page<\/a>/);
+  assert.doesNotMatch(m.html, /customer-signup|account form|approved/i);
+  assert.match(m.html, /nothing to fill out/, "empty stored steps text falls back to the no-form wording");
+  const legacy = message(record, { ...settings, "Customer invite steps":"Setting up takes about five minutes: fill in our short wholesale account form, and we'll send your ordering link as soon as it's approved." });
+  assert.doesNotMatch(legacy.html, /account form|as soon as it/, "old stored form wording is replaced");
+  assert.match(message(record, { ...settings, "Customer invite steps":"Karl's own words." }).html, /Karl's own words\./, "edited wording is kept");
   assert.match(m.html, /<p>Thanks<\/p><p>2663 Oregon St, Oshkosh WI<\/p><p>Reply stop to unsubscribe\.<\/p>$/);
   // Review fix: the link lives in the footer, which every path re-attaches, so a staff edit keeps it.
-  assert.doesNotMatch(m.body_text, /Set up online ordering/, "the editable text has no link words to lose");
-  assert.match(m.footer_html, /^<p><a href="https:\/\/distribution\.example\/customer-signup\.html\?account_id=ACC-1/);
+  assert.doesNotMatch(m.body_text, /Open your ordering page/, "the editable text has no link words to lose");
+  assert.match(m.footer_html, /^<p><a href="https:\/\/distribution\.example\/order\.html\?account_id=ACC-1/);
   const edited = inviteApi.plainToHtml(m.body_text.replace("Thanks for carrying", "Thank you so much for carrying")) + inviteApi.footer(record, settings);
-  assert.match(edited, /href="https:\/\/distribution\.example\/customer-signup\.html\?account_id=ACC-1/);
+  assert.match(edited, /href="https:\/\/distribution\.example\/order\.html\?account_id=ACC-1/);
   assert.match(edited, /Thank you so much for carrying/);
   // The edit path's footer comes from the frozen recipient row, so it carries the same link.
   assert.match(fn("campaignRecipientFooterHtml_"), /OUTREACH_CUSTOMER_INVITE_STAGE\) \{\s*return customerInviteFooterHtml_\(\{ account_id:recipient\.values\[rh\.account_id\]/);
-  assert.throws(() => message(record, { ...settings, "Customer application URL":"" }), /Customer application URL/);
+  assert.doesNotThrow(() => message(record, { ...settings, "Customer application URL":"" }), "the invite no longer needs the account-form URL");
+  assert.throws(() => message({ ...record, account_id:"" }, settings), /no Account ID/);
   assert.throws(() => message(record, { ...settings, "Physical mailing address":"" }), /Physical mailing address/);
-  assert.throws(() => message(record, { ...settings, "Customer invite subject":"" }), /CUSTOMER ORDER INVITE EMAIL/);
+  assert.equal(message(record, { ...settings, "Customer invite subject":"" }).subject, "Online ordering is open for Fox & Crow", "a blank stored subject uses the default");
 
   // A failed Badger read stops the preview instead of silently shrinking the audience.
   assert.match(fn("customerInviteBadgerMatches_"), /__OUTREACH_RECENT_BADGER_INVOICE_LOOKUP_FAILED \|\| !__OUTREACH_RECENT_BADGER_MATCHES\) throw new Error/);
@@ -1203,7 +1221,7 @@ test("Order online invite: audience, opt-outs, once per address, and the message
   assert.match(sendSource, /if \(!prior && live\.reasons\.length\) throw/);
   assert.doesNotMatch(sendSource, /finalizeOutreachSend_|advanceOutreachSend_/);
   const index = await readFile(new URL("index.html", root), "utf8");
-  assert.match(index, /<option value="customer_invite">Current customers — order online invite<\/option>/);
+  assert.match(index, /<option value="customer_invite">Current and lapsed customers — ordering link<\/option>/);
 });
 
 test("Distribution Outreach sendCustomerEmail refuses opt-outs, changed rows, other stages and repeat invites", async () => {
@@ -1342,7 +1360,8 @@ test("the canonical-host redirect is first and public-site URL migration is safe
   assert.deepEqual(migration.rewritePublicSiteUrls_(), { changed:1, unchanged:2 });
   assert.equal(writes[0].value, "https://distribution.sturgeonspirits.com/order.html?account_id=ACC-1&customer_id=C-1");
   assert.deepEqual(migration.rewritePublicSiteUrls_(), { changed:0, unchanged:3 }, "a second migration does not rewrite anything");
-  assert.match(backend, /set\("ordering_portal_url", `\$\{publicSiteUrl_\(settings\)\}\/order\.html\?/);
+  assert.match(backend, /return `\$\{publicSiteUrl_\(settings\)\}\/order\.html\?\$\{params\.join\("&"\)\}`;/);
+  assert.match(backend, /set\("ordering_portal_url", applicationOrderingUrl_\(settings, account\.account_id,/);
   assert.match(backend, /public_site_added_settings/);
 });
 
@@ -1523,7 +1542,7 @@ test("Karl-only test rendering supplies non-empty HTML with an unsigned x=test m
   const backend = await readFile(new URL("apps-script/Code.gs", root), "utf8");
   const rendererSource = backend.slice(backend.indexOf("function outreachPlainTextToHtml_"), backend.indexOf("function outreachFieldLabel_"));
   const renderMessage = new Function(
-    "Utilities", "PropertiesService", "outreachValue_", "outreachSegmentTemplateKey_", "outreachDisplayBusinessName_", "escapeOutreachHtml_", "outreachTemplateParts_", "renderOutreachTemplate_", "outreachMonthlyContentValues_", "outreachHasRecentBadgerInvoice_",
+    "Utilities", "PropertiesService", "outreachValue_", "outreachSegmentTemplateKey_", "outreachDisplayBusinessName_", "escapeOutreachHtml_", "outreachTemplateParts_", "renderOutreachTemplate_", "outreachMonthlyContentValues_", "outreachHasRecentBadgerInvoice_", "OUTREACH_CUSTOMER_HISTORY_RELATIONSHIPS", "applicationOrderingUrl_",
     `${rendererSource}\nreturn outreachMessage_;`
   )(
     {
@@ -1538,7 +1557,9 @@ test("Karl-only test rendering supplies non-empty HTML with an unsigned x=test m
     template => ({ body:String(template || ""), footer:"{{Sell Sheet Link}}" }),
     (template, values) => String(template || "").replace(/{{([^}]+)}}/g, (_, key) => values[key.trim()] || ""),
     () => ({}),
-    () => false
+    () => false,
+    ["current customer", "customer", "existing customer", "lapsed customer", "win-back due"],
+    (settings, accountId) => `https://distribution.example/order.html?account_id=${accountId}`
   );
   const message = renderMessage(
     { account_id:"ACC-1", next_email:"Initial", business:"Example Bar", email:"orders@example.test", contact:"Alex" },
@@ -1851,7 +1872,7 @@ test("source contains formula protection, global error listeners, and recoverabl
   assert.match(backend, /trackedSellSheet \|\| sellSheet/);
   assert.match(backend, /trackedApplication \|\| directApplication/);
   const inventoryMessageSource = backend.slice(backend.indexOf("function outreachMessage_"), backend.indexOf("function outreachRecord_"));
-  assert.match(inventoryMessageSource, /const applicationLink = \(trackedApplication \|\| directApplication\)/);
+  assert.match(inventoryMessageSource, /const applicationLink = \(isPastCustomer \|\| trackedApplication \|\| directApplication\)/);
   assert.doesNotMatch(inventoryMessageSource, /stage === "Initial" && \(trackedApplication/);
   assert.match(inventoryMessageSource, /stage === "Reactivation"/);
   assert.match(inventoryMessageSource, /If you'd like to set up online ordering with us/);
