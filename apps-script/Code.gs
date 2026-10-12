@@ -14,7 +14,14 @@
  *   ordering link. A sent welcome records Welcome Email Sent At / Sent By / Recipient / Message ID on the application,
  *   sets the program's Ordering Invite Date, and moves the application to "Account active" (which now means approved
  *   and welcomed). A second send needs an explicit "Send again".
- * - The ordering link now also carries the business name and ordering email, so the order page fills them in.
+ * - The ordering link now also carries the business name, ordering email and contact name, so the order page fills them
+ *   in and a reorder is only choosing products.
+ * - Current customers no longer get sent to the new-customer account form. The "Order online invite" campaign now
+ *   puts each customer's own ordering link in the email (account, business, email and contact filled in), and a sent
+ *   invite marks the account set up for online ordering (Outreach Programs: Ordering Status Active, Ordering Portal URL,
+ *   Ordering Invite Date). Stored Email Editor text that still mentions the account form or approval is replaced by
+ *   the new default wording automatically; edited text is kept. A Directory row without an Account ID is left out
+ *   ("No Account ID on the Directory row"). The invite no longer needs Customer application URL.
  *
  * CHANGES IN 2026.10.10.42-APP
  * - Replies view (web 2026.10.10.44-WEB): each bounce now carries a plain-words verdict (`bounce`: dead, probably dead,
@@ -1058,12 +1065,12 @@ const OUTREACH_COCKTAIL_LIST_SETTINGS = [
 // address/unsubscribe footer are added by the code, so the template cannot leave them out.
 const OUTREACH_CUSTOMER_INVITE_STAGE = "Order online invite";
 const OUTREACH_CUSTOMER_INVITE_EDITOR_ROWS = [
-  { label:"CUSTOMER ORDER INVITE EMAIL", value:"", note:"Invites current customers to set up online ordering. The account-form link and the address / unsubscribe footer are added automatically." },
+  { label:"CUSTOMER ORDER INVITE EMAIL", value:"", note:"Sends current customers their own ordering link. No form: the link is already set up for their account. The link and the address / unsubscribe footer are added automatically." },
   { label:"Customer invite subject", value:"Online ordering is open for {{Business Name}}", note:"Merge fields: {{First Name}}, {{Business Name}}, {{City}}." },
   { label:"Customer invite greeting", value:"Hi {{First Name}},", note:"First line of the email." },
   { label:"Customer invite intro", value:"Thank you for carrying Sturgeon Spirits. You can now place your wholesale orders with us online.", note:"Why you are writing." },
-  { label:"Customer invite steps", value:"Setting up takes about five minutes: fill in our short wholesale account form, and we'll send your ordering link as soon as it's approved.", note:"What they do next. The link follows this line." },
-  { label:"Customer invite link text", value:"Set up online ordering", note:"The words of the link to the account form." },
+  { label:"Customer invite steps", value:"There's nothing to fill out. The link below is already set up for {{Business Name}}: pick products and quantities, by the bottle or by the case, and we'll confirm the delivery day. Bookmark it for reorders.", note:"What they do next. Their ordering link follows this line." },
+  { label:"Customer invite link text", value:"Open your ordering page", note:"The words of the link to the customer's own ordering page." },
   { label:"Customer invite sign-off", value:"Questions? Just reply to this email. Thank you, Sturgeon Spirits", note:"Last line before the footer." },
 ];
 const OUTREACH_CUSTOMER_INVITE_SETTINGS = OUTREACH_CUSTOMER_INVITE_EDITOR_ROWS.slice(1).map(item => ({ key:item.label, label:item.label }));
@@ -4291,6 +4298,7 @@ function customerInviteEligibility_(record) {
   const outcome = String(record.outcome || "").trim().toLowerCase();
   const confidence = String(record.email_confidence || "").trim().toLowerCase();
   const optOut = ["do not contact", "not interested", "unsubscribed", "bad address"];
+  if (!String(record.account_id || "").trim()) reasons.push("No Account ID on the Directory row");
   if (!email) reasons.push("No email on file");
   else if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) reasons.push("Recipient email is invalid");
   if (record.do_not_email) reasons.push("Do Not Email is ticked");
@@ -4307,6 +4315,7 @@ function customerInviteRecord_(row, sourceRow, programs) {
   const record = campaignDirectoryRecord_(row, sourceRow);
   const program = programs.get(record.account_id) || programs.get(sourceRow) || {};
   record.program_ordering_status = String(program.ordering_status || "");
+  record.ordering_customer_id = String(program.ordering_customer_id || "");
   record.next_email = OUTREACH_CUSTOMER_INVITE_STAGE;
   return record;
 }
@@ -4322,19 +4331,29 @@ function customerInviteFooterHtml_(record, settings) {
   const accountId = String(record.account_id || "").trim();
   const business = String(record.business || "").trim();
   const email = String(record.email || "").trim();
-  const applicationUrl = String(settings["Customer application URL"] || "").trim();
-  const tracked = outreachTrackingUrl_("application", accountId, OUTREACH_CUSTOMER_INVITE_STAGE, settings, { business:business, email:email }, false);
-  const direct = /^https:\/\/\S+$/i.test(applicationUrl)
-    ? `${applicationUrl}${applicationUrl.includes("?") ? "&" : "?"}account_id=${encodeURIComponent(accountId)}&business=${encodeURIComponent(business)}&email=${encodeURIComponent(email)}`
-    : "";
-  const link = tracked || direct;
-  if (!link) throw new Error("Set Customer application URL in Campaign Settings before creating an order-online invite.");
+  if (!accountId) throw new Error(`${business || "This customer"} has no Account ID, so no ordering link can be made.`);
+  // The customer's own ordering page: account, business, email and contact are filled in for them.
+  const link = applicationOrderingUrl_(settings, accountId, "", business, email, String(record.contact || "").trim());
   const values = customerInviteValues_(record);
-  const linkText = escapeOutreachHtml_(String(settings["Customer invite link text"] || "").trim() || "Set up online ordering");
+  const linkText = escapeOutreachHtml_(customerInviteSetting_(settings, "Customer invite link text"));
   const signOff = renderOutreachTemplate_(String(settings["Customer invite sign-off"] || ""), values, true).trim();
   return `<p><a href="${escapeOutreachHtml_(link)}">${linkText}</a></p>`
     + (signOff ? `<p>${signOff}</p>` : "")
     + `<p>${escapeOutreachHtml_(String(settings["Physical mailing address"] || ""))}</p><p>Reply stop to unsubscribe.</p>`;
+}
+
+// The Campaign Settings sheet keeps the text that was first written there. Invites used to send
+// current customers to the new-customer account form; if the stored text is still that old wording,
+// use the new wording so no current customer is told to fill out a form.
+const CUSTOMER_INVITE_LEGACY_TEXT = {
+  "Customer invite steps":"Setting up takes about five minutes: fill in our short wholesale account form, and we'll send your ordering link as soon as it's approved.",
+  "Customer invite link text":"Set up online ordering",
+};
+function customerInviteSetting_(settings, key) {
+  const stored = String(settings[key] || "").trim();
+  const fallback = (OUTREACH_CUSTOMER_INVITE_EDITOR_ROWS.find(item => item.label === key) || {}).value || "";
+  if (!stored || stored === CUSTOMER_INVITE_LEGACY_TEXT[key] || /account form|as soon as it'?s approved/i.test(stored)) return fallback;
+  return stored;
 }
 
 function customerInviteValues_(record) {
@@ -4348,9 +4367,9 @@ function customerInviteValues_(record) {
 function customerInviteMessage_(record, settings) {
   const footer = customerInviteFooterHtml_(record, settings);
   const values = customerInviteValues_(record);
-  const subject = renderOutreachTemplate_(String(settings["Customer invite subject"] || ""), values, false).trim();
+  const subject = renderOutreachTemplate_(customerInviteSetting_(settings, "Customer invite subject"), values, false).trim();
   if (!subject) throw new Error("Fill in the CUSTOMER ORDER INVITE EMAIL block in the Email Editor (run repairHubStructure() once to add it).");
-  const line = key => renderOutreachTemplate_(String(settings[key] || ""), values, true).trim();
+  const line = key => renderOutreachTemplate_(customerInviteSetting_(settings, key), values, true).trim();
   const body = ["Customer invite greeting", "Customer invite intro", "Customer invite steps"].map(line).filter(Boolean).map(text => `<p>${text}</p>`).join("");
   return { stage:OUTREACH_CUSTOMER_INVITE_STAGE, subject:subject, body_text:outreachHtmlToPlainText_(body), html:body + footer, footer_html:footer };
 }
@@ -5346,6 +5365,13 @@ function apiSendOutreachCampaignBatch_(p) {
           const acceptedAt = isNaN(sentAt.getTime()) ? new Date() : sentAt;
           outreachNoteRecentSend_(record.email, "sales", acceptedAt);
           customerInviteSentEmails_().add(String(record.email || "").trim().toLowerCase());
+          try {
+            // The invite carried their own ordering link, so the account is now set up for online ordering.
+            upsertActiveAccountProgram_({ account_id:record.account_id, source_row:sourceRow, business:record.business, email:record.email },
+              record.ordering_customer_id || "", "order-online invite", staffName, { business:record.business, email:record.email, contact:record.contact });
+          } catch (programError) {
+            appendAudit_("CUSTOMER_INVITE_PROGRAM_PARTIAL", "Account", record.account_id, record.account_id, staffName, "Distribution Outreach", "Outreach Programs", "Needs recovery", `Invite sent but ordering status not saved: ${String(programError.message || programError)}`);
+          }
           item.values[rh.status] = "Sent"; item.values[rh.result_detail] = result.idempotent ? "Previously accepted and recovered." : "Zoho accepted delivery.";
           item.values[rh.zoho_message_id] = String(result.message_id); item.values[rh.sent_at] = acceptedAt; item.values[rh.app_version] = APP_VERSION;
           sheets.recipients.getRange(item.row, 1, 1, item.values.length).setValues([item.values]);
@@ -9874,7 +9900,7 @@ function rewritePublicSiteUrls() {
   return { changed:changed, unchanged:unchanged };
 }
 
-function upsertActiveAccountProgram_(account, customerId, applicationId, staffName, prefill) {
+function upsertActiveAccountProgram_(account, customerId, sourceLabel, staffName, prefill) {
   const sheet = getOutreachProgramSheet_(true);
   const h = getHeaderMap_(sheet);
   const key = `account::${account.account_id}`;
@@ -9885,10 +9911,12 @@ function upsertActiveAccountProgram_(account, customerId, applicationId, staffNa
   const now = new Date();
   set("program_key", key); set("account_id", account.account_id); set("source_row", account.source_row);
   set("business_name", account.business); set("email", account.email); set("ordering_status", "Active");
-  set("ordering_customer_id", customerId); set("ordering_invite_date", now);
+  if (customerId || index < 0) set("ordering_customer_id", customerId);
+  const keptCustomerId = customerId || (index >= 0 && h.ordering_customer_id !== undefined ? String(values[h.ordering_customer_id] || "") : "");
+  set("ordering_invite_date", now);
   const settings = getOutreachCampaignSettings_();
-  set("ordering_portal_url", applicationOrderingUrl_(settings, account.account_id, customerId, prefill?.business || account.business, prefill?.email || account.email));
-  set("updated_at", now); set("updated_by", staffName); set("notes", `Activated from application ${applicationId}`); set("app_version", APP_VERSION);
+  set("ordering_portal_url", applicationOrderingUrl_(settings, account.account_id, keptCustomerId, prefill?.business || account.business, prefill?.email || account.email, prefill?.contact || ""));
+  set("updated_at", now); set("updated_by", staffName); set("notes", `Activated from ${sourceLabel}`); set("app_version", APP_VERSION);
   sheet.getRange(index >= 0 ? index + 2 : sheet.getLastRow() + 1, 1, 1, values.length).setValues([values]);
 }
 
@@ -9938,7 +9966,7 @@ function synchronizeApplicationAccount_(application, p, staffName) {
   directory.getRange(account.source_row, 1, 1, row.length).setValues([row]);
   account = accountIdentityFromRows_(getAllRowsAsObjects_(directory)).by_id.get(account.account_id);
   const customerId = publicText_(p.customer_id, 80, "Customer ID");
-  upsertActiveAccountProgram_(account, customerId, application.application_id, staffName, { business:application.business_name || application.legal_business_name, email:application.ordering_email || application.primary_email });
+  upsertActiveAccountProgram_(account, customerId, `application ${application.application_id}`, staffName, { business:application.business_name || application.legal_business_name, email:application.ordering_email || application.primary_email, contact:application.primary_contact_name });
   const storeId = ensureInventoryStoreForApplication_(Object.assign({}, application, { account_id:account.account_id }), customerId, toBool_(p.inventory_tracking), p.inventory_store_id, p.inventory_route);
   appendAudit_("ACTIVATE_ACCOUNT", "Application", application.application_id, account.account_id, staffName, CUSTOMER_APPLICATIONS_SHEET_NAME, OUTREACH_SHEET_NAME, "Completed", `Customer ID ${customerId}; inventory store ${storeId || "not enabled"}.`);
   return { account_id:account.account_id, account_link_status:"Linked and active", inventory_store_id:storeId, data_sync_status:storeId ? "Directory, ordering and inventory store synchronized" : "Directory and ordering synchronized" };
@@ -10084,8 +10112,8 @@ const WELCOME_DEFAULT_BODY = [
   "Karl Loewenstein\nSturgeon Spirits",
 ].join("\n\n");
 
-function applicationOrderingUrl_(settings, accountId, customerId, business, email) {
-  const params = [["account_id", accountId], ["customer_id", customerId || ""], ["business", business || ""], ["email", email || ""]]
+function applicationOrderingUrl_(settings, accountId, customerId, business, email, contact) {
+  const params = [["account_id", accountId], ["customer_id", customerId || ""], ["business", business || ""], ["email", email || ""], ["contact", contact || ""]]
     .filter(([key, value]) => key === "account_id" || key === "customer_id" || String(value || "").trim())
     .map(([key, value]) => `${key}=${encodeURIComponent(String(value || "").trim())}`);
   return `${publicSiteUrl_(settings)}/order.html?${params.join("&")}`;

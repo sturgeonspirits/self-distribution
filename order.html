@@ -1,10 +1,10 @@
 <!doctype html>
-<!-- App version: 2026.10.12.1-WEB -->
+<!-- App version: 2026.10.12.2-WEB -->
 <html lang="en">
 <head>
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
-  <meta name="app-version" content="2026.10.12.1-WEB" />
+  <meta name="app-version" content="2026.10.12.2-WEB" />
   <title>Order request | Sturgeon Distribution Hub</title>
   <link rel="stylesheet" href="/assets/customer-portal.css?v=2026.10.12.1" />
 </head>
@@ -118,7 +118,7 @@
     "use strict";
     window.addEventListener("unhandledrejection", e => console.error("Unhandled promise rejection:", e.reason));
     window.addEventListener("error", e => console.error("Unhandled error:", e.error || e.message));
-    const APP_VERSION = "2026.10.12.1-WEB";
+    const APP_VERSION = "2026.10.12.2-WEB";
     const form = document.getElementById("orderForm");
     const linesEl = document.getElementById("orderLines");
     const loadingEl = document.getElementById("productLoading");
@@ -133,14 +133,17 @@
       const business = link.get("business") || "";
       const email = link.get("email") || "";
       const customerId = link.get("customer_id") || "";
+      const contact = link.get("contact") || "";
       form.elements.account_id.defaultValue = accountId;
       form.elements.account_id.value = accountId;
       if (business) form.elements.business_name.defaultValue = business;
       if (email) form.elements.email.defaultValue = email;
       if (customerId) form.elements.customer_id.defaultValue = customerId;
+      if (contact) form.elements.contact_name.defaultValue = contact;
       if (business && !form.elements.business_name.value) form.elements.business_name.value = business;
       if (email && !form.elements.email.value) form.elements.email.value = email;
       if (customerId && !form.elements.customer_id.value) form.elements.customer_id.value = customerId;
+      if (contact && !form.elements.contact_name.value) form.elements.contact_name.value = contact;
     }
     applyLinkContext();
     window.addEventListener("pageshow", applyLinkContext);
