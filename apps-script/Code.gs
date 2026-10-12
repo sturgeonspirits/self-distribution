@@ -1,8 +1,20 @@
 /*********************************
  * Inventory API (JSON) for Netlify
- * App version: 2026.10.12.43-APP
+ * App version: 2026.10.12.44-APP
  *
  * CHANGES IN THIS VERSION
+ * - Welcome email fix (first real send, The Wild Boar, 2026-10-12): Zoho accepted the email, but moving the application
+ *   to "Account active" was refused by the Customer Applications Workflow Status dropdown (New, Reviewing, Need
+ *   information, Approved, Declined, Converted), so the Hub reported "needs recovery". Now:
+ *   - Every record of the send (Welcome Email Sent At / By / Recipient / Message ID, Ordering Invite Date, workflow log,
+ *     audit) is written first. The status change comes last and can no longer fail a send: if it is refused, the
+ *     application stays Approved, the audit notes why, and the Hub reports the email as sent.
+ *   - The Workflow Status dropdown is widened to the Hub's statuses (New, Reviewing, Needs information, Approved,
+ *     Account active, Declined), keeping the values it already allows (Need information, Converted), the next time an
+ *     application is saved or welcomed. Before this, saving "Needs information" or "Account active" from the Hub also
+ *     failed on that rule.
+ *
+ * CHANGES IN 2026.10.12.43-APP
  * - Approving a wholesale application now sets the customer up: saving an application as "Approved" does what
  *   "Account active" used to do (links or creates the Directory account, creates the ordering link, sets up the
  *   inventory store when tracking is ticked). Customer ID is no longer required; it can be added later.
@@ -470,7 +482,7 @@
  * - Use only in the staging inventory backend until testing is complete.
  *********************************/
 
-const APP_VERSION = "2026.10.12.43-APP";
+const APP_VERSION = "2026.10.12.44-APP";
 
 const SHEET_NAMES = {
   STORES: "Stores",
@@ -10119,6 +10131,7 @@ function apiUpdateCustomerApplication_(p) {
     const rowNumber = findRecordRow_(sheet, "application_id", applicationId);
     if (!rowNumber) throw new Error("Application not found.");
     const h = getHeaderMap_(sheet);
+    try { ensureApplicationStatusValidation_(sheet, h); } catch (error) { console.warn("Application status dropdown not widened: " + String(error && error.message || error)); }
     const row = sheet.getRange(rowNumber, 1, 1, sheet.getLastColumn()).getValues()[0];
     const previousStatus = String(row[h.workflow_status] || "New");
     const business = String(row[h.business_name] || row[h.legal_business_name] || "");
@@ -10206,6 +10219,20 @@ function welcomeTextToHtml_(text) {
   }).join("");
 }
 
+// The Customer Applications Workflow Status column has a dropdown rule that predates the Hub's
+// statuses. Widen it (keeping every value it already allows) so each status the Hub offers can be saved.
+const APPLICATION_STATUS_VALUES = ["New", "Reviewing", "Needs information", "Approved", "Account active", "Declined"];
+function ensureApplicationStatusValidation_(sheet, h) {
+  if (!sheet || h.workflow_status === undefined || sheet.getMaxRows() < 2) return;
+  const range = sheet.getRange(2, h.workflow_status + 1, sheet.getMaxRows() - 1, 1);
+  const rule = range.getCell(1, 1).getDataValidation();
+  if (!rule || rule.getCriteriaType() !== SpreadsheetApp.DataValidationCriteria.VALUE_IN_LIST) return;
+  const allowed = (rule.getCriteriaValues()[0] || []).map(String);
+  const missing = APPLICATION_STATUS_VALUES.filter(value => !allowed.includes(value));
+  if (!missing.length) return;
+  range.setDataValidation(SpreadsheetApp.newDataValidation().requireValueInList(allowed.concat(missing), true).setAllowInvalid(false).build());
+}
+
 function applicationForWelcome_(applicationId) {
   const sheet = getCustomerApplicationsSheet_(false);
   if (!sheet) throw new Error("Customer Applications sheet is missing.");
@@ -10289,11 +10316,11 @@ function apiSendApplicationWelcome_(p) {
     acceptedMessageId = String(result.message_id || "");
     const sentAt = result.sent_at && !isNaN(new Date(result.sent_at).getTime()) ? new Date(result.sent_at) : new Date();
     const set = (key, value) => { if (h[key] !== undefined) sheet.getRange(rowNumber, h[key] + 1).setValue(value); };
+    // Record the send first. Nothing after this point may report a sent email as failed.
     set("welcome_email_sent_at", sentAt);
     set("welcome_email_sent_by", staffName);
     set("welcome_email_recipient", recipient);
     set("welcome_email_message_id", acceptedMessageId ? `'${acceptedMessageId}` : "");
-    set("workflow_status", "Account active");
     set("review_updated_at", sentAt);
     set("review_updated_by", staffName);
     const programs = getOutreachProgramSheet_(false);
@@ -10303,10 +10330,19 @@ function apiSendApplicationWelcome_(p) {
       const index = ids.findIndex(item => String(item[0] || "") === account.account_id);
       if (index >= 0 && ph.ordering_invite_date !== undefined) programs.getRange(index + 2, ph.ordering_invite_date + 1).setValue(sentAt);
     }
-    appendCustomerWorkflowLog_("Application", record.application_id, account.account_id, record.business_name, record.workflow_status, "Account active", staffName, `Welcome email sent to ${recipient}${result.idempotent ? " (replayed receipt)" : ""}`);
-    appendAudit_("SEND_WELCOME_EMAIL", "Application", record.application_id, account.account_id, staffName, CUSTOMER_APPLICATIONS_SHEET_NAME, "Distribution Outreach", "Completed", `Message ${acceptedMessageId || "without ID"} to ${recipient}`);
+    let workflowStatus = "Account active";
+    let statusNote = "";
+    try {
+      ensureApplicationStatusValidation_(sheet, h);
+      set("workflow_status", workflowStatus);
+    } catch (statusError) {
+      workflowStatus = record.workflow_status;
+      statusNote = `; status left ${workflowStatus}: ${String(statusError && statusError.message || statusError).slice(0, 300)}`;
+    }
+    appendCustomerWorkflowLog_("Application", record.application_id, account.account_id, record.business_name, record.workflow_status, workflowStatus, staffName, `Welcome email sent to ${recipient}${result.idempotent ? " (replayed receipt)" : ""}`);
+    appendAudit_("SEND_WELCOME_EMAIL", "Application", record.application_id, account.account_id, staffName, CUSTOMER_APPLICATIONS_SHEET_NAME, "Distribution Outreach", "Completed", `Message ${acceptedMessageId || "without ID"} to ${recipient}${statusNote}`);
     if (result.partial_failure) appendAudit_("SEND_WELCOME_EMAIL_PARTIAL", "Application", record.application_id, account.account_id, staffName, "Distribution Outreach", "Activity Log", "Needs recovery", String(result.partial_failure));
-    return { message:"Welcome email sent.", accepted:true, message_id:acceptedMessageId, workflow_status:"Account active", idempotent:!!result.idempotent };
+    return { message:"Welcome email sent.", accepted:true, message_id:acceptedMessageId, workflow_status:workflowStatus, idempotent:!!result.idempotent };
   } catch (error) {
     if (accepted) {
       appendAudit_("SEND_WELCOME_EMAIL_PARTIAL", "Application", String(p.application_id || ""), "", staffName, "Distribution Outreach", CUSTOMER_APPLICATIONS_SHEET_NAME, "Needs recovery", `Zoho accepted message ${acceptedMessageId || "without ID"}; ${String(error.message || error)}`);

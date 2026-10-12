@@ -1224,6 +1224,18 @@ test("Order online invite: current and lapsed customers, opt-outs, once per acco
   assert.match(index, /<option value="customer_invite">Current and lapsed customers — ordering link<\/option>/);
 });
 
+test("welcome email: the send is recorded before the status change, and a refused status never reports a sent email as failed", async () => {
+  const backend = await readFile(new URL("apps-script/Code.gs", root), "utf8");
+  const send = backend.slice(backend.indexOf("function apiSendApplicationWelcome_"), backend.indexOf("function apiUpdateOnlineOrderRequest_"));
+  // 2026-10-12: Zoho accepted the first real welcome, then the sheet's status dropdown refused "Account active".
+  assert.ok(send.indexOf('set("welcome_email_message_id"') < send.indexOf('set("workflow_status"'), "the send is recorded before the status change");
+  assert.match(send, /try \{\s*ensureApplicationStatusValidation_\(sheet, h\);\s*set\("workflow_status", workflowStatus\);\s*\} catch \(statusError\)/);
+  assert.match(backend, /const APPLICATION_STATUS_VALUES = \["New", "Reviewing", "Needs information", "Approved", "Account active", "Declined"\];/);
+  const widen = backend.slice(backend.indexOf("function ensureApplicationStatusValidation_"), backend.indexOf("function applicationForWelcome_"));
+  assert.match(widen, /allowed\.concat\(missing\)/, "values the sheet already allows are kept");
+  assert.match(backend, /try \{ ensureApplicationStatusValidation_\(sheet, h\); \} catch \(error\) \{ console\.warn\("Application status dropdown not widened/);
+});
+
 test("Distribution Outreach sendCustomerEmail refuses opt-outs, changed rows, other stages and repeat invites", async () => {
   const mailer = await readFile(new URL("docs/reference/distribution-outreach/Code.gs", root), "utf8");
   assert.match(mailer, /action === 'sendCustomerEmail'\) return appJson_\(Object\.assign\(\{ ok:true, version:OUTREACH_VERSION \}, sendAppEmailRequest_\(body, false, validateCustomerLead_\)\)\)/);
