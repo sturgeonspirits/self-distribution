@@ -1,8 +1,16 @@
 /*********************************
  * Inventory API (JSON) for Netlify
- * App version: 2026.10.12.44-APP
+ * App version: 2026.10.12.45-APP
  *
  * CHANGES IN THIS VERSION
+ * - Added to Badger: the application window has an "Added to Badger" checkbox and an optional Badger customer number.
+ *   Saving writes them to the application and to the customer's Directory row ("Added to Badger", "Badger Customer
+ *   ID" columns, created at the end of each sheet when first used). Badger invoice creation already reads the
+ *   Directory's Badger Customer ID, so entering the number lets the Hub invoice a new customer without a first invoice
+ *   by hand. A number counts as added. Accounts show their Badger status (an account with a matched Badger invoice
+ *   counts as in Badger).
+ *
+ * CHANGES IN 2026.10.12.44-APP
  * - Welcome email fix (first real send, The Wild Boar, 2026-10-12): Zoho accepted the email, but moving the application
  *   to "Account active" was refused by the Customer Applications Workflow Status dropdown (New, Reviewing, Need
  *   information, Approved, Declined, Converted), so the Hub reported "needs recovery". Now:
@@ -482,7 +490,7 @@
  * - Use only in the staging inventory backend until testing is complete.
  *********************************/
 
-const APP_VERSION = "2026.10.12.44-APP";
+const APP_VERSION = "2026.10.12.45-APP";
 
 const SHEET_NAMES = {
   STORES: "Stores",
@@ -7969,6 +7977,8 @@ function customerApplicationRecord_(row) {
     inventory_store_id:String(row.inventory_store_id || ""),
     inventory_route:String(row.inventory_route || ""),
     data_sync_status:String(row.data_sync_status || ""),
+    added_to_badger:toBool_(row.added_to_badger) || !!digitsOnly_(row.badger_customer_id),
+    badger_customer_id:digitsOnly_(row.badger_customer_id),
     welcome_email_sent_at:row.welcome_email_sent_at || "",
     welcome_email_sent_by:String(row.welcome_email_sent_by || ""),
     welcome_email_recipient:String(row.welcome_email_recipient || ""),
@@ -8863,7 +8873,7 @@ function badgerCustomerIdForAccount_(accountId, account) {
   const paymentAccount = account || currentBadgerPaymentAccount_(accountId, false);
   const match = (paymentAccount.invoices || []).filter(invoice => invoice.badger_match_status === "Matched" && /^\d+$/.test(String(invoice.customer_id || "")))
     .sort((a, b) => recordTimestamp_(b.invoice_date) - recordTimestamp_(a.invoice_date))[0];
-  if (!match) throw new Error("Create this customer in Badger (or invoice them once by hand) first.");
+  if (!match) throw new Error("Add this customer in Badger, then enter their Badger customer number on their application (Orders & Accounts) and save. Or invoice them once by hand in Badger.");
   return String(match.customer_id);
 }
 
@@ -9553,6 +9563,8 @@ function buildCustomerAccounts_(applications, orders, bypassBadgerCache) {
       city:String(outreachValue_(row, ["city"]) || ""),
       relationship:relationship,
       directory_status:directoryStatus,
+      badger_customer_id:digitsOnly_(outreachValue_(row, ["badger_customer_id"])),
+      added_to_badger:toBool_(outreachValue_(row, ["added_to_badger"])) || !!digitsOnly_(outreachValue_(row, ["badger_customer_id"])),
       next_follow_up:outreachValue_(row, ["next_follow-up", "next_follow_up"]),
       last_emailed:outreachValue_(row, ["last_emailed", "last_email"]),
       inventory_tracking:!!store,
@@ -10127,7 +10139,10 @@ function apiUpdateCustomerApplication_(p) {
   try {
     const sheet = getCustomerApplicationsSheet_(false);
     if (!sheet) throw new Error("Customer Applications sheet is missing.");
-    ensureHeaderColumns_(sheet, ["Customer ID", "Assigned To", "Staff Notes", "Review Updated At", "Review Updated By", ACCOUNT_ID_HEADER, "Account Link Status", "Inventory Tracking", "Inventory Store ID", "Inventory Route", "Data Sync Status"]);
+    ensureHeaderColumns_(sheet, ["Customer ID", "Assigned To", "Staff Notes", "Review Updated At", "Review Updated By", ACCOUNT_ID_HEADER, "Account Link Status", "Inventory Tracking", "Inventory Store ID", "Inventory Route", "Data Sync Status", "Added to Badger", "Badger Customer ID"]);
+    const badgerCustomerId = digitsOnly_(p.badger_customer_id);
+    if (String(p.badger_customer_id || "").trim() && !/^\d+$/.test(String(p.badger_customer_id).trim())) throw new Error("The Badger customer number is digits only.");
+    const addedToBadger = toBool_(p.badger_added) || !!badgerCustomerId;
     const rowNumber = findRecordRow_(sheet, "application_id", applicationId);
     if (!rowNumber) throw new Error("Application not found.");
     const h = getHeaderMap_(sheet);
@@ -10177,7 +10192,12 @@ function apiUpdateCustomerApplication_(p) {
       set("account_link_status", "Linked by staff");
       set("data_sync_status", "Application linked; account not yet activated");
     }
-    appendCustomerWorkflowLog_("Application", applicationId, accountId, business, previousStatus, status, staffName, `Customer ID: ${customerId}; inventory tracking: ${toBool_(p.inventory_tracking) ? "yes" : "no"}`);
+    const badgerChanged = toBool_(h.added_to_badger !== undefined ? row[h.added_to_badger] : false) !== addedToBadger
+      || String(h.badger_customer_id !== undefined ? row[h.badger_customer_id] : "").replace(/\D/g, "") !== badgerCustomerId;
+    set("added_to_badger", addedToBadger);
+    set("badger_customer_id", badgerCustomerId);
+    if (accountId && (badgerChanged || addedToBadger)) setDirectoryBadgerCustomer_(accountId, addedToBadger, badgerCustomerId);
+    appendCustomerWorkflowLog_("Application", applicationId, accountId, business, previousStatus, status, staffName, `Customer ID: ${customerId}; inventory tracking: ${toBool_(p.inventory_tracking) ? "yes" : "no"}${badgerChanged ? `; added to Badger: ${addedToBadger ? `yes${badgerCustomerId ? ` (#${badgerCustomerId})` : ""}` : "no"}` : ""}`);
     appendAudit_("UPDATE_APPLICATION", "Application", applicationId, accountId, staffName, CUSTOMER_APPLICATIONS_SHEET_NAME, CUSTOMER_APPLICATIONS_SHEET_NAME, "Completed", `${previousStatus} to ${status}`);
     const welcomeSentAt = h.welcome_email_sent_at !== undefined ? row[h.welcome_email_sent_at] : "";
     return { message:"Application updated.", application_id:applicationId, account_id:accountId, workflow_status:status, synchronization:sync,
@@ -10217,6 +10237,18 @@ function welcomeTextToHtml_(text) {
     });
     return `<p>${html.replace(/\n/g, "<br>")}</p>`;
   }).join("");
+}
+
+// The customer's Badger status lives on the Directory row, where Badger invoice creation reads it
+// (badgerCustomerIdForAccount_ uses the Badger Customer ID column).
+function setDirectoryBadgerCustomer_(accountId, added, badgerCustomerId) {
+  const account = accountIdentityLookup_().by_id.get(String(accountId || ""));
+  if (!account) return false;
+  const directory = getOutreachSheet_(OUTREACH_SHEET_NAME);
+  const dh = ensureHeaderColumns_(directory, ["Added to Badger", "Badger Customer ID"]);
+  directory.getRange(account.source_row, dh.added_to_badger + 1).setValue(!!added);
+  directory.getRange(account.source_row, dh.badger_customer_id + 1).setValue(badgerCustomerId ? `'${badgerCustomerId}` : "");
+  return true;
 }
 
 // The Customer Applications Workflow Status column has a dropdown rule that predates the Hub's

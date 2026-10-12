@@ -1236,6 +1236,19 @@ test("welcome email: the send is recorded before the status change, and a refuse
   assert.match(backend, /try \{ ensureApplicationStatusValidation_\(sheet, h\); \} catch \(error\) \{ console\.warn\("Application status dropdown not widened/);
 });
 
+test("Added to Badger: the application saves it to the Directory row that Badger invoice creation reads", async () => {
+  const backend = await readFile(new URL("apps-script/Code.gs", root), "utf8");
+  const index = await readFile(new URL("index.html", root), "utf8");
+  const update = backend.slice(backend.indexOf("function apiUpdateCustomerApplication_"), backend.indexOf("function apiUpdateOnlineOrderRequest_"));
+  assert.match(update, /"Added to Badger", "Badger Customer ID"\]/);
+  assert.match(update, /const addedToBadger = toBool_\(p\.badger_added\) \|\| !!badgerCustomerId;/, "a Badger number counts as added");
+  assert.match(update, /setDirectoryBadgerCustomer_\(accountId, addedToBadger, badgerCustomerId\)/);
+  assert.match(backend, /const override = String\(directoryRow\.badger_customer_id \|\| ""\)\.trim\(\);/, "invoice creation reads the Directory's Badger Customer ID");
+  assert.match(index, /id="customerRecordBadgerAdded" type="checkbox"/);
+  assert.match(index, /badger_added:\$\("customerRecordBadgerAdded"\)\.checked/);
+  assert.match(index, /label:"Badger", value:record\.added_to_badger/);
+});
+
 test("Distribution Outreach sendCustomerEmail refuses opt-outs, changed rows, other stages and repeat invites", async () => {
   const mailer = await readFile(new URL("docs/reference/distribution-outreach/Code.gs", root), "utf8");
   assert.match(mailer, /action === 'sendCustomerEmail'\) return appJson_\(Object\.assign\(\{ ok:true, version:OUTREACH_VERSION \}, sendAppEmailRequest_\(body, false, validateCustomerLead_\)\)\)/);
