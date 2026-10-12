@@ -4,6 +4,12 @@
  * VERSION: 2026.10.12.33-APP
  *
  * CHANGES IN THIS VERSION
+ * - Order-online invite (sendCustomerEmail): the Do Not Email box that approval ticks automatically (to keep current
+ *   customers out of sales outreach) no longer blocks the customer's own ordering link. It counts as automatic when
+ *   Customer Source starts with "Application " and Relationship shows customer history (Current customer, Customer,
+ *   Existing customer, Lapsed customer, Win-back due). Status or Outcome Bad address, Unsubscribed, Do not contact or
+ *   Not interested still blocks. The duplicate check now also refuses an invite when this account (Account ID)
+ *   already received an invite or welcome at any address.
  * - Adds the Hub-only sendWelcomeEmail action: the welcome email with the ordering link that staff review and send
  *   after approving a wholesale application. It is a transactional reply to the customer's own application, so the
  *   Directory "Do Not Email" box (which keeps current customers out of sales outreach) does not block it. It is still
@@ -441,6 +447,17 @@ function isTicked_(value) {
 // independent last gate before Zoho, so it repeats the opt-out and once-per-address rules.
 const CUSTOMER_INVITE_STAGE = 'Order online invite';
 
+// Approving an application ticks Do Not Email to keep the customer out of sales outreach and writes
+// Customer Source "Application APP-...". That automatic flag must not stop the customer's own ordering
+// link. Real opt-outs are recorded in Status / Outcome and are checked separately.
+const CUSTOMER_HISTORY_RELATIONSHIPS = ['current customer', 'customer', 'existing customer', 'lapsed customer', 'win-back due'];
+function automaticCustomerDoNotEmail_(row) {
+  const source = String(row[OUTREACH.COL.CUSTOMER_SOURCE - 1] || '').trim();
+  const relationship = String(row[OUTREACH.COL.RELATIONSHIP - 1] || '').trim().toLowerCase();
+  const status = String(row[OUTREACH.COL.STATUS - 1] || '').trim().toLowerCase();
+  return /^application\s/i.test(source) && (CUSTOMER_HISTORY_RELATIONSHIPS.indexOf(relationship) >= 0 || status === 'existing customer');
+}
+
 function validateCustomerLead_(body, testMode) {
   if (String(body.message_stage || '').trim() !== CUSTOMER_INVITE_STAGE) throw new Error('Customer messages must use the Order online invite stage.');
   const sheet = assertStagingEnvironment_().getSheetByName(OUTREACH.LEADS_SHEET);
@@ -453,13 +470,16 @@ function validateCustomerLead_(body, testMode) {
   const outcome = String(row[OUTREACH.COL.OUTCOME - 1] || '').trim().toLowerCase();
   if (business !== String(body.business || '').trim() || email !== String(body.recipient || '').trim().toLowerCase()) throw new Error('Customer row changed. Refresh the Hub before sending.');
   if (!testMode && !isValidEmail_(email)) throw new Error('Recipient email is invalid.');
-  if (!testMode && (isTicked_(row[OUTREACH.COL.DO_NOT_EMAIL - 1]) || ['do not contact', 'not interested', 'unsubscribed', 'bad address'].indexOf(status) >= 0 || ['bad address', 'not interested', 'unsubscribed', 'do not contact'].indexOf(outcome) >= 0)) {
+  const dneBlocks = isTicked_(row[OUTREACH.COL.DO_NOT_EMAIL - 1]) && !automaticCustomerDoNotEmail_(row);
+  if (!testMode && (dneBlocks || ['do not contact', 'not interested', 'unsubscribed', 'bad address'].indexOf(status) >= 0 || ['bad address', 'not interested', 'unsubscribed', 'do not contact'].indexOf(outcome) >= 0)) {
     throw new Error('The customer is blocked from email.');
   }
+  const accountId = String(row[OUTREACH.COL.ACCOUNT_ID - 1] || '').trim();
   const alreadySent = appSentHistory_().some(function (item) {
     const result = String(item.result || '').toUpperCase();
     const intended = String(item.intended_recipient || item.email || '').trim().toLowerCase();
-    return result.indexOf('SENT') >= 0 && result.indexOf('TEST') < 0 && intended === email && String(item.message_stage || item.stage || '').trim() === CUSTOMER_INVITE_STAGE;
+    const sameAccount = accountId && String(item.account_id || '').trim() === accountId;
+    return result.indexOf('SENT') >= 0 && result.indexOf('TEST') < 0 && (intended === email || sameAccount) && String(item.message_stage || item.stage || '').trim() === CUSTOMER_INVITE_STAGE;
   });
   if (!testMode && alreadySent) throw new Error('The order-online invite was already sent to this address.');
   return { sheet:sheet, row:row, rowNumber:rowNumber, business:business, email:email, stage:CUSTOMER_INVITE_STAGE };

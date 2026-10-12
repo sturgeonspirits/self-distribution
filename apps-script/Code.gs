@@ -27,6 +27,11 @@
  *   or Existing customer status) links to that customer's own ordering page instead of the account form (tracked as
  *   target "order" when tracking is configured). Everyone else's account-form link now carries everything the
  *   Directory has (business, email, contact, phone, address, city, state, ZIP) so the form is filled in.
+ * - Invite eligibility (chat review P1/P2): the Do Not Email box that approval ticks automatically no longer leaves a
+ *   customer out of the ordering-link invite. It counts as automatic when Customer Source starts with "Application "
+ *   and the row has customer history; Status/Outcome opt-outs (Bad address, Unsubscribed, Do not contact, Not
+ *   interested) still block. An invite or welcome sent to ANY address of an account now counts for the whole account
+ *   (Activity Log Account ID), so a welcome to an alternate ordering email stops a second link to the primary email.
  * - Invite eligibility: "set up for online ordering" now means the link was actually emailed (an Order online invite or
  *   welcome send to that address). Accounts activated earlier without an email are no longer left out of the invite.
  *
@@ -4148,6 +4153,7 @@ function campaignCriteriaFailures_(record, criteria) {
 function campaignDirectoryRecord_(row, sourceRow) {
   return {
     source_row:sourceRow,
+    customer_source:String(outreachValue_(row, ["customer_source"]) || "").trim(),
     account_id:String(row.account_id || "").trim(),
     business:String(outreachValue_(row, ["business", "business_name"]) || "").trim(),
     contact:String(outreachValue_(row, ["contact", "contact_name", "contact_person", "first_name"]) || "").trim(),
@@ -4273,6 +4279,7 @@ const OUTREACH_CUSTOMER_RELATIONSHIPS = ["current customer", "customer", "existi
 // name could be a different business (two bars both called "Village Inn").
 const OUTREACH_CUSTOMER_HISTORY_RELATIONSHIPS = OUTREACH_CUSTOMER_RELATIONSHIPS.concat(["lapsed customer", "win-back due"]);
 let __CUSTOMER_INVITE_SENT_EMAILS = null;
+let __CUSTOMER_INVITE_SENT_ACCOUNTS = null;
 
 /**
  * Why a row counts as a current customer ("" if it does not). badger is { strong:Set, name_only:Map }.
@@ -4297,18 +4304,39 @@ function customerInviteIsCustomer_(record, badger) {
 }
 
 /** Addresses that already received the invite (Activity Log, real sends only). */
+// Approval ticks Do Not Email to keep a customer out of sales outreach and writes Customer Source
+// "Application APP-...". That automatic flag must not stop the customer's own ordering link; real
+// opt-outs are recorded in Status / Outcome, which customerInviteEligibility_ checks separately.
+function customerDoNotEmailIsAutomatic_(record) {
+  const relationship = String(record.relationship || "").trim().toLowerCase();
+  const status = String(record.status || "").trim().toLowerCase();
+  return /^application\s/i.test(String(record.customer_source || "").trim())
+    && (OUTREACH_CUSTOMER_HISTORY_RELATIONSHIPS.includes(relationship) || status === "existing customer");
+}
+
+/** Accounts that already received an ordering link (invite or welcome) at any address. */
+function customerInviteSentAccounts_() {
+  if (!__CUSTOMER_INVITE_SENT_ACCOUNTS) customerInviteSentEmails_();
+  return __CUSTOMER_INVITE_SENT_ACCOUNTS || (__CUSTOMER_INVITE_SENT_ACCOUNTS = new Set());
+}
+
 function customerInviteSentEmails_() {
   if (__CUSTOMER_INVITE_SENT_EMAILS) return __CUSTOMER_INVITE_SENT_EMAILS;
   const sent = new Set();
+  const accounts = new Set();
   const sheet = getOutreachSheet_(OUTREACH_ACTIVITY_SHEET_NAME);
   if (sheet && sheet.getLastRow() >= 2) {
     getAllRowsAsObjects_(sheet).forEach(row => {
       const stage = String(outreachValue_(row, ["message_stage", "stage"]) || "").trim();
       const result = String(outreachValue_(row, ["result"]) || "").toUpperCase();
       const email = String(outreachValue_(row, ["intended_recipient", "delivered_to", "email", "email_address"]) || "").trim().toLowerCase();
-      if (stage === OUTREACH_CUSTOMER_INVITE_STAGE && email && result.includes("SENT") && !result.includes("TEST")) sent.add(email);
+      if (stage !== OUTREACH_CUSTOMER_INVITE_STAGE || !result.includes("SENT") || result.includes("TEST")) return;
+      if (email) sent.add(email);
+      const accountId = String(outreachValue_(row, ["account_id"]) || "").trim();
+      if (accountId) accounts.add(accountId);
     });
   }
+  __CUSTOMER_INVITE_SENT_ACCOUNTS = accounts;
   return (__CUSTOMER_INVITE_SENT_EMAILS = sent);
 }
 
@@ -4334,11 +4362,12 @@ function customerInviteEligibility_(record) {
   if (!String(record.account_id || "").trim()) reasons.push("No Account ID on the Directory row");
   if (!email) reasons.push("No email on file");
   else if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) reasons.push("Recipient email is invalid");
-  if (record.do_not_email) reasons.push("Do Not Email is ticked");
+  if (record.do_not_email && !customerDoNotEmailIsAutomatic_(record)) reasons.push("Do Not Email is ticked");
   if (optOut.includes(status) || optOut.includes(outcome)) reasons.push("Business is excluded from email");
   // Only a link actually emailed counts. Accounts activated before 2026.10.12.43 were marked Active
   // without ever being sent their link, so the program status alone must not leave them out.
-  if (email && customerInviteSentEmails_().has(email)) reasons.push(String(record.program_ordering_status || "").trim().toLowerCase() === "active" ? "Already has their ordering link" : "Invite already sent");
+  const accountId = String(record.account_id || "").trim();
+  if ((email && customerInviteSentEmails_().has(email)) || (accountId && customerInviteSentAccounts_().has(accountId))) reasons.push(String(record.program_ordering_status || "").trim().toLowerCase() === "active" ? "Already has their ordering link" : "Invite already sent");
   if (confidence && !["confirmed", "published", "supplied"].includes(confidence)) reasons.push("Recipient email is not verified");
   const cooldown = email ? outreachCrossSendCooldownReason_(email, false) : "";
   if (cooldown) reasons.push(cooldown);
@@ -5399,6 +5428,7 @@ function apiSendOutreachCampaignBatch_(p) {
           const acceptedAt = isNaN(sentAt.getTime()) ? new Date() : sentAt;
           outreachNoteRecentSend_(record.email, "sales", acceptedAt);
           customerInviteSentEmails_().add(String(record.email || "").trim().toLowerCase());
+          if (record.account_id) customerInviteSentAccounts_().add(String(record.account_id).trim());
           try {
             // The invite carried their own ordering link, so the account is now set up for online ordering.
             upsertActiveAccountProgram_({ account_id:record.account_id, source_row:sourceRow, business:record.business, email:record.email },
