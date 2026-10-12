@@ -1,4 +1,4 @@
-// App version: 2026.10.10.44-WEB
+// App version: 2026.10.12.45-WEB
 import { createHmac, timingSafeEqual } from "node:crypto";
 
 const APP_VERSION = "2026.10.12.45-WEB";
