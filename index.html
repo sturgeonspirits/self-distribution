@@ -1,10 +1,10 @@
 <!doctype html>
-<!-- App version: 2026.10.14.50-WEB -->
+<!-- App version: 2026.10.14.51-WEB -->
 <html>
 <head>
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover"/>
-  <meta name="app-version" content="2026.10.14.50-WEB" />
+  <meta name="app-version" content="2026.10.14.51-WEB" />
   <meta name="theme-color" content="#536f77" />
   <link rel="icon" href="/assets/distribution-hub-icon.svg" type="image/svg+xml" />
   <link rel="manifest" href="/site.webmanifest" />
@@ -1903,7 +1903,7 @@
     button.is-busy::after { content:" …"; }
     /* Compact count mode: on a phone in the Inventory section, show only the store picker, the
        Shelf/Back toggle, Scan, and the bottle list. "More tools" brings everything else back.
-       That includes the section menu, so the button names Outreach and Accounts. */
+       The section menu (Inventory / Outreach / Orders & Accounts) always stays at the top. */
     .compactToolsToggle{display:none;width:100%;margin:12px 0 0}
     body.compactCount .compactToolsToggle{display:block}
     body.compactCount #managerSummaryCard,
@@ -1914,7 +1914,6 @@
     body.compactCount #countFilters,
     body.compactCount #countSummaryGrid,
     body.compactCount #managerDetails,
-    body.compactCount .appNav,
     body.compactCount #appSubtitle{display:none !important}
   </style>
 </head>
@@ -2150,7 +2149,7 @@
   </div>
 
   <div class="list" id="list" data-inventory-count-only></div>
-  <button type="button" class="compactToolsToggle" id="compactToolsToggle">Outreach, Accounts &amp; more tools</button>
+  <button type="button" class="compactToolsToggle" id="compactToolsToggle">More tools (search, summary, manager)</button>
   </div>
   </section>
 
@@ -2735,7 +2734,7 @@
 
   <footer style="max-width:1200px;margin:18px auto 120px;padding:0 12px;text-align:center;color:#6b7280;font-size:12px;">
     Designed by <a href="https://scriptspirit.dev" target="_blank" rel="noopener noreferrer" style="color:#1d4ed8;text-decoration:none;font-weight:700;">Script Spirit</a>
-<span id="appVersionFooter"> • Version 2026.10.14.50-WEB</span>
+<span id="appVersionFooter"> • Version 2026.10.14.51-WEB</span>
   </footer>
 
 
@@ -2758,7 +2757,7 @@
   window.addEventListener("unhandledrejection", e => console.error("Unhandled promise rejection:", e.reason));
   window.addEventListener("error", e => console.error("Unhandled error:", e.error || e.message));
   const $ = (id) => document.getElementById(id);
-  const APP_VERSION = "2026.10.14.50-WEB";
+  const APP_VERSION = "2026.10.14.51-WEB";
   $("appVersionFooter").textContent = ` • Version ${APP_VERSION}`;
   function screenCacheKey(screen){ return `distribution_hub:${APP_VERSION}:${staffSession?.email || "unknown"}:${screen}`; }
   function readScreenCache(screen){
@@ -6872,7 +6871,7 @@
     const toggle = $("compactToolsToggle");
     if (toggle) {
       toggle.hidden = !compactCountQuery.matches || activeAppSection !== "inventory";
-      toggle.textContent = compactToolsOpen ? "Back to simple counting" : "Outreach, Accounts & more tools";
+      toggle.textContent = compactToolsOpen ? "Back to simple counting" : "More tools (search, summary, manager)";
     }
     if (compact && !wasCompact) {
       // Hidden controls must not keep filtering the list out of sight.
