@@ -1,10 +1,10 @@
 <!doctype html>
-<!-- App version: 2026.10.12.2-WEB -->
+<!-- App version: 2026.10.14.1-WEB -->
 <html lang="en">
 <head>
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
-  <meta name="app-version" content="2026.10.12.2-WEB" />
+  <meta name="app-version" content="2026.10.14.1-WEB" />
   <title>Order request | Sturgeon Distribution Hub</title>
   <link rel="stylesheet" href="/assets/customer-portal.css?v=2026.10.12.1" />
 </head>
@@ -58,7 +58,7 @@
         <p class="sectionHelp">Request by bottle or case. The team will confirm the final quantity.</p>
         <div class="loading" id="productLoading">Loading current products...</div>
         <div class="orderLines" id="orderLines"></div>
-        <div class="actions" style="margin-top:12px"><button id="addLineBtn" type="button">Add product</button></div>
+        <div class="actions" style="margin-top:12px"><button id="addLineBtn" type="button" hidden>Add another product</button></div>
         <div class="totals" id="orderTotals" aria-live="polite"></div>
       </fieldset>
 
@@ -118,12 +118,13 @@
     "use strict";
     window.addEventListener("unhandledrejection", e => console.error("Unhandled promise rejection:", e.reason));
     window.addEventListener("error", e => console.error("Unhandled error:", e.error || e.message));
-    const APP_VERSION = "2026.10.12.2-WEB";
+    const APP_VERSION = "2026.10.14.1-WEB";
     const form = document.getElementById("orderForm");
     const linesEl = document.getElementById("orderLines");
     const loadingEl = document.getElementById("productLoading");
     const status = document.getElementById("orderStatus");
     const submit = document.getElementById("submitOrderBtn");
+    const addLineBtn = document.getElementById("addLineBtn");
     let skus = [];
     let submissionToken = crypto.randomUUID ? crypto.randomUUID() : `${Date.now()}-${Math.random()}`;
 
@@ -162,6 +163,8 @@
     }
 
     function addLine(){
+      // No product box until the product list has loaded; an empty "Choose a product" box can't be used.
+      if (!skus.length) return;
       const line = document.getElementById("orderLineTemplate").content.firstElementChild.cloneNode(true);
       line.querySelector(".productSelect").innerHTML = productOptions();
       line.querySelector(".removeLineBtn").addEventListener("click", () => {
@@ -209,6 +212,7 @@
 
     async function loadProducts(){
       submit.disabled = true;
+      addLineBtn.hidden = true;
       loadingEl.hidden = false;
       loadingEl.textContent = "Loading current products...";
       try {
@@ -219,7 +223,14 @@
         skus = result.skus;
         loadingEl.hidden = true;
         submit.disabled = false;
-        addLine();
+        addLineBtn.hidden = false;
+        // Refill any product boxes already on the page (keeping a choice), or start with one.
+        linesEl.querySelectorAll(".productSelect").forEach(select => {
+          const chosen = select.value;
+          select.innerHTML = productOptions();
+          select.value = chosen;
+        });
+        if (!linesEl.children.length) addLine();
       } catch (_) {
         loadingEl.innerHTML = `We couldn't load the product list. Try again. <button type="button" id="retryProductsBtn">Try again</button><br /><span>Please email <a href="mailto:sales@sturgeonspirits.com">sales@sturgeonspirits.com</a> to order.</span>`;
         document.getElementById("retryProductsBtn").addEventListener("click", loadProducts, {once:true});
@@ -289,7 +300,7 @@
       }
     });
 
-    document.getElementById("addLineBtn").addEventListener("click", addLine);
+    addLineBtn.addEventListener("click", addLine);
     form.addEventListener("submit", async event => {
       event.preventDefault();
       status.className = "status";
