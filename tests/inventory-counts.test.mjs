@@ -213,3 +213,11 @@ test("outreach lists draw in batches and icons are converted once", async () => 
   const code = body.replace(/\/\/.*$/gm, "");
   assert.doesNotMatch(code.split("if (typeof createElement")[0], /createIcons/, "no whole-document rebuild when there is nothing new");
 });
+
+test("campaigns list draws the newest 10 with a Show older button", async () => {
+  const index = await readFile(new URL("index.html", root), "utf8");
+  assert.match(index, /const OUTREACH_CAMPAIGN_BATCH = 10;/);
+  assert.match(index, /allCampaigns\.slice\(0, outreachCampaignsShown\)/);
+  assert.match(index, /data-campaigns-show-older/);
+  assert.match(index, /outreachCampaignsShown \+= OUTREACH_CAMPAIGN_BATCH/);
+});

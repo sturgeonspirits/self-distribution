@@ -1,10 +1,10 @@
 <!doctype html>
-<!-- App version: 2026.10.14.52-WEB -->
+<!-- App version: 2026.10.14.53-WEB -->
 <html>
 <head>
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover"/>
-  <meta name="app-version" content="2026.10.14.52-WEB" />
+  <meta name="app-version" content="2026.10.14.53-WEB" />
   <meta name="theme-color" content="#536f77" />
   <link rel="icon" href="/assets/distribution-hub-icon.svg" type="image/svg+xml" />
   <link rel="manifest" href="/site.webmanifest" />
@@ -2736,7 +2736,7 @@
 
   <footer style="max-width:1200px;margin:18px auto 120px;padding:0 12px;text-align:center;color:#6b7280;font-size:12px;">
     Designed by <a href="https://scriptspirit.dev" target="_blank" rel="noopener noreferrer" style="color:#1d4ed8;text-decoration:none;font-weight:700;">Script Spirit</a>
-<span id="appVersionFooter"> • Version 2026.10.14.52-WEB</span>
+<span id="appVersionFooter"> • Version 2026.10.14.53-WEB</span>
   </footer>
 
 
@@ -2759,7 +2759,7 @@
   window.addEventListener("unhandledrejection", e => console.error("Unhandled promise rejection:", e.reason));
   window.addEventListener("error", e => console.error("Unhandled error:", e.error || e.message));
   const $ = (id) => document.getElementById(id);
-  const APP_VERSION = "2026.10.14.52-WEB";
+  const APP_VERSION = "2026.10.14.53-WEB";
   $("appVersionFooter").textContent = ` • Version ${APP_VERSION}`;
   function screenCacheKey(screen){ return `distribution_hub:${APP_VERSION}:${staffSession?.email || "unknown"}:${screen}`; }
   function readScreenCache(screen){
@@ -4665,9 +4665,14 @@
   }
 
   var lastOutreachCampaignsHtml = "";
+  // The server sends newest first. Only the most recent are drawn so the page stays short on phones.
+  const OUTREACH_CAMPAIGN_BATCH = 10;
+  var outreachCampaignsShown = OUTREACH_CAMPAIGN_BATCH;
   function renderOutreachCampaigns(){
-    const campaigns = outreachData.campaigns || [];
-    $("outreachAudienceCount").textContent = `${campaigns.length} campaign${campaigns.length === 1 ? "" : "s"}`;
+    const allCampaigns = outreachData.campaigns || [];
+    const campaigns = allCampaigns.slice(0, outreachCampaignsShown);
+    const olderCount = allCampaigns.length - campaigns.length;
+    $("outreachAudienceCount").textContent = `${allCampaigns.length} campaign${allCampaigns.length === 1 ? "" : "s"}`;
     const html = `
       <article class="outreachCard priority">
         <div class="outreachCardTop"><div><div class="businessName">New outreach campaign</div><div class="contactLine">Choose Initial, a due follow-up, or a due nurture check-in before freezing the eligible audience for review. No email is sent when the campaign is created.</div></div><span class="badge amber">Draft</span></div>
@@ -4678,7 +4683,7 @@
           <div class="outreachCardTop"><div><div class="businessName">${escapeHtml(campaign.name)}</div><div class="contactLine">${escapeHtml(campaign.audience)} • ${escapeHtml(campaign.created_by || "Staff")}</div></div><span class="badge ${campaign.status === "Complete" ? "green" : campaign.status === "Approved" ? "blue" : "amber"}">${escapeHtml(campaign.status)}</span></div>
           <div class="outreachMeta"><span class="badge">${escapeHtml(campaign.criteria?.stage || "Initial")}</span>${campaignScheduleBadge(campaign)}<span class="badge">${Number(campaign.recipient_count || 0)} recipients</span><span class="badge blue">${Number(campaign.sent_count || 0)} sent</span>${Number(campaign.unsegmented_count || 0) ? `<span class="badge amber">${Number(campaign.unsegmented_count)} unsegmented</span>` : ""}${Number(campaign.blocked_count || 0) ? `<span class="badge red">${Number(campaign.blocked_count)} blocked</span>` : ""}</div>
           <div class="outreachActions"><button class="actionBtn primary" type="button" data-campaign-action="review"><i data-lucide="clipboard-check"></i><span>Review campaign</span></button></div>
-        </article>`).join("")}`;
+        </article>`).join("")}${olderCount > 0 ? `<button class="outreachShowMore" type="button" data-campaigns-show-older>Show older campaigns <span>(${campaigns.length} of ${allCampaigns.length} shown)</span></button>` : ""}`;
     // A background refresh that brings back the same campaigns leaves the list alone, so the phone
     // is not redrawing it mid-scroll. Another view drawing into the list clears the marker.
     const list = $("outreachList");
@@ -4686,7 +4691,7 @@
     lastOutreachCampaignsHtml = html;
     list.dataset.view = "campaigns";
     list.innerHTML = html;
-    refreshIcons();
+    refreshIcons(list);
   }
 
   async function createOutreachCampaign(){
@@ -5395,7 +5400,7 @@
     const newsletterView = outreachView === "newsletter";
     const campaignsView = outreachView === "campaigns";
     const repliesView = outreachView === "replies";
-    if (!campaignsView) delete $("outreachList").dataset.view; // the list is about to show another view
+    if (!campaignsView) { delete $("outreachList").dataset.view; outreachCampaignsShown = OUTREACH_CAMPAIGN_BATCH; } // the list is about to show another view
     $("outreachAudienceBar").hidden = newsletterView || campaignsView || repliesView;
     $("addNewsletterContactBtn").hidden = !newsletterView;
     $("outreachSearch").placeholder = newsletterView ? "Search newsletter contacts" : repliesView ? "Search replies" : "Search any business information";
@@ -8358,6 +8363,11 @@
     $("outreachSearch").focus();
   });
   $("outreachList").addEventListener("click", event => {
+    if (event.target.closest("[data-campaigns-show-older]")) {
+      outreachCampaignsShown += OUTREACH_CAMPAIGN_BATCH;
+      renderOutreachCampaigns();
+      return;
+    }
     if (event.target.closest("[data-outreach-show-more]")) {
       outreachShownLimit += OUTREACH_LIST_BATCH;
       renderOutreach();
