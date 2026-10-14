@@ -136,7 +136,7 @@ test("phone count mode hides extra tools behind More tools and lists uncounted b
   }
   assert.match(index, /\.sort\(\(a, b\) => \(isCounted\(a\.line\) - isCounted\(b\.line\)\) \|\| \(a\.order - b\.order\)\)/);
   assert.match(index, /compactCountQuery\.matches && activeAppSection === "inventory" && !compactToolsOpen/);
-  assert.doesNotMatch(index, /body\.compactCount \.appNav/, "the section menu stays visible while counting on a phone");
+  assert.match(index, /"Outreach, Accounts & more tools"/, "the button says it leads to the other sections");
 });
 
 test("salesReport returns the sales tabs as displayed, trimmed to their data", async () => {

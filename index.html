@@ -1901,7 +1901,7 @@
     button.is-busy::after { content:" …"; }
     /* Compact count mode: on a phone in the Inventory section, show only the store picker, the
        Shelf/Back toggle, Scan, and the bottle list. "More tools" brings everything else back.
-       The section menu (Inventory / Outreach / Orders & Accounts) always stays visible. */
+       That includes the section menu, so the button names Outreach and Accounts. */
     .compactToolsToggle{display:none;width:100%;margin:12px 0 0}
     body.compactCount .compactToolsToggle{display:block}
     body.compactCount #managerSummaryCard,
@@ -1912,6 +1912,7 @@
     body.compactCount #countFilters,
     body.compactCount #countSummaryGrid,
     body.compactCount #managerDetails,
+    body.compactCount .appNav,
     body.compactCount #appSubtitle{display:none !important}
   </style>
 </head>
@@ -2147,7 +2148,7 @@
   </div>
 
   <div class="list" id="list" data-inventory-count-only></div>
-  <button type="button" class="compactToolsToggle" id="compactToolsToggle">More tools (search, summary, manager)</button>
+  <button type="button" class="compactToolsToggle" id="compactToolsToggle">Outreach, Accounts &amp; more tools</button>
   </div>
   </section>
 
@@ -6851,7 +6852,7 @@
     const toggle = $("compactToolsToggle");
     if (toggle) {
       toggle.hidden = !compactCountQuery.matches || activeAppSection !== "inventory";
-      toggle.textContent = compactToolsOpen ? "Hide extra tools" : "More tools (search, summary, manager)";
+      toggle.textContent = compactToolsOpen ? "Back to simple counting" : "Outreach, Accounts & more tools";
     }
     if (compact && !wasCompact) {
       // Hidden controls must not keep filtering the list out of sight.
