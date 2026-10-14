@@ -210,5 +210,6 @@ test("outreach lists draw in batches and icons are converted once", async () => 
   const start = index.indexOf("  function refreshIcons(root){");
   const body = index.slice(start, index.indexOf("\n  }\n", start));
   assert.match(body, /querySelectorAll\("i\[data-lucide\]"\)/, "only undrawn icons are converted");
-  assert.doesNotMatch(body.split("if (typeof createElement")[0], /createIcons/, "no whole-document rebuild when there is nothing new");
+  const code = body.replace(/\/\/.*$/gm, "");
+  assert.doesNotMatch(code.split("if (typeof createElement")[0], /createIcons/, "no whole-document rebuild when there is nothing new");
 });
