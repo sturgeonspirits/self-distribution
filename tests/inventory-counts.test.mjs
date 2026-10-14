@@ -174,3 +174,29 @@ test("salesReport returns the sales tabs as displayed, trimmed to their data", a
   const index = await readFile(new URL("index.html", root), "utf8");
   assert.match(index, /staffApiGet\(\{ action:"salesReport" \}\)/);
 });
+
+test("a superseded campaign load never overwrites a newer one", async () => {
+  const index = await readFile(new URL("index.html", root), "utf8");
+  const start = index.indexOf("  var outreachCampaignsLoadRequest = 0;");
+  const end = index.indexOf("  var lastOutreachCampaignsHtml");
+  assert.ok(start > 0 && end > start);
+  const pending = [];
+  const env = {
+    outreachData:{ campaigns:[{ campaign_id:"C", status:"Review" }] }, renders:0, statuses:[],
+    staffApiGet:() => new Promise(resolve => pending.push(resolve)),
+    readScreenCache:() => null, writeScreenCache:() => {}, cachedTimeLabel:() => "",
+  };
+  const load = new Function("env", `with (env) { ${index.slice(start, end)}; return loadOutreachCampaigns; }`)(new Proxy(env, {
+    has:() => true,
+    get:(t, k) => k === Symbol.unscopables ? undefined : k === "renderOutreach" ? () => { t.renders += 1; } : k === "setOutreachStatus" ? m => t.statuses.push(m) : k in t ? t[k] : globalThis[k],
+    set:(t, k, v) => { t[k] = v; return true; },
+  }));
+  const older = load();
+  const newer = load();
+  pending[1]({ ok:true, campaigns:[{ campaign_id:"C", status:"Approved" }] });
+  await newer;
+  pending[0]({ ok:true, campaigns:[{ campaign_id:"C", status:"Review" }] });
+  await older;
+  assert.equal(env.outreachData.campaigns[0].status, "Approved", "the older response is discarded");
+  assert.equal(env.renders, 1);
+});

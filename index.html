@@ -4616,13 +4616,22 @@
     refreshIcons();
   }
 
+  var outreachCampaignsLoadRequest = 0;
   async function loadOutreachCampaigns(){
+    // Only the newest request may update the list: an older response that arrives last must not
+    // overwrite fresher campaign status or counts (e.g. a Refresh racing an action's reload).
+    const requestId = ++outreachCampaignsLoadRequest;
     const cached = !(outreachData.campaigns || []).length && readScreenCache("campaigns");
     if (cached) { outreachData.campaigns = cached.payload.campaigns || []; renderOutreach(); setOutreachStatus(`Updating campaigns… showing data from ${cachedTimeLabel(cached)}.`); }
     else if (!(outreachData.campaigns || []).length) setOutreachStatus("Loading campaigns…");
     let res;
     try { res = await staffApiGet({ action:"outreachCampaigns" }); }
-    catch (error) { if (cached) { setOutreachStatus(`Couldn't refresh campaigns; showing data from ${cachedTimeLabel(cached)}. Click Refresh to retry.`); return; } throw error; }
+    catch (error) {
+      if (requestId !== outreachCampaignsLoadRequest) return;
+      if (cached) { setOutreachStatus(`Couldn't refresh campaigns; showing data from ${cachedTimeLabel(cached)}. Click Refresh to retry.`); return; }
+      throw error;
+    }
+    if (requestId !== outreachCampaignsLoadRequest) return;
     if (!res.ok) throw new Error(res.error || "Campaigns could not be loaded.");
     outreachData.campaigns = res.campaigns || [];
     writeScreenCache("campaigns", res);
