@@ -1,10 +1,10 @@
 <!doctype html>
-<!-- App version: 2026.10.14.1-WEB -->
+<!-- App version: 2026.10.14.2-WEB -->
 <html lang="en">
 <head>
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
-  <meta name="app-version" content="2026.10.14.1-WEB" />
+  <meta name="app-version" content="2026.10.14.2-WEB" />
   <title>Order request | Sturgeon Distribution Hub</title>
   <link rel="stylesheet" href="/assets/customer-portal.css?v=2026.10.12.1" />
 </head>
@@ -58,8 +58,8 @@
         <p class="sectionHelp">Request by bottle or case. The team will confirm the final quantity.</p>
         <div class="loading" id="productLoading">Loading current products...</div>
         <div class="orderLines" id="orderLines"></div>
-        <div class="actions" style="margin-top:12px"><button id="addLineBtn" type="button" hidden>Add another product</button></div>
-        <div class="totals" id="orderTotals" aria-live="polite"></div>
+        <div class="actions" id="addLineRow" style="margin-top:12px" hidden><button id="addLineBtn" type="button">Add another product</button></div>
+        <div class="totals" id="orderTotals" aria-live="polite" hidden></div>
       </fieldset>
 
       <fieldset>
@@ -118,13 +118,18 @@
     "use strict";
     window.addEventListener("unhandledrejection", e => console.error("Unhandled promise rejection:", e.reason));
     window.addEventListener("error", e => console.error("Unhandled error:", e.error || e.message));
-    const APP_VERSION = "2026.10.14.1-WEB";
+    const APP_VERSION = "2026.10.14.2-WEB";
     const form = document.getElementById("orderForm");
     const linesEl = document.getElementById("orderLines");
     const loadingEl = document.getElementById("productLoading");
     const status = document.getElementById("orderStatus");
     const submit = document.getElementById("submitOrderBtn");
     const addLineBtn = document.getElementById("addLineBtn");
+    // The Add-product row and the totals stay out of the layout (no blank gap) until products load.
+    function showProductControls(show){
+      document.getElementById("addLineRow").hidden = !show;
+      document.getElementById("orderTotals").hidden = !show;
+    }
     let skus = [];
     let submissionToken = crypto.randomUUID ? crypto.randomUUID() : `${Date.now()}-${Math.random()}`;
 
@@ -212,7 +217,7 @@
 
     async function loadProducts(){
       submit.disabled = true;
-      addLineBtn.hidden = true;
+      showProductControls(false);
       loadingEl.hidden = false;
       loadingEl.textContent = "Loading current products...";
       try {
@@ -220,10 +225,12 @@
         const result = await customerResponseJson(response);
         if (!response.ok) throw new Error(result.error || "Products could not be loaded.");
         if (!result.ok || !Array.isArray(result.skus)) throw new Error(result.error || "Products could not be loaded.");
+        // An empty catalog can't be ordered from: treat it like a failed load (retry and email message).
+        if (!result.skus.length) throw new Error("No products are available right now.");
         skus = result.skus;
         loadingEl.hidden = true;
         submit.disabled = false;
-        addLineBtn.hidden = false;
+        showProductControls(true);
         // Refill any product boxes already on the page (keeping a choice), or start with one.
         linesEl.querySelectorAll(".productSelect").forEach(select => {
           const chosen = select.value;
