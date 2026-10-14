@@ -1,10 +1,10 @@
 <!doctype html>
-<!-- App version: 2026.10.14.51-WEB -->
+<!-- App version: 2026.10.14.52-WEB -->
 <html>
 <head>
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover"/>
-  <meta name="app-version" content="2026.10.14.51-WEB" />
+  <meta name="app-version" content="2026.10.14.52-WEB" />
   <meta name="theme-color" content="#536f77" />
   <link rel="icon" href="/assets/distribution-hub-icon.svg" type="image/svg+xml" />
   <link rel="manifest" href="/site.webmanifest" />
@@ -272,6 +272,8 @@
       border-radius:8px;
       padding:12px;
     }
+    .outreachShowMore{display:block;width:100%;margin:4px 0 12px;padding:14px;border:1px solid var(--line);border-radius:10px;background:#fff;color:var(--text);font:inherit;font-weight:900;cursor:pointer}
+    .outreachShowMore span{font-weight:600;color:var(--muted,#6b7280)}
     .outreachCard.priority{
       border-left:4px solid var(--amber);
     }
@@ -2734,7 +2736,7 @@
 
   <footer style="max-width:1200px;margin:18px auto 120px;padding:0 12px;text-align:center;color:#6b7280;font-size:12px;">
     Designed by <a href="https://scriptspirit.dev" target="_blank" rel="noopener noreferrer" style="color:#1d4ed8;text-decoration:none;font-weight:700;">Script Spirit</a>
-<span id="appVersionFooter"> • Version 2026.10.14.51-WEB</span>
+<span id="appVersionFooter"> • Version 2026.10.14.52-WEB</span>
   </footer>
 
 
@@ -2757,7 +2759,7 @@
   window.addEventListener("unhandledrejection", e => console.error("Unhandled promise rejection:", e.reason));
   window.addEventListener("error", e => console.error("Unhandled error:", e.error || e.message));
   const $ = (id) => document.getElementById(id);
-  const APP_VERSION = "2026.10.14.51-WEB";
+  const APP_VERSION = "2026.10.14.52-WEB";
   $("appVersionFooter").textContent = ` • Version ${APP_VERSION}`;
   function screenCacheKey(screen){ return `distribution_hub:${APP_VERSION}:${staffSession?.email || "unknown"}:${screen}`; }
   function readScreenCache(screen){
@@ -2801,6 +2803,9 @@
   let outreachFilterText = "";
   let outreachLoaded = false;
   let outreachLoadRequest = 0;
+  const OUTREACH_LIST_BATCH = 50;
+  let outreachShownLimit = OUTREACH_LIST_BATCH;
+  let outreachListKey = "";
   let outreachReviewOpenRequest = 0;
   let outreachOutcomeOpenRequest = 0;
   let outreachDetailOpenRequest = 0;
@@ -2945,9 +2950,29 @@
     return data;
   }
 
-  function refreshIcons(){
-    if (window.lucide) window.lucide.createIcons({ attrs: { "aria-hidden":"true" } });
+  function refreshIcons(root){
+    if (!window.lucide) return;
+    // Convert only icons not yet drawn (<i data-lucide>). lucide.createIcons() rescans the whole
+    // document and rebuilds every icon already on the page (the SVGs keep data-lucide), so each
+    // list redraw replaced thousands of icons everywhere — heavy repaint on phones while scrolling.
+    const pending = (root && root.querySelectorAll ? root : document).querySelectorAll("i[data-lucide]");
+    if (!pending.length) return;
+    const { createElement, icons } = window.lucide;
+    if (typeof createElement !== "function" || !icons) {
+      window.lucide.createIcons({ attrs: { "aria-hidden":"true" } });
+      return;
+    }
+    pending.forEach(element => {
+      const name = element.getAttribute("data-lucide");
+      const node = icons[String(name).replace(/(\w)(\w*)(_|-|\s*)/g, (m, a, b) => a.toUpperCase() + b.toLowerCase())];
+      if (!node) return;
+      const [tag, iconAttrs, children] = node;
+      const own = Array.from(element.attributes).reduce((all, attr) => { all[attr.name] = attr.value; return all; }, {});
+      const className = ["lucide", `lucide-${name}`, own.class || ""].join(" ").trim();
+      element.replaceWith(createElement([tag, { ...iconAttrs, "data-lucide":name, "aria-hidden":"true", ...own, class:className }, children]));
+    });
   }
+
 
   function setOutreachStatus(message){
     $("outreachStatus").textContent = message || "";
@@ -5413,7 +5438,14 @@
       return;
     }
 
-    list.innerHTML = records.map(record => {
+    // Phones run out of graphics memory on a page with hundreds of cards (the full Businesses list
+    // was ~320,000 px tall), which shows up as blank bands and garbled tiles. Draw a batch at a time;
+    // search, filters and sort still cover every record.
+    const listKey = [outreachView, outreachAudiencePreset, outreachSort, outreachFilterText].join("|");
+    if (listKey !== outreachListKey) { outreachListKey = listKey; outreachShownLimit = OUTREACH_LIST_BATCH; }
+    const shownRecords = records.slice(0, outreachShownLimit);
+    const remaining = records.length - shownRecords.length;
+    list.innerHTML = shownRecords.map(record => {
       const status = String(record.status || "Not contacted");
       const priority = String(record.priority || "");
       const dateLabel = record.next_follow_up
@@ -5458,8 +5490,10 @@
           </div>
           ${refreshPending ? `<div class="smallMuted">Refreshing — try again in a moment.</div>` : ""}
         </article>`;
-    }).join("");
-    refreshIcons();
+    }).join("") + (remaining > 0
+      ? `<button class="outreachShowMore" type="button" data-outreach-show-more>Show ${Math.min(remaining, OUTREACH_LIST_BATCH)} more <span>(${shownRecords.length} of ${records.length} shown)</span></button>`
+      : "");
+    refreshIcons(list);
   }
 
   function applyOutreachSendStatus(res){
@@ -8324,6 +8358,11 @@
     $("outreachSearch").focus();
   });
   $("outreachList").addEventListener("click", event => {
+    if (event.target.closest("[data-outreach-show-more]")) {
+      outreachShownLimit += OUTREACH_LIST_BATCH;
+      renderOutreach();
+      return;
+    }
     const replyButton = event.target.closest("[data-reply-action]");
     if (replyButton) {
       handleReplyAction(replyButton).catch(error => toast(error.message || String(error)));

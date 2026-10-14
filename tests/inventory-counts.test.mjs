@@ -200,3 +200,15 @@ test("a superseded campaign load never overwrites a newer one", async () => {
   assert.equal(env.outreachData.campaigns[0].status, "Approved", "the older response is discarded");
   assert.equal(env.renders, 1);
 });
+
+test("outreach lists draw in batches and icons are converted once", async () => {
+  const index = await readFile(new URL("index.html", root), "utf8");
+  assert.match(index, /const OUTREACH_LIST_BATCH = 50;/);
+  assert.match(index, /records\.slice\(0, outreachShownLimit\)/, "only a batch of cards is drawn");
+  assert.match(index, /data-outreach-show-more/);
+  assert.match(index, /if \(listKey !== outreachListKey\) \{ outreachListKey = listKey; outreachShownLimit = OUTREACH_LIST_BATCH; \}/, "a new view, filter, sort or search starts from the first batch");
+  const start = index.indexOf("  function refreshIcons(root){");
+  const body = index.slice(start, index.indexOf("\n  }\n", start));
+  assert.match(body, /querySelectorAll\("i\[data-lucide\]"\)/, "only undrawn icons are converted");
+  assert.doesNotMatch(body.split("if (typeof createElement")[0], /createIcons/, "no whole-document rebuild when there is nothing new");
+});
