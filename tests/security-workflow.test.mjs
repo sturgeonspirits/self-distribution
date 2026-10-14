@@ -2985,3 +2985,65 @@ test("Toast 86 Report import maps stock by exact Toast item name and reports gap
   assert.equal(problems.no_toast_item, undefined);
   assert.deepEqual(problems.no_invoice_unit, ["C (9000ml)"]);
 });
+
+test("Zoho callback without the matching state cookie recovers instead of showing raw JSON", async () => {
+  process.env.APP_SESSION_SECRET = "test-session-secret-that-is-long-enough";
+  process.env.ZOHO_OIDC_CLIENT_ID = "client";
+  process.env.ZOHO_OIDC_CLIENT_SECRET = "secret";
+  process.env.ZOHO_OIDC_REDIRECT_URI = "https://example.test/api/auth?action=callback";
+  process.env.TEST_STAFF_ROSTER_JSON = '{"staff@sturgeonspirits.com":"staff"}';
+  const { handler } = await loadFunction("netlify/functions/auth.js", "callback-recovery");
+  const tokenCalls = [];
+  const priorFetch = globalThis.fetch;
+  globalThis.fetch = async url => { tokenCalls.push(String(url)); return new Response("{}", { status:500 }); };
+  try {
+    const login = async (query = {}) => {
+      const response = await handler({ httpMethod:"GET", headers:{}, queryStringParameters:{ action:"login", return_to:"/?view=inventory", ...query } });
+      assert.equal(response.statusCode, 302);
+      return new URL(response.headers.Location).searchParams.get("state");
+    };
+    const callback = (state, cookie) => handler({ httpMethod:"GET", headers:cookie ? { cookie } : {}, queryStringParameters:{ action:"callback", code:"zoho-code", state } });
+
+    // Started in one browser or app, finished in another: start over once in this browser.
+    const first = await login();
+    const restarted = await callback(first);
+    assert.equal(restarted.statusCode, 302);
+    assert.equal(restarted.headers.Location, "/api/auth?action=login&retried=1&return_to=%2F%3Fview%3Dinventory");
+    assert.equal(tokenCalls.length, 0, "a code without the matching cookie is never exchanged");
+
+    // A second failure after the restart shows a readable page with a sign-in button, not a loop.
+    const second = await login({ retried:"1" });
+    const page = await callback(second);
+    assert.equal(page.statusCode, 400);
+    assert.match(page.headers["Content-Type"], /text\/html/);
+    assert.match(page.body, /Sign in with Zoho again/);
+    assert.match(page.body, /href="\/api\/auth\?action=login&amp;return_to=%2F%3Fview%3Dinventory"/);
+
+    // Back button or a restored tab after a good sign-in: already signed in, go to the Hub.
+    const back = await callback(first, staffSession());
+    assert.equal(back.statusCode, 302);
+    assert.equal(back.headers.Location, "/?view=inventory");
+
+    // Forged or garbled state never restarts or exchanges anything.
+    const forged = await callback("bogus.state");
+    assert.equal(forged.statusCode, 400);
+    assert.equal(tokenCalls.length, 0);
+
+    // Zoho cancellation with a good cookie is a page, not an automatic retry loop.
+    const cancelled = await handler({ httpMethod:"GET", headers:{ cookie:`distribution_zoho_state=${encodeURIComponent(first)}` }, queryStringParameters:{ action:"callback", error:"access_denied", state:first } });
+    assert.equal(cancelled.statusCode, 401);
+    assert.match(cancelled.body, /cancelled/);
+
+    // The matching cookie still proceeds to Zoho's token exchange.
+    const matched = await callback(first, `distribution_zoho_state=${encodeURIComponent(first)}`);
+    assert.equal(tokenCalls.length, 1);
+    assert.equal(matched.statusCode, 401);
+    assert.match(matched.body, /Zoho did not approve this sign-in request/);
+  } finally {
+    globalThis.fetch = priorFetch;
+    delete process.env.TEST_STAFF_ROSTER_JSON;
+    delete process.env.ZOHO_OIDC_CLIENT_ID;
+    delete process.env.ZOHO_OIDC_CLIENT_SECRET;
+    delete process.env.ZOHO_OIDC_REDIRECT_URI;
+  }
+});

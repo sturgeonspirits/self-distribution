@@ -1,3 +1,4 @@
+// App version: 2026.10.14.49-WEB
 // Zoho OIDC authentication for the staff application.
 // Required Netlify environment variables:
 // ZOHO_OIDC_CLIENT_ID, ZOHO_OIDC_CLIENT_SECRET, APP_SESSION_SECRET.
@@ -8,6 +9,7 @@
 import { createHash, createHmac, createPublicKey, randomBytes, timingSafeEqual, verify as verifySignature } from "node:crypto";
 import { loadStaffRoster } from "../lib/staff-roster.js";
 
+const APP_VERSION = "2026.10.14.49-WEB";
 const SESSION_COOKIE = "distribution_staff_session";
 const STATE_COOKIE = "distribution_zoho_state";
 const SESSION_SECONDS = 8 * 60 * 60;
@@ -90,6 +92,24 @@ function safeReturnTo(value) {
   return path;
 }
 
+function escapeHtml(value) {
+  return String(value).replace(/[&<>"']/g, c => ({ "&":"&amp;", "<":"&lt;", ">":"&gt;", '"':"&quot;", "'":"&#39;" }[c]));
+}
+
+function redirect(location, setCookie) {
+  return { statusCode:302, headers:{ Location:location, "Cache-Control":"no-store", "X-App-Version":APP_VERSION, ...(setCookie ? { "Set-Cookie":setCookie } : {}) }, body:"" };
+}
+
+// The callback is a full-page visit, so its failures are a readable page with a way back in,
+// not raw JSON on a phone screen.
+function signInPage(statusCode, title, message, returnTo) {
+  const again = `/api/auth?action=login&return_to=${encodeURIComponent(safeReturnTo(returnTo))}`;
+  const body = `<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Sturgeon Distribution sign-in</title>
+<style>body{margin:0;font:16px/1.5 system-ui,-apple-system,sans-serif;background:#f6f4ef;color:#1d2a33}main{max-width:420px;margin:12vh auto;padding:0 16px}h1{font-size:1.3rem;margin:0 0 8px}p{margin:0 0 20px}a.btn{display:block;text-align:center;padding:14px;border-radius:10px;background:#1d2a33;color:#fff;text-decoration:none;font-weight:600}a.home{display:block;text-align:center;margin-top:14px;color:#1d2a33}@media(prefers-color-scheme:dark){body{background:#14191d;color:#e8e4dc}a.btn{background:#e8e4dc;color:#14191d}a.home{color:#e8e4dc}}</style></head>
+<body><main><h1>${escapeHtml(title)}</h1><p>${escapeHtml(message)}</p><a class="btn" href="${escapeHtml(again)}">Sign in with Zoho again</a><a class="home" href="/">Go to the Hub</a></main></body></html>`;
+  return { statusCode, headers:{ "Content-Type":"text/html; charset=utf-8", "Cache-Control":"no-store", "X-App-Version":APP_VERSION, "Set-Cookie":clearCookie(STATE_COOKIE) }, body };
+}
+
 // Returns an approved access object, an unapproved result, or an unavailable roster.
 async function rosterAccessFor(email) {
   const key = String(email || "").trim().toLowerCase();
@@ -161,6 +181,7 @@ async function beginLogin(event) {
   const state = encodeSigned({
     purpose:"zoho_oidc", nonce:randomBytes(24).toString("base64url"), verifier,
     returnTo:safeReturnTo(event.queryStringParameters?.return_to), exp:now + STATE_SECONDS,
+    retried:event.queryStringParameters?.retried === "1",
   }, settings.sessionSecret);
   const payload = decodeSigned(state, settings.sessionSecret);
   const query = new URLSearchParams({
@@ -176,29 +197,52 @@ async function finishLogin(event) {
   const settings = config();
   const params = event.queryStringParameters || {};
   const state = String(params.state || "");
-  const savedState = cookies(event)[STATE_COOKIE];
-  const payload = state && savedState === state ? decodeSigned(state, settings.sessionSecret) : null;
-  if (!payload || payload.purpose !== "zoho_oidc" || !params.code) return json(400, { ok:false, error:"This Zoho sign-in link is invalid or expired." }, { "Set-Cookie":clearCookie(STATE_COOKIE) });
-  const tokenResponse = await fetch(`${settings.issuer}/oauth/v2/token`, {
-    method:"POST", headers:{ "Content-Type":"application/x-www-form-urlencoded" },
-    body:new URLSearchParams({ grant_type:"authorization_code", code:String(params.code), redirect_uri:settings.redirectUri, client_id:settings.clientId, client_secret:settings.clientSecret, code_verifier:payload.verifier }),
-  });
-  const token = await tokenResponse.json().catch(() => ({}));
-  if (!tokenResponse.ok || !token.id_token) return json(401, { ok:false, error:"Zoho did not approve this sign-in request." }, { "Set-Cookie":clearCookie(STATE_COOKIE) });
-  const claims = await verifyIdToken(token.id_token, payload.nonce, settings);
-  const email = String(claims.email).trim().toLowerCase();
-  const rosterAccess = await rosterAccessFor(email);
-  if (rosterAccess.unavailable) return json(503, { ok:false, error:"The Staff Access tab could not be read. Ask Karl to check the staff list and try again in a minute.", code:"STAFF_ROSTER_UNAVAILABLE" }, { "Set-Cookie":clearCookie(STATE_COOKIE) });
-  if (!rosterAccess.access) return json(403, { ok:false, error:"Your Zoho account is not on the Hub staff list. Ask Karl to add it to the Staff Access tab in the Hub." }, { "Set-Cookie":clearCookie(STATE_COOKIE) });
-  const now = Math.floor(Date.now() / 1000);
-  const name = String(claims.name || [claims.given_name, claims.family_name].filter(Boolean).join(" ") || email).slice(0, 120);
-  const session = encodeSigned({ sub:String(claims.sub), email, name, role:rosterAccess.access.role, areas:rosterAccess.access.areas, exp:now + SESSION_SECONDS }, settings.sessionSecret);
-  return {
-    statusCode:302,
-    headers:{ Location:payload.returnTo, "Cache-Control":"no-store" },
-    multiValueHeaders:{ "Set-Cookie":[cookie(SESSION_COOKIE, session, SESSION_SECONDS), clearCookie(STATE_COOKIE)] },
-    body:"",
-  };
+  const signedState = state ? decodeSigned(state, settings.sessionSecret) : null;
+  const statePayload = signedState?.purpose === "zoho_oidc" ? signedState : null;
+  const returnTo = safeReturnTo(statePayload?.returnTo);
+  // The state cookie must match: that ties Zoho's answer to the browser that asked for it.
+  const payload = statePayload && cookies(event)[STATE_COOKIE] === state ? statePayload : null;
+
+  if (params.error && payload) {
+    return signInPage(401, "Zoho sign-in was cancelled", "Zoho did not finish the sign-in. Try again, and choose Accept if Zoho asks for permission.", returnTo);
+  }
+  if (!payload || !params.code) {
+    // Back button, a restored tab, or a second tap after signing in: already signed in, so just continue.
+    let existing = null;
+    try { existing = await sessionFor(event); } catch (_) { existing = null; }
+    if (existing && !existing.unavailable) return redirect(returnTo, clearCookie(STATE_COOKIE));
+    // Sign-in started in another browser or app (for example a link opened inside the Zoho Mail app
+    // and finished in Chrome), so this browser never got the matching cookie. Start over here, once.
+    if (statePayload && !statePayload.retried) {
+      return redirect(`/api/auth?action=login&retried=1&return_to=${encodeURIComponent(returnTo)}`, clearCookie(STATE_COOKIE));
+    }
+    return signInPage(400, "This Zoho sign-in link is invalid or expired.", "The sign-in took longer than 10 minutes, or it was started in a different browser or app. Tap below to sign in again from here.", returnTo);
+  }
+
+  try {
+    const tokenResponse = await fetch(`${settings.issuer}/oauth/v2/token`, {
+      method:"POST", headers:{ "Content-Type":"application/x-www-form-urlencoded" },
+      body:new URLSearchParams({ grant_type:"authorization_code", code:String(params.code), redirect_uri:settings.redirectUri, client_id:settings.clientId, client_secret:settings.clientSecret, code_verifier:payload.verifier }),
+    });
+    const token = await tokenResponse.json().catch(() => ({}));
+    if (!tokenResponse.ok || !token.id_token) return signInPage(401, "Zoho did not approve this sign-in request.", "Try signing in again. If it keeps happening, tell Karl.", returnTo);
+    const claims = await verifyIdToken(token.id_token, payload.nonce, settings);
+    const email = String(claims.email).trim().toLowerCase();
+    const rosterAccess = await rosterAccessFor(email);
+    if (rosterAccess.unavailable) return signInPage(503, "Staff list temporarily unavailable", "The Staff Access tab could not be read. Ask Karl to check the staff list and try again in a minute.", returnTo);
+    if (!rosterAccess.access) return signInPage(403, "Not on the Hub staff list", "Your Zoho account is not on the Hub staff list. Ask Karl to add it to the Staff Access tab in the Hub.", returnTo);
+    const now = Math.floor(Date.now() / 1000);
+    const name = String(claims.name || [claims.given_name, claims.family_name].filter(Boolean).join(" ") || email).slice(0, 120);
+    const session = encodeSigned({ sub:String(claims.sub), email, name, role:rosterAccess.access.role, areas:rosterAccess.access.areas, exp:now + SESSION_SECONDS }, settings.sessionSecret);
+    return {
+      statusCode:302,
+      headers:{ Location:returnTo, "Cache-Control":"no-store", "X-App-Version":APP_VERSION },
+      multiValueHeaders:{ "Set-Cookie":[cookie(SESSION_COOKIE, session, SESSION_SECONDS), clearCookie(STATE_COOKIE)] },
+      body:"",
+    };
+  } catch (error) {
+    return signInPage(502, "Zoho sign-in could not be completed", `${error?.message || "Zoho did not respond."} Try signing in again.`, returnTo);
+  }
 }
 
 export async function handler(event) {
