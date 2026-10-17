@@ -1,12 +1,12 @@
 <!doctype html>
-<!-- App version: 2026.10.14.2-WEB -->
+<!-- App version: 2026.10.17.55-WEB -->
 <html lang="en">
 <head>
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
-  <meta name="app-version" content="2026.10.14.2-WEB" />
+  <meta name="app-version" content="2026.10.17.55-WEB" />
   <title>Order request | Sturgeon Distribution Hub</title>
-  <link rel="stylesheet" href="/assets/customer-portal.css?v=2026.10.12.1" />
+  <link rel="stylesheet" href="/assets/customer-portal.css?v=2026.10.17.55" />
 </head>
 <body>
   <header class="siteHeader">
@@ -15,7 +15,10 @@
         <img src="/assets/sturgeon-spirits-logo.png" alt="Sturgeon Spirits" />
         <span class="brandText"><strong>Sturgeon Spirits</strong><span>Customer ordering</span></span>
       </a>
-      <a class="headerLink" href="/customer-signup.html">Become a customer</a>
+      <nav class="headerLinks" aria-label="Customer resources">
+        <a class="headerLink" href="/sell-sheet.html" target="_blank" rel="noopener noreferrer">View sell sheet</a>
+        <a class="headerLink" href="/customer-signup.html">Become a customer</a>
+      </nav>
     </div>
   </header>
 
@@ -118,7 +121,7 @@
     "use strict";
     window.addEventListener("unhandledrejection", e => console.error("Unhandled promise rejection:", e.reason));
     window.addEventListener("error", e => console.error("Unhandled error:", e.error || e.message));
-    const APP_VERSION = "2026.10.14.2-WEB";
+    const APP_VERSION = "2026.10.17.55-WEB";
     const form = document.getElementById("orderForm");
     const linesEl = document.getElementById("orderLines");
     const loadingEl = document.getElementById("productLoading");

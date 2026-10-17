@@ -2,3 +2,16 @@
 .DS_Store
 .netlify
 node_modules
+
+# Kept on Karl's Mac only; not part of the Hub's code history.
+# Compliance and filing documents (they belong with the TTB/DOR compliance work, not this repo)
+TTB_DOR_COMPLIANCE_REVIEW*.md
+FINAL_FILING_CHECK_*.md
+docs/sturgeon-spirits-prefiling-review-*.md
+sturgeon-spirits-independent-ai-review-*/
+docs/security-hardening-tasks-*.md
+# Exports generated from docs/staff-user-guide.md
+docs/*.docx
+docs/*.pdf
+# Unused design placeholder
+assets/sell-sheet/*-LOWRES-placeholder.png

@@ -71,6 +71,7 @@ button,a.button{touch-action:manipulation}
   text-decoration:none;
   white-space:nowrap;
 }
+.headerLinks{display:flex;align-items:center;gap:8px}
 
 main{width:min(920px,100%);margin:0 auto;padding:28px 18px 56px}
 .pageIntro{max-width:720px;margin-bottom:26px}
@@ -176,6 +177,7 @@ footer{border-top:1px solid var(--line);background:var(--soft)}
   .brandText strong{font-size:16px}
   .brandText span{font-size:11px}
   .headerLink{min-height:42px;padding:9px 10px;font-size:13px}
+  .headerLinks{gap:6px}
   main{padding:22px 12px 42px}
   .grid{grid-template-columns:1fr}
   .span2{grid-column:auto}
@@ -187,10 +189,17 @@ footer{border-top:1px solid var(--line);background:var(--soft)}
   .orderLine .productField{grid-column:1 / -1}
 }
 
+/* Two header buttons do not fit beside the name on narrow phones: keep the name whole and let the buttons wrap
+   to their own row instead of drawing on top of it. */
+@media (max-width:520px){
+  .headerInner{flex-wrap:wrap;row-gap:10px}
+  .brand{flex:0 0 auto}
+  .headerLinks{margin-left:auto;flex-wrap:wrap;justify-content:flex-end}
+}
 @media (max-width:380px){
   .headerInner{padding-left:12px;padding-right:12px;gap:8px}
   .brandText span{display:none}
-  .headerLink{font-size:12px}
+  .headerLink{font-size:12px;padding-left:8px;padding-right:8px}
   h1{font-size:30px}
   .orderLine{grid-template-columns:1fr 48px}
   .orderLine .productField,.orderLine .quantityField{grid-column:1 / -1}

@@ -516,6 +516,7 @@ test("campaign freeze timeouts wait for the snapshot instead of re-creating it",
 test("SKUs Out of Stock checkbox blocks ordering without adding sheet columns", async () => {
   const script = await readFile(new URL("apps-script/Code.gs", root), "utf8");
   const order = await readFile(new URL("order.html", root), "utf8");
+  assert.match(order, /href="\/sell-sheet\.html" target="_blank" rel="noopener noreferrer">View sell sheet/, "order form keeps the sell sheet available without replacing an in-progress order");
   const catalog = script.slice(script.indexOf("function apiListSkus_"), script.indexOf("function apiAddSkuToStoreUnlocked_"));
   assert.match(catalog, /toBool_\(firstPresent_\(s, \["out_of_stock", "out_of_stock\?"\]\)\)/);
   assert.doesNotMatch(catalog, /ensureHeaderColumns_/);
@@ -1558,6 +1559,8 @@ test("sell-sheet render keeps public output price-free and renders authorized pr
   assert.doesNotMatch(pricedView.html, /Coffee Liqueur <span class="item-price">/);
   assert.match(pricedView.html, /Maraschino Liqueur \(375 mL\)<\/li>/);
   assert.match(pricedView.html, /Special Liqueur[^<]*<span class="item-price">Ask us for your price/);
+  assert.match(pricedView.html, /<h3>New(?:\s|<)[\s\S]*?<li>Straight Bourbon<\/li>/, "new products remain in the page-two list");
+  assert.match(pricedView.html, /<h3>Best seller(?:\s|<)[\s\S]*?<li>Gin<\/li>/, "best sellers remain in the page-two list");
   assert.equal((pricedView.html.match(/alt="Gin"/g) || []).length, 2, "best sellers also populate the page-two grid");
   assert.equal((pricedView.html.match(/alt="Straight Bourbon"/g) || []).length, 1, "the Page 1 New bottle is not repeated in the grid");
   assert.equal((pricedView.html.match(/sturgeonspirits\.com/g) || []).length, 1);

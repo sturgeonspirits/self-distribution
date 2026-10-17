@@ -52,6 +52,8 @@ Staff sign in with their approved Zoho work account through the existing Zoho OI
 
 Who may sign in, and to which workspaces, comes from the **Staff Access** tab of the Hub spreadsheet, not from Netlify variables. Netlify reads that tab directly through the Google Sheets API with the relay service account and caches it for 2 minutes, so no Apps Script call is added to staff requests. See `docs/staff-access-setup.md`.
 
+For day-to-day Hub work, see the [staff user guide](docs/staff-user-guide.md).
+
 Netlify environment variables required for staff login:
 
 - `ZOHO_OIDC_CLIENT_ID`
