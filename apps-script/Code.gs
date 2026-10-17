@@ -9,6 +9,15 @@
  *   Deleting is a soft delete under the script lock: the campaign and its recipients are marked Deleted, approval and
  *   any schedule are cleared, the rows stay for the audit trail, and DELETE_OUTREACH_CAMPAIGN is logged. Deleted
  *   campaigns are left out of the Campaigns list and no longer block creating the same audience again.
+ * - Follow-ups can use exactly the businesses of an earlier campaign ("Same businesses as that campaign"): criteria
+ *   audience_mode "source" keeps only the stage check (who is due for this email) and the usual send-eligibility
+ *   rules, and skips the distance, fit, city, county, segment and wave filters. The stored center, radius and fit are
+ *   copied from the source campaign for labels and distances. Turning it off uses the filters as before.
+ * - "Only recipients of campaign" matched businesses by the stored Directory row number, which goes stale when the
+ *   Directory is sorted or rows are inserted (every Appleton row pointed at a different business by 2026-10-17).
+ *   campaignSourceRows_ now finds the businesses the source campaign sent to by account ID, then email, then name.
+ * - Sales campaign previews explain who was left out and why (due for a different email, not due until a date,
+ *   recently emailed, excluded, outside the radius or fit, over the maximum), with up to 8 names per reason.
  * - Campaigns can be renamed at any stage (renameOutreachCampaign); names are internal labels only and never appear
  *   in email. Logged as RENAME_OUTREACH_CAMPAIGN.
  *
@@ -4140,6 +4149,30 @@ function campaignCriteriaFromRequest_(p) {
   if (!Number.isFinite(radius) || radius < 0 || radius > 1000) throw new Error("Campaign radius must be from 0 to 1,000 miles.");
   if (!Number.isInteger(minFit) || minFit < 1 || minFit > 5) throw new Error("Campaign minimum fit must be from 1 to 5.");
   if (!stages.includes(stage)) throw new Error("Campaign stage must be Initial, Follow-up 1, Follow-up 2, or Nurture check-in.");
+  // "Same businesses as the source campaign": only the stage check applies (who is due for this email); no distance,
+  // fit or area filters, so a follow-up reaches the group the earlier email went to wherever it was centered.
+  // The stored center/radius/fit come from the source campaign so labels and distances still read sensibly.
+  if (source.use_source_audience === true || String(source.use_source_audience) === "true") {
+    if (!sourceCampaignId) throw new Error("Choose the campaign whose businesses this one should use.");
+    const sheets = outreachCampaignSheets_();
+    const sourceCampaign = outreachCampaignRow_(sheets.campaigns, sourceCampaignId);
+    if (!sourceCampaign) throw new Error("Selected source campaign was not found.");
+    const sourceCriteria = campaignStoredCriteria_(sourceCampaign.values[sourceCampaign.headers.criteria]);
+    const sourceIsSales = sourceCriteria && sourceCriteria.campaign_type !== "cocktail_list" && sourceCriteria.campaign_type !== "customer_invite";
+    return {
+      schema:3,
+      campaign_type:"sales_outreach",
+      audience_mode:"source",
+      stage:stage,
+      source_campaign_id:sourceCampaignId,
+      source_campaign_name:String(sourceCampaign.values[sourceCampaign.headers.campaign_name] || "").slice(0, 120),
+      center:sourceIsSales && sourceCriteria.center ? sourceCriteria.center : campaignCenterForCriteria_("distillery", ""),
+      radius_miles:sourceIsSales ? Number(sourceCriteria.radius_miles) : 1000,
+      min_fit:sourceIsSales ? Number(sourceCriteria.min_fit) : 1,
+      filters:{},
+      max_recipients:maxRecipients,
+    };
+  }
   return {
     schema:3,
     campaign_type:"sales_outreach",
@@ -4162,6 +4195,10 @@ function campaignAudienceLabel_(criteria) {
   if (criteria?.campaign_type === "customer_invite") return `Current customers · order online invite${criteria?.max_recipients ? ` · first ${criteria.max_recipients}` : ""}`;
   if (criteria?.campaign_type === "cocktail_list") return `Cocktail list · subscribed newsletter contacts${criteria?.max_recipients ? ` · first ${criteria.max_recipients}` : ""}`;
   const stage = String(criteria?.stage || "Initial");
+  if (criteria?.audience_mode === "source") {
+    const sourceLabel = criteria.source_campaign_name ? `${criteria.source_campaign_name} (${criteria.source_campaign_id})` : criteria.source_campaign_id;
+    return `${stage === "Initial" ? "Initial prospects" : `${stage} due`} · same businesses as ${sourceLabel}${criteria.max_recipients ? ` · first ${criteria.max_recipients}` : ""}`;
+  }
   const center = criteria?.center?.label || "selected center";
   const filters = criteria?.filters || {};
   const suffix = [criteria?.source_campaign_id && `recipients of ${criteria.source_campaign_id}`, filters.city && `city ${filters.city}`, filters.county && `county ${filters.county}`, filters.segment && `segment ${filters.segment}`, filters.wave && `wave ${filters.wave}`, criteria.max_recipients && `first ${criteria.max_recipients}`].filter(Boolean);
@@ -4176,6 +4213,8 @@ function campaignDistanceForCriteria_(record, criteria) {
 function campaignCriteriaFailures_(record, criteria) {
   if (!criteria) return [];
   if (criteria.campaign_type === "cocktail_list" || criteria.campaign_type === "customer_invite") return [];
+  // Source-audience follow-ups are limited by campaignSourceRows_ instead of distance, fit or area.
+  if (criteria.audience_mode === "source") return [];
   const failures = [];
   const miles = campaignDistanceForCriteria_(record, criteria);
   if (miles === null || miles > Number(criteria.radius_miles)) failures.push("distance");
@@ -4558,13 +4597,50 @@ function campaignInitialSentEmailSet_(directoryRecords) {
   return sentEmails;
 }
 
-function campaignSourceRows_(campaignId) {
+// The current Directory rows of the businesses an earlier campaign actually emailed. Recipients are matched by
+// account ID, then email, then business name: the stored source_row goes stale whenever the Directory is sorted or
+// rows are inserted (on 2026-10-17 every Appleton row number pointed at a different business). Only recipients the
+// source campaign sent to count; if it has not sent yet, its unsent recipients (not excluded or deleted) are used.
+function campaignSourceRows_(campaignId, directoryRecords) {
   if (!campaignId) return null;
   const sheets = outreachCampaignSheets_();
   if (!outreachCampaignRow_(sheets.campaigns, campaignId)) throw new Error("Selected source campaign was not found.");
-  return new Set(campaignRecipientRows_(sheets.recipients, campaignId)
-    .map(item => Number(item.values[item.headers.source_row] || 0))
-    .filter(Number.isInteger));
+  const recipients = campaignRecipientRows_(sheets.recipients, campaignId).map(item => {
+    const get = key => item.headers[key] === undefined ? "" : item.values[item.headers[key]];
+    return { status:String(get("status") || ""), account_id:String(get("account_id") || "").trim(), email:String(get("recipient_email") || "").trim().toLowerCase(), business:String(get("business_name") || "").trim().toLowerCase(), source_row:Number(get("source_row") || 0) };
+  });
+  const sent = recipients.filter(item => /^sent/i.test(item.status));
+  const group = sent.length ? sent : recipients.filter(item => !["Excluded", CAMPAIGN_DELETED_STATUS].includes(item.status));
+  const records = directoryRecords || getAllRowsAsObjects_(getOutreachSheet_(OUTREACH_SHEET_NAME)).map((row, index) => campaignDirectoryRecord_(row, index + 2));
+  const byAccount = new Map(), byEmail = new Map(), byName = new Map();
+  records.forEach(record => {
+    if (record.account_id && !byAccount.has(record.account_id)) byAccount.set(record.account_id, record.source_row);
+    const email = String(record.email || "").trim().toLowerCase();
+    if (email && !byEmail.has(email)) byEmail.set(email, record.source_row);
+    const name = String(record.business || "").trim().toLowerCase();
+    if (name && !byName.has(name)) byName.set(name, record.source_row);
+  });
+  const rows = new Set();
+  group.forEach(item => {
+    const row = (item.account_id && byAccount.get(item.account_id)) || (item.email && byEmail.get(item.email)) || (item.business && byName.get(item.business));
+    if (row) rows.add(row);
+  });
+  return rows;
+}
+
+function campaignLeftOutDateLabel_(value) {
+  const date = outreachDate_(value);
+  return date ? Utilities.formatDate(date, Session.getScriptTimeZone(), "EEE MMM d") : "";
+}
+
+function campaignCriteriaFailureLabel_(failure, criteria) {
+  const filters = criteria.filters || {};
+  return {
+    distance:`More than ${criteria.radius_miles} mi from ${criteria.center?.label || "the center"} (or no distance on file)`,
+    fit:`Craft-spirit fit below ${criteria.min_fit}`,
+    city:`Not in city ${filters.city}`, county:`Not in county ${filters.county}`,
+    segment:`Not segment ${filters.segment}`, wave:`Not wave ${filters.wave}`,
+  }[failure] || failure;
 }
 
 function campaignDirectoryStageSelection_(criteria) {
@@ -4573,11 +4649,25 @@ function campaignDirectoryStageSelection_(criteria) {
   const directoryRecords = getAllRowsAsObjects_(leadSheet).map((row, index) => campaignDirectoryRecord_(row, index + 2));
   const initialSentEmails = campaignInitialSentEmailSet_(directoryRecords);
   const activityMap = stage === "Initial" ? null : outreachActivityMap_();
-  const sourceRows = campaignSourceRows_(criteria.source_campaign_id);
-  const candidateRows = directoryRecords
-    .filter(record => record.next_email.toLowerCase() === stage.toLowerCase())
-    .filter(record => stage !== "Initial" || record.relationship.toLowerCase() === "prospect")
-    .filter(record => !sourceRows || sourceRows.has(record.source_row));
+  const sourceRows = campaignSourceRows_(criteria.source_campaign_id, directoryRecords);
+  // Why businesses were left out, so a preview with few or no recipients says what is in the way
+  // (for example a follow-up date that has not arrived) instead of only "0 eligible".
+  const leftOut = {};
+  const leftOutNames = {};
+  const leaveOut = (reason, record) => {
+    leftOut[reason] = (leftOut[reason] || 0) + 1;
+    (leftOutNames[reason] = leftOutNames[reason] || []).length < 8 && leftOutNames[reason].push(record.business || "Unnamed business");
+  };
+  const pool = directoryRecords.filter(record => !sourceRows || sourceRows.has(record.source_row));
+  const candidateRows = pool.filter(record => {
+    if (record.next_email.toLowerCase() !== stage.toLowerCase()) {
+      // Only explain stage mismatches for a chosen source group; for the whole Directory they are just "not this email".
+      if (sourceRows) leaveOut(/^complete$/i.test(record.next_email) ? "Outreach sequence already complete" : `Due for ${record.next_email || "Initial"} instead`, record);
+      return false;
+    }
+    if (stage === "Initial" && record.relationship.toLowerCase() !== "prospect") { if (sourceRows) leaveOut("Not a prospect", record); return false; }
+    return true;
+  });
   const seenEmails = new Set();
   const eligible = candidateRows.map(record => {
     if (activityMap) {
@@ -4588,13 +4678,23 @@ function campaignDirectoryStageSelection_(criteria) {
   }).filter(record => {
     // Preview and freeze both use directory fields only for eligibility; rendered messages are intentionally deferred to freeze.
     const eligibilityOptions = stage === "Initial" ? { skip_legacy_pilot:true, initial_sent_emails:initialSentEmails } : { skip_legacy_pilot:true };
-    if (outreachSendEligibility_(record, eligibilityOptions).length || campaignCriteriaFailures_(record, criteria).length) return false;
+    const reasons = outreachSendEligibility_(record, eligibilityOptions);
+    if (reasons.length) {
+      const dateBlocked = reasons.find(reason => /date has not arrived/i.test(reason));
+      const due = dateBlocked ? campaignLeftOutDateLabel_(record.next_follow_up) : "";
+      leaveOut(dateBlocked ? `Not due yet${due ? ` (due ${due})` : ""}` : reasons[0], record);
+      return false;
+    }
+    const failures = campaignCriteriaFailures_(record, criteria);
+    if (failures.length) { leaveOut(campaignCriteriaFailureLabel_(failures[0], criteria), record); return false; }
     const email = String(record.email || "").trim().toLowerCase();
-    if (seenEmails.has(email)) return false;
+    if (seenEmails.has(email)) { leaveOut("Same email address as another business in this campaign", record); return false; }
     seenEmails.add(email);
     return true;
   }).sort((a, b) => Number(a.campaign_miles) - Number(b.campaign_miles) || outreachPriorityScore_(b) - outreachPriorityScore_(a) || String(a.business).localeCompare(String(b.business)));
-  return { records:criteria.max_recipients === null ? eligible : eligible.slice(0, criteria.max_recipients), initial_sent_emails:initialSentEmails };
+  const records = criteria.max_recipients === null ? eligible : eligible.slice(0, criteria.max_recipients);
+  if (records.length < eligible.length) leftOut[`Over the ${criteria.max_recipients}-recipient maximum`] = eligible.length - records.length;
+  return { records:records, initial_sent_emails:initialSentEmails, left_out:leftOut, left_out_names:leftOutNames, source_group_size:sourceRows ? sourceRows.size : null };
 }
 
 function campaignDirectoryInitialSelection_(criteria) {
@@ -5248,11 +5348,13 @@ function apiUpdateOutreachCampaignRecipient_(p) {
 function apiPreviewOutreachCampaign_(p) {
   const criteria = campaignCriteriaFromRequest_(p);
   const invite = criteria.campaign_type === "customer_invite" ? campaignCustomerInviteSelection_(criteria) : null;
-  const records = invite ? invite.records : criteria.campaign_type === "cocktail_list" ? campaignCocktailListRecords_(criteria) : campaignDirectoryInitialRecords_(criteria);
+  const selection = !invite && criteria.campaign_type !== "cocktail_list" ? campaignDirectoryStageSelection_(criteria) : null;
+  const records = invite ? invite.records : criteria.campaign_type === "cocktail_list" ? campaignCocktailListRecords_(criteria) : selection.records;
   return {
     criteria:criteria,
-    excluded:invite ? invite.excluded : undefined,
-    excluded_names:invite ? invite.excluded_names : undefined,
+    excluded:invite ? invite.excluded : selection ? selection.left_out : undefined,
+    excluded_names:invite ? invite.excluded_names : selection ? selection.left_out_names : undefined,
+    source_group_size:selection ? selection.source_group_size : undefined,
     warnings:invite ? invite.warnings : undefined,
     audience:campaignAudienceLabel_(criteria),
     recipient_count:records.length,

@@ -2107,7 +2107,7 @@ test("campaign criteria preview uses centroid distances, JSON rules, and distinc
   assert.doesNotMatch(backend, /function campaignAudienceRules_\(/);
   assert.match(previewSource, /function apiPreviewOutreachCampaign_\(/);
   assert.match(previewSource, /preview_confirmed !== true/);
-  assert.match(previewSource, /campaignDirectoryInitialRecords_\(criteria\)/);
+  assert.match(previewSource, /campaignDirectoryStageSelection_\(criteria\)/, "the preview selects from Directory fields only");
   assert.match(previewSource, /JSON\.stringify\(criteria\)/);
   assert.match(sendSource, /campaignStoredCriteria_\(campaign\.values\[ch\.criteria\]\)/);
   assert.match(sendSource, /Excluded — out of area/);
@@ -2137,7 +2137,7 @@ test("campaign review exclusions are inline and previews use directory fields wi
   const exclusionSource = backend.slice(backend.indexOf("function apiSetOutreachCampaignRecipientExclusion_"), backend.indexOf("function apiUpdateOutreachCampaignRecipient_"));
   const campaignUiSource = index.slice(index.indexOf("async function openOutreachCampaign"), index.indexOf("function renderOutreach", index.indexOf("async function openOutreachCampaign")));
   assert.match(backend, /function campaignDirectoryInitialRecords_\(criteria\)/);
-  assert.match(previewSource, /campaignDirectoryInitialRecords_\(criteria\)/);
+  assert.match(previewSource, /campaignDirectoryStageSelection_\(criteria\)/, "the preview selects from Directory fields only");
   assert.doesNotMatch(previewSource, /outreachMessage_\(/);
   for (const field of ["postal_code", "craft_spirit_fit", "status", "email", "last_emailed"]) assert.match(previewSource, new RegExp(`${field}:record\\.${field}`));
   assert.match(exclusionSource, /\["Sent", "Sent - needs recording"\]\.includes/);
@@ -2277,8 +2277,8 @@ test("campaign builder freezes and delivers the requested outreach stage", async
   assert.match(criteriaSource, /const stages = \["Initial", "Follow-up 1", "Follow-up 2", "Nurture check-in"\]/);
   assert.match(criteriaSource, /stage:stage/);
   assert.match(criteriaSource, /source_campaign_id:sourceCampaignId/);
-  assert.match(selectionSource, /record\.next_email\.toLowerCase\(\) === stage\.toLowerCase\(\)/);
-  assert.match(selectionSource, /campaignSourceRows_\(criteria\.source_campaign_id\)/);
+  assert.match(selectionSource, /record\.next_email\.toLowerCase\(\) !== stage\.toLowerCase\(\)/, "only businesses due for the requested stage are candidates");
+  assert.match(selectionSource, /campaignSourceRows_\(criteria\.source_campaign_id, directoryRecords\)/, "source campaigns limit the audience against the current Directory");
   assert.match(sendSource, /const campaignStage = String\(campaignCriteria\?\.stage \|\| "Initial"\)/);
   assert.match(sendSource, /Outreach stage changed after review/);
   assert.match(sendSource, /message_stage:campaignStage/);
@@ -3100,4 +3100,68 @@ test("campaigns can be renamed at any stage except after deletion, writing only 
   assert.match(fn, /appendAudit_\("RENAME_OUTREACH_CAMPAIGN"/);
   assert.match(proxy, /\["renameOutreachCampaign", "outreach"\]/);
   assert.match(index, /action:"renameOutreachCampaign", campaign_id:campaign\.campaign_id, campaign_name:name, staff_name:staffName/);
+});
+
+test("source-campaign follow-ups find businesses by identity, skip filters in same-businesses mode, and explain who was left out", async () => {
+  const backend = await readFile(new URL("apps-script/Code.gs", root), "utf8");
+  const fn = name => { const start = backend.indexOf(`function ${name}(`); const end = backend.indexOf("\nfunction ", start + 10); return backend.slice(start, end); };
+  // The Directory today: rows were sorted since the campaign, so stored source_row values point at other businesses.
+  const directory = [
+    { source_row:2, account_id:"A-CIGAR", business:"Appleton Cigar", email:"cigar@x.com", next_email:"Initial", relationship:"Prospect", miles:1, craft_spirit_fit:2 },
+    { source_row:3, account_id:"A-BEER", business:"Appleton Beer Factory", email:"beer@x.com", next_email:"Follow-up 2", relationship:"Prospect", miles:40, craft_spirit_fit:3, reasons:[] },
+    { source_row:4, account_id:"A-LEGACY", business:"The Legacy Supper Club", email:"legacy@x.com", next_email:"Follow-up 2", relationship:"Prospect", miles:2, craft_spirit_fit:5, next_follow_up:"2026-10-24", reasons:["Follow-up date has not arrived"] },
+    { source_row:5, account_id:"", business:"Dhami Sports Bar", email:"dhami@x.com", next_email:"Follow-up 2", relationship:"Prospect", miles:3, craft_spirit_fit:5, reasons:[] },
+    { source_row:6, account_id:"A-DONE", business:"Done Bar", email:"done@x.com", next_email:"Complete", relationship:"Prospect", miles:3, craft_spirit_fit:5 },
+  ];
+  // The Appleton campaign as stored: old row numbers, now wrong.
+  const rh = { campaign_id:0, status:1, account_id:2, recipient_email:3, business_name:4, source_row:5 };
+  const recipientRows = [
+    ["CMP-APP", "Sent", "A-BEER", "beer@x.com", "Appleton Beer Factory", 2],
+    ["CMP-APP", "Sent", "A-LEGACY", "legacy@x.com", "The Legacy Supper Club", 3],
+    ["CMP-APP", "Sent", "", "DHAMI@x.com", "Dhami Sports Bar", 6],
+    ["CMP-APP", "Sent", "A-DONE", "done@x.com", "Done Bar", 9],
+    ["CMP-APP", "Excluded", "A-CIGAR", "cigar@x.com", "Appleton Cigar", 4],
+  ].map(values => ({ values, headers:rh }));
+  const env = {
+    CAMPAIGN_DELETED_STATUS:"Deleted", OUTREACH_SHEET_NAME:"Directory",
+    getOutreachSheet_:() => ({}), getAllRowsAsObjects_:() => directory.map(record => ({ ...record })), campaignDirectoryRecord_:row => row,
+    campaignInitialSentEmailSet_:() => new Set(), outreachActivityMap_:() => new Map(),
+    outreachCampaignSheets_:() => ({ campaigns:{}, recipients:{} }), outreachCampaignRow_:() => ({ row:2 }), campaignRecipientRows_:() => recipientRows,
+    campaignDistanceForCriteria_:record => record.miles, outreachSendEligibility_:record => record.reasons || [], outreachPriorityScore_:() => 0,
+    outreachDate_:value => value ? new Date(`${value}T12:00:00`) : null,
+    Utilities:{ formatDate:date => date.toDateString().slice(0, 10) }, Session:{ getScriptTimeZone:() => "America/Chicago" },
+  };
+  const names = ["campaignSourceRows_", "campaignLeftOutDateLabel_", "campaignCriteriaFailureLabel_", "campaignCriteriaFailures_", "campaignDirectoryStageSelection_"];
+  const api = new Function(...Object.keys(env), `${names.map(fn).join("\n")}; return { ${names.join(", ")} };`)(...Object.values(env));
+
+  // Matched by account ID, then email (case-insensitive); excluded recipients are not part of the group.
+  assert.deepEqual([...api.campaignSourceRows_("CMP-APP", directory)].sort(), [3, 4, 5, 6]);
+
+  const base = { campaign_type:"sales_outreach", stage:"Follow-up 2", source_campaign_id:"CMP-APP", center:{ label:"Appleton" }, radius_miles:10, min_fit:4, filters:{}, max_recipients:null };
+  const filtered = api.campaignDirectoryStageSelection_(base);
+  assert.deepEqual(filtered.records.map(record => record.business), ["Dhami Sports Bar"], "radius and fit still apply when filters are on");
+  assert.equal(filtered.left_out["More than 10 mi from Appleton (or no distance on file)"], 1);
+  assert.equal(filtered.left_out["Not due yet (due Sat Oct 24)"], 1, "a follow-up date that has not arrived is named with its date");
+  assert.equal(filtered.left_out["Outreach sequence already complete"], 1);
+  assert.equal(filtered.source_group_size, 4);
+
+  const same = api.campaignDirectoryStageSelection_({ ...base, audience_mode:"source" });
+  assert.deepEqual(same.records.map(record => record.business).sort(), ["Appleton Beer Factory", "Dhami Sports Bar"], "same-businesses mode ignores radius and fit");
+  assert.deepEqual(same.left_out_names["Not due yet (due Sat Oct 24)"], ["The Legacy Supper Club"]);
+
+  const wrongStage = api.campaignDirectoryStageSelection_({ ...base, audience_mode:"source", stage:"Follow-up 1" });
+  assert.equal(wrongStage.records.length, 0);
+  assert.equal(wrongStage.left_out["Due for Follow-up 2 instead"], 3, "an empty follow-up explains that the group is due for a later email");
+});
+
+test("the create window defaults a source campaign to the same businesses and the next email", async () => {
+  const [backend, index] = await Promise.all(["apps-script/Code.gs", "index.html"].map(path => readFile(new URL(path, root), "utf8")));
+  assert.match(backend, /source\.use_source_audience === true/);
+  assert.match(backend, /audience_mode:"source"/);
+  assert.match(backend, /if \(criteria\.audience_mode === "source"\) return \[\];/);
+  assert.match(index, /id="outreachCampaignCriteriaSameAudience" type="checkbox" checked/);
+  assert.match(index, /use_source_audience:campaignSameAudienceMode\(\)/);
+  assert.match(index, /\{ "Initial":"Follow-up 1", "Follow-up 1":"Follow-up 2", "Follow-up 2":"Nurture check-in"/);
+  assert.match(index, /outreachCampaignCriteriaSourceCampaign"\)\.addEventListener\("change", applyCampaignSourceDefaults\)/);
+  assert.equal((index.match(/data-campaign-sales-only data-campaign-filter/g) || []).length, 8, "every distance, fit and area field hides in same-businesses mode");
 });

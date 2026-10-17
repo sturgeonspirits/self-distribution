@@ -2555,20 +2555,21 @@
       <button id="closeOutreachCampaignCriteriaBtn" type="button">Cancel</button>
     </div>
     <div class="dlgBody">
-      <div class="modeNotice" style="margin-top:0"><i data-lucide="map-pin"></i><span>Choose the email stage first. Sales campaigns select recipients due for that stage and apply the location, fit, and optional criteria below. Preview first; creation only happens after you confirm the preview.</span></div>
+      <div class="modeNotice" style="margin-top:0"><i data-lucide="map-pin"></i><span>Choose the email stage first. For a follow-up, pick the earlier campaign below: it uses the same businesses with no extra filters. Otherwise sales campaigns apply the location, fit and optional criteria below. The preview shows who was left out and why; creation only happens after you confirm it.</span></div>
       <div class="workflowEditGrid">
         <div class="full"><label>Campaign name</label><input id="outreachCampaignCriteriaName" maxlength="120" /></div>
         <div><label>Campaign type</label><select id="outreachCampaignCriteriaType"><option value="sales_outreach" selected>Sales outreach</option><option value="cocktail_list">Cocktail list</option><option value="customer_invite">Current and lapsed customers — ordering link</option></select></div>
         <div data-campaign-sales-only><label>Stage</label><select id="outreachCampaignCriteriaStage"><option value="Initial" selected>Initial</option><option value="Follow-up 1">Follow-up 1 due</option><option value="Follow-up 2">Follow-up 2 due</option><option value="Nurture check-in">Nurture check-in due</option></select></div>
         <div data-campaign-sales-only><label>Only recipients of campaign (optional)</label><select id="outreachCampaignCriteriaSourceCampaign"><option value="">Any eligible recipient</option></select></div>
-        <div data-campaign-sales-only><label>Center</label><select id="outreachCampaignCriteriaCenterType"><option value="distillery">Distillery (default)</option><option value="zip">ZIP</option><option value="city">City</option></select></div>
-        <div data-campaign-sales-only><label id="outreachCampaignCriteriaCenterLabel">Center value</label><input id="outreachCampaignCriteriaCenterValue" disabled placeholder="Distillery (54902)" /></div>
-        <div data-campaign-sales-only><label>Radius (miles)</label><input id="outreachCampaignCriteriaRadius" type="number" min="0" max="1000" step="0.1" value="15" /></div>
-        <div data-campaign-sales-only><label>Minimum craft-spirit fit</label><select id="outreachCampaignCriteriaFit"><option value="5">5 — strongest fit</option><option value="4">4 or better</option><option value="3">3 or better</option><option value="2">2 or better</option><option value="1">1 or better</option></select></div>
-        <div data-campaign-sales-only><label>City filter (optional)</label><input id="outreachCampaignCriteriaCity" maxlength="80" /></div>
-        <div data-campaign-sales-only><label>County filter (optional)</label><select id="outreachCampaignCriteriaCounty"><option value="">Any county</option></select></div>
-        <div data-campaign-sales-only><label>Segment filter (optional)</label><select id="outreachCampaignCriteriaSegment"><option value="">Any segment</option></select></div>
-        <div data-campaign-sales-only><label>Wave filter (optional)</label><input id="outreachCampaignCriteriaWave" maxlength="80" /></div>
+        <div class="full" id="campaignSameAudienceRow" hidden><label class="checkLabel"><input id="outreachCampaignCriteriaSameAudience" type="checkbox" checked /><span>Same businesses as that campaign — no distance, fit or area filters. Untick to narrow it with the filters below (they start from that campaign's settings).</span></label></div>
+        <div data-campaign-sales-only data-campaign-filter><label>Center</label><select id="outreachCampaignCriteriaCenterType"><option value="distillery">Distillery (default)</option><option value="zip">ZIP</option><option value="city">City</option></select></div>
+        <div data-campaign-sales-only data-campaign-filter><label id="outreachCampaignCriteriaCenterLabel">Center value</label><input id="outreachCampaignCriteriaCenterValue" disabled placeholder="Distillery (54902)" /></div>
+        <div data-campaign-sales-only data-campaign-filter><label>Radius (miles)</label><input id="outreachCampaignCriteriaRadius" type="number" min="0" max="1000" step="0.1" value="15" /></div>
+        <div data-campaign-sales-only data-campaign-filter><label>Minimum craft-spirit fit</label><select id="outreachCampaignCriteriaFit"><option value="5">5 — strongest fit</option><option value="4">4 or better</option><option value="3">3 or better</option><option value="2">2 or better</option><option value="1">1 or better</option></select></div>
+        <div data-campaign-sales-only data-campaign-filter><label>City filter (optional)</label><input id="outreachCampaignCriteriaCity" maxlength="80" /></div>
+        <div data-campaign-sales-only data-campaign-filter><label>County filter (optional)</label><select id="outreachCampaignCriteriaCounty"><option value="">Any county</option></select></div>
+        <div data-campaign-sales-only data-campaign-filter><label>Segment filter (optional)</label><select id="outreachCampaignCriteriaSegment"><option value="">Any segment</option></select></div>
+        <div data-campaign-sales-only data-campaign-filter><label>Wave filter (optional)</label><input id="outreachCampaignCriteriaWave" maxlength="80" /></div>
         <div><label>Maximum recipients (optional)</label><input id="outreachCampaignCriteriaMaxRecipients" type="number" min="1" max="5000" step="1" /></div>
       </div>
       <div class="status" id="outreachCampaignCriteriaStatus" role="status" aria-live="polite"></div>
@@ -2825,6 +2826,7 @@
   let outreachDraftOriginal = { subject:"", body:"" };
   let selectedNewsletterContact = null;
   let selectedOutreachCampaign = null;
+  let campaignNameEdited = false;
   let selectedCampaignApprovalToken = "";
   let campaignSegmentConfirmation = { campaignId:"", confirmed:false };
   let campaignRecipientView = { campaignId:"", search:"", filter:"", sort:"name", selected:new Set() };
@@ -4708,6 +4710,8 @@
     $("outreachCampaignCriteriaType").value = "sales_outreach";
     $("outreachCampaignCriteriaStage").value = "Initial";
     $("outreachCampaignCriteriaSourceCampaign").value = "";
+    $("outreachCampaignCriteriaSameAudience").checked = true;
+    campaignNameEdited = false;
     $("outreachCampaignCriteriaCenterType").value = "distillery";
     $("outreachCampaignCriteriaCenterValue").value = "";
     $("outreachCampaignCriteriaRadius").value = "15";
@@ -4758,12 +4762,56 @@
     const type = $("outreachCampaignCriteriaType").value;
     const cocktailList = type === "cocktail_list";
     document.querySelectorAll("[data-campaign-sales-only]").forEach(field => field.hidden = type !== "sales_outreach");
+    syncCampaignSameAudienceFields();
     const notice = $("outreachCampaignCriteriaDialog").querySelector(".modeNotice span");
     if (notice) notice.textContent = type === "customer_invite"
       ? "Invites current customers to set up online ordering: Directory rows marked Current customer or Existing customer, plus any account with a Badger invoice in the last 12 months. Each address gets it once; Do Not Email, opt-outs and accounts already ordering online are left out. Uses the CUSTOMER ORDER INVITE EMAIL template in the Email Editor."
       : cocktailList
       ? "Cocktail list campaigns go only to subscribed newsletter contacts. They use the saved monthly newsletter template, a physical mailing address, and a 14-day email gap."
-      : "Choose the email stage first. Sales campaigns select recipients due for that stage and apply the location, fit, and optional criteria below. Preview first; creation only happens after you confirm the preview.";
+      : "Choose the email stage first. For a follow-up, pick the earlier campaign below: it uses the same businesses with no extra filters. Otherwise sales campaigns apply the location, fit and optional criteria below. The preview shows who was left out and why; creation only happens after you confirm it.";
+  }
+
+  function campaignSameAudienceMode(){
+    return $("outreachCampaignCriteriaType").value === "sales_outreach" && !!$("outreachCampaignCriteriaSourceCampaign").value && $("outreachCampaignCriteriaSameAudience").checked;
+  }
+
+  // With a source campaign chosen, the default is that campaign's businesses with no extra filters.
+  function syncCampaignSameAudienceFields(){
+    const sales = $("outreachCampaignCriteriaType").value === "sales_outreach";
+    $("campaignSameAudienceRow").hidden = !sales || !$("outreachCampaignCriteriaSourceCampaign").value;
+    const same = campaignSameAudienceMode();
+    document.querySelectorAll("[data-campaign-filter]").forEach(field => field.hidden = !sales || same);
+  }
+
+  // Picking a source campaign: same businesses, the next email in the sequence, its filters as the starting point
+  // if the box is unticked, and a name based on it unless one was typed.
+  function applyCampaignSourceDefaults(){
+    const sourceId = $("outreachCampaignCriteriaSourceCampaign").value;
+    const source = (outreachData.campaigns || []).find(campaign => campaign.campaign_id === sourceId);
+    if (source) {
+      $("outreachCampaignCriteriaSameAudience").checked = true;
+      const criteria = source.criteria || {};
+      const sourceStage = criteria.campaign_type && criteria.campaign_type !== "sales_outreach" ? "" : (criteria.stage || "Initial");
+      const nextStage = { "Initial":"Follow-up 1", "Follow-up 1":"Follow-up 2", "Follow-up 2":"Nurture check-in", "Nurture check-in":"Nurture check-in" }[sourceStage];
+      if (nextStage) $("outreachCampaignCriteriaStage").value = nextStage;
+      if (criteria.center) {
+        const type = ["zip", "city"].includes(criteria.center.type) ? criteria.center.type : "distillery";
+        $("outreachCampaignCriteriaCenterType").value = type;
+        syncOutreachCampaignCenterInput();
+        if (type !== "distillery") $("outreachCampaignCriteriaCenterValue").value = type === "zip" ? (criteria.center.zip || "") : (criteria.center.label || "");
+      }
+      if (Number.isFinite(Number(criteria.radius_miles))) $("outreachCampaignCriteriaRadius").value = String(criteria.radius_miles);
+      if (criteria.min_fit) $("outreachCampaignCriteriaFit").value = String(criteria.min_fit);
+      const filters = criteria.filters || {};
+      $("outreachCampaignCriteriaCity").value = filters.city || "";
+      $("outreachCampaignCriteriaWave").value = filters.wave || "";
+      const pick = (id, value) => { const select = $(id); select.value = Array.from(select.options).some(option => option.value.toLowerCase() === String(value || "").toLowerCase()) ? Array.from(select.options).find(option => option.value.toLowerCase() === String(value || "").toLowerCase()).value : ""; };
+      pick("outreachCampaignCriteriaCounty", filters.county);
+      pick("outreachCampaignCriteriaSegment", filters.segment);
+      if (!campaignNameEdited) $("outreachCampaignCriteriaName").value = `${source.name} — ${$("outreachCampaignCriteriaStage").value}`;
+    }
+    syncCampaignSameAudienceFields();
+    invalidateOutreachCampaignPreview();
   }
 
   function campaignCriteriaInput(){
@@ -4780,6 +4828,7 @@
       segment:$("outreachCampaignCriteriaSegment").value.trim(),
       wave:$("outreachCampaignCriteriaWave").value.trim(),
       max_recipients:$("outreachCampaignCriteriaMaxRecipients").value.trim(),
+      use_source_audience:campaignSameAudienceMode(),
     };
   }
 
@@ -4793,8 +4842,8 @@
     const staffName = $("outreachStaffName").value.trim();
     if (!staffName) return $("outreachCampaignCriteriaStatus").textContent = "Enter your staff name before previewing a campaign.";
     const criteria = campaignCriteriaInput();
-    if (criteria.campaign_type === "sales_outreach" && criteria.center_type === "zip" && !/^\d{5}$/.test(criteria.center_value)) return $("outreachCampaignCriteriaStatus").textContent = "Enter a five-digit center ZIP.";
-    if (criteria.campaign_type === "sales_outreach" && criteria.center_type === "city" && !criteria.center_value) return $("outreachCampaignCriteriaStatus").textContent = "Enter a center city.";
+    if (criteria.campaign_type === "sales_outreach" && !criteria.use_source_audience && criteria.center_type === "zip" && !/^\d{5}$/.test(criteria.center_value)) return $("outreachCampaignCriteriaStatus").textContent = "Enter a five-digit center ZIP.";
+    if (criteria.campaign_type === "sales_outreach" && !criteria.use_source_audience && criteria.center_type === "city" && !criteria.center_value) return $("outreachCampaignCriteriaStatus").textContent = "Enter a center city.";
     const button = $("previewOutreachCampaignCriteriaBtn");
     button.disabled = true;
     $("outreachCampaignCriteriaStatus").textContent = "Building audience preview...";
@@ -4805,15 +4854,16 @@
       $("outreachCampaignCriteriaStatus").textContent = "Preview is ready. Confirm only if this is the intended audience.";
       const customerInvite = criteria.campaign_type === "customer_invite";
       const stageLabel = customerInvite ? "eligible current customer" : criteria.campaign_type === "cocktail_list" ? "eligible subscribed newsletter contact" : criteria.stage === "Initial" ? "eligible initial prospect" : `eligible ${criteria.stage.toLowerCase()} recipient`;
-      const excludedSummary = customerInvite ? Object.entries(res.excluded || {}).map(([reason, count]) => `${count} ${reason.toLowerCase()}`).join(" • ") : "";
+      const excludedSummary = Object.entries(res.excluded || {}).map(([reason, count]) => `${count} ${customerInvite ? reason.toLowerCase() : reason}`).join(" • ");
       $("outreachCampaignPreviewSummary").textContent = `${Number(res.recipient_count || 0)} ${stageLabel}${Number(res.recipient_count || 0) === 1 ? "" : "s"} • ${res.audience || "Selected criteria"}${excludedSummary ? ` • Left out: ${excludedSummary}` : ""}`;
       // Who was left out, by name, and anything that may have shrunk the audience.
-      const inviteNotes = customerInvite ? [
+      const inviteNotes = (customerInvite || criteria.campaign_type === "sales_outreach") ? [
         ...(res.warnings || []).map(text => `<div class="outreachEmpty"><strong>Check before sending</strong><span>${escapeHtml(text)}</span></div>`),
+        ...(criteria.campaign_type === "sales_outreach" && res.source_group_size !== null && res.source_group_size !== undefined ? [`<div class="smallMuted"><strong>${Number(res.source_group_size)} businesses</strong> from the chosen campaign were checked.</div>`] : []),
         ...Object.entries(res.excluded_names || {}).map(([reason, names]) => `<div class="smallMuted"><strong>Left out — ${escapeHtml(reason)} (${Number((res.excluded || {})[reason] || names.length)}):</strong> ${escapeHtml(names.join(", "))}${Number((res.excluded || {})[reason] || 0) > names.length ? ", …" : ""}</div>`),
       ].join("") : "";
       const cocktailList = criteria.campaign_type === "cocktail_list" || customerInvite;
-      $("outreachCampaignPreviewRecipients").innerHTML = (res.recipients || []).length ? res.recipients.map(recipient => `<article class="outreachCard"><div class="outreachCardTop"><div><div class="businessName">${escapeHtml(recipient.business)}</div><div class="contactLine">${customerInvite ? `${escapeHtml(recipient.email || "No email")} • ${escapeHtml(recipient.invite_reason || "Current customer")}` : cocktailList ? `${escapeHtml(recipient.email || "No email")} • ${escapeHtml(recipient.status || "Subscribed")}` : `${escapeHtml(recipient.city || "City missing")} ${recipient.postal_code ? `• ${escapeHtml(recipient.postal_code)}` : ""} • ${recipient.miles_from_center === null || recipient.miles_from_center === undefined ? "Miles missing" : `${escapeHtml(recipient.miles_from_center)} mi from center`} • Fit ${escapeHtml(recipient.craft_spirit_fit)} • ${escapeHtml(recipient.status || "No status")}`}</div>${cocktailList ? "" : `<div class="smallMuted">${escapeHtml(recipient.email || "No email")} ${recipient.last_emailed ? `• Last emailed ${escapeHtml(formatOutreachDate(recipient.last_emailed))}` : "• Not previously emailed"}</div>`}</div></div></article>`).join("") : `<div class="outreachEmpty"><strong>${customerInvite ? "No current customers are eligible" : cocktailList ? "No subscribed newsletter contacts are currently eligible" : "No eligible prospects match these criteria"}</strong><span>${customerInvite ? "See who was left out and why above. Customers need an email, no Do Not Email or opt-out, and must not already be ordering online or have received the invite." : cocktailList ? "Check contact consent, unsubscribe status, and the 14-day email gap." : "Change the center, radius, fit, or optional filters and preview again."}</span></div>`;
+      $("outreachCampaignPreviewRecipients").innerHTML = (res.recipients || []).length ? res.recipients.map(recipient => `<article class="outreachCard"><div class="outreachCardTop"><div><div class="businessName">${escapeHtml(recipient.business)}</div><div class="contactLine">${customerInvite ? `${escapeHtml(recipient.email || "No email")} • ${escapeHtml(recipient.invite_reason || "Current customer")}` : cocktailList ? `${escapeHtml(recipient.email || "No email")} • ${escapeHtml(recipient.status || "Subscribed")}` : `${escapeHtml(recipient.city || "City missing")} ${recipient.postal_code ? `• ${escapeHtml(recipient.postal_code)}` : ""} • ${recipient.miles_from_center === null || recipient.miles_from_center === undefined ? "Miles missing" : `${escapeHtml(recipient.miles_from_center)} mi from center`} • Fit ${escapeHtml(recipient.craft_spirit_fit)} • ${escapeHtml(recipient.status || "No status")}`}</div>${cocktailList ? "" : `<div class="smallMuted">${escapeHtml(recipient.email || "No email")} ${recipient.last_emailed ? `• Last emailed ${escapeHtml(formatOutreachDate(recipient.last_emailed))}` : "• Not previously emailed"}</div>`}</div></div></article>`).join("") : `<div class="outreachEmpty"><strong>${customerInvite ? "No current customers are eligible" : cocktailList ? "No subscribed newsletter contacts are currently eligible" : "No eligible prospects match these criteria"}</strong><span>${criteria.campaign_type === "sales_outreach" && Object.keys(res.excluded || {}).length ? "See who was left out and why above, including any date that has not arrived yet." : customerInvite ? "See who was left out and why above. Customers need an email, no Do Not Email or opt-out, and must not already be ordering online or have received the invite." : cocktailList ? "Check contact consent, unsubscribe status, and the 14-day email gap." : "Change the center, radius, fit, or optional filters and preview again."}</span></div>`;
       if (inviteNotes) $("outreachCampaignPreviewRecipients").insertAdjacentHTML("afterbegin", inviteNotes);
       $("outreachCampaignPreview").hidden = false;
       $("createOutreachCampaignCriteriaBtn").disabled = !Number(res.recipient_count || 0);
@@ -4956,10 +5006,11 @@
     const maxMiles = Number(criteria?.radius_miles || 0);
     const centerLabel = criteria?.center?.label || "the original audience";
     const minFit = Number(criteria?.min_fit || 0);
-    const areaWarningCount = criteria && !["cocktail_list", "customer_invite"].includes(criteria.campaign_type) ? (campaign.recipients || []).filter(recipient => recipient.miles === null || recipient.miles === undefined || Number(recipient.miles) > maxMiles).length : 0;
+    const areaWarningCount = criteria && !["cocktail_list", "customer_invite"].includes(criteria.campaign_type) && criteria.audience_mode !== "source" ? (campaign.recipients || []).filter(recipient => recipient.miles === null || recipient.miles === undefined || Number(recipient.miles) > maxMiles).length : 0;
     const criteriaSummary = !criteria ? "Legacy campaign • no stored criteria gate"
       : criteria.campaign_type === "cocktail_list" ? "Cocktail list • subscribed contacts"
       : criteria.campaign_type === "customer_invite" ? "Current and lapsed customers • ordering link"
+      : criteria.audience_mode === "source" ? `${stage} • same businesses as ${criteria.source_campaign_name || criteria.source_campaign_id}`
         : `${stage} • fit ≥${minFit} • ≤${maxMiles} mi of ${centerLabel}${criteria.source_campaign_id ? ` • from ${criteria.source_campaign_id}` : ""}`;
     $("outreachCampaignSubtitle").textContent = `${campaign.recipient_count} frozen recipients${excludedCount ? ` • ${excludedCount} excluded` : ""} • ${criteriaSummary}${areaWarningCount ? ` • ${areaWarningCount} need area review` : ""} • ${campaign.status}`;
     $("outreachCampaignNotice").textContent = campaign.status === "Review"
@@ -8502,6 +8553,9 @@
     $(id).addEventListener("input", invalidateOutreachCampaignPreview);
     $(id).addEventListener("change", invalidateOutreachCampaignPreview);
   });
+  $("outreachCampaignCriteriaSourceCampaign").addEventListener("change", applyCampaignSourceDefaults);
+  $("outreachCampaignCriteriaSameAudience").addEventListener("change", () => { syncCampaignSameAudienceFields(); invalidateOutreachCampaignPreview(); });
+  $("outreachCampaignCriteriaName").addEventListener("input", () => { campaignNameEdited = true; });
   $("previewOutreachCampaignCriteriaBtn").addEventListener("click", previewOutreachCampaignCriteria);
   $("createOutreachCampaignCriteriaBtn").addEventListener("click", submitOutreachCampaignCriteria);
   $("outreachCampaignCriteriaDialog").addEventListener("close", () => { outreachCampaignPreview = null; });
