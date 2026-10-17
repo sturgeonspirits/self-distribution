@@ -15,7 +15,9 @@
  *   copied from the source campaign for labels and distances. Turning it off uses the filters as before.
  * - "Only recipients of campaign" matched businesses by the stored Directory row number, which goes stale when the
  *   Directory is sorted or rows are inserted (every Appleton row pointed at a different business by 2026-10-17).
- *   campaignSourceRows_ now finds the businesses the source campaign sent to by account ID, then email, then name.
+ *   campaignSourceRows_ now finds the businesses the source campaign sent to by account ID, then email, then name,
+ *   using a match only when it is unique (and an email/name match only when its account ID does not conflict);
+ *   ambiguous or missing businesses are listed as left out rather than guessed (chat review P2, 2026-10-17).
  * - Sales campaign previews explain who was left out and why (due for a different email, not due until a date,
  *   recently emailed, excluded, outside the radius or fit, over the maximum), with up to 8 names per reason.
  * - Campaigns can be renamed at any stage (renameOutreachCampaign); names are internal labels only and never appear
@@ -4601,31 +4603,43 @@ function campaignInitialSentEmailSet_(directoryRecords) {
 // account ID, then email, then business name: the stored source_row goes stale whenever the Directory is sorted or
 // rows are inserted (on 2026-10-17 every Appleton row number pointed at a different business). Only recipients the
 // source campaign sent to count; if it has not sent yet, its unsent recipients (not excluded or deleted) are used.
+// A match is used only when it is unique: a key shared by several Directory rows, or an email/name match whose
+// account ID differs from the recipient's, is never guessed. Those recipients are reported as left out instead.
 function campaignSourceRows_(campaignId, directoryRecords) {
   if (!campaignId) return null;
   const sheets = outreachCampaignSheets_();
   if (!outreachCampaignRow_(sheets.campaigns, campaignId)) throw new Error("Selected source campaign was not found.");
   const recipients = campaignRecipientRows_(sheets.recipients, campaignId).map(item => {
     const get = key => item.headers[key] === undefined ? "" : item.values[item.headers[key]];
-    return { status:String(get("status") || ""), account_id:String(get("account_id") || "").trim(), email:String(get("recipient_email") || "").trim().toLowerCase(), business:String(get("business_name") || "").trim().toLowerCase(), source_row:Number(get("source_row") || 0) };
+    return { status:String(get("status") || ""), account_id:String(get("account_id") || "").trim(), email:String(get("recipient_email") || "").trim().toLowerCase(), business:String(get("business_name") || "").trim(), source_row:Number(get("source_row") || 0) };
   });
   const sent = recipients.filter(item => /^sent/i.test(item.status));
   const group = sent.length ? sent : recipients.filter(item => !["Excluded", CAMPAIGN_DELETED_STATUS].includes(item.status));
   const records = directoryRecords || getAllRowsAsObjects_(getOutreachSheet_(OUTREACH_SHEET_NAME)).map((row, index) => campaignDirectoryRecord_(row, index + 2));
-  const byAccount = new Map(), byEmail = new Map(), byName = new Map();
+  const index = () => new Map();
+  const byAccount = index(), byEmail = index(), byName = index();
+  const add = (map, key, record) => { if (!key) return; if (!map.has(key)) map.set(key, []); map.get(key).push(record); };
   records.forEach(record => {
-    if (record.account_id && !byAccount.has(record.account_id)) byAccount.set(record.account_id, record.source_row);
-    const email = String(record.email || "").trim().toLowerCase();
-    if (email && !byEmail.has(email)) byEmail.set(email, record.source_row);
-    const name = String(record.business || "").trim().toLowerCase();
-    if (name && !byName.has(name)) byName.set(name, record.source_row);
+    add(byAccount, String(record.account_id || "").trim(), record);
+    add(byEmail, String(record.email || "").trim().toLowerCase(), record);
+    add(byName, String(record.business || "").trim().toLowerCase(), record);
   });
   const rows = new Set();
+  const unmatched = {};
+  const leaveOut = (reason, item) => (unmatched[reason] = unmatched[reason] || []).push(item.business || item.email || "Unnamed business");
   group.forEach(item => {
-    const row = (item.account_id && byAccount.get(item.account_id)) || (item.email && byEmail.get(item.email)) || (item.business && byName.get(item.business));
-    if (row) rows.add(row);
+    // A fallback match must not belong to a different account than the recipient had.
+    const compatible = record => !item.account_id || !String(record.account_id || "").trim() || String(record.account_id).trim() === item.account_id;
+    let ambiguous = false;
+    for (const [map, key] of [[byAccount, item.account_id], [byEmail, item.email], [byName, item.business.toLowerCase()]]) {
+      if (!key) continue;
+      const matches = (map.get(key) || []).filter(compatible);
+      if (matches.length === 1) { rows.add(matches[0].source_row); return; }
+      if (matches.length > 1) { ambiguous = true; break; }
+    }
+    leaveOut(ambiguous ? "Matches more than one Directory row (fix the duplicate, then preview again)" : "No longer found in the Directory", item);
   });
-  return rows;
+  return { rows:rows, unmatched:unmatched };
 }
 
 function campaignLeftOutDateLabel_(value) {
@@ -4649,7 +4663,8 @@ function campaignDirectoryStageSelection_(criteria) {
   const directoryRecords = getAllRowsAsObjects_(leadSheet).map((row, index) => campaignDirectoryRecord_(row, index + 2));
   const initialSentEmails = campaignInitialSentEmailSet_(directoryRecords);
   const activityMap = stage === "Initial" ? null : outreachActivityMap_();
-  const sourceRows = campaignSourceRows_(criteria.source_campaign_id, directoryRecords);
+  const source = campaignSourceRows_(criteria.source_campaign_id, directoryRecords);
+  const sourceRows = source ? source.rows : null;
   // Why businesses were left out, so a preview with few or no recipients says what is in the way
   // (for example a follow-up date that has not arrived) instead of only "0 eligible".
   const leftOut = {};
@@ -4658,6 +4673,7 @@ function campaignDirectoryStageSelection_(criteria) {
     leftOut[reason] = (leftOut[reason] || 0) + 1;
     (leftOutNames[reason] = leftOutNames[reason] || []).length < 8 && leftOutNames[reason].push(record.business || "Unnamed business");
   };
+  if (source) Object.entries(source.unmatched).forEach(([reason, names]) => names.forEach(name => leaveOut(reason, { business:name })));
   const pool = directoryRecords.filter(record => !sourceRows || sourceRows.has(record.source_row));
   const candidateRows = pool.filter(record => {
     if (record.next_email.toLowerCase() !== stage.toLowerCase()) {
@@ -4694,7 +4710,7 @@ function campaignDirectoryStageSelection_(criteria) {
   }).sort((a, b) => Number(a.campaign_miles) - Number(b.campaign_miles) || outreachPriorityScore_(b) - outreachPriorityScore_(a) || String(a.business).localeCompare(String(b.business)));
   const records = criteria.max_recipients === null ? eligible : eligible.slice(0, criteria.max_recipients);
   if (records.length < eligible.length) leftOut[`Over the ${criteria.max_recipients}-recipient maximum`] = eligible.length - records.length;
-  return { records:records, initial_sent_emails:initialSentEmails, left_out:leftOut, left_out_names:leftOutNames, source_group_size:sourceRows ? sourceRows.size : null };
+  return { records:records, initial_sent_emails:initialSentEmails, left_out:leftOut, left_out_names:leftOutNames, source_group_size:source ? sourceRows.size + Object.values(source.unmatched).reduce((total, names) => total + names.length, 0) : null };
 }
 
 function campaignDirectoryInitialSelection_(criteria) {

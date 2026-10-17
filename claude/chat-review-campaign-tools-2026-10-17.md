@@ -2,6 +2,21 @@
 
 Chat: read PROJECT_STATUS.md first.
 
+## Round 2: re-check the P2 fix (`campaignSourceRows_`)
+
+Your round-1 result: one P2, no P1; A, B and C confirmed. P2: ambiguous source matching kept the first Directory match.
+
+Fix (commit after `81e3327` on `codex/work`, `apps-script/Code.gs` only plus tests and status):
+- For each source recipient, account ID, then email, then business name are tried in turn.
+- A key is used only when exactly one Directory row has it. Fallback (email or name) candidates whose non-empty account ID differs from the recipient's are discarded first.
+- If a key matches more than one row, the recipient is not resolved by a weaker key. It is reported as "Matches more than one Directory row (fix the duplicate, then preview again)". No match at all gives "No longer found in the Directory".
+- `campaignSourceRows_` now returns `{ rows, unmatched }`. `campaignDirectoryStageSelection_` adds the unmatched names to the preview's left-out list and counts them in `source_group_size`.
+- Tests cover a duplicate account ID, a duplicate email, a conflicting account on an email match, a business missing from the Directory, and the preview listing them with none of the duplicate rows substituted in.
+
+Please confirm the P2 is closed. Only report anything new at P1/P2.
+
+## Round 1
+
 Range: `5657851..6ac2754` on `codex/work`. Files: `apps-script/Code.gs`, `index.html`, `netlify/functions/inventory.js`, two test files, `PROJECT_STATUS.md`. `node --test tests/*.mjs tests/*.cjs`: 101 pass.
 
 | Part | Commits | Versions | Deploy state |

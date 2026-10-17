@@ -3123,8 +3123,9 @@ test("source-campaign follow-ups find businesses by identity, skip filters in sa
     ["CMP-APP", "Excluded", "A-CIGAR", "cigar@x.com", "Appleton Cigar", 4],
   ].map(values => ({ values, headers:rh }));
   const env = {
+    currentDirectory:null,
     CAMPAIGN_DELETED_STATUS:"Deleted", OUTREACH_SHEET_NAME:"Directory",
-    getOutreachSheet_:() => ({}), getAllRowsAsObjects_:() => directory.map(record => ({ ...record })), campaignDirectoryRecord_:row => row,
+    getOutreachSheet_:() => ({}), getAllRowsAsObjects_:() => (env.currentDirectory || directory).map(record => ({ ...record })), campaignDirectoryRecord_:row => row,
     campaignInitialSentEmailSet_:() => new Set(), outreachActivityMap_:() => new Map(),
     outreachCampaignSheets_:() => ({ campaigns:{}, recipients:{} }), outreachCampaignRow_:() => ({ row:2 }), campaignRecipientRows_:() => recipientRows,
     campaignDistanceForCriteria_:record => record.miles, outreachSendEligibility_:record => record.reasons || [], outreachPriorityScore_:() => 0,
@@ -3135,7 +3136,21 @@ test("source-campaign follow-ups find businesses by identity, skip filters in sa
   const api = new Function(...Object.keys(env), `${names.map(fn).join("\n")}; return { ${names.join(", ")} };`)(...Object.values(env));
 
   // Matched by account ID, then email (case-insensitive); excluded recipients are not part of the group.
-  assert.deepEqual([...api.campaignSourceRows_("CMP-APP", directory)].sort(), [3, 4, 5, 6]);
+  const matched = api.campaignSourceRows_("CMP-APP", directory);
+  assert.deepEqual([...matched.rows].sort(), [3, 4, 5, 6]);
+  assert.deepEqual(matched.unmatched, {});
+
+  // Chat review P2: a key shared by several Directory rows is never guessed.
+  const withDuplicates = directory.concat([
+    { source_row:7, account_id:"A-BEER", business:"Beer Factory (second row)", email:"beer2@x.com", next_email:"Follow-up 2", relationship:"Prospect" },
+    { source_row:8, account_id:"", business:"Unrelated Bar", email:"dhami@x.com", next_email:"Follow-up 2", relationship:"Prospect" },
+    { source_row:9, account_id:"A-OTHER", business:"Other Account", email:"legacy@x.com", next_email:"Follow-up 2", relationship:"Prospect" },
+  ]);
+  const guarded = api.campaignSourceRows_("CMP-APP", withDuplicates);
+  assert.deepEqual([...guarded.rows].sort(), [4, 6], "duplicate account ID and duplicate email are left out; a conflicting account on the email match is ignored");
+  assert.deepEqual(guarded.unmatched["Matches more than one Directory row (fix the duplicate, then preview again)"].sort(), ["Appleton Beer Factory", "Dhami Sports Bar"]);
+  const gone = api.campaignSourceRows_("CMP-APP", directory.filter(record => record.account_id !== "A-DONE"));
+  assert.deepEqual(gone.unmatched["No longer found in the Directory"], ["Done Bar"]);
 
   const base = { campaign_type:"sales_outreach", stage:"Follow-up 2", source_campaign_id:"CMP-APP", center:{ label:"Appleton" }, radius_miles:10, min_fit:4, filters:{}, max_recipients:null };
   const filtered = api.campaignDirectoryStageSelection_(base);
@@ -3144,6 +3159,12 @@ test("source-campaign follow-ups find businesses by identity, skip filters in sa
   assert.equal(filtered.left_out["Not due yet (due Sat Oct 24)"], 1, "a follow-up date that has not arrived is named with its date");
   assert.equal(filtered.left_out["Outreach sequence already complete"], 1);
   assert.equal(filtered.source_group_size, 4);
+  env.currentDirectory = withDuplicates;
+  const ambiguousSelection = api.campaignDirectoryStageSelection_({ ...base, audience_mode:"source" });
+  env.currentDirectory = null;
+  assert.equal(ambiguousSelection.source_group_size, 4, "ambiguous businesses still count as checked");
+  assert.equal(ambiguousSelection.left_out["Matches more than one Directory row (fix the duplicate, then preview again)"], 2, "and the preview lists them as left out");
+  assert.ok(!ambiguousSelection.records.some(record => [7, 8, 9].includes(record.source_row)), "no duplicate row is substituted in");
 
   const same = api.campaignDirectoryStageSelection_({ ...base, audience_mode:"source" });
   assert.deepEqual(same.records.map(record => record.business).sort(), ["Appleton Beer Factory", "Dhami Sports Bar"], "same-businesses mode ignores radius and fit");
