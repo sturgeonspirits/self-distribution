@@ -1,8 +1,18 @@
 /*********************************
  * Inventory API (JSON) for Netlify
- * App version: 2026.10.12.46-APP
+ * App version: 2026.10.17.47-APP
  *
  * CHANGES IN THIS VERSION
+ * - Campaigns made in error can be deleted (deleteOutreachCampaign). Only a Review or Approved campaign that never
+ *   sent or attempted a single email qualifies: every recipient still Ready for review, Ready to send or Excluded,
+ *   no Zoho message ID or sent time, no accepted send in the activity log, sent count 0, and not mid scheduled send.
+ *   Deleting is a soft delete under the script lock: the campaign and its recipients are marked Deleted, approval and
+ *   any schedule are cleared, the rows stay for the audit trail, and DELETE_OUTREACH_CAMPAIGN is logged. Deleted
+ *   campaigns are left out of the Campaigns list and no longer block creating the same audience again.
+ * - Campaigns can be renamed at any stage (renameOutreachCampaign); names are internal labels only and never appear
+ *   in email. Logged as RENAME_OUTREACH_CAMPAIGN.
+ *
+ * CHANGES IN 2026.10.12.46-APP
  * - Added to Badger is a checkbox only: Badger shows no customer number to members, so the window no longer asks for
  *   one. The Hub still learns a customer's Badger ID from their first invoice (entered by hand in Badger, then linked
  *   by the daily sync); the invoice error now says exactly that. A Badger Customer ID typed into the Directory by hand
@@ -496,7 +506,7 @@
  * - Use only in the staging inventory backend until testing is complete.
  *********************************/
 
-const APP_VERSION = "2026.10.12.46-APP";
+const APP_VERSION = "2026.10.17.47-APP";
 
 const SHEET_NAMES = {
   STORES: "Stores",
@@ -1467,7 +1477,7 @@ function handle_(e, body, isGet) {
   try {
     assertAuthorized_(e, body);
     if (!action) {
-      return json_({ ok:true, service:"sturgeon-distribution-hub", version:APP_VERSION, actions:["initData","listSkus","sellSheet","addSkuToStore","upsertProduct","submitCounts","createReorder","managerGrid","salesSinceCount","updateStoreContacts","outreachDashboard","outreachRecord","outreachSendStatus","outreachNewsletterContacts","outreachCampaigns","outreachCampaign","previewOutreachCampaign","createOutreachCampaign","updateOutreachCampaignRecipient","setOutreachCampaignRecipientExclusion","setOutreachCampaignRecipientExclusions","approveOutreachCampaign","reopenOutreachCampaign","reconcileCampaignSends","rebuildCampaignRecipients","sendOutreachCampaignBatch","scheduleOutreachCampaign","cancelOutreachCampaignSchedule","saveOutreachDraft","sendOutreachEmail","sendOutreachTestEmail","updateOutreachOutcome","logOutreachContact","updateOutreachBusiness","updateOutreachPrograms","createOutreachBusiness","importOutreachBusinesses","recalculateOutreachMiles","backfillEngagementDetails","upsertNewsletterContact","submitCustomerApplication","submitOnlineOrderRequest","customerWorkQueue","customerAccountIndex","linkBadgerInvoice","syncBadgerStatus","markBadgerInvoicePayment","recordBadgerCheck","resolvePaymentReminder","badgerReconcilePreview","applyBadgerReconcile","previewBadgerPaymentReminder","sendBadgerPaymentReminder","previewBadgerInvoice","createBadgerInvoice","adoptBadgerInvoice","failBadgerInvoiceCreation","updateCustomerApplication","previewApplicationWelcome","sendApplicationWelcome","updateOnlineOrderRequest","hubSystemStatus","salesReport","inboundReplies","resolveInboundReply","checkInboundReplies","initializeHardenedHub","repairHubStructure","reconcileIntegrations"] });
+      return json_({ ok:true, service:"sturgeon-distribution-hub", version:APP_VERSION, actions:["initData","listSkus","sellSheet","addSkuToStore","upsertProduct","submitCounts","createReorder","managerGrid","salesSinceCount","updateStoreContacts","outreachDashboard","outreachRecord","outreachSendStatus","outreachNewsletterContacts","outreachCampaigns","outreachCampaign","previewOutreachCampaign","createOutreachCampaign","updateOutreachCampaignRecipient","setOutreachCampaignRecipientExclusion","setOutreachCampaignRecipientExclusions","approveOutreachCampaign","reopenOutreachCampaign","deleteOutreachCampaign","renameOutreachCampaign","reconcileCampaignSends","rebuildCampaignRecipients","sendOutreachCampaignBatch","scheduleOutreachCampaign","cancelOutreachCampaignSchedule","saveOutreachDraft","sendOutreachEmail","sendOutreachTestEmail","updateOutreachOutcome","logOutreachContact","updateOutreachBusiness","updateOutreachPrograms","createOutreachBusiness","importOutreachBusinesses","recalculateOutreachMiles","backfillEngagementDetails","upsertNewsletterContact","submitCustomerApplication","submitOnlineOrderRequest","customerWorkQueue","customerAccountIndex","linkBadgerInvoice","syncBadgerStatus","markBadgerInvoicePayment","recordBadgerCheck","resolvePaymentReminder","badgerReconcilePreview","applyBadgerReconcile","previewBadgerPaymentReminder","sendBadgerPaymentReminder","previewBadgerInvoice","createBadgerInvoice","adoptBadgerInvoice","failBadgerInvoiceCreation","updateCustomerApplication","previewApplicationWelcome","sendApplicationWelcome","updateOnlineOrderRequest","hubSystemStatus","salesReport","inboundReplies","resolveInboundReply","checkInboundReplies","initializeHardenedHub","repairHubStructure","reconcileIntegrations"] });
     }
 
     // A link or image tag can trigger a GET, so only read actions are accepted that way.
@@ -1499,6 +1509,8 @@ function handle_(e, body, isGet) {
       case "setOutreachCampaignRecipientExclusions": res = apiSetOutreachCampaignRecipientExclusions_(body); break;
       case "approveOutreachCampaign": res = apiApproveOutreachCampaign_(body); break;
       case "reopenOutreachCampaign": res = apiReopenOutreachCampaign_(body); break;
+      case "deleteOutreachCampaign": res = apiDeleteOutreachCampaign_(body); break;
+      case "renameOutreachCampaign": res = apiRenameOutreachCampaign_(body); break;
       case "reconcileCampaignSends": res = apiReconcileCampaignSends_(body); break;
       case "rebuildCampaignRecipients": res = apiRebuildCampaignRecipients_(body); break;
       case "sendOutreachCampaignBatch": res = apiSendOutreachCampaignBatch_(body); break;
@@ -4715,6 +4727,7 @@ function apiGetOutreachCampaigns_() {
   }));
   const campaigns = sheets.campaigns.getRange(2, 1, sheets.campaigns.getLastRow() - 1, sheets.campaigns.getLastColumn()).getValues()
     .map((values, index) => ({ row:index + 2, values:values, headers:h }))
+    .filter(campaign => String(campaign.values[h.status] || "") !== CAMPAIGN_DELETED_STATUS)
     .reverse().map(campaign => campaignObject_(campaign, allRecipients.filter(item => String(item.values[item.headers.campaign_id] || "") === String(campaign.values[h.campaign_id] || "")), false));
   return { campaigns:campaigns, performance:{ total_ms:Date.now() - startedAt, stages:{ campaign_read_ms:Date.now() - startedAt } } };
 }
@@ -4724,7 +4737,11 @@ function apiGetOutreachCampaign_(p) {
   const sheets = outreachCampaignSheets_();
   const campaign = outreachCampaignRow_(sheets.campaigns, p?.campaign_id);
   if (!campaign) throw new Error("Campaign not found.");
-  return { campaign:campaignObject_(campaign, campaignRecipientRows_(sheets.recipients, p.campaign_id), true), performance:{ total_ms:Date.now() - startedAt, stages:{ campaign_recipient_read_ms:Date.now() - startedAt } } };
+  const recipientRows = campaignRecipientRows_(sheets.recipients, p.campaign_id);
+  const result = campaignObject_(campaign, recipientRows, true);
+  // Cheap pre-check for the Delete button; deletion itself re-checks the activity log under the lock.
+  result.delete_blocker = campaignDeleteBlocker_(campaign, recipientRows, new Set());
+  return { campaign:result, performance:{ total_ms:Date.now() - startedAt, stages:{ campaign_recipient_read_ms:Date.now() - startedAt } } };
 }
 
 function writeCampaignRecipientRows_(sheet, recipients) {
@@ -5397,6 +5414,102 @@ function apiReopenOutreachCampaign_(p) {
     sheets.campaigns.getRange(campaign.row, 1, 1, campaign.values.length).setValues([campaign.values]);
     appendAudit_("REOPEN_OUTREACH_CAMPAIGN", "Campaign", p.campaign_id, "", authenticatedActor_(p, "Sturgeon Distribution Hub"), OUTREACH_CAMPAIGNS_SHEET_NAME, OUTREACH_CAMPAIGN_RECIPIENTS_SHEET_NAME, "Review", `${reopenable.length} recipients reopened (${reopenedBlocked} previously blocked); ${correctedSubjects} non-Oshkosh subjects corrected; sent and excluded recipients were unchanged.`);
     return { message:`${reopenable.length} recipients reopened (${reopenedBlocked} previously blocked); ${correctedSubjects} non-Oshkosh subjects corrected. No email was sent.`, recipient_count:reopenable.length, reopened_blocked:reopenedBlocked, corrected_subjects:correctedSubjects };
+  } finally { lock.releaseLock(); }
+}
+
+const CAMPAIGN_DELETED_STATUS = "Deleted";
+const CAMPAIGN_DELETABLE_RECIPIENT_STATUSES = ["Ready for review", "Ready to send", "Excluded"];
+
+// Why a campaign cannot be deleted, or "" when it can. Only a campaign that never sent or attempted
+// a single email may be deleted; anything with delivery history stays, because follow-up stages and
+// the activity log depend on it.
+function campaignDeleteBlocker_(campaign, recipients, acceptedTokens) {
+  const ch = campaign.headers;
+  const status = String(campaign.values[ch.status] || "");
+  if (!["Review", "Approved"].includes(status)) return `This campaign is ${status || "closed"}; only a campaign that has not sent any email can be deleted.`;
+  if (ch.schedule_status !== undefined && String(campaign.values[ch.schedule_status] || "") === "Sending") return "This campaign is sending right now. Wait for the scheduled send to finish or cancel the schedule first.";
+  if (Number(campaign.values[ch.sent_count] || 0) > 0) return "This campaign has already sent email, so it is kept as delivery history.";
+  const touched = recipients.find(item => {
+    const rh = item.headers;
+    return !CAMPAIGN_DELETABLE_RECIPIENT_STATUSES.includes(String(item.values[rh.status] || ""))
+      || String(item.values[rh.zoho_message_id] || "").trim()
+      || (rh.sent_at !== undefined && String(item.values[rh.sent_at] || "").trim())
+      || acceptedTokens.has(String(item.values[rh.idempotency_token] || ""));
+  });
+  return touched ? `${String(touched.values[touched.headers.business_name] || "A recipient")} already has a send attempt, so this campaign is kept as delivery history.` : "";
+}
+
+// Deleting hides the campaign and retires its unsent recipients; rows stay in the sheets for the audit
+// trail. A deleted campaign can never be approved, scheduled, edited or sent (every one of those
+// actions requires Review or Approved), and it no longer blocks creating the same audience again.
+function apiDeleteOutreachCampaign_(p) {
+  requireFields_(p || {}, ["campaign_id", "staff_name"]);
+  if (p.confirm_delete !== true) throw new Error("Confirm the deletion before deleting a campaign.");
+  const lock = LockService.getScriptLock();
+  if (!lock.tryLock(10000)) throw new Error("Another campaign update is in progress. Try again in a moment.");
+  try {
+    const sheets = outreachCampaignSheets_();
+    const campaign = outreachCampaignRow_(sheets.campaigns, p.campaign_id);
+    if (!campaign) throw new Error("Campaign not found.");
+    const ch = campaign.headers;
+    if (String(campaign.values[ch.status] || "") === CAMPAIGN_DELETED_STATUS) return { message:"This campaign was already deleted.", already_deleted:true };
+    const recipients = campaignRecipientRows_(sheets.recipients, p.campaign_id);
+    const campaignTokens = new Set(recipients.map(item => String(item.values[item.headers.idempotency_token] || "")).filter(Boolean));
+    const acceptedTokens = new Set(outreachActivityRows_().filter(row => {
+      const token = String(row.idempotency_token || "");
+      const result = String(row.result || "").toUpperCase();
+      return token && campaignTokens.has(token) && result.includes("SENT") && !result.includes("TEST");
+    }).map(row => String(row.idempotency_token)));
+    const blocker = campaignDeleteBlocker_(campaign, recipients, acceptedTokens);
+    if (blocker) throw new Error(blocker);
+    const actor = authenticatedActor_(p, "Sturgeon Distribution Hub");
+    const previousStatus = String(campaign.values[ch.status] || "");
+    const note = `Deleted by ${actor} at ${campaignScheduleTimeLabel_(new Date())}; no email was sent.`;
+    // Write each run of consecutive rows once instead of one sheet write per recipient.
+    recipients.forEach(item => {
+      const rh = item.headers;
+      item.values[rh.status] = CAMPAIGN_DELETED_STATUS;
+      item.values[rh.result_detail] = note;
+      item.values[rh.app_version] = APP_VERSION;
+    });
+    const sorted = recipients.slice().sort((a, b) => a.row - b.row);
+    for (let start = 0; start < sorted.length;) {
+      let end = start;
+      while (end + 1 < sorted.length && sorted[end + 1].row === sorted[end].row + 1) end += 1;
+      const run = sorted.slice(start, end + 1);
+      sheets.recipients.getRange(run[0].row, 1, run.length, run[0].values.length).setValues(run.map(item => item.values));
+      start = end + 1;
+    }
+    campaign.values[ch.status] = CAMPAIGN_DELETED_STATUS;
+    if (ch.approval_token !== undefined) campaign.values[ch.approval_token] = "";
+    if (ch.schedule_status !== undefined && String(campaign.values[ch.schedule_status] || "")) clearCampaignSchedule_(campaign, "Cancelled", "Cancelled because the campaign was deleted.");
+    campaign.values[ch.app_version] = APP_VERSION;
+    sheets.campaigns.getRange(campaign.row, 1, 1, campaign.values.length).setValues([campaign.values]);
+    appendAudit_("DELETE_OUTREACH_CAMPAIGN", "Campaign", p.campaign_id, "", actor, OUTREACH_CAMPAIGNS_SHEET_NAME, OUTREACH_CAMPAIGN_RECIPIENTS_SHEET_NAME, CAMPAIGN_DELETED_STATUS, `Was ${previousStatus}; ${recipients.length} unsent recipients retired. ${String(campaign.values[ch.campaign_name] || "")}`.slice(0, 500));
+    return { message:`Campaign deleted. ${recipients.length} unsent recipients were removed from it; no email was sent.`, recipient_count:recipients.length };
+  } finally { lock.releaseLock(); }
+}
+
+// Campaign names are internal labels (the list, review window and follow-up source picker); no email uses them,
+// so a campaign can be renamed at any stage except after deletion.
+function apiRenameOutreachCampaign_(p) {
+  requireFields_(p || {}, ["campaign_id", "campaign_name", "staff_name"]);
+  const name = publicText_(p.campaign_name, 120, "Campaign name");
+  if (!name) throw new Error("Enter a campaign name.");
+  const lock = LockService.getScriptLock();
+  if (!lock.tryLock(10000)) throw new Error("Another campaign update is in progress. Try again in a moment.");
+  try {
+    const sheets = outreachCampaignSheets_();
+    const campaign = outreachCampaignRow_(sheets.campaigns, p.campaign_id);
+    if (!campaign) throw new Error("Campaign not found.");
+    const ch = campaign.headers;
+    if (String(campaign.values[ch.status] || "") === CAMPAIGN_DELETED_STATUS) throw new Error("A deleted campaign cannot be renamed.");
+    const previous = String(campaign.values[ch.campaign_name] || "");
+    if (previous === name) return { message:"The name is unchanged.", campaign_name:name };
+    // Only the name cell is written, so a rename never races other campaign fields.
+    sheets.campaigns.getRange(campaign.row, ch.campaign_name + 1).setValue(name);
+    appendAudit_("RENAME_OUTREACH_CAMPAIGN", "Campaign", p.campaign_id, "", authenticatedActor_(p, "Sturgeon Distribution Hub"), OUTREACH_CAMPAIGNS_SHEET_NAME, OUTREACH_CAMPAIGNS_SHEET_NAME, "Renamed", `"${previous}" → "${name}"`.slice(0, 500));
+    return { message:"Campaign renamed.", campaign_name:name };
   } finally { lock.releaseLock(); }
 }
 

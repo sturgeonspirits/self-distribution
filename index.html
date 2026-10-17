@@ -1,10 +1,10 @@
 <!doctype html>
-<!-- App version: 2026.10.14.53-WEB -->
+<!-- App version: 2026.10.17.54-WEB -->
 <html>
 <head>
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover"/>
-  <meta name="app-version" content="2026.10.14.53-WEB" />
+  <meta name="app-version" content="2026.10.17.54-WEB" />
   <meta name="theme-color" content="#536f77" />
   <link rel="icon" href="/assets/distribution-hub-icon.svg" type="image/svg+xml" />
   <link rel="manifest" href="/site.webmanifest" />
@@ -272,6 +272,11 @@
       border-radius:8px;
       padding:12px;
     }
+    .campaignRenameRow{margin:0 0 12px}
+    .campaignRenameRow label{margin-top:0}
+    .campaignRenameRow .tinyRow{flex-wrap:nowrap}
+    .campaignRenameRow input{flex:1 1 auto;min-width:0}
+    .campaignDeleteRow{margin-top:18px;padding-top:12px;border-top:1px solid var(--line);justify-content:flex-start;align-items:center}
     .outreachShowMore{display:block;width:100%;margin:4px 0 12px;padding:14px;border:1px solid var(--line);border-radius:10px;background:#fff;color:var(--text);font:inherit;font-weight:900;cursor:pointer}
     .outreachShowMore span{font-weight:600;color:var(--muted,#6b7280)}
     .outreachCard.priority{
@@ -2531,7 +2536,8 @@
       <button id="closeOutreachCampaignBtn" type="button">Close</button>
     </div>
     <div class="dlgBody">
-      <div class="modeNotice" style="margin-top:0"><i data-lucide="shield-check"></i><span id="outreachCampaignNotice">Review the frozen audience before approving delivery.</span></div>
+      <div class="campaignRenameRow" id="campaignRenameRow"><label for="campaignNameInput">Campaign name</label><div class="tinyRow"><input id="campaignNameInput" type="text" maxlength="120" autocomplete="off" /><button id="renameOutreachCampaignBtn" type="button" disabled>Save name</button></div></div>
+      <div class="modeNotice"><i data-lucide="shield-check"></i><span id="outreachCampaignNotice">Review the frozen audience before approving delivery.</span></div>
       <div class="campaignRecipientToolbar" id="campaignRecipientToolbar"><input id="campaignRecipientSearch" type="search" placeholder="Search business, city, ZIP, email, contact, or segment" /><div class="campaignFilterChips" id="campaignRecipientFilters"></div><div class="grid2"><div><label for="campaignRecipientSort">Sort recipients</label><select id="campaignRecipientSort"><option value="name">Name</option><option value="city">City</option><option value="miles">Miles (closest first)</option><option value="status">Status</option></select></div><div><label for="campaignBulkExcludeReason">Exclude selected</label><div class="tinyRow"><select id="campaignBulkExcludeReason"><option value="">Choose reason</option><option>Out of area</option><option>Already a customer</option><option>Not a fit</option><option>Distributor/vendor</option></select><button id="campaignBulkExcludeBtn" type="button">Exclude selected</button></div></div></div><div class="smallMuted" id="campaignRecipientCount"></div></div>
       <div id="outreachCampaignRecipients"></div>
       <div class="dlgActions"><button id="rebuildCampaignRecipientsBtn" type="button">Rebuild unsent emails with current template</button></div>
@@ -2539,6 +2545,7 @@
       <div class="dlgActions"><button id="reopenOutreachCampaignBtn" type="button">Reopen unsent for edits</button><label class="checkLabel" id="campaignSegmentConfirmRow"><input id="campaignSegmentConfirm" type="checkbox" /><span id="campaignSegmentConfirmLabel"></span></label><button id="approveOutreachCampaignBtn" type="button">Approve campaign</button><span class="smallMuted" id="campaignSegmentConfirmHint">Review the fallback message to enable approval.</span><button id="sendOutreachCampaignBatchBtn" type="button">Send next 10</button><button class="primary" id="sendRemainingCampaignBtn" type="button">Send remaining</button></div>
       <div class="dlgActions" id="campaignScheduleRow" hidden><label for="campaignScheduleAt" style="margin:0;align-self:center">Send at</label><input id="campaignScheduleAt" type="datetime-local" style="width:auto;min-width:220px" /><button id="scheduleCampaignBtn" type="button">Schedule send</button><button id="cancelCampaignScheduleBtn" type="button" hidden>Cancel schedule</button></div>
       <div class="smallMuted" id="campaignScheduleInfo"></div>
+      <div class="dlgActions campaignDeleteRow" id="campaignDeleteRow" hidden><button class="danger" id="deleteOutreachCampaignBtn" type="button">Delete campaign</button><span class="smallMuted">Only for a campaign made in error. Nothing has been sent from it.</span></div>
     </div>
   </dialog>
 
@@ -2736,7 +2743,7 @@
 
   <footer style="max-width:1200px;margin:18px auto 120px;padding:0 12px;text-align:center;color:#6b7280;font-size:12px;">
     Designed by <a href="https://scriptspirit.dev" target="_blank" rel="noopener noreferrer" style="color:#1d4ed8;text-decoration:none;font-weight:700;">Script Spirit</a>
-<span id="appVersionFooter"> • Version 2026.10.14.53-WEB</span>
+<span id="appVersionFooter"> • Version 2026.10.17.54-WEB</span>
   </footer>
 
 
@@ -2759,7 +2766,7 @@
   window.addEventListener("unhandledrejection", e => console.error("Unhandled promise rejection:", e.reason));
   window.addEventListener("error", e => console.error("Unhandled error:", e.error || e.message));
   const $ = (id) => document.getElementById(id);
-  const APP_VERSION = "2026.10.14.53-WEB";
+  const APP_VERSION = "2026.10.17.54-WEB";
   $("appVersionFooter").textContent = ` • Version ${APP_VERSION}`;
   function screenCacheKey(screen){ return `distribution_hub:${APP_VERSION}:${staffSession?.email || "unknown"}:${screen}`; }
   function readScreenCache(screen){
@@ -4940,6 +4947,9 @@
     if (campaignRecipientView.campaignId !== campaign.campaign_id) campaignRecipientView = { campaignId:campaign.campaign_id, search:"", filter:"all", sort:"name", selected:new Set() };
     selectedCampaignApprovalToken = campaign.approval_token || "";
     $("outreachCampaignTitle").textContent = campaign.name;
+    if (document.activeElement !== $("campaignNameInput")) $("campaignNameInput").value = campaign.name;
+    $("campaignRenameRow").hidden = campaign.status === "Deleted";
+    $("renameOutreachCampaignBtn").disabled = true;
     const excludedCount = Number(campaign.counts?.Excluded || 0);
     const criteria = campaign.criteria || null;
     const stage = criteria?.stage || "Initial";
@@ -4967,6 +4977,9 @@
     const canReopen = ["Review", "Approved", "Complete with blocks"].includes(campaign.status) && reopenableCount > 0;
     $("reopenOutreachCampaignBtn").hidden = !canReopen;
     $("rebuildCampaignRecipientsBtn").hidden = campaign.status !== "Review";
+    // The server says whether nothing was ever sent from this campaign; it re-checks before deleting.
+    $("campaignDeleteRow").hidden = !["Review", "Approved"].includes(campaign.status) || !!campaign.delete_blocker || campaign.delete_blocker === undefined;
+    $("deleteOutreachCampaignBtn").disabled = false;
     $("approveOutreachCampaignBtn").hidden = campaign.status !== "Review";
     refreshCampaignApprovalControl();
     $("sendOutreachCampaignBatchBtn").hidden = campaign.status !== "Approved";
@@ -5134,6 +5147,53 @@
     } catch (error) {
       setCampaignStatus(`Could not reopen this campaign: ${error.message || String(error)}`, true);
       $("reopenOutreachCampaignBtn").disabled = false;
+    }
+  }
+
+  async function renameOutreachCampaign(){
+    const campaign = selectedOutreachCampaign;
+    const staffName = $("outreachStaffName").value.trim();
+    const name = $("campaignNameInput").value.trim();
+    if (!campaign) return;
+    if (!name) return setCampaignStatus("Enter a campaign name.", true);
+    if (!staffName) return setCampaignStatus("Enter your staff name before renaming the campaign.", true);
+    if (name === campaign.name) return;
+    $("renameOutreachCampaignBtn").disabled = true;
+    setCampaignStatus("Saving the new name...");
+    try {
+      const res = await staffApiPost({ action:"renameOutreachCampaign", campaign_id:campaign.campaign_id, campaign_name:name, staff_name:staffName });
+      if (!res.ok) throw new Error(res.error || "Campaign could not be renamed.");
+      campaign.name = res.campaign_name || name;
+      $("outreachCampaignTitle").textContent = campaign.name;
+      $("campaignNameInput").value = campaign.name;
+      const listed = (outreachData.campaigns || []).find(item => item.campaign_id === campaign.campaign_id);
+      if (listed) listed.name = campaign.name;
+      renderOutreach();
+      setCampaignStatus(res.message || "Campaign renamed.");
+    } catch (error) {
+      setCampaignStatus(`Could not rename this campaign: ${error.message || String(error)}`, true);
+      $("renameOutreachCampaignBtn").disabled = false;
+    }
+  }
+
+  async function deleteOutreachCampaign(){
+    const campaign = selectedOutreachCampaign;
+    const staffName = $("outreachStaffName").value.trim();
+    if (!campaign) return;
+    if (!staffName) return setCampaignStatus("Enter your staff name before deleting the campaign.", true);
+    if (!confirm(`Delete "${campaign.name}"? Its ${Number(campaign.recipient_count || 0)} unsent recipients are removed from it and it disappears from the Campaigns list. No email is sent. Those businesses can go into a new campaign.`)) return;
+    $("deleteOutreachCampaignBtn").disabled = true;
+    setCampaignStatus("Deleting campaign...");
+    try {
+      const res = await staffApiPost({ action:"deleteOutreachCampaign", campaign_id:campaign.campaign_id, staff_name:staffName, confirm_delete:true });
+      if (!res.ok) throw new Error(res.error || "Campaign could not be deleted.");
+      selectedOutreachCampaign = null;
+      $("outreachCampaignDialog").close();
+      await loadOutreachCampaigns();
+      setOutreachStatus(res.message || "Campaign deleted. No email was sent.");
+    } catch (error) {
+      setCampaignStatus(`Could not delete this campaign: ${error.message || String(error)}`, true);
+      $("deleteOutreachCampaignBtn").disabled = false;
     }
   }
 
@@ -8489,6 +8549,13 @@
   $("campaignSegmentConfirm").addEventListener("change", refreshCampaignApprovalControl);
   $("rebuildCampaignRecipientsBtn").addEventListener("click", () => rebuildCampaignRecipients());
   $("reopenOutreachCampaignBtn").addEventListener("click", () => reopenOutreachCampaign());
+  $("deleteOutreachCampaignBtn").addEventListener("click", () => deleteOutreachCampaign());
+  $("renameOutreachCampaignBtn").addEventListener("click", () => renameOutreachCampaign());
+  $("campaignNameInput").addEventListener("input", () => {
+    const value = $("campaignNameInput").value.trim();
+    $("renameOutreachCampaignBtn").disabled = !value || value === (selectedOutreachCampaign?.name || "");
+  });
+  $("campaignNameInput").addEventListener("keydown", event => { if (event.key === "Enter") { event.preventDefault(); renameOutreachCampaign(); } });
   $("sendOutreachCampaignBatchBtn").addEventListener("click", sendOutreachCampaignBatch);
   $("sendRemainingCampaignBtn").addEventListener("click", sendRemainingCampaign);
   $("scheduleCampaignBtn").addEventListener("click", scheduleOutreachCampaign);

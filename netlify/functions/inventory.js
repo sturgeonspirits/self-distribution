@@ -1,9 +1,9 @@
-// App version: 2026.10.12.45-WEB
+// App version: 2026.10.17.54-WEB
 import { gunzipSync } from "node:zlib";
 import { requireStaffSession } from "./auth.js";
 import { fetchWithDriveRelay, relayConfig } from "../lib/drive-relay.js";
 
-const APP_VERSION = "2026.10.12.45-WEB";
+const APP_VERSION = "2026.10.17.54-WEB";
 const STAFF_ACTIONS = new Set([
   "outreachDashboard",
   "outreachRecord",
@@ -21,6 +21,8 @@ const STAFF_ACTIONS = new Set([
   "setOutreachCampaignRecipientExclusions",
   "approveOutreachCampaign",
   "reopenOutreachCampaign",
+  "deleteOutreachCampaign",
+  "renameOutreachCampaign",
   "reconcileCampaignSends",
   "rebuildCampaignRecipients",
   "sendOutreachCampaignBatch",
@@ -93,7 +95,7 @@ const ACTION_AREAS = new Map([
   ["outreachDashboard", "outreach"], ["outreachRecord", "outreach"], ["outreachSendStatus", "outreach"], ["outreachNewsletterContacts", "outreach"],
   ["inboundReplies", "outreach"], ["resolveInboundReply", "outreach"], ["checkInboundReplies", "outreach"],
   ["outreachCampaigns", "outreach"], ["outreachCampaign", "outreach"], ["previewOutreachCampaign", "outreach"], ["createOutreachCampaign", "outreach"], ["updateOutreachCampaignRecipient", "outreach"], ["setOutreachCampaignRecipientExclusion", "outreach"], ["setOutreachCampaignRecipientExclusions", "outreach"],
-  ["approveOutreachCampaign", "outreach"], ["reopenOutreachCampaign", "outreach"], ["reconcileCampaignSends", "outreach"], ["rebuildCampaignRecipients", "outreach"], ["sendOutreachCampaignBatch", "outreach"],
+  ["approveOutreachCampaign", "outreach"], ["reopenOutreachCampaign", "outreach"], ["deleteOutreachCampaign", "outreach"], ["renameOutreachCampaign", "outreach"], ["reconcileCampaignSends", "outreach"], ["rebuildCampaignRecipients", "outreach"], ["sendOutreachCampaignBatch", "outreach"],
   ["scheduleOutreachCampaign", "outreach"], ["cancelOutreachCampaignSchedule", "outreach"],
   ["saveOutreachDraft", "outreach"], ["updateOutreachOutcome", "outreach"], ["logOutreachContact", "outreach"], ["updateOutreachBusiness", "outreach"],
   ["updateOutreachPrograms", "outreach"], ["upsertNewsletterContact", "outreach"], ["createOutreachBusiness", "outreach"],

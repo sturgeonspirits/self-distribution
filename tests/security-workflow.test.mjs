@@ -3047,3 +3047,57 @@ test("Zoho callback without the matching state cookie recovers instead of showin
     delete process.env.ZOHO_OIDC_REDIRECT_URI;
   }
 });
+
+test("only a campaign that never sent or attempted email can be deleted", async () => {
+  const backend = await readFile(new URL("apps-script/Code.gs", root), "utf8");
+  const start = backend.indexOf("function campaignDeleteBlocker_");
+  const blocker = new Function("CAMPAIGN_DELETABLE_RECIPIENT_STATUSES", `${backend.slice(start, backend.indexOf("\n}\n", start) + 2)}; return campaignDeleteBlocker_;`)(["Ready for review", "Ready to send", "Excluded"]);
+  const ch = { status:0, schedule_status:1, sent_count:2 };
+  const rh = { status:0, zoho_message_id:1, sent_at:2, idempotency_token:3, business_name:4 };
+  const campaign = (status, schedule = "", sent = 0) => ({ headers:ch, values:[status, schedule, sent] });
+  const recipient = (status, extra = {}) => ({ headers:rh, values:[status, extra.message || "", extra.sentAt || "", extra.token || "tok", "Bar"] });
+  const none = new Set();
+  const unsent = [recipient("Ready for review"), recipient("Ready to send"), recipient("Excluded")];
+
+  assert.equal(blocker(campaign("Review"), unsent, none), "");
+  assert.equal(blocker(campaign("Approved", "Scheduled"), unsent, none), "", "a scheduled but unsent campaign can be deleted");
+  assert.match(blocker(campaign("Approved", "Sending"), unsent, none), /sending right now/);
+  assert.match(blocker(campaign("Complete"), unsent, none), /only a campaign that has not sent/);
+  assert.match(blocker(campaign("Deleted"), unsent, none), /only a campaign that has not sent/);
+  assert.match(blocker(campaign("Approved", "", 1), unsent, none), /already sent email/);
+  assert.match(blocker(campaign("Approved"), [recipient("Sent")], none), /send attempt/);
+  assert.match(blocker(campaign("Approved"), [recipient("Blocked")], none), /send attempt/, "a blocked recipient may have reached Zoho");
+  assert.match(blocker(campaign("Approved"), [recipient("Ready to send", { message:"zoho-1" })], none), /send attempt/);
+  assert.match(blocker(campaign("Approved"), [recipient("Ready to send", { sentAt:"2026-10-17" })], none), /send attempt/);
+  assert.match(blocker(campaign("Approved"), [recipient("Ready to send", { token:"t1" })], new Set(["t1"])), /send attempt/, "an accepted send in the activity log blocks deletion");
+});
+
+test("campaign deletion is wired, confirmed, audited and hidden from the list", async () => {
+  const [backend, proxy, index] = await Promise.all(["apps-script/Code.gs", "netlify/functions/inventory.js", "index.html"].map(path => readFile(new URL(path, root), "utf8")));
+  assert.match(backend, /case "deleteOutreachCampaign": res = apiDeleteOutreachCampaign_\(body\); break;/);
+  assert.match(backend, /"reopenOutreachCampaign","deleteOutreachCampaign"/);
+  const fn = backend.slice(backend.indexOf("function apiDeleteOutreachCampaign_"), backend.indexOf("function apiSendOutreachCampaignBatch_"));
+  assert.match(fn, /p\.confirm_delete !== true/);
+  assert.match(fn, /LockService\.getScriptLock\(\)/);
+  assert.match(fn, /appendAudit_\("DELETE_OUTREACH_CAMPAIGN"/);
+  assert.match(fn, /approval_token\] = ""/, "approval is revoked so nothing can send");
+  assert.doesNotMatch(fn, /deleteRow|deleteRows|clearContent/, "rows are kept for the audit trail");
+  assert.match(backend, /\.filter\(campaign => String\(campaign\.values\[h\.status\] \|\| ""\) !== CAMPAIGN_DELETED_STATUS\)/);
+  assert.match(proxy, /"deleteOutreachCampaign",/);
+  assert.match(proxy, /\["deleteOutreachCampaign", "outreach"\]/);
+  assert.doesNotMatch(proxy.match(/GET_READ_ACTIONS = new Set\(\[[^\]]*\]/)[0], /deleteOutreachCampaign/, "deletion is POST-only");
+  assert.match(index, /action:"deleteOutreachCampaign", campaign_id:campaign\.campaign_id, staff_name:staffName, confirm_delete:true/);
+  assert.match(index, /if \(!confirm\(`Delete "/);
+});
+
+test("campaigns can be renamed at any stage except after deletion, writing only the name", async () => {
+  const [backend, proxy, index] = await Promise.all(["apps-script/Code.gs", "netlify/functions/inventory.js", "index.html"].map(path => readFile(new URL(path, root), "utf8")));
+  assert.match(backend, /case "renameOutreachCampaign": res = apiRenameOutreachCampaign_\(body\); break;/);
+  const fn = backend.slice(backend.indexOf("function apiRenameOutreachCampaign_"), backend.indexOf("function apiSendOutreachCampaignBatch_"));
+  assert.match(fn, /publicText_\(p\.campaign_name, 120, "Campaign name"\)/, "names are length-limited and formula-safe");
+  assert.match(fn, /=== CAMPAIGN_DELETED_STATUS\) throw new Error/);
+  assert.match(fn, /getRange\(campaign\.row, ch\.campaign_name \+ 1\)\.setValue\(name\)/, "only the name cell is written");
+  assert.match(fn, /appendAudit_\("RENAME_OUTREACH_CAMPAIGN"/);
+  assert.match(proxy, /\["renameOutreachCampaign", "outreach"\]/);
+  assert.match(index, /action:"renameOutreachCampaign", campaign_id:campaign\.campaign_id, campaign_name:name, staff_name:staffName/);
+});
