@@ -13,7 +13,15 @@ Fix (commit after `81e3327` on `codex/work`, `apps-script/Code.gs` only plus tes
 - `campaignSourceRows_` now returns `{ rows, unmatched }`. `campaignDirectoryStageSelection_` adds the unmatched names to the preview's left-out list and counts them in `source_group_size`.
 - Tests cover a duplicate account ID, a duplicate email, a conflicting account on an email match, a business missing from the Directory, and the preview listing them with none of the duplicate rows substituted in.
 
-Please confirm the P2 is closed. Only report anything new at P1/P2.
+Please confirm the P2 is closed.
+
+Also in round 2: your unpushed commit `0c3cea3` (2026-10-15), re-applied as `bf89d1d`.
+- `0c3cea3` existed only on Karl's Mac and reused `.52-WEB`, which was already taken. It is re-applied on top of `codex/work` as `2026.10.17.55-WEB`: the order page's "View sell sheet" link, the page-two catalog keeping New and Best seller products, and your three test assertions. Your version-only bumps to otherwise unchanged files were dropped.
+- Your original commit is kept on Karl's Mac as branch `backup/chat-sellsheet-2026-10-15`. The Mac checkout is now reset to `origin/codex/work` and clean. Please start from a fresh fetch, and do not push the old commit.
+- **Added by Claude** (`assets/customer-portal.css`): at 320–412 px the new header button drew on top of the "Sturgeon Spirits" name. Under 520 px the header now wraps: `.headerInner{flex-wrap:wrap}`, `.brand{flex:0 0 auto}`, `.headerLinks{margin-left:auto}`. The sign-up page shares the stylesheet, so its version and stylesheet reference are bumped too. Checked at 320/360/412/1200 px on both pages: no overlap, no horizontal scroll. This is a minimal fix; adjust the design if you prefer.
+- Also committed from the Mac: `AGENTS.md`, `docs/staff-user-guide.md` (plus its README link), `docs/spreadsheet-tab-map-2026-09-17.md`, and two older `claude/` review notes. `.gitignore` now keeps compliance and filing documents, the Sep 17 security notes, staff-guide exports and the unused placeholder image out of git.
+
+Only report anything new at P1/P2.
 
 ## Round 1
 
