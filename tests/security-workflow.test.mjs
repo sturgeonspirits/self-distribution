@@ -2845,6 +2845,14 @@ test("Code.gs header names the current APP_VERSION and keeps the prior version's
   const version = backend.match(/const APP_VERSION = "([^"]+)";/)[1];
   assert.match(backend.slice(0, 400), new RegExp(`App version: ${version.replace(/\./g, "\\.")}\\n`));
   assert.doesNotMatch(backend.slice(0, 4000), new RegExp(`CHANGES IN ${version.replace(/\./g, "\\.")}\\n`), "the current version's changes sit under CHANGES IN THIS VERSION");
+  // Earlier versions live in docs/history so the deployed file stays short (2026-10-17).
+  const header = backend.slice(0, backend.indexOf("*/"));
+  assert.equal((header.match(/CHANGES IN /g) || []).length, 1, "the header keeps only the current version's notes");
+  assert.match(header, /Earlier version notes: docs\/history\/inventory-api-changes\.md/);
+  assert.match(header, /Apps Script project: Inventory API/);
+  assert.match(header, /Attached to \(container\): Distribution Hub - Inventory Backend/);
+  const history = await readFile(new URL("docs/history/inventory-api-changes.md", root), "utf8");
+  assert.ok((history.match(/CHANGES IN 20\d\d\./g) || []).length >= 44, "earlier version notes are kept in the history file");
 });
 
 test("wholesale prices come from SKU tiers or overrides, customer deals, and Toast stock sets availability", async () => {
