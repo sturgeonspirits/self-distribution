@@ -1063,7 +1063,7 @@ test("Inbound reply checker: matching, quoted-text removal, stop rules, respond-
   assert.deepEqual(grouped, { today:["late", "unsorted"], soon:["soon"], stop:["stop"], address:["bounce"], results:["answered"], optional:["later"], done:["done"] });
   assert.doesNotMatch(html, /data-reply-action="(handled|reopen)"|Reply by email|Not a reply<|Mark handled/, "the old buttons are gone");
   assert.match(html, /window\.open\("", "zohomail"\)/, "Answer in Zoho reuses one Zoho window");
-  assert.match(html, /if \(repliesAwaitingOutcomeFor\(selectedOutreachRecord\.account_id, res\.reply\?\.reply_id\)\) loadOutreachReplies\(\)/, "other answered replies of the business refresh");
+  assert.match(html, /if \(repliesAwaitingOutcomeFor\(record\.account_id, res\.reply\?\.reply_id\)\) loadOutreachReplies\(\)/, "other answered replies of the business refresh using the saved record snapshot");
   assert.match(html, /if \(\$\("contactLogOutcome"\)\.value && repliesAwaitingOutcomeFor\(record\.account_id\)\) loadOutreachReplies\(\)/, "Log contact with an outcome refreshes Replies");
 
   // No AI calls from the Hub: unsorted replies wait as "Needs reading" for the sort-inbound-replies skill.
@@ -2001,6 +2001,12 @@ test("source contains formula protection, global error listeners, and recoverabl
   assert.match(backend, /"Wrong contact", "Bad address", "Not interested", "Unsubscribed"/);
   assert.match(backend, /requireValueInList\(OUTREACH_OUTCOME_VALUES, true\)/);
   assert.match(backend.slice(backend.indexOf("\nfunction apiUpdateOutreachOutcome_("), backend.indexOf("\nfunction apiLogOutreachContact_(")), /writeChangedRowCells_\(sheet, rowNumber, originalValues, values\);/, "an outcome save writes only the changed cells");
+  const outcomeDialogSource = index.slice(index.indexOf("function setOutcomeDialogEditing"), index.indexOf("async function openContactLogForRecord"));
+  assert.match(outcomeDialogSource, /function setOutcomeDialogEditing\(editable\)/);
+  assert.match(outcomeDialogSource, /\["outcomeFollowUpDate", "outcomeNotes", "outcomeNothingBtn"\]/, "outcome inputs are locked until the live record arrives and while a save is pending");
+  assert.match(outcomeDialogSource, /option\.disabled = !editable/, "outcome choices cannot change after Save has captured the request");
+  assert.match(outcomeDialogSource, /const outcome = selectedOutcome;[\s\S]*?const nextFollowUp = \$\("outcomeFollowUpDate"\)\.value;[\s\S]*?const notes = \$\("outcomeNotes"\)\.value\.trim\(\);/, "Save snapshots the visible values before the request starts");
+  assert.match(outcomeDialogSource, /outcome:outcome,[\s\S]*?next_follow_up:nextFollowUp,[\s\S]*?notes:notes/, "the snapshot, not later edits, is sent to the API");
   assert.match(index, /Number\(campaign\.counts\?\.Blocked \|\| 0\)/);
   assert.match(await readFile(new URL("netlify/functions/inventory.js", root), "utf8"), /"sendOutreachCampaignBatch"/);
   assert.match(mailer, /if \(!testMode && !isValidEmail_\(email\)\)/);

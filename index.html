@@ -1,10 +1,10 @@
 <!doctype html>
-<!-- App version: 2026.10.17.54-WEB -->
+<!-- App version: 2026.10.17.56-WEB -->
 <html>
 <head>
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover"/>
-  <meta name="app-version" content="2026.10.17.54-WEB" />
+  <meta name="app-version" content="2026.10.17.56-WEB" />
   <meta name="theme-color" content="#536f77" />
   <link rel="icon" href="/assets/distribution-hub-icon.svg" type="image/svg+xml" />
   <link rel="manifest" href="/site.webmanifest" />
@@ -2744,7 +2744,7 @@
 
   <footer style="max-width:1200px;margin:18px auto 120px;padding:0 12px;text-align:center;color:#6b7280;font-size:12px;">
     Designed by <a href="https://scriptspirit.dev" target="_blank" rel="noopener noreferrer" style="color:#1d4ed8;text-decoration:none;font-weight:700;">Script Spirit</a>
-<span id="appVersionFooter"> • Version 2026.10.17.54-WEB</span>
+<span id="appVersionFooter"> • Version 2026.10.17.56-WEB</span>
   </footer>
 
 
@@ -2767,7 +2767,7 @@
   window.addEventListener("unhandledrejection", e => console.error("Unhandled promise rejection:", e.reason));
   window.addEventListener("error", e => console.error("Unhandled error:", e.error || e.message));
   const $ = (id) => document.getElementById(id);
-  const APP_VERSION = "2026.10.17.54-WEB";
+  const APP_VERSION = "2026.10.17.56-WEB";
   $("appVersionFooter").textContent = ` • Version ${APP_VERSION}`;
   function screenCacheKey(screen){ return `distribution_hub:${APP_VERSION}:${staffSession?.email || "unknown"}:${screen}`; }
   function readScreenCache(screen){
@@ -5978,7 +5978,7 @@
     $("outcomeNotes").value = "";
     $("outcomeFollowUpDate").value = "";
     $("outcomeStatus").textContent = "";
-    $("saveOutcomeBtn").disabled = true;
+    setOutcomeDialogEditing(true);
     document.querySelectorAll(".outcomeOption").forEach(button => button.classList.remove("active"));
     if (!$("outcomeDialog").open) $("outcomeDialog").showModal();
   }
@@ -5995,7 +5995,7 @@
     $("outcomeNotes").value = "";
     $("outcomeFollowUpDate").value = "";
     $("outcomeStatus").textContent = "Loading business details…";
-    $("saveOutcomeBtn").disabled = true;
+    setOutcomeDialogEditing(false);
     document.querySelectorAll(".outcomeOption").forEach(button => button.classList.remove("active"));
     if (!$("outcomeDialog").open) $("outcomeDialog").showModal();
     try {
@@ -6388,41 +6388,54 @@
     }
   }
 
+  // The dialog first fetches the current Directory row.  Never let a staff member enter
+  // values that that fetch would overwrite, or alter a request after Save has started.
+  function setOutcomeDialogEditing(editable){
+    ["outcomeFollowUpDate", "outcomeNotes", "outcomeNothingBtn"].forEach(id => {
+      $(id).disabled = !editable;
+    });
+    document.querySelectorAll(".outcomeOption").forEach(option => { option.disabled = !editable; });
+    $("saveOutcomeBtn").disabled = !editable || !selectedOutcome;
+  }
+
   async function saveOutreachOutcome(){
     if (!selectedOutreachRecord || !selectedOutcome) return;
-    const button = $("saveOutcomeBtn");
-    button.disabled = true;
+    const record = selectedOutreachRecord;
+    const outcome = selectedOutcome;
+    const nextFollowUp = $("outcomeFollowUpDate").value;
+    const notes = $("outcomeNotes").value.trim();
+    setOutcomeDialogEditing(false);
     $("outcomeStatus").textContent = "Saving...";
     try {
       const res = await staffApiPost({
         action:"updateOutreachOutcome",
-        account_id:selectedOutreachRecord.account_id,
-        source_row:selectedOutreachRecord.source_row,
-        business:selectedOutreachRecord.business,
-        email:selectedOutreachRecord.email,
-        outcome:selectedOutcome,
-        next_follow_up:$("outcomeFollowUpDate").value,
-        notes:$("outcomeNotes").value.trim(),
+        account_id:record.account_id,
+        source_row:record.source_row,
+        business:record.business,
+        email:record.email,
+        outcome:outcome,
+        next_follow_up:nextFollowUp,
+        notes:notes,
         ...(outcomeReplyId ? { reply_id:outcomeReplyId } : {}),
       });
       if (!res.ok) throw new Error(res.error || "Outcome could not be saved.");
       if (res.reply) patchReplyLocally(res.reply);
       // Logging an outcome also records it on that business's other answered replies: reload to show them.
-      if (repliesAwaitingOutcomeFor(selectedOutreachRecord.account_id, res.reply?.reply_id)) loadOutreachReplies().catch(() => {});
+      if (repliesAwaitingOutcomeFor(record.account_id, res.reply?.reply_id)) loadOutreachReplies().catch(() => {});
       if (res.alt_email_added) toast(`Saved ${res.alt_email_added} as an alternate email`);
-      patchOutreachRecordLocally(selectedOutreachRecord.source_row, {
-        outcome:selectedOutcome,
-        status:res.status || selectedOutreachRecord.status,
-        next_follow_up:$("outcomeFollowUpDate").value || selectedOutreachRecord.next_follow_up,
-        do_not_email:["Not interested", "Unsubscribed"].includes(selectedOutcome) || !!selectedOutreachRecord.do_not_email,
+      patchOutreachRecordLocally(record.source_row, {
+        outcome:outcome,
+        status:res.status || record.status,
+        next_follow_up:nextFollowUp || record.next_follow_up,
+        do_not_email:["Not interested", "Unsubscribed"].includes(outcome) || !!record.do_not_email,
       });
       $("outcomeDialog").close();
       toast("Outcome saved");
       renderOutreach();
-      refreshOutreachRecordAfterSave(selectedOutreachRecord);
+      refreshOutreachRecordAfterSave(record);
     } catch (err) {
       $("outcomeStatus").textContent = err.message || String(err);
-      button.disabled = false;
+      setOutcomeDialogEditing(true);
     }
   }
 
