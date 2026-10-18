@@ -19,3 +19,18 @@ Whenever you ask Karl to paste and deploy a `Code.gs`, name the Apps Script proj
 # Status file rule
 
 Keep `PROJECT_STATUS.md` short: current state, open items and one line per recent change. Move detailed write-ups older than about a week to `docs/history/`; never delete history.
+
+# Pushing to GitHub and production
+
+This Mac checkout has no GitHub sign-in, so `git push` from here fails with `could not read Username for 'https://github.com'`. That is expected; it is not something to fix by changing the remote, creating tokens, or asking Karl for a password.
+
+1. Before committing: `git fetch origin`, make sure you are on `codex/work` and that `origin/codex/work` is an ancestor of your commit (`git merge-base --is-ancestor origin/codex/work HEAD`). If it is not, rebase onto `origin/codex/work` **before** committing your final version. Never reuse a version number already on `origin/codex/work`.
+2. One commit per change, including `PROJECT_STATUS.md` in the same commit. Run `node --test tests/*.mjs tests/*.cjs`; all must pass. Leave no uncommitted changes.
+3. Try the push once: `GIT_TERMINAL_PROMPT=0 git push origin codex/work`. Push to production only when Karl asks: `GIT_TERMINAL_PROMPT=0 git push origin codex/work:codex/distribution-system-foundation` (fast-forward only).
+4. If it fails for authentication: stop. Do not amend, rebase or squash the commit afterwards (Claude pushes the exact SHA). Give Karl this one line to paste to Claude:
+
+   `Claude: push <full commit SHA> from ~/self-distribution-app to codex/work` (add `and production` if Karl wants it live)
+
+5. Claude then checks the commit sits on top of `origin/codex/work`, runs the tests, carries the exact commit to GitHub (same SHA), promotes it if asked, confirms the live version, and fast-forwards this checkout.
+
+If Karl later signs this Mac into GitHub (for example GitHub Desktop or `gh auth login`), step 3 works directly and step 4 is no longer needed.

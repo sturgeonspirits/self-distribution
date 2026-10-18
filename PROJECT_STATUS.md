@@ -15,7 +15,7 @@ History, kept word for word:
 
 | Component | Source version | Deployment state |
 | --- | --- | --- |
-| Netlify web app and staff proxy | `2026.10.17.56-WEB` on `codex/work` | **Production 2026-10-17.** Hub and staff proxy report `.54`; order, sell sheet and sign-up report `.55`. |
+| Netlify web app and staff proxy | `2026.10.17.56-WEB` on `codex/work` | **Production 2026-10-17.** Hub reports `.56` (promoted 19:15 CDT); staff proxy `.54`; order, sell sheet and sign-up `.55`. |
 | Inventory API Apps Script | `2026.10.17.47-APP` on `codex/work` | **Deployed 2026-10-17** by Karl (project **Inventory API**, attached to **Distribution Hub - Inventory Backend**; live API reports `.47`). |
 | Distribution Outreach Apps Script | `2026.10.12.33-APP` in `docs/reference/distribution-outreach/Code.gs` | **Deployed 2026-10-12** (project **distribution outreach**, attached to **Distribution Hub**). |
 | Public customer Netlify proxy | `2026.10.08.5-WEB` | Deployed 2026-10-08. |
@@ -50,7 +50,7 @@ Setup steps recorded in the history whose completion was **not re-verified** on 
 
 ## Recent changes (one line each; details in `docs/history/` and git)
 
-- 2026-10-17 `.56-WEB` (not deployed): Log outcome is non-editable while its live record loads or its save is pending, so loading cannot erase entered text and a save records exactly the outcome, date and note shown when Save was pressed.
+- 2026-10-17 `.56-WEB` (production, chat's `6655194`, pushed by Claude because the Mac has no GitHub sign-in): Log outcome is non-editable while its live record loads or its save is pending, so loading cannot erase entered text and a save records exactly the outcome, date and note shown when Save was pressed.
 - 2026-10-17 `.47-APP`/`.54`/`.55-WEB` (production): delete unsent campaigns; rename campaigns; follow-ups from an earlier campaign match its businesses by account ID → email → name (unique matches only) with a default "Same businesses" mode and no distance/fit/area filters; previews list who was left out and why, including dates not reached; order page "View sell sheet" link and sell-sheet page-two catalog (chat's `0c3cea3`, re-applied) with a narrow-phone header fix. Chat review: no P1; P2 fixed.
 - 2026-10-17: `PROJECT_STATUS.md` and both `Code.gs` headers trimmed; history moved to `docs/history/` (code unchanged).
 - 2026-10-14 `.50`–`.53-WEB` (production): campaign load race guard (chat P2); section menu always visible in phone count mode; Outreach lists draw 50 at a time; icons converted once; Campaigns shows newest 10.
