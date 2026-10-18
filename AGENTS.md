@@ -22,7 +22,7 @@ Keep `PROJECT_STATUS.md` short: current state, open items and one line per recen
 
 # Pushing to GitHub and production
 
-This Mac checkout has no GitHub sign-in, so `git push` from here fails with `could not read Username for 'https://github.com'`. That is expected; it is not something to fix by changing the remote, creating tokens, or asking Karl for a password.
+Pushes from this checkout worked until **2026-10-07** (last successful push recorded in `.git/logs`) and have failed since, most likely because the GitHub sign-in saved on the Mac expired. Nothing in the repository's git config changed. Until Karl signs the Mac into GitHub again, a push can fail with an authentication error such as `could not read Username for 'https://github.com'`. Do not try to fix that by changing the remote, creating tokens, or asking Karl for a password.
 
 1. Before committing: `git fetch origin`, make sure you are on `codex/work` and that `origin/codex/work` is an ancestor of your commit (`git merge-base --is-ancestor origin/codex/work HEAD`). If it is not, rebase onto `origin/codex/work` **before** committing your final version. Never reuse a version number already on `origin/codex/work`.
 2. One commit per change, including `PROJECT_STATUS.md` in the same commit. Run `node --test tests/*.mjs tests/*.cjs`; all must pass. Leave no uncommitted changes.
@@ -33,4 +33,4 @@ This Mac checkout has no GitHub sign-in, so `git push` from here fails with `cou
 
 5. Claude then checks the commit sits on top of `origin/codex/work`, runs the tests, carries the exact commit to GitHub (same SHA), promotes it if asked, confirms the live version, and fast-forwards this checkout.
 
-If Karl later signs this Mac into GitHub (for example GitHub Desktop or `gh auth login`), step 3 works directly and step 4 is no longer needed.
+Once Karl signs this Mac into GitHub again (for example `gh auth login` followed by `gh auth setup-git`, or GitHub Desktop), step 3 works directly and step 4 is only a fallback.
