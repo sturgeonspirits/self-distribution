@@ -1514,9 +1514,10 @@ test("sell-sheet implementation keeps public catalog prices separate and install
   assert.match(page, /catalog-right\{justify-content:space-between/);
   assert.match(page, /page-two\{min-height:10\.05in;display:flex;flex-direction:column/);
   assert.match(page, /catalog-layout\{flex:1;align-items:stretch/);
-  assert.match(page, /flavor-lists\{font-size:12pt;line-height:1\.24/);
-  assert.match(page, /flavor-group\{margin-bottom:\.12in/);
-  assert.match(page, /flavor-group h3\{font-size:13pt/);
+  assert.match(page, /flavor-lists\{font-size:calc\(11pt\*var\(--catalog-fit,1\)\);line-height:1\.14/, "print catalog type shrinks when the list grows so page two stays one page");
+  assert.match(page, /flavor-group\{margin-bottom:\.1in/);
+  assert.match(page, /root\.style\?\.setProperty\("--catalog-fit",String\(Math\.max\(\.8,Math\.min\(1,74\/Math\.max\(lines,1\)\)\)\)/);
+  assert.match(page, /flavor-group h3\{font-size:12pt/);
   assert.match(page, /bottle-grid\{grid-template-rows:repeat\(3,1\.5in\)/);
   assert.match(page, /if\(location\.protocol==="file:"\)/);
   assert.doesNotMatch(page, /\["127\.0\.0\.1","localhost"\]\.includes/);
