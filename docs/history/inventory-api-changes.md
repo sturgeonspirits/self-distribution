@@ -3,6 +3,26 @@
 Moved out of the `apps-script/Code.gs` header on 2026-10-17 so the deployed file stays short. Newest first, copied word for word. The header keeps only the current version (`CHANGES IN THIS VERSION`); when a new version is made, move that section to the top of this file.
 
 ```
+CHANGES IN 2026.10.17.47-APP
+- Campaigns made in error can be deleted (deleteOutreachCampaign). Only a Review or Approved campaign that never
+  sent or attempted a single email qualifies: every recipient still Ready for review, Ready to send or Excluded,
+  no Zoho message ID or sent time, no accepted send in the activity log, sent count 0, and not mid scheduled send.
+  Deleting is a soft delete under the script lock: the campaign and its recipients are marked Deleted, approval and
+  any schedule are cleared, the rows stay for the audit trail, and DELETE_OUTREACH_CAMPAIGN is logged. Deleted
+  campaigns are left out of the Campaigns list and no longer block creating the same audience again.
+- Follow-ups can use exactly the businesses of an earlier campaign ("Same businesses as that campaign"): criteria
+  audience_mode "source" keeps only the stage check (who is due for this email) and the usual send-eligibility
+  rules, and skips the distance, fit, city, county, segment and wave filters. The stored center, radius and fit are
+  copied from the source campaign for labels and distances. Turning it off uses the filters as before.
+- "Only recipients of campaign" matched businesses by the stored Directory row number, which goes stale when the
+  Directory is sorted or rows are inserted (every Appleton row pointed at a different business by 2026-10-17).
+  campaignSourceRows_ now finds the businesses the source campaign sent to by account ID, then email, then name,
+  using a match only when it is unique (and an email/name match only when its account ID does not conflict);
+  ambiguous or missing businesses are listed as left out rather than guessed (chat review P2, 2026-10-17).
+- Sales campaign previews explain who was left out and why (due for a different email, not due until a date,
+  recently emailed, excluded, outside the radius or fit, over the maximum), with up to 8 names per reason.
+- Campaigns can be renamed at any stage (renameOutreachCampaign); names are internal labels only and never appear
+  in email. Logged as RENAME_OUTREACH_CAMPAIGN.
 CHANGES IN 2026.10.12.46-APP
 - Added to Badger is a checkbox only: Badger shows no customer number to members, so the window no longer asks for
   one. The Hub still learns a customer's Badger ID from their first invoice (entered by hand in Badger, then linked

@@ -1,27 +1,11 @@
 /*********************************
  * Inventory API (JSON) for Netlify
- * App version: 2026.10.17.47-APP
+ * App version: 2026.10.28.48-APP
  *
  * CHANGES IN THIS VERSION
- * - Campaigns made in error can be deleted (deleteOutreachCampaign). Only a Review or Approved campaign that never
- *   sent or attempted a single email qualifies: every recipient still Ready for review, Ready to send or Excluded,
- *   no Zoho message ID or sent time, no accepted send in the activity log, sent count 0, and not mid scheduled send.
- *   Deleting is a soft delete under the script lock: the campaign and its recipients are marked Deleted, approval and
- *   any schedule are cleared, the rows stay for the audit trail, and DELETE_OUTREACH_CAMPAIGN is logged. Deleted
- *   campaigns are left out of the Campaigns list and no longer block creating the same audience again.
- * - Follow-ups can use exactly the businesses of an earlier campaign ("Same businesses as that campaign"): criteria
- *   audience_mode "source" keeps only the stage check (who is due for this email) and the usual send-eligibility
- *   rules, and skips the distance, fit, city, county, segment and wave filters. The stored center, radius and fit are
- *   copied from the source campaign for labels and distances. Turning it off uses the filters as before.
- * - "Only recipients of campaign" matched businesses by the stored Directory row number, which goes stale when the
- *   Directory is sorted or rows are inserted (every Appleton row pointed at a different business by 2026-10-17).
- *   campaignSourceRows_ now finds the businesses the source campaign sent to by account ID, then email, then name,
- *   using a match only when it is unique (and an email/name match only when its account ID does not conflict);
- *   ambiguous or missing businesses are listed as left out rather than guessed (chat review P2, 2026-10-17).
- * - Sales campaign previews explain who was left out and why (due for a different email, not due until a date,
- *   recently emailed, excluded, outside the radius or fit, over the maximum), with up to 8 names per reason.
- * - Campaigns can be renamed at any stage (renameOutreachCampaign); names are internal labels only and never appear
- *   in email. Logged as RENAME_OUTREACH_CAMPAIGN.
+ * - Badger invoice units: 330 mL cans (Badger unit 6) and 187 mL (unit 7), read from Sturgeon's own Badger invoices on
+ *   2026-10-28 (SS0079, SS0093, SS0167). Online orders of the five canned cocktails (invoice_volume 330ml) can now be
+ *   previewed and invoiced instead of being listed as blocked.
  *
  * DEPLOY
  * - Apps Script project: Inventory API
@@ -31,7 +15,7 @@
  * Earlier version notes: docs/history/inventory-api-changes.md (move this version's notes there when the version changes).
  *********************************/
 
-const APP_VERSION = "2026.10.17.47-APP";
+const APP_VERSION = "2026.10.28.48-APP";
 
 const SHEET_NAMES = {
   STORES: "Stores",
@@ -8325,7 +8309,7 @@ function clearBadgerInvoiceCache_() {
 
 function badgerVolumeUnitOfMeasureId_(volume) {
   const normalized = String(volume || "").toLowerCase().replace(/\s/g, "");
-  return ({ "750ml":3, "375ml":5, "1.75l":20, "1750ml":20, "1500ml":2, "200ml":25, "100ml":26, "50ml":19 })[normalized] || "";
+  return ({ "750ml":3, "375ml":5, "1.75l":20, "1750ml":20, "1500ml":2, "330ml":6, "200ml":25, "187ml":7, "100ml":26, "50ml":19 })[normalized] || "";
 }
 
 // ---------- Toast stock import (2026.10.04.20-APP) ----------
