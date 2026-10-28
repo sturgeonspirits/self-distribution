@@ -30,7 +30,7 @@ Standing facts:
 
 ## Open items
 
-- Canned cocktails can be ordered online, but their Badger invoice lines block (by product name) until two things exist: Badger's unit-of-measure ID for **330 mL** added to `badgerVolumeUnitOfMeasureId_` (Inventory API) and `BADGER_UNIT_NAMES` (Badger parser), and each can's `proof` in SKUs. Karl invoices can orders by hand until then.
+- Canned cocktails can be ordered online, but their Badger invoice lines block (by product name) until Badger's unit-of-measure ID for **330 mL** is added to `badgerVolumeUnitOfMeasureId_` (Inventory API) and `BADGER_UNIT_NAMES` (Badger parser). Past can invoices (SS0029, SS0032, SS0079, SS0167) used 330mL, Spirits, $3/can. Proof 10 set on all five can SKUs 2026-10-28 (proof map: Fat Golfer, Freshkosh; recipes: Grape Popsicle, Cherry Limeade, Mango Collins at 4 cups alcohol in 80 = 5%). The ID needs a signed-in Badger session to read.
 - Chat round 2 of `claude/chat-review-campaign-tools-2026-10-17.md` (unique-match P2 fix `67aa20c`; re-applied sell-sheet change and narrow-phone header fix `bf89d1d`) was not confirmed before the 2026-10-17 promotion.
 - Scheduled campaign "second email campaign -- Oshkosh 2" (89, Follow-up 1, 2026-10-20 10:33 CDT) includes 3 businesses not from its source (Gardina's Restaurant, Jerry's Tavern LLC, Oshkosh Arena); "Initial prospect campaign — Oct 17, 2026" (31) is entirely inside it (duplicates are blocked at send). Karl to decide; the 31 can now be deleted.
 - Appleton group is due for Follow-up 2 (since 2026-10-13); its Follow-up 1 went out 2026-10-06 in a campaign named "Initial prospect campaign — Oct 6, 2026" (can now be renamed).
