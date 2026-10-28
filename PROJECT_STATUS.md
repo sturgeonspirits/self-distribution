@@ -15,7 +15,7 @@ History, kept word for word:
 
 | Component | Source version | Deployment state |
 | --- | --- | --- |
-| Netlify web app and staff proxy | `2026.10.17.56-WEB` on `codex/work` | **Production 2026-10-17.** Hub reports `.56` (promoted 19:15 CDT); staff proxy `.54`; order and sign-up `.55`; sell sheet `.57` (2026-10-21). |
+| Netlify web app and staff proxy | `2026.10.17.56-WEB` on `codex/work` | **Production 2026-10-17.** Hub reports `.56` (promoted 19:15 CDT); staff proxy `.54`; sign-up `.55`; order and sell sheet `.58` (2026-10-28). |
 | Inventory API Apps Script | `2026.10.17.47-APP` on `codex/work` | **Deployed 2026-10-17** by Karl (project **Inventory API**, attached to **Distribution Hub - Inventory Backend**; live API reports `.47`). |
 | Distribution Outreach Apps Script | `2026.10.12.33-APP` in `docs/reference/distribution-outreach/Code.gs` | **Deployed 2026-10-12** (project **distribution outreach**, attached to **Distribution Hub**). |
 | Public customer Netlify proxy | `2026.10.08.5-WEB` | Deployed 2026-10-08. |
@@ -30,6 +30,7 @@ Standing facts:
 
 ## Open items
 
+- Canned cocktails can be ordered online, but their Badger invoice lines block (by product name) until two things exist: Badger's unit-of-measure ID for **330 mL** added to `badgerVolumeUnitOfMeasureId_` (Inventory API) and `BADGER_UNIT_NAMES` (Badger parser), and each can's `proof` in SKUs. Karl invoices can orders by hand until then.
 - Chat round 2 of `claude/chat-review-campaign-tools-2026-10-17.md` (unique-match P2 fix `67aa20c`; re-applied sell-sheet change and narrow-phone header fix `bf89d1d`) was not confirmed before the 2026-10-17 promotion.
 - Scheduled campaign "second email campaign -- Oshkosh 2" (89, Follow-up 1, 2026-10-20 10:33 CDT) includes 3 businesses not from its source (Gardina's Restaurant, Jerry's Tavern LLC, Oshkosh Arena); "Initial prospect campaign — Oct 17, 2026" (31) is entirely inside it (duplicates are blocked at send). Karl to decide; the 31 can now be deleted.
 - Appleton group is due for Follow-up 2 (since 2026-10-13); its Follow-up 1 went out 2026-10-06 in a campaign named "Initial prospect campaign — Oct 6, 2026" (can now be renamed).
@@ -50,6 +51,7 @@ Setup steps recorded in the history whose completion was **not re-verified** on 
 
 ## Recent changes (one line each; details in `docs/history/` and git)
 
+- 2026-10-28 `.58-WEB` (sell sheet, order page) plus sheet data: canned cocktails restored. The Oct 5 setup step was never done, so the SKUs tab had no cans. Added Price Tiers **Canned cocktail** $3 (per can; $72 per case of 24) and five active SKUs (Grape Popsicle, Cherry Limeade, Mango Collins, Fat Golfer, Fresh-kosh; size `12 oz can`, `invoice_volume` `330ml`, 24 per case, section Canned cocktails). Sell sheet prices the group as **$72/case of 24**; order page help mentions cans and mixing flavors. Print catalog shrink now starts above 70 lines; checked 2 pages public and priced with cans.
 - 2026-10-21 `.57-WEB` (sell sheet only): print was spilling onto a third page (Bitters and contact block) after New and Best seller joined the page-two catalog. Print catalog type 12pt/1.24 → 11pt/1.14 and scales down automatically (to 80% at most) when the catalog has more than 74 lines. Checked with live catalog data, public and priced, in headless Chromium letter print: 2 pages; still 2 with 24 extra test products.
 - 2026-10-17 `.56-WEB` (production, chat's `6655194`, pushed by Claude because the Mac has no GitHub sign-in): Log outcome is non-editable while its live record loads or its save is pending, so loading cannot erase entered text and a save records exactly the outcome, date and note shown when Save was pressed.
 - 2026-10-17 `.47-APP`/`.54`/`.55-WEB` (production): delete unsent campaigns; rename campaigns; follow-ups from an earlier campaign match its businesses by account ID → email → name (unique matches only) with a default "Same businesses" mode and no distance/fit/area filters; previews list who was left out and why, including dates not reached; order page "View sell sheet" link and sell-sheet page-two catalog (chat's `0c3cea3`, re-applied) with a narrow-phone header fix. Chat review: no P1; P2 fixed.
