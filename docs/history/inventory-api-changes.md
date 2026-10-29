@@ -3,6 +3,10 @@
 Moved out of the `apps-script/Code.gs` header on 2026-10-17 so the deployed file stays short. Newest first, copied word for word. The header keeps only the current version (`CHANGES IN THIS VERSION`); when a new version is made, move that section to the top of this file.
 
 ```
+CHANGES IN 2026.10.28.48-APP
+- Badger invoice units: 330 mL cans (Badger unit 6) and 187 mL (unit 7), read from Sturgeon's own Badger invoices on
+  2026-10-28 (SS0079, SS0093, SS0167). Online orders of the five canned cocktails (invoice_volume 330ml) can now be
+  previewed and invoiced instead of being listed as blocked.
 CHANGES IN 2026.10.17.47-APP
 - Campaigns made in error can be deleted (deleteOutreachCampaign). Only a Review or Approved campaign that never
   sent or attempted a single email qualifies: every recipient still Ready for review, Ready to send or Excluded,
