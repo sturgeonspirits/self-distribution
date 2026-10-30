@@ -1,22 +1,13 @@
 /**
  * Sturgeon Spirits Distribution Outreach
  *
- * VERSION: 2026.10.12.33-APP
+ * VERSION: 2026.10.30.34-APP
  *
  * CHANGES IN THIS VERSION
- * - Order-online invite (sendCustomerEmail): the Do Not Email box that approval ticks automatically (to keep current
- *   customers out of sales outreach) no longer blocks the customer's own ordering link. It counts as automatic when
- *   Customer Source starts with "Application " and Relationship shows customer history (Current customer, Customer,
- *   Existing customer, Lapsed customer, Win-back due). Status or Outcome Bad address, Unsubscribed, Do not contact or
- *   Not interested still blocks. The duplicate check now also refuses an invite when this account (Account ID)
- *   already received an invite or welcome at any address.
- * - Adds the Hub-only sendWelcomeEmail action: the welcome email with the ordering link that staff review and send
- *   after approving a wholesale application. It is a transactional reply to the customer's own application, so the
- *   Directory "Do Not Email" box (which keeps current customers out of sales outreach) does not block it. It is still
- *   refused for an address the Directory row has marked Bad address, Unsubscribed or Do not contact, and for an
- *   invalid address. It uses the "Order online invite" stage, so the Hub never sends that address the prospect
- *   introduction or a second order-online invite from a campaign. Same idempotency receipts and Activity Log row as
- *   every other app send.
+ * - After every real send (campaign, single, welcome, newsletter, payment reminder) the mailer checks the Zoho
+ *   Outbox and returns held_in_outbox: how many messages Zoho is holding instead of sending (the hourly sending
+ *   limit). The Activity Log detail says so too. The Hub (Inventory API .50) stops campaign sending and pauses
+ *   scheduled campaigns when it sees one. Read-only check; no new Zoho scopes. Test sends are not checked.
  *
  * DEPLOY
  * - Apps Script project: distribution outreach
@@ -28,7 +19,7 @@
  * Earlier version notes: docs/history/distribution-outreach-changes.md (move this version's notes there when the version changes).
  */
 
-const OUTREACH_VERSION = '2026.10.12.33-APP';
+const OUTREACH_VERSION = '2026.10.30.34-APP';
 const NURTURE_CHECK_IN_DUPLICATE_COOLDOWN_DAYS = 60;
 
 const OUTREACH = Object.freeze({
@@ -486,9 +477,10 @@ function sendAppEmailRequest_(body, testMode, validateLead) {
     const deliveredTo = testMode ? String(settings['Test recipient'] || '').trim().toLowerCase() : lead.email;
     const zoho = sendZohoEmail_(deliveredTo, subject, testMode ? markTestTrackingLinks_(html) : html, settings, testMode ? 'APP_TEST' : 'APP');
     accepted = { accepted:true, message_id:String(zoho.messageId || ''), sent_at:new Date().toISOString(), idempotent:false };
+    if (!testMode) accepted.held_in_outbox = outboxHeldCount_(settings);
     setAppReceipt_(token, accepted);
     try {
-      appendAppLog_(lead, body, deliveredTo, testMode ? 'APP TEST SENT' : 'APP SENT', accepted.message_id, 'Zoho accepted delivery.');
+      appendAppLog_(lead, body, deliveredTo, testMode ? 'APP TEST SENT' : 'APP SENT', accepted.message_id, acceptedLogDetail_(accepted));
       clearAppReceipt_(token);
     } catch (logError) {
       accepted.partial_failure = 'Zoho accepted delivery, but Activity Log recording needs recovery: ' + String(logError.message || logError);
@@ -505,6 +497,49 @@ function sendAppEmailRequest_(body, testMode, validateLead) {
   } finally {
     lock.releaseLock();
   }
+}
+
+// ---------- Outbox check (2026.10.30.34-APP) ----------
+// When the account passes its hourly sending limit, Zoho still accepts an API send (and returns a message ID) but
+// holds it in the Outbox instead of sending it; on 2026-10-29 it held 11 campaign emails overnight and then blocked
+// all outgoing mail on the account. After each real send this reports how many messages Zoho is holding, so the Hub
+// can stop sending. Read-only; uses the ZohoMail.folders.READ and ZohoMail.messages.READ scopes the reply checker
+// already has. A failed check returns -1 (unknown) and never fails the send that already happened.
+const OUTBOX_CHECK_DELAY_MS = 1500;
+
+function outboxFolderId_(settings, accountId) {
+  const cache = CacheService.getScriptCache();
+  const cacheKey = 'ZOHO_OUTBOX_FOLDER_' + OUTREACH_VERSION;
+  const cached = cache.get(cacheKey);
+  if (cached) return cached === 'none' ? '' : cached;
+  const json = zohoGet_('/accounts/' + encodeURIComponent(accountId) + '/folders', settings);
+  const folders = Array.isArray(json.data) ? json.data : [];
+  const outbox = folders.find(function (folder) { return String(folder.folderType || '').toLowerCase() === 'outbox'; })
+    || folders.find(function (folder) { return String(folder.folderName || '').toLowerCase() === 'outbox'; });
+  const id = outbox && outbox.folderId ? String(outbox.folderId) : '';
+  cache.put(cacheKey, id || 'none', 21600);
+  return id;
+}
+
+function outboxHeldCount_(settings) {
+  try {
+    Utilities.sleep(OUTBOX_CHECK_DELAY_MS);
+    const accountId = String(settings['Zoho account ID'] || '').trim();
+    const folderId = outboxFolderId_(settings, accountId);
+    if (!folderId) return -1;
+    const page = zohoGet_('/accounts/' + encodeURIComponent(accountId) + '/messages/view?folderId=' + encodeURIComponent(folderId) + '&start=1&limit=50', settings);
+    return Array.isArray(page.data) ? page.data.length : -1;
+  } catch (error) {
+    console.warn('Outbox check failed: ' + String(error.message || error));
+    return -1;
+  }
+}
+
+function acceptedLogDetail_(accepted) {
+  const held = Number(accepted && accepted.held_in_outbox || 0);
+  return held > 0
+    ? 'Zoho accepted it but is holding ' + held + ' email' + (held === 1 ? '' : 's') + ' in the Outbox (sending limit reached).'
+    : 'Zoho accepted delivery.';
 }
 
 function sendNewsletterEmailRequest_(body) {
@@ -627,6 +662,7 @@ function sendPaymentReminderRequest_(body) {
     const zoho = sendZohoEmail_(request.recipient, request.subject, request.html, settings, 'APP');
     const accepted = { accepted:true, message_id:String(zoho.messageId || ''), sent_at:new Date().toISOString(), idempotent:false, payment_reminder:true, logs_recorded:false };
     if (!accepted.message_id) throw new Error('Zoho did not return a message ID.');
+    accepted.held_in_outbox = outboxHeldCount_(settings);
     setAppReceipt_(request.token, accepted);
     appendPaymentReminderActivity_(request, accepted);
     writePaymentReminderLog_(request, accepted);

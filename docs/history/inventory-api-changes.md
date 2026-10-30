@@ -3,6 +3,14 @@
 Moved out of the `apps-script/Code.gs` header on 2026-10-17 so the deployed file stays short. Newest first, copied word for word. The header keeps only the current version (`CHANGES IN THIS VERSION`); when a new version is made, move that section to the top of this file.
 
 ```
+CHANGES IN 2026.10.29.49-APP
+- Weekly task manager sync: every hour the Hub writes its waiting work into the Tasks tab of "Karl weekly task
+  manager" (open replies, personal follow-ups due this week, one task per campaign whose businesses are due for
+  their next email, campaigns left in review / paused / approved but unsent, new applications, online orders) and
+  closes each task once its item clears in the Hub. Never deletes rows; adopts hand-made tasks that carry a
+  "Hub key:" line; leaves alone a task reopened by hand. Run installTaskManagerSync() once from the editor
+  (previewTaskManagerSync() shows the plan without writing; removeTaskManagerSync() stops it). No new services.
+- Includes 2026.10.28.48-APP (Badger units 330 mL = 6 and 187 mL = 7), not yet deployed when this was written.
 CHANGES IN 2026.10.28.48-APP
 - Badger invoice units: 330 mL cans (Badger unit 6) and 187 mL (unit 7), read from Sturgeon's own Badger invoices on
   2026-10-28 (SS0079, SS0093, SS0167). Online orders of the five canned cocktails (invoice_volume 330ml) can now be

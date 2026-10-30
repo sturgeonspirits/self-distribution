@@ -1,15 +1,15 @@
 /*********************************
  * Inventory API (JSON) for Netlify
- * App version: 2026.10.29.49-APP
+ * App version: 2026.10.30.50-APP
  *
  * CHANGES IN THIS VERSION
- * - Weekly task manager sync: every hour the Hub writes its waiting work into the Tasks tab of "Karl weekly task
- *   manager" (open replies, personal follow-ups due this week, one task per campaign whose businesses are due for
- *   their next email, campaigns left in review / paused / approved but unsent, new applications, online orders) and
- *   closes each task once its item clears in the Hub. Never deletes rows; adopts hand-made tasks that carry a
- *   "Hub key:" line; leaves alone a task reopened by hand. Run installTaskManagerSync() once from the editor
- *   (previewTaskManagerSync() shows the plan without writing; removeTaskManagerSync() stops it). No new services.
- * - Includes 2026.10.28.48-APP (Badger units 330 mL = 6 and 187 mL = 7), not yet deployed when this was written.
+ * - Send pacing: campaign emails go out at most 20 an hour (Hub Configuration "outreach_hourly_send_limit") and at
+ *   most a twelfth of that in any 5 minutes, counting every real send the Hub makes. The scheduler sends one batch of
+ *   up to 2 per five-minute run. "Send remaining" now hands the campaign to the scheduler (start_now) instead of
+ *   sending from the browser. Zoho blocked karl@ for exceeding its hourly limit on 2026-10-30.
+ * - When the mailer (distribution outreach .34) reports Zoho holding mail in the Outbox, campaign sending stops for an
+ *   hour, the recipient's result says so, and a scheduled campaign pauses (which the task manager sync turns into a
+ *   task). Needs distribution outreach .34 for the Outbox report; pacing works without it.
  *
  * DEPLOY
  * - Apps Script project: Inventory API
@@ -19,7 +19,7 @@
  * Earlier version notes: docs/history/inventory-api-changes.md (move this version's notes there when the version changes).
  *********************************/
 
-const APP_VERSION = "2026.10.29.49-APP";
+const APP_VERSION = "2026.10.30.50-APP";
 
 const SHEET_NAMES = {
   STORES: "Stores",
@@ -5152,15 +5152,22 @@ function apiSendOutreachCampaignBatch_(p) {
     if (String(campaign.values[ch.approval_token] || "") !== String(p.approval_token || "")) throw new Error("Campaign approval is not valid. Refresh and review again.");
     const campaignCriteria = campaignStoredCriteria_(campaign.values[ch.criteria]);
     const campaignStage = String(campaignCriteria?.stage || "Initial");
-    const recipients = campaignRecipientRows_(sheets.recipients, p.campaign_id)
-      .filter(item => String(item.values[item.headers.status] || "") === "Ready to send").slice(0, requestedSize);
-    if (!recipients.length) return { message:"No campaign recipients are waiting to send.", sent:0, blocked:0, remaining:0, results:[] };
+    const waiting = campaignRecipientRows_(sheets.recipients, p.campaign_id)
+      .filter(item => String(item.values[item.headers.status] || "") === "Ready to send");
+    if (!waiting.length) return { message:"No campaign recipients are waiting to send.", sent:0, blocked:0, remaining:0, results:[] };
+    const allowance = outreachSendAllowance_(Date.now());
+    if (!allowance.allowed) {
+      return { message:outreachPacingMessage_(allowance), sent:0, blocked:0, remaining:waiting.length, results:[], paced:true, held:allowance.held,
+        next_send_at:new Date(allowance.next_at).toISOString() };
+    }
+    const recipients = waiting.slice(0, Math.min(requestedSize, allowance.allowed));
     const leadSheet = getOutreachSheet_(OUTREACH_SHEET_NAME);
     const leadHeaders = getHeaderMap_(leadSheet);
     const staffName = authenticatedActor_(p, "Sturgeon Distribution Hub");
-    const results = []; let sent = 0; let blocked = 0;
+    const results = []; let sent = 0; let blocked = 0; let heldInOutbox = 0;
     for (const item of recipients) {
       if (deadlineAt && Date.now() > deadlineAt) break;
+      if (heldInOutbox) break; // Zoho is holding mail; send nothing more until it is released.
       const rh = item.headers;
       const sourceRow = Number(item.values[rh.source_row] || 0);
       let result = null;
@@ -5195,7 +5202,8 @@ function apiSendOutreachCampaignBatch_(p) {
           } catch (programError) {
             appendAudit_("CUSTOMER_INVITE_PROGRAM_PARTIAL", "Account", record.account_id, record.account_id, staffName, "Distribution Outreach", "Outreach Programs", "Needs recovery", `Invite sent but ordering status not saved: ${String(programError.message || programError)}`);
           }
-          item.values[rh.status] = "Sent"; item.values[rh.result_detail] = result.idempotent ? "Previously accepted and recovered." : "Zoho accepted delivery.";
+          item.values[rh.status] = "Sent"; item.values[rh.result_detail] = outreachAcceptedDetail_(result);
+          heldInOutbox = Math.max(heldInOutbox, Number(result.held_in_outbox || 0));
           item.values[rh.zoho_message_id] = String(result.message_id); item.values[rh.sent_at] = acceptedAt; item.values[rh.app_version] = APP_VERSION;
           sheets.recipients.getRange(item.row, 1, 1, item.values.length).setValues([item.values]);
           sent += 1; results.push({ source_row:sourceRow, business:record.business, status:"Sent", message_id:String(result.message_id) });
@@ -5217,7 +5225,8 @@ function apiSendOutreachCampaignBatch_(p) {
           const sentAt = result.sent_at ? new Date(result.sent_at) : new Date();
           const acceptedAt = isNaN(sentAt.getTime()) ? new Date() : sentAt;
           outreachNoteRecentSend_(record.email, "cocktail", acceptedAt);
-          item.values[rh.status] = "Sent"; item.values[rh.result_detail] = result.idempotent ? "Previously accepted and recovered." : "Zoho accepted delivery.";
+          item.values[rh.status] = "Sent"; item.values[rh.result_detail] = outreachAcceptedDetail_(result);
+          heldInOutbox = Math.max(heldInOutbox, Number(result.held_in_outbox || 0));
           item.values[rh.zoho_message_id] = String(result.message_id); item.values[rh.sent_at] = acceptedAt; item.values[rh.app_version] = APP_VERSION;
           sheets.recipients.getRange(item.row, 1, 1, item.values.length).setValues([item.values]);
           sent += 1; results.push({ source_row:sourceRow, business:record.business, status:"Sent", message_id:String(result.message_id) });
@@ -5261,7 +5270,8 @@ function apiSendOutreachCampaignBatch_(p) {
         outreachNoteRecentSend_(record.email, "sales", acceptedAt);
         finalizeOutreachSend_(leadSheet, sourceRow, record, campaignStage, String(result.message_id), acceptedAt, staffName, token, raw);
         timing.finalize_ms = Date.now() - recipientStartedAt - timing.row_read_ms - timing.mailer_ms;
-        item.values[rh.status] = "Sent"; item.values[rh.result_detail] = result.idempotent ? "Previously accepted and recovered." : "Zoho accepted delivery.";
+        item.values[rh.status] = "Sent"; item.values[rh.result_detail] = outreachAcceptedDetail_(result);
+          heldInOutbox = Math.max(heldInOutbox, Number(result.held_in_outbox || 0));
         item.values[rh.zoho_message_id] = String(result.message_id); item.values[rh.sent_at] = acceptedAt; item.values[rh.app_version] = APP_VERSION;
         sheets.recipients.getRange(item.row, 1, 1, item.values.length).setValues([item.values]);
         sent += 1; results.push({ source_row:sourceRow, business:record.business, status:"Sent", message_id:String(result.message_id) });
@@ -5302,7 +5312,11 @@ function apiSendOutreachCampaignBatch_(p) {
       }
     }
     sheets.campaigns.getRange(campaign.row, 1, 1, campaign.values.length).setValues([campaign.values]);
-    appendAudit_("SEND_OUTREACH_CAMPAIGN_BATCH", "Campaign", p.campaign_id, "", staffName, OUTREACH_CAMPAIGN_RECIPIENTS_SHEET_NAME, OUTREACH_ACTIVITY_SHEET_NAME, blocked ? "Stopped for review" : "Completed", `${sent} sent; ${blocked} blocked; ${remaining} remaining.`);
+    appendAudit_("SEND_OUTREACH_CAMPAIGN_BATCH", "Campaign", p.campaign_id, "", staffName, OUTREACH_CAMPAIGN_RECIPIENTS_SHEET_NAME, OUTREACH_ACTIVITY_SHEET_NAME, heldInOutbox ? "Held by Zoho" : blocked ? "Stopped for review" : "Completed", `${sent} sent; ${blocked} blocked; ${remaining} remaining.${heldInOutbox ? ` Zoho is holding ${heldInOutbox} in the Outbox.` : ""}`);
+    if (heldInOutbox) {
+      const holdMessage = `Zoho accepted the last email but is holding ${heldInOutbox} in the Outbox: the account's hourly sending limit was reached. Campaign sending is stopped for an hour. Check Zoho Mail (the Outbox and any "Email Outgoing Blocked" notice) before resuming.`;
+      return { message:holdMessage, sent:sent, blocked:blocked, needs_recording:needsRecording, remaining:remaining, results:results, held:true, held_in_outbox:heldInOutbox };
+    }
     return { message:blocked && p.continue_after_block !== true ? "Batch stopped for review after a blocked recipient." : `Batch complete: ${sent} sent; ${blocked} blocked; ${needsRecording} need recording.`, sent:sent, blocked:blocked, needs_recording:needsRecording, remaining:remaining, results:results };
   } finally { lock.releaseLock(); }
 }
@@ -6206,7 +6220,7 @@ function apiCheckInboundReplies_() {
 // live eligibility, replies, opt-outs, duplicate tokens) still applies to each recipient.
 const CAMPAIGN_SCHEDULE_HANDLER = "runScheduledOutreachCampaigns";
 const CAMPAIGN_SCHEDULE_ACTIVE_STATUSES = ["Scheduled", "Sending"];
-const CAMPAIGN_SCHEDULE_BATCH_SIZE = 5;
+const CAMPAIGN_SCHEDULE_BATCH_SIZE = 2; // Per five-minute run; the send budget (outreachSendAllowance_) has the final say.
 const CAMPAIGN_SCHEDULE_RUN_BUDGET_MS = 4 * 60 * 1000;
 const CAMPAIGN_SCHEDULE_MAX_DAYS_AHEAD = 30;
 
@@ -6288,8 +6302,10 @@ function updateCampaignSchedule_(campaignId, mutate) {
 }
 
 function apiScheduleOutreachCampaign_(p) {
-  requireFields_(p || {}, ["campaign_id", "approval_token", "send_at", "staff_name"]);
-  const check = campaignScheduleValidation_(p.send_at, new Date());
+  const startNow = p?.start_now === true;
+  requireFields_(p || {}, startNow ? ["campaign_id", "approval_token", "staff_name"] : ["campaign_id", "approval_token", "send_at", "staff_name"]);
+  // "Send remaining" hands the campaign to the paced scheduler, starting now, instead of sending from the browser.
+  const check = startNow ? { send_at:new Date() } : campaignScheduleValidation_(p.send_at, new Date());
   if (check.error) throw new Error(check.error);
   const staffName = authenticatedActor_(p, "Sturgeon Distribution Hub");
   const label = campaignScheduleTimeLabel_(check.send_at);
@@ -6297,7 +6313,7 @@ function apiScheduleOutreachCampaign_(p) {
     const h = campaign.headers;
     if (String(campaign.values[h.status] || "") !== "Approved") throw new Error("Approve the campaign before scheduling it.");
     if (String(campaign.values[h.approval_token] || "") !== String(p.approval_token || "")) throw new Error("Campaign approval is not valid. Refresh and review again.");
-    if (String(campaign.values[h.schedule_status] || "") === "Sending") throw new Error("This campaign is sending on its schedule now. Cancel the schedule first to change it.");
+    if (String(campaign.values[h.schedule_status] || "") === "Sending") throw new Error(startNow ? "This campaign is already sending on its own; it continues every five minutes." : "This campaign is sending on its schedule now. Cancel the schedule first to change it.");
     const ready = campaignRecipientRows_(outreachCampaignSheets_().recipients, p.campaign_id)
       .filter(item => String(item.values[item.headers.status] || "") === "Ready to send").length;
     if (!ready) throw new Error("No approved recipients are waiting to send.");
@@ -6309,7 +6325,7 @@ function apiScheduleOutreachCampaign_(p) {
   appendAudit_("SCHEDULE_OUTREACH_CAMPAIGN", "Campaign", p.campaign_id, "", staffName, OUTREACH_CAMPAIGNS_SHEET_NAME, OUTREACH_CAMPAIGNS_SHEET_NAME, "Scheduled", label);
   const installed = campaignSchedulerInstalled_();
   return {
-    message:`Scheduled for ${label}. No email was sent now.${installed === false ? " Warning: the scheduled sender is not installed; run installOutreachCampaignScheduler() in Apps Script or this will not send." : ""}`,
+    message:startNow ? `Sending started. The Hub sends about ${outreachHourlyLimit_()} an hour on its own; you can close this page.${installed === false ? " Warning: the scheduled sender is not installed; run installOutreachCampaignScheduler() in Apps Script or this will not send." : ""}` : `Scheduled for ${label}. No email was sent now.${installed === false ? " Warning: the scheduled sender is not installed; run installOutreachCampaignScheduler() in Apps Script or this will not send." : ""}`,
     scheduled_send_at:check.send_at.toISOString(), scheduler_installed:installed,
   };
 }
@@ -6399,15 +6415,28 @@ function runScheduledCampaign_(campaignId, deadlineAt) {
     const unsafe = campaignScheduleUnsafeBlocks_(res.results);
     sent += Number(res.sent || 0);
     skipped += Math.max(0, Number(res.blocked || 0) - unsafe.length);
+    if (res.held) {
+      return finish("Paused", `Paused at ${campaignScheduleTimeLabel_(new Date())}: ${res.message} ${sent} sent this run; ${Number(res.remaining || 0)} still waiting. Schedule it again (or use Send remaining) once Zoho is sending normally.`);
+    }
+    if (res.paced) {
+      return finish("Sending", `${res.message} ${Number(res.remaining || 0)} waiting; continues automatically.`);
+    }
     if (unsafe.length) {
       return finish("Paused", `Paused at ${campaignScheduleTimeLabel_(new Date())} after ${unsafe[0].business}: ${String(unsafe[0].detail || "").slice(0, 300)}. Delivery may be uncertain; open the campaign and check before resuming. ${sent} sent, ${skipped} skipped this run.`);
     }
     if (!Number(res.remaining || 0)) {
       return finish("Done", `Finished ${campaignScheduleTimeLabel_(new Date())}. ${sent} sent and ${skipped} skipped in the final run; see the recipient list for the full result.`);
     }
-    if (!(res.results || []).length) break; // Deadline reached before another recipient started.
+    break; // One small batch per five-minute run keeps the sends spread out.
   }
-  return finish("Sending", `Sending: ${sent} sent and ${skipped} skipped in the latest run; continues automatically every five minutes.`);
+  return finish("Sending", `Sending slowly: ${sent} sent and ${skipped} skipped in the latest run; continues automatically every five minutes (about ${outreachHourlyLimit_()} an hour).`);
+}
+
+function outreachAcceptedDetail_(result) {
+  if (result.idempotent) return "Previously accepted and recovered.";
+  const held = Number(result.held_in_outbox || 0);
+  if (held > 0) return `Zoho accepted it but is holding ${held} email${held === 1 ? "" : "s"} in the Outbox (sending limit). It goes out when Zoho releases the Outbox.`;
+  return "Zoho accepted delivery.";
 }
 
 function outreachStatusForOutcome_(outcome) {
@@ -6663,7 +6692,75 @@ function callOutreachMailer_(payload) {
   if (response.getResponseCode() < 200 || response.getResponseCode() >= 300 || !result.ok) {
     throw new Error(result?.error || `The Distribution Outreach mailer failed with HTTP ${response.getResponseCode()}.`);
   }
+  if (OUTREACH_PACED_ACTIONS.includes(String(payload.action || "")) && result.accepted && !result.idempotent) {
+    try { outreachRecordSend_(Date.now(), Number(result.held_in_outbox || 0) > 0); }
+    catch (error) { console.warn(`Send pacing record failed: ${String(error.message || error)}`); }
+  }
   return result;
+}
+
+// ---------- Send pacing (2026.10.30.50-APP) ----------
+// Zoho Mail limits how many outside emails karl@ (and its sales@ alias) may send per hour, from 50 to 500 depending on
+// sender reputation; Karl's own email counts against the same hour. On 2026-10-29 a campaign sent one email every 17
+// seconds; Zoho held the last 11 in the Outbox and then blocked all outgoing mail on the account. So every real send
+// is recorded here and campaign sends take only what the budget allows: at most the hourly limit (Hub Configuration
+// "outreach_hourly_send_limit", default 20) in any 60 minutes, and a twelfth of it in any 5 minutes, so the hour is
+// spread out. One-off sends (a single email, a welcome email, a payment reminder) are recorded but never refused.
+// If the mailer reports Zoho holding mail in the Outbox, campaign sends stop for an hour and scheduled campaigns pause.
+const OUTREACH_PACED_ACTIONS = ["sendAppEmail", "sendCustomerEmail", "sendNewsletterEmail", "sendWelcomeEmail", "sendPaymentReminder"];
+const OUTREACH_HOURLY_LIMIT_CONFIG_KEY = "outreach_hourly_send_limit";
+const OUTREACH_DEFAULT_HOURLY_LIMIT = 20;
+const OUTREACH_SEND_TIMES_PROPERTY = "OUTREACH_SEND_TIMES";
+const OUTREACH_SEND_HOLD_PROPERTY = "OUTREACH_SEND_HOLD_UNTIL";
+const OUTREACH_HOLD_MS = 60 * 60 * 1000;
+const OUTREACH_WINDOW_MS = 60 * 60 * 1000;
+const OUTREACH_BURST_WINDOW_MS = 5 * 60 * 1000;
+
+function outreachHourlyLimit_() {
+  const configured = Number(getHubConfigurationValue_(OUTREACH_HOURLY_LIMIT_CONFIG_KEY));
+  return Number.isInteger(configured) && configured >= 1 && configured <= 200 ? configured : OUTREACH_DEFAULT_HOURLY_LIMIT;
+}
+
+function outreachSendTimes_(now) {
+  let times = [];
+  try { times = JSON.parse(PropertiesService.getScriptProperties().getProperty(OUTREACH_SEND_TIMES_PROPERTY) || "[]"); }
+  catch (error) { times = []; }
+  return (Array.isArray(times) ? times : []).map(Number).filter(time => Number.isFinite(time) && time > now - OUTREACH_WINDOW_MS && time <= now + 60000);
+}
+
+function outreachRecordSend_(at, held) {
+  const properties = PropertiesService.getScriptProperties();
+  const times = outreachSendTimes_(at);
+  times.push(at);
+  properties.setProperty(OUTREACH_SEND_TIMES_PROPERTY, JSON.stringify(times.slice(-300)));
+  if (held) properties.setProperty(OUTREACH_SEND_HOLD_PROPERTY, String(at + OUTREACH_HOLD_MS));
+}
+
+/** How many campaign emails may go now, and when the next one may go if none can. */
+function outreachSendAllowance_(now) {
+  const at = typeof now === "number" ? now : Date.now();
+  const limit = outreachHourlyLimit_();
+  const burst = Math.max(1, Math.ceil(limit / 12));
+  const holdUntil = Number(PropertiesService.getScriptProperties().getProperty(OUTREACH_SEND_HOLD_PROPERTY) || 0);
+  const times = outreachSendTimes_(at).sort((a, b) => a - b);
+  const recent = times.filter(time => time > at - OUTREACH_BURST_WINDOW_MS);
+  const hourRoom = limit - times.length;
+  const burstRoom = burst - recent.length;
+  const allowed = holdUntil > at ? 0 : Math.max(0, Math.min(hourRoom, burstRoom));
+  let nextAt = at;
+  if (holdUntil > at) nextAt = holdUntil;
+  else if (!allowed) {
+    const hourNext = hourRoom > 0 ? at : times[times.length - limit] + OUTREACH_WINDOW_MS;
+    const burstNext = burstRoom > 0 ? at : recent[recent.length - burst] + OUTREACH_BURST_WINDOW_MS;
+    nextAt = Math.max(hourNext, burstNext);
+  }
+  return { allowed:allowed, limit:limit, burst:burst, sent_last_hour:times.length, held:holdUntil > at, next_at:nextAt };
+}
+
+function outreachPacingMessage_(allowance) {
+  const when = campaignScheduleTimeLabel_(new Date(allowance.next_at));
+  if (allowance.held) return `Zoho was holding mail in the Outbox, so campaign sending is stopped until ${when}. Check Zoho Mail (the Outbox and any "Email Outgoing Blocked" notice) before resuming.`;
+  return `Pacing: ${allowance.sent_last_hour} emails in the last hour (limit ${allowance.limit}, at most ${allowance.burst} per 5 minutes). The next one can go at ${when}.`;
 }
 
 function outreachActivityRows_() {

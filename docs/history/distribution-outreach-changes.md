@@ -3,6 +3,20 @@
 Moved out of the `docs/reference/distribution-outreach/Code.gs` header on 2026-10-17 so the deployed file stays short. Newest first, copied word for word. The header keeps only the current version (`CHANGES IN THIS VERSION`); when a new version is made, move that section to the top of this file.
 
 ```
+CHANGES IN 2026.10.12.33-APP
+- Order-online invite (sendCustomerEmail): the Do Not Email box that approval ticks automatically (to keep current
+  customers out of sales outreach) no longer blocks the customer's own ordering link. It counts as automatic when
+  Customer Source starts with "Application " and Relationship shows customer history (Current customer, Customer,
+  Existing customer, Lapsed customer, Win-back due). Status or Outcome Bad address, Unsubscribed, Do not contact or
+  Not interested still blocks. The duplicate check now also refuses an invite when this account (Account ID)
+  already received an invite or welcome at any address.
+- Adds the Hub-only sendWelcomeEmail action: the welcome email with the ordering link that staff review and send
+  after approving a wholesale application. It is a transactional reply to the customer's own application, so the
+  Directory "Do Not Email" box (which keeps current customers out of sales outreach) does not block it. It is still
+  refused for an address the Directory row has marked Bad address, Unsubscribed or Do not contact, and for an
+  invalid address. It uses the "Order online invite" stage, so the Hub never sends that address the prospect
+  introduction or a second order-online invite from a campaign. Same idempotency receipts and Activity Log row as
+  every other app send.
 CHANGES IN 2026.10.10.32-APP
 - Adds the Hub-only, read-only listSentInThreads action so the Hub can close replies already answered from Zoho. It
   pages the Sent folder (folderType "Sent") newest first back to since_ms (at most 2,000 messages) and returns only

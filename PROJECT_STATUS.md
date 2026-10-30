@@ -1,6 +1,6 @@
 # Sturgeon Distribution Hub — Project Status
 
-Last updated: 2026-10-29
+Last updated: 2026-10-30
 
 Read this file before inspecting the repository or changing the application. Never put secret values in this file.
 
@@ -15,9 +15,9 @@ History, kept word for word:
 
 | Component | Source version | Deployment state |
 | --- | --- | --- |
-| Netlify web app and staff proxy | `2026.10.17.56-WEB` on `codex/work` | **Production 2026-10-17.** Hub reports `.56` (promoted 19:15 CDT); staff proxy `.54`; sign-up `.55`; order and sell sheet `.58` (2026-10-28). |
-| Inventory API Apps Script | `2026.10.29.49-APP` on `codex/work` | **Ready to deploy** (project **Inventory API**, attached to **Distribution Hub - Inventory Backend**): weekly task manager sync (`.49`), plus Badger units 330 mL (6) and 187 mL (7) so canned-cocktail orders can be invoiced (`.48`). After deploying, run `installTaskManagerSync()` once. Production: `2026.10.17.47-APP` (deployed 2026-10-17). |
-| Distribution Outreach Apps Script | `2026.10.12.33-APP` in `docs/reference/distribution-outreach/Code.gs` | **Deployed 2026-10-12** (project **distribution outreach**, attached to **Distribution Hub**). |
+| Netlify web app and staff proxy | `2026.10.30.59-WEB` on `codex/work` | **Ready to promote** after the two Apps Script deploys below: Hub `.59` (Send remaining starts paced sending; Send next 2). Production: Hub `.56` (2026-10-17); staff proxy `.54`; sign-up `.55`; order and sell sheet `.58` (2026-10-28). |
+| Inventory API Apps Script | `2026.10.30.50-APP` on `codex/work` | **Deployed `.49` 2026-10-29** (project **Inventory API**, attached to **Distribution Hub - Inventory Backend**; `installTaskManagerSync()` run, first sync wrote 5 tasks). **`.50` ready to deploy:** send pacing (20 an hour, 2 per 5 minutes) and Outbox-hold stop. |
+| Distribution Outreach Apps Script | `2026.10.30.34-APP` in `docs/reference/distribution-outreach/Code.gs` | **Ready to deploy** (project **distribution outreach**, attached to **Distribution Hub**): reports Zoho Outbox holds after each real send. Production: `.33` (2026-10-12). |
 | Public customer Netlify proxy | `2026.10.08.5-WEB` | Deployed 2026-10-08. |
 | Badger invoice parser | `2026.10.08.3` in `docs/reference/badger-parser/Code.gs` | Live in the Badger Invoice Tracker since 2026-10-08; daily 5:45 am import reads Badger directly (no PDFs). Watch: a new Badger product spelling may need a row in the Sales Data product table (N–O). |
 
@@ -30,7 +30,7 @@ Standing facts:
 
 ## Open items
 
-- Weekly task manager sync (`.49`, not yet deployed): after the Inventory API deploy, run `installTaskManagerSync()` once from the editor (hourly trigger plus a first run). It writes to the Tasks tab of "Karl weekly task manager" (`1NQKvTSWvpTZ3uRsYWMUPAdOa_bHvsp_VMpc7EX1c_tI`). The 13 matching Follow-Up Board tasks (`fub-…`) were given "Hub key:" lines on 2026-10-29 so the first run adopts them; a dry run against that day's data created 5 new tasks (Oshkosh 2 Follow-up 2 (15), Oshkosh Oct 6 Follow-up 1 (13), Reactivation (31), Sep 23 Follow-up 2 (1), pre-campaign Follow-up 1 (3)). Last run summary: script property `TASK_MANAGER_SYNC_LAST_RUN`.
+- Zoho blocked all outgoing mail on karl@ 2026-10-30 2:24 PM for exceeding its hourly limit (campaigns send from the sales@ alias on that account; Karl's own mail counts too). On 10-29 Oshkosh 2 sent one email every 17 s: 56 went out, Zoho held the last 11 in the Outbox while the Hub logged them "Zoho accepted delivery"; Karl unblocked and released them 10-30. Fix: Inventory API `.50` + distribution outreach `.34` + web `.59` (deploy Apps Scripts first). Hourly limit is Hub Configuration `outreach_hourly_send_limit` (default 20). Zoho's usage policy disallows bulk/marketing mail through Zoho Mail at any pace; moving outreach to its own sender is still open.
 - Canned cocktails: Badger unit IDs read from Sturgeon's Badger invoices 2026-10-28 (330mL = 6, cans SS0079/SS0167; 187mL = 7, bitters SS0079/SS0093). Inventory API `.48` adds them; until Karl deploys it, can lines block at invoice preview. Proof 10 set on all five can SKUs (proof map; recipes at 4 cups alcohol in 80 = 5%). Bitters: Badger invoices used 187mL (unit 7) but SKUs list 50ml (unit 19); Karl to decide which the Hub should invoice.
 - Chat round 2 of `claude/chat-review-campaign-tools-2026-10-17.md` (unique-match P2 fix `67aa20c`; re-applied sell-sheet change and narrow-phone header fix `bf89d1d`) was not confirmed before the 2026-10-17 promotion.
 - Scheduled campaign "second email campaign -- Oshkosh 2" (89, Follow-up 1, 2026-10-20 10:33 CDT) includes 3 businesses not from its source (Gardina's Restaurant, Jerry's Tavern LLC, Oshkosh Arena); "Initial prospect campaign — Oct 17, 2026" (31) is entirely inside it (duplicates are blocked at send). Karl to decide; the 31 can now be deleted.
@@ -52,6 +52,7 @@ Setup steps recorded in the history whose completion was **not re-verified** on 
 
 ## Recent changes (one line each; details in `docs/history/` and git)
 
+- 2026-10-30 `.50-APP` / outreach `.34-APP` / `.59-WEB`: send pacing (budget across every real send: 20/hour, 2 per 5 minutes; scheduler one batch of 2 per run; Send remaining = schedule now); mailer reports Zoho Outbox holds, which stop campaign sends for an hour and pause scheduled campaigns. Tests: `tests/send-pacing.test.mjs`.
 - 2026-10-29 `.49-APP` (Inventory API only, no web change): hourly sync of open Hub work into the weekly task manager's Tasks tab (`syncTaskManager_`; keys `hub-reply-`, `hub-fu-`, `hub-cmp-`, `hub-cmprun-`, `hub-app-`, `hub-order-`); tasks close themselves when the Hub item clears. Tests: `tests/task-manager-sync.test.mjs`.
 - 2026-10-28 `.58-WEB` (sell sheet, order page) plus sheet data: canned cocktails restored. The Oct 5 setup step was never done, so the SKUs tab had no cans. Added Price Tiers **Canned cocktail** $3 (per can; $72 per case of 24) and five active SKUs (Grape Popsicle, Cherry Limeade, Mango Collins, Fat Golfer, Fresh-kosh; size `12 oz can`, `invoice_volume` `330ml`, 24 per case, section Canned cocktails). Sell sheet prices the group as **$72/case of 24**; order page help mentions cans and mixing flavors. Print catalog shrink now starts above 70 lines; checked 2 pages public and priced with cans.
 - 2026-10-21 `.57-WEB` (sell sheet only): print was spilling onto a third page (Bitters and contact block) after New and Best seller joined the page-two catalog. Print catalog type 12pt/1.24 → 11pt/1.14 and scales down automatically (to 80% at most) when the catalog has more than 74 lines. Checked with live catalog data, public and priced, in headless Chromium letter print: 2 pages; still 2 with 24 extra test products.

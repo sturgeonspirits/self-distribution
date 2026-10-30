@@ -1977,7 +1977,9 @@ test("source contains formula protection, global error listeners, and recoverabl
   assert.match(index, /function outreachOutcomeIsInterested\(/);
   assert.match(index, /function outreachFollowUpIsDue\(/);
   assert.match(index, /continue_after_block:continueAfterBlock/);
-  assert.match(index, /sendCampaignRecipients\(campaign, staffName, ready, true\)/);
+  // Send remaining hands the campaign to the paced scheduler instead of looping in the browser (2026-10-30).
+  assert.match(index, /action:"scheduleOutreachCampaign", campaign_id:campaign\.campaign_id, approval_token:selectedCampaignApprovalToken, start_now:true/);
+  assert.match(index, /sendCampaignRecipients\(campaign, staffName, 2, false\)/);
   assert.match(backend, /CacheService\.getScriptCache\(\)/);
   assert.match(backend, /if \(!__OUTREACH_SS\) __OUTREACH_SS = SpreadsheetApp\.openById/);
   assert.match(backend, /const reasons = testMode \? \[\] : outreachSendEligibility_\(record\)/);
@@ -2777,7 +2779,7 @@ test("scheduled campaign sends validate times, run due campaigns, skip guarded r
     const run = new Function(
       "updateCampaignSchedule_", "outreachCampaignSheets_", "outreachCampaignRow_", "campaignScheduleState_", "apiSendOutreachCampaignBatch_",
       "campaignScheduleTimeLabel_", "clearCampaignSchedule_", "appendAudit_", "CAMPAIGN_SCHEDULE_ACTIVE_STATUSES", "CAMPAIGN_SCHEDULE_BATCH_SIZE",
-      "campaignScheduleIsDue_", "campaignScheduleUnsafeBlocks_", "OUTREACH_CAMPAIGNS_SHEET_NAME", "console",
+      "campaignScheduleIsDue_", "campaignScheduleUnsafeBlocks_", "OUTREACH_CAMPAIGNS_SHEET_NAME", "console", "outreachHourlyLimit_",
       `${functionSource("runScheduledCampaign_", "outreachStatusForOutcome_")}; return runScheduledCampaign_;`
     )(
       (id, mutate) => mutate(campaign),
@@ -2788,24 +2790,42 @@ test("scheduled campaign sends validate times, run due campaigns, skip guarded r
       () => "Sun Oct 4, 10:00 AM CT",
       new Function(`${functionSource("clearCampaignSchedule_", "campaignScheduleState_")}; return clearCampaignSchedule_;`)(),
       (...args) => audits.push(args),
-      ACTIVE, 5, isDue, unsafeBlocks, "Outreach Campaigns", { warn() {}, log() {} },
+      ACTIVE, 2, isDue, unsafeBlocks, "Outreach Campaigns", { warn() {}, log() {} }, () => 20,
     );
     const result = run("CMP-1", Date.now() + 60000);
     return { result, campaign, calls, audits };
   };
 
-  const done = runCampaign([
-    { sent:4, blocked:1, remaining:3, results:[{ status:"Sent" }, { status:"Sent" }, { status:"Blocked", mailer_attempted:false, business:"Replied Bar" }, { status:"Sent" }, { status:"Sent" }] },
-    { sent:3, blocked:0, remaining:0, results:[{ status:"Sent" }, { status:"Sent" }, { status:"Sent" }] },
+  // One small batch per five-minute run (2026-10-30 send pacing): the run stops after it and the next run continues.
+  const slow = runCampaign([
+    { sent:1, blocked:1, remaining:3, results:[{ status:"Sent" }, { status:"Blocked", mailer_attempted:false, business:"Replied Bar" }] },
+    { sent:3, blocked:0, remaining:0, results:[] },
   ]);
+  assert.equal(slow.result.state, "Sending");
+  assert.equal(slow.calls.length, 1, "only one batch per run");
+  assert.equal(slow.result.sent, 1);
+  assert.equal(slow.result.skipped, 1);
+  assert.match(slow.campaign.values[6], /about 20 an hour/);
+  assert.equal(slow.calls[0].approval_token, "tok");
+  assert.equal(slow.calls[0].continue_after_block, true);
+  assert.equal(slow.calls[0].batch_size, 2);
+  assert.ok(slow.calls[0].deadline_at > Date.now());
+
+  const done = runCampaign([{ sent:2, blocked:0, remaining:0, results:[{ status:"Sent" }, { status:"Sent" }] }]);
   assert.equal(done.result.state, "Done");
-  assert.equal(done.result.sent, 7);
-  assert.equal(done.result.skipped, 1);
   assert.equal(done.campaign.values[5], "Done");
-  assert.equal(done.calls[0].approval_token, "tok");
-  assert.equal(done.calls[0].continue_after_block, true);
-  assert.equal(done.calls[0].batch_size, 5);
-  assert.ok(done.calls[0].deadline_at > Date.now());
+
+  // Over the hourly budget: nothing sent, the schedule keeps going and says when the next one can go.
+  const paced = runCampaign([{ sent:0, blocked:0, remaining:12, results:[], paced:true, message:"Pacing: 20 emails in the last hour (limit 20, at most 2 per 5 minutes). The next one can go at Sun Oct 4, 10:40 AM CT." }]);
+  assert.equal(paced.result.state, "Sending");
+  assert.equal(paced.campaign.values[5], "Sending");
+  assert.match(paced.campaign.values[6], /^Pacing: 20 emails .* 12 waiting; continues automatically\.$/);
+
+  // Zoho holding mail in the Outbox pauses the schedule, so the task manager sync raises a task.
+  const held = runCampaign([{ sent:1, blocked:0, remaining:9, results:[{ status:"Sent" }], held:true, message:"Zoho accepted the last email but is holding 1 in the Outbox." }]);
+  assert.equal(held.result.state, "Paused");
+  assert.equal(held.campaign.values[5], "Paused");
+  assert.match(held.campaign.values[6], /holding 1 in the Outbox\. 1 sent this run; 9 still waiting\./);
 
   const paused = runCampaign([
     { sent:1, blocked:1, remaining:5, results:[{ status:"Sent" }, { status:"Blocked", mailer_attempted:true, business:"Uncertain Bar", detail:"Zoho did not return a verified message ID." }] },
@@ -2822,9 +2842,8 @@ test("scheduled campaign sends validate times, run due campaigns, skip guarded r
   assert.equal(failed.result.state, "Paused");
 
   const cancelled = runCampaign([{ sent:2, blocked:0, remaining:4, results:[{ status:"Sent" }, { status:"Sent" }] }, { sent:4, blocked:0, remaining:0, results:[] }], { cancelAfterFirst:true });
-  assert.equal(cancelled.result.state, "Stopped");
   assert.equal(cancelled.calls.length, 1);
-  assert.equal(cancelled.campaign.values[5], "Cancelled");
+  assert.equal(cancelled.campaign.values[5], "Cancelled", "a cancellation that lands during the run is never overwritten");
 
   // The manual batch path marks whether the mailer was attempted, honors the deadline, and approval/reopen reset schedules.
   const batch = functionSource("apiSendOutreachCampaignBatch_", "campaignScheduleTimeLabel_");
