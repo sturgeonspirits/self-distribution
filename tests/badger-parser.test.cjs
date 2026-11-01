@@ -6,6 +6,7 @@ const SRC = fs.readFileSync(require("path").join(__dirname, "..", "docs", "refer
 const PROD_ID = "1nmHzrZLB2Kv-bLf3z0GBXbkO0XqUL-ETCxUlOlidSEk";
 const STAGE_ID = "10KM-L-iAXJ4WQ1HfLWWoGkINsi9tEvVs6J5XiHBsMIQ";
 const PROD_FOLDER = "1ccOfQpk69SLyMYskD2srlNqHCGm1VBJ5";
+const FIXED_NOW = "2026-10-02T12:00:00-05:00";
 
 function makeSheet(name, rows) {
   const s = { name, rows: rows ? rows.map(r => r.slice()) : [], failAppend: false, checkboxes: [], validations: [], cleared: 0 };
@@ -43,6 +44,10 @@ function makeEnv({ ssId, sheets = {}, files = [], texts = {}, props = {}, noActi
   const propStore = Object.assign({}, props);
   const docs = {}; let docSeq = 0; const trashed = []; const triggers = [];
   const ctx = {
+    Date: class extends Date {
+      constructor(...args) { super(...(args.length ? args : [FIXED_NOW])); }
+      static now() { return new Date(FIXED_NOW).getTime(); }
+    },
     console: { log: () => {}, warn: () => {} },
     SpreadsheetApp: { getActive: () => (noActive ? null : ss), openById: id => (id === ssId ? ss : null), getUi: () => ({ createMenu: () => { const m = { items: [], addItem: (a, b) => (m.items.push(b), m), addSeparator: () => m, addToUi: () => (ctx.__menu = m) }; return m; } }),
       newDataValidation: () => { const b = { requireValueInList: () => b, setAllowInvalid: () => b, build: () => ({}) }; return b; } },
