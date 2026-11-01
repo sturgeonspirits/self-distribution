@@ -2019,6 +2019,13 @@ test("source contains formula protection, global error listeners, and recoverabl
   assert.doesNotMatch(mailer, /PILOT_SEND_LIMIT/);
 });
 
+test("narrow Outreach reply panels allow grid and flex children to shrink", async () => {
+  const index = await readFile(new URL("index.html", root), "utf8");
+  assert.match(index, /\.replyPanel\{[^}]*min-width:0/);
+  assert.match(index, /\.replyPanel > \*,\s*\.replyCard,\s*\.replyDoneRow,\s*\.replyDoneRow > \*\{min-width:0\}/);
+  assert.match(index, /\.replyDoneRow > div\{overflow-wrap:anywhere\}/);
+});
+
 test("formula-like staff text is stored with a literal-text prefix", async () => {
   const backend = await readFile(new URL("apps-script/Code.gs", root), "utf8");
   const publicTextSource = backend.match(/function publicText_\([\s\S]*?\n\}/)?.[0];

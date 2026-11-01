@@ -1,10 +1,10 @@
 <!doctype html>
-<!-- App version: 2026.10.30.59-WEB -->
+<!-- App version: 2026.11.01.60-WEB -->
 <html>
 <head>
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover"/>
-  <meta name="app-version" content="2026.10.30.59-WEB" />
+  <meta name="app-version" content="2026.11.01.60-WEB" />
   <meta name="theme-color" content="#536f77" />
   <link rel="icon" href="/assets/distribution-hub-icon.svg" type="image/svg+xml" />
   <link rel="manifest" href="/site.webmanifest" />
@@ -365,7 +365,11 @@
     }
     .tabCount{display:inline-block;min-width:18px;margin-left:4px;padding:0 5px;border-radius:9px;background:var(--red);color:#fff;font-size:11px;line-height:18px;text-align:center}
     .outreachTab.active .tabCount{background:#fff;color:var(--primary)}
-    .replyPanel{display:grid;gap:8px;padding:12px;border:1px solid var(--line);border-radius:8px;background:#fff}
+    .replyPanel{display:grid;gap:8px;padding:12px;border:1px solid var(--line);border-radius:8px;background:#fff;min-width:0}
+    .replyPanel > *,
+    .replyCard,
+    .replyDoneRow,
+    .replyDoneRow > *{min-width:0}
     .replyPanel .replyCounts{display:flex;flex-wrap:wrap;gap:6px;align-items:center}
     .replyGroupTitle{margin:10px 2px 0;font-size:13px;font-weight:700;color:var(--muted)}
     .replySummary{margin:6px 0 0;font-size:14px}
@@ -396,6 +400,7 @@
     .replyActions .actionBtn.primary.danger{background:var(--red);border-color:var(--red);color:#fff}
     .replyLink{all:unset;cursor:pointer;color:var(--blue);font-size:13px;font-weight:700;align-self:center;justify-self:start}
     .replyDoneRow{display:flex;justify-content:space-between;gap:10px;align-items:center;margin-top:6px;padding:8px 12px;border:1px solid var(--line);border-radius:8px;background:#fff}
+    .replyDoneRow > div{overflow-wrap:anywhere}
     .replyDoneRow .actionBtn{min-height:34px;padding:4px 10px}
     @media (max-width:640px){.replyTiles{grid-template-columns:1fr 1fr}}
     .outreachEmpty{
@@ -2744,7 +2749,7 @@
 
   <footer style="max-width:1200px;margin:18px auto 120px;padding:0 12px;text-align:center;color:#6b7280;font-size:12px;">
     Designed by <a href="https://scriptspirit.dev" target="_blank" rel="noopener noreferrer" style="color:#1d4ed8;text-decoration:none;font-weight:700;">Script Spirit</a>
-<span id="appVersionFooter"> • Version 2026.10.30.59-WEB</span>
+<span id="appVersionFooter"> • Version 2026.11.01.60-WEB</span>
   </footer>
 
 
@@ -2767,7 +2772,7 @@
   window.addEventListener("unhandledrejection", e => console.error("Unhandled promise rejection:", e.reason));
   window.addEventListener("error", e => console.error("Unhandled error:", e.error || e.message));
   const $ = (id) => document.getElementById(id);
-  const APP_VERSION = "2026.10.30.59-WEB";
+  const APP_VERSION = "2026.11.01.60-WEB";
   $("appVersionFooter").textContent = ` • Version ${APP_VERSION}`;
   function screenCacheKey(screen){ return `distribution_hub:${APP_VERSION}:${staffSession?.email || "unknown"}:${screen}`; }
   function readScreenCache(screen){

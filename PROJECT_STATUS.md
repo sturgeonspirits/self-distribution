@@ -15,7 +15,7 @@ History, kept word for word:
 
 | Component | Source version | Deployment state |
 | --- | --- | --- |
-| Netlify web app and staff proxy | `2026.10.30.59-WEB` on `codex/work` | **Production 2026-10-30.** Hub reports `.59`; unauthenticated inventory requests return 401. Staff proxy `.54`; sign-up `.55`; order and sell sheet `.58`. |
+| Netlify web app and staff proxy | `2026.11.01.60-WEB` on `codex/work` | **Pending release:** Replies panel no longer widens the page on narrow phones. Production Hub `.59` (2026-10-30); staff proxy `.54`; sign-up `.55`; order and sell sheet `.58`. |
 | Inventory API Apps Script | `2026.10.30.50-APP` on `codex/work` | **Deployed 2026-10-30** (project **Inventory API**, attached to **Distribution Hub - Inventory Backend**; live API reports `.50`). |
 | Distribution Outreach Apps Script | `2026.10.30.34-APP` in `docs/reference/distribution-outreach/Code.gs` | **Deployed 2026-10-30** (project **distribution outreach**, attached to **Distribution Hub**; active version 25, direct sending enabled). |
 | Public customer Netlify proxy | `2026.10.08.5-WEB` | Deployed 2026-10-08. |
@@ -52,6 +52,7 @@ Setup steps recorded in the history whose completion was **not re-verified** on 
 
 ## Recent changes (one line each; details in `docs/history/` and git)
 
+- 2026-11-01 `.60-WEB` (pending release): allow Outreach reply cards and completed-reply rows to shrink and wrap so 390 px phones and the 280 px Galaxy Fold do not scroll sideways.
 - 2026-11-01: verified live `.50-APP`, outreach `.34-APP`, and `.59-WEB`; unauthenticated inventory returns 401 and authenticated Outreach/Orders load. Pinned the Badger parser test clock to its October fixture so the full suite remains stable across month boundaries (production parser unchanged).
 - 2026-10-30 `.50-APP` / outreach `.34-APP` / `.59-WEB`: send pacing (budget across every real send: 20/hour, 2 per 5 minutes; scheduler one batch of 2 per run; Send remaining = schedule now); mailer reports Zoho Outbox holds, which stop campaign sends for an hour and pause scheduled campaigns. Tests: `tests/send-pacing.test.mjs`.
 - 2026-10-29 `.49-APP` (Inventory API only, no web change): hourly sync of open Hub work into the weekly task manager's Tasks tab (`syncTaskManager_`; keys `hub-reply-`, `hub-fu-`, `hub-cmp-`, `hub-cmprun-`, `hub-app-`, `hub-order-`); tasks close themselves when the Hub item clears. Tests: `tests/task-manager-sync.test.mjs`.
