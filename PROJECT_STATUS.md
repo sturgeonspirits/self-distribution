@@ -15,9 +15,9 @@ History, kept word for word:
 
 | Component | Source version | Deployment state |
 | --- | --- | --- |
-| Netlify web app and staff proxy | `2026.11.01.60-WEB` on `codex/work` | **Pending release:** Replies panel no longer widens the page on narrow phones. Production Hub `.59` (2026-10-30); staff proxy `.54`; sign-up `.55`; order and sell sheet `.58`. |
-| Inventory API Apps Script | `2026.11.05.52-APP` on `codex/work` | **Pending Deploy 1 / Phase 1 review:** Closed outcome, truthful campaign state/dates, early Outbox release, header-append guard. Last deployed `.51` (2026-11-05). |
-| Distribution Outreach Apps Script | `2026.11.05.35-APP` in `docs/reference/distribution-outreach/Code.gs` | **Pending Deploy 1 / Phase 1 review:** Closed blocks every mail type; read-only Outbox-count action. Last deployed `.34` (2026-10-30). |
+| Netlify web app and staff proxy | `2026.11.05.61-WEB` on `codex/work` | **Pending Deploy 1:** Closed result, result window usable while loading (no double save), campaign card schedule summary, dates and self-refresh; plus `.60` Replies panel width on narrow phones. Production Hub `.59` (2026-10-30); staff proxy `.54`; sign-up `.55`; order and sell sheet `.58`. |
+| Inventory API Apps Script | `2026.11.05.53-APP` on `codex/work` | **Pending Deploy 1 (reviewed):** Closed outcome, truthful campaign state/dates, early Outbox release, header-append guard (`.52`) plus review fixes (`.53`). Last deployed `.51` (2026-11-05). |
+| Distribution Outreach Apps Script | `2026.11.05.35-APP` in `docs/reference/distribution-outreach/Code.gs` | **Pending Deploy 1 (reviewed):** Closed blocks every mail type; read-only Outbox-count action. Last deployed `.34` (2026-10-30). |
 | Public customer Netlify proxy | `2026.10.08.5-WEB` | Deployed 2026-10-08. |
 | Badger invoice parser | `2026.10.08.3` in `docs/reference/badger-parser/Code.gs` | Live in the Badger Invoice Tracker since 2026-10-08; daily 5:45 am import reads Badger directly (no PDFs). Watch: a new Badger product spelling may need a row in the Sales Data product table (N–O). |
 
@@ -38,6 +38,13 @@ Standing facts:
 - Appleton group is due for Follow-up 2 (since 2026-10-13); its Follow-up 1 went out 2026-10-06 in a campaign named "Initial prospect campaign — Oct 6, 2026" (can now be renamed).
 - Outreach drawing glitch on Karl's Android Chrome: page content verified correct (desktop Chrome, Firefox on the phone draws it fine); parked.
 
+**Deploy 1 order (2026-11-05):**
+1. **distribution outreach** (attached to **Distribution Hub**) → `.35`. Until it is live, the early-release Outbox check gets -1 and keeps the hold (harmless).
+2. **Inventory API** (attached to **Distribution Hub - Inventory Backend**) → `.53`.
+3. Run `repairHubStructure()` right after step 2, **before anyone clicks Closed**: the Directory Status / Outcome dropdowns are strict and reject Closed until it runs.
+4. Promote `codex/work` → `codex/distribution-system-foundation` (web `.61`, last).
+5. One-time, only when no campaign is Scheduled or Sending (a batch writes whole rows sized to the column count): delete the empty duplicate column **U** "Schedule Detail" on **Outreach Campaigns** and the empty duplicate column **Y** "Message Stage" on **Outreach Campaign Recipients** (checked read-only 2026-11-05: V and Z hold the data).
+
 Setup steps recorded in the history whose completion was **not re-verified** on 2026-10-17 (check before relying on them):
 - `repairHubStructure()` after releases that append columns or Email Editor blocks (sell sheet section, Cocktail list template, CUSTOMER ORDER INVITE EMAIL, Badger Invoice Links tab).
 - Triggers: `installOutreachCampaignScheduler()`, `installToastStockImport()`, `installInboundReplyChecker()`, `installHubReadCacheWarmer()`.
@@ -53,6 +60,7 @@ Setup steps recorded in the history whose completion was **not re-verified** on 
 
 ## Recent changes (one line each; details in `docs/history/` and git)
 
+- 2026-11-05 `.53-APP` / `.61-WEB` (Claude; chat out of tokens): fixes from `claude/review-7361d41-2026-11-05.md`. The result window ignores a late details load during a save (no double save); `ensureHeaderColumns_` reads the live header only when a column looks missing; `isDoNotContact_` adds only Closed; Deploy 1 order and the duplicate-column cleanup added above.
 - 2026-11-05 `.52-APP` / outreach `.35-APP` (pending Claude Phase 1 review; no deploy): Closed is a permanent non-emailable outcome; outcome dialog is immediately usable while refreshing its record; campaign cards show current schedule and sent dates, clear finished schedules, and refresh Sending/Scheduled state; scheduler releases a hold early after 10 minutes when Zoho's Outbox is empty; live-header checks prevent duplicate campaign columns.
 - 2026-11-05 `.51-APP` (deployed 2026-11-05; Apps Script only): a Zoho Outbox hold makes a scheduled campaign (and Send remaining) wait out the hour and continue on its own instead of pausing until someone clicks again; it pauses only after 3 held sends in a row with no clean send (`OUTREACH_SEND_HOLD_STREAK`) or an uncertain delivery. Prompted by the Appleton Follow-up 2 campaign pausing twice on 2026-11-05 after Zoho held one email for a couple of minutes. Tests: `tests/send-pacing.test.mjs`.
 - 2026-11-01 `.60-WEB` (pending release): allow Outreach reply cards and completed-reply rows to shrink and wrap so 390 px phones and the 280 px Galaxy Fold do not scroll sideways.

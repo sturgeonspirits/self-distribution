@@ -222,3 +222,48 @@ test("a Zoho hold makes a scheduled campaign wait and continue on its own, not p
   assert.equal(r.run.state, "Paused");
   assert.match(r.campaign[6], /after Club Tavern: unreadable response\. Delivery may be uncertain/);
 });
+
+// Review fixes for .52 (claude/review-7361d41-2026-11-05.md), shipped in .53-APP / .61-WEB.
+test("ensureHeaderColumns_ skips the live read when the cache has every column, and never duplicates one", async () => {
+  const { context, call } = await backend();
+  context.__header = ["Campaign ID", "Status", "Schedule Detail"];
+  context.__reads = 0;
+  vm.runInContext(`
+    __sheet = {
+      getLastColumn: () => __header.length,
+      getRange: (row, col, rows, cols) => ({
+        getValues: () => { __reads += 1; return [__header.slice(0, cols || 1)]; },
+        setValue: value => { __header[col - 1] = value; },
+      }),
+    };
+    headerCacheKey_ = () => "test-sheet";`, context);
+  call(`ensureHeaderColumns_(__sheet, ["Schedule Detail"])`);
+  const afterFirst = context.__reads;
+  call(`ensureHeaderColumns_(__sheet, ["Schedule Detail", "Status"])`);
+  assert.equal(context.__reads, afterFirst, "a fully cached map needs no further read");
+  // Another helper appends a column behind the cache's back; asking for it must not append a second copy.
+  context.__header.push("Message Stage");
+  call(`ensureHeaderColumns_(__sheet, ["Message Stage"])`);
+  assert.deepEqual(context.__header.filter(h => h === "Message Stage").length, 1);
+  call(`ensureHeaderColumns_(__sheet, ["Sequence ID"])`);
+  assert.deepEqual(context.__header, ["Campaign ID", "Status", "Schedule Detail", "Message Stage", "Sequence ID"]);
+});
+
+test("isDoNotContact_ adds Closed only; older outcomes still count through status alone", async () => {
+  const { call } = await backend();
+  assert.equal(call(`isDoNotContact_({ status:"Closed" })`), true);
+  assert.equal(call(`isDoNotContact_({ status:"Needs email", outcome:"Closed" })`), true);
+  // A business whose old result was Not interested but whose status later moved on stays in the queues.
+  assert.equal(call(`isDoNotContact_({ status:"Interested", outcome:"Not interested" })`), false);
+  assert.equal(call(`isDoNotContact_({ status:"Existing customer", outcome:"Unsubscribed" })`), false);
+  assert.equal(call(`isDoNotContact_({ status:"Not interested" })`), true);
+});
+
+test("the result window cannot be saved twice when business details arrive mid-save", async () => {
+  const index = await readFile(new URL("index.html", root), "utf8");
+  const save = index.slice(index.indexOf("async function saveOutreachOutcome"), index.indexOf("async function openContactLogForRecord"));
+  assert.match(save, /if \(outcomeSaveInProgress \|\| !selectedOutreachRecord \|\| !selectedOutcome\) return;\s*outcomeSaveInProgress = true;/);
+  assert.match(save, /finally \{\s*outcomeSaveInProgress = false;\s*\}/);
+  const open = index.slice(index.indexOf("async function openOutcomeDialogForRecord"), index.indexOf("function displayDetailValue"));
+  assert.equal((open.match(/\|\| outcomeSaveInProgress\) return;/g) || []).length, 2, "both the loaded and the failed path leave a save alone");
+});

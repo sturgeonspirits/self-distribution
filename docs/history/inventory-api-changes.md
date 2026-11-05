@@ -3,6 +3,16 @@
 Moved out of the `apps-script/Code.gs` header on 2026-10-17 so the deployed file stays short. Newest first, copied word for word. The header keeps only the current version (`CHANGES IN THIS VERSION`); when a new version is made, move that section to the top of this file.
 
 ```
+CHANGES IN 2026.11.05.52-APP
+- Adds Closed as a permanent, non-actionable Directory result. Closed businesses are excluded from all Hub email
+  audiences and follow-up queues, and the strict Directory Status / Outcome dropdowns are repaired with it.
+- Campaign cards now show their delivery date or range, finished campaigns clear stale scheduling fields, and an
+  open Scheduled / Sending campaign refreshes itself about once a minute.
+- A scheduled sender checks Zoho's Outbox after a hold has lasted ten minutes; when it is empty, it clears the
+  fixed-hour hold and continues. The mailer action is read-only and an unknown count keeps the hold.
+- Header repair reads the live header row before appending, preventing a stale header cache from creating duplicate
+  Schedule Detail or Message Stage columns.
+
 CHANGES IN 2026.11.05.51-APP
 - Zoho Outbox holds no longer stop a campaign until someone clicks again. A scheduled campaign (including Send
   remaining) waits out the hold and then continues on its own; its detail says when. It pauses for a person only

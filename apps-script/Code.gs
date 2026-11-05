@@ -1,16 +1,14 @@
 /*********************************
  * Inventory API (JSON) for Netlify
- * App version: 2026.11.05.52-APP
+ * App version: 2026.11.05.53-APP
  *
  * CHANGES IN THIS VERSION
- * - Adds Closed as a permanent, non-actionable Directory result. Closed businesses are excluded from all Hub email
- *   audiences and follow-up queues, and the strict Directory Status / Outcome dropdowns are repaired with it.
- * - Campaign cards now show their delivery date or range, finished campaigns clear stale scheduling fields, and an
- *   open Scheduled / Sending campaign refreshes itself about once a minute.
- * - A scheduled sender checks Zoho's Outbox after a hold has lasted ten minutes; when it is empty, it clears the
- *   fixed-hour hold and continues. The mailer action is read-only and an unknown count keeps the hold.
- * - Header repair reads the live header row before appending, preventing a stale header cache from creating duplicate
- *   Schedule Detail or Message Stage columns.
+ * - Review fixes for .52 (claude/review-7361d41-2026-11-05.md); .52 itself was never deployed, so its notes (Closed
+ *   result, campaign dates and states, early Outbox release, header guard) ship in this version too.
+ * - ensureHeaderColumns_ returns the cached header map with no extra read when every column is already there. It
+ *   reads the live header row only when a column looks missing, which is the only case that could duplicate one.
+ * - isDoNotContact_ adds only Closed (status or outcome). Outcomes Unsubscribed / Not interested / Do not contact
+ *   again count only through status, as before .52, so the Due today queue and follow-up tasks are unchanged.
  *
  * DEPLOY
  * - Apps Script project: Inventory API
@@ -20,7 +18,7 @@
  * Earlier version notes: docs/history/inventory-api-changes.md (move this version's notes there when the version changes).
  *********************************/
 
-const APP_VERSION = "2026.11.05.52-APP";
+const APP_VERSION = "2026.11.05.53-APP";
 
 const SHEET_NAMES = {
   STORES: "Stores",
@@ -295,8 +293,12 @@ function getHeaderMap_(sheet) {
   return map;
 }
 function ensureHeaderColumns_(sheet, columns) {
-  // Do not trust the in-process header cache here: other helpers can append a column before this helper runs.
-  // Reading the live row prevents a second copy of a column such as Schedule Detail or Message Stage.
+  // Fast path: when the cached header map already has every column, nothing can be duplicated, so no extra read.
+  // This runs on sends, outcome saves and count saves, where every Sheets read adds to the time-out risk.
+  const cached = getHeaderMap_(sheet);
+  if (columns.every(col => cached[normalizeHeader_(col)] !== undefined)) return cached;
+  // Something looks missing. The cache may be stale (another helper can append a column first), so read the live
+  // header row before appending; this prevents a second copy of a column such as Schedule Detail or Message Stage.
   const actual = sheet.getLastColumn()
     ? sheet.getRange(1, 1, 1, sheet.getLastColumn()).getValues()[0].map(normalizeHeader_)
     : [];
@@ -305,7 +307,6 @@ function ensureHeaderColumns_(sheet, columns) {
   missing.forEach(col => {
     sheet.getRange(1, sheet.getLastColumn() + 1).setValue(col);
   });
-  // Refresh even when nothing was appended: the cache may be the stale map that prompted this check.
   __HEADER_CACHE.delete(headerCacheKey_(sheet));
   return getHeaderMap_(sheet);
 }
@@ -2164,8 +2165,8 @@ function outreachStatusLower_(record) {
 function isDoNotContact_(record) {
   const status = outreachStatusLower_(record);
   const outcome = String(record.outcome || "").trim().toLowerCase();
-  return record.do_not_email || ["do not contact", "not interested", "closed"].includes(status)
-    || ["closed", "unsubscribed", "not interested", "do not contact"].includes(outcome);
+  // Closed is checked on both status and outcome; the other outcomes keep their earlier behavior (status only).
+  return record.do_not_email || ["do not contact", "not interested", "closed"].includes(status) || outcome === "closed";
 }
 
 function isSentOutreach_(record) {
