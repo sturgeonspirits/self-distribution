@@ -3,6 +3,20 @@
 Moved out of the `apps-script/Code.gs` header on 2026-10-17 so the deployed file stays short. Newest first, copied word for word. The header keeps only the current version (`CHANGES IN THIS VERSION`); when a new version is made, move that section to the top of this file.
 
 ```
+CHANGES IN 2026.11.05.61-APP
+- Sequences Phase 3 (server). New Initial campaigns become sequences on their own: syncSequences_() (no
+  deletions) runs before every step check and writes the same three things the migration wrote, through the new
+  shared writeSequencePlan_(): the Outreach Sequences row, Sequence ID / Step on step campaigns, and the Directory
+  Sequence ID. The Directory pass now also clears a Sequence ID that a stored sequence left behind (the business
+  finished, stopped, or no sequence lists it); an ID the Hub never wrote is left alone. Missing columns stop
+  with "Run Repair Hub Structure first" instead of writing to a wrong column.
+- A gap set on one sequence (Gap Days) is now used for that sequence's due dates, not just shown.
+- New staff actions: updateOutreachSequence (name and days between steps; writes only those cells and Updated
+  At) and buildOutreachSequenceStep ("Build next step" on a card: syncs, then drafts what is due for that one
+  sequence, same rules as the daily check; nothing is approved or sent). runSequenceStepCheck(options) takes
+  { sequence_id, actor }; the editor call with no options is unchanged.
+- The api "actions" list now includes outreachSequences and the two new actions.
+
 CHANGES IN 2026.11.05.60-APP
 - Sequences: a sent date stored as a bare Sheets serial number (a few recipient rows hold e.g. 46301.51552) is
   read as that day, not as milliseconds after 1970. Only the step dates shown in the preview and on the cards

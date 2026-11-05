@@ -1,20 +1,21 @@
 /*********************************
  * Inventory API (JSON) for Netlify
- * App version: 2026.11.05.61-APP
+ * App version: 2026.11.05.62-APP
  *
  * CHANGES IN THIS VERSION
- * - Sequences Phase 3 (server). New Initial campaigns become sequences on their own: syncSequences_() (no
- *   deletions) runs before every step check and writes the same three things the migration wrote, through the new
- *   shared writeSequencePlan_(): the Outreach Sequences row, Sequence ID / Step on step campaigns, and the Directory
- *   Sequence ID. The Directory pass now also clears a Sequence ID that a stored sequence left behind (the business
- *   finished, stopped, or no sequence lists it); an ID the Hub never wrote is left alone. Missing columns stop
- *   with "Run Repair Hub Structure first" instead of writing to a wrong column.
- * - A gap set on one sequence (Gap Days) is now used for that sequence's due dates, not just shown.
- * - New staff actions: updateOutreachSequence (name and days between steps; writes only those cells and Updated
- *   At) and buildOutreachSequenceStep ("Build next step" on a card: syncs, then drafts what is due for that one
- *   sequence, same rules as the daily check; nothing is approved or sent). runSequenceStepCheck(options) takes
- *   { sequence_id, actor }; the editor call with no options is unchanged.
- * - The api "actions" list now includes outreachSequences and the two new actions.
+ * Fixes from chat's Phase 3 review (claude/chat-review-findings-sequences-phase-3-2026-11-05.md):
+ * - Shared addresses: the Directory pass of writeSequencePlan_() matches a leftover Sequence ID by Account ID, or
+ *   by address only when one Directory row has it. When two rows share an address it leaves the cell alone and
+ *   returns a warning (audited as SEQUENCE_SYNC_WARNING, shown in the migration log).
+ * - A longer gap is refused while a step draft of that sequence is in Review (it was frozen under the shorter
+ *   gap); delete or send the draft first. A shorter gap saves any time.
+ * - Speed: writeSequencePlan_() writes only Sequences rows that changed (Updated At moves only then), and the
+ *   campaign and Directory columns only when a cell changed, so an idle sync writes nothing. "Build next step"
+ *   on a stored sequence skips the sync (one full read instead of two plus writes).
+ * - The daily check never drafts Initial again for businesses the first Initial campaign left unsent; "Build
+ *   next step" pressed on the card still can ("<sequence> — Initial (more)").
+ * - Deleting the last live campaign of a sequence (an unsent Initial draft) clears that Sequence ID from the
+ *   Directory at once, so those businesses get their normal follow-up reminders back without waiting a day.
  *
  * DEPLOY
  * - Apps Script project: Inventory API
@@ -24,7 +25,7 @@
  * Earlier version notes: docs/history/inventory-api-changes.md (move this version's notes there when the version changes).
  *********************************/
 
-const APP_VERSION = "2026.11.05.61-APP";
+const APP_VERSION = "2026.11.05.62-APP";
 
 const SHEET_NAMES = {
   STORES: "Stores",
@@ -5164,9 +5165,32 @@ function deleteOutreachCampaignUnderLock_(p) {
     if (ch.schedule_status !== undefined && String(campaign.values[ch.schedule_status] || "")) clearCampaignSchedule_(campaign, "Cancelled", "Cancelled because the campaign was deleted.");
     campaign.values[ch.app_version] = APP_VERSION;
     sheets.campaigns.getRange(campaign.row, 1, 1, campaign.values.length).setValues([campaign.values]);
+    const releasedMembers = releaseSequenceAfterDelete_(sheets.campaigns, ch, String(ch.sequence_id === undefined ? "" : campaign.values[ch.sequence_id] || "").trim());
     appendAudit_("DELETE_OUTREACH_CAMPAIGN", "Campaign", p.campaign_id, "", actor, OUTREACH_CAMPAIGNS_SHEET_NAME, OUTREACH_CAMPAIGN_RECIPIENTS_SHEET_NAME, CAMPAIGN_DELETED_STATUS, `Was ${previousStatus}; ${recipients.length} unsent recipients retired. ${String(campaign.values[ch.campaign_name] || "")}`.slice(0, 500));
-    return { message:`Campaign deleted. ${recipients.length} unsent recipients were removed from it; no email was sent.`, recipient_count:recipients.length };
+    return { message:`Campaign deleted. ${recipients.length} unsent recipients were removed from it; no email was sent.${releasedMembers ? ` ${releasedMembers} businesses are back on their normal follow-up reminders.` : ""}`, recipient_count:recipients.length };
   }
+}
+
+/**
+ * After a campaign is deleted: if no other live campaign carries its Sequence ID (typically an unsent Initial
+ * draft), the sequence has nothing left, so the Directory rows holding that ID are cleared at once. Otherwise they
+ * would get no reminder of any kind until the next daily sync. Returns how many rows were cleared.
+ */
+function releaseSequenceAfterDelete_(campaignSheet, ch, sequenceId) {
+  if (!sequenceId || ch.sequence_id === undefined || campaignSheet.getLastRow() < 2) return 0;
+  const count = campaignSheet.getLastRow() - 1;
+  const ids = campaignSheet.getRange(2, ch.sequence_id + 1, count, 1).getValues();
+  const statuses = campaignSheet.getRange(2, ch.status + 1, count, 1).getValues();
+  if (ids.some((cell, i) => String(cell[0] || "").trim() === sequenceId && String(statuses[i][0] || "") !== CAMPAIGN_DELETED_STATUS)) return 0;
+  const directory = getOutreachSheet_(OUTREACH_SHEET_NAME);
+  const dh = getHeaderMap_(directory);
+  if (dh.sequence_id === undefined || directory.getLastRow() < 2) return 0;
+  const range = directory.getRange(2, dh.sequence_id + 1, directory.getLastRow() - 1, 1);
+  const values = range.getValues();
+  let cleared = 0;
+  values.forEach(cell => { if (String(cell[0] || "").trim() === sequenceId) { cell[0] = ""; cleared += 1; } });
+  if (cleared) range.setValues(values);
+  return cleared;
 }
 
 // ---------- Campaign sequences (2026-11-05, Part B Phase 2) ----------
@@ -5688,7 +5712,7 @@ function migrateCampaignsToSequences() {
     appendAudit_("MIGRATE_OUTREACH_SEQUENCES", "Sequence", "", "", SEQUENCE_MIGRATION_ACTOR, OUTREACH_SEQUENCES_SHEET_NAME, OUTREACH_CAMPAIGNS_SHEET_NAME, "Migrated",
       `${plan.sequences.length} sequences (${counts.appended} new); ${counts.campaign_cells} campaign cells; ${counts.directory_cells} Directory cells; deleted ${deleted.length}.`.slice(0, 500));
     const summary = `Migrated ${plan.sequences.length} sequences (${counts.appended} new). Deleted ${deleted.length} duplicate campaign${deleted.length === 1 ? "" : "s"}${deleted.length ? `: ${deleted.join(", ")}` : ""}. Updated ${counts.campaign_cells} campaign cells and ${counts.directory_cells} Directory cells.`;
-    console.log(summary + "\n\n" + sequencePlanText_(plan));
+    console.log(summary + (counts.warnings.length ? "\n\nLeft as is:\n" + counts.warnings.join("\n") : "") + "\n\n" + sequencePlanText_(plan));
     return summary;
   } finally {
     lock.releaseLock();
@@ -5708,7 +5732,7 @@ function syncSequences_(actor) {
     __HEADER_CACHE.clear();
     const plan = buildSequencePlan_(sequenceSourceData_(), { now:new Date(), gap_days:sequenceGapDays_() });
     const counts = writeSequencePlan_(plan, actor || SEQUENCE_STEP_CHECK_ACTOR);
-    const changed = !!(counts.appended || counts.campaign_cells || counts.directory_cells);
+    const changed = !!(counts.appended || counts.sequence_cells || counts.campaign_cells || counts.directory_cells);
     if (changed) bumpReadCacheVersion_();
     // The plan is current unless this sync just stored a new sequence (its "stored" flag is now out of date).
     return Object.assign({ changed:changed, plan:counts.appended ? null : plan }, counts);
@@ -5730,10 +5754,19 @@ function writeSequencePlan_(plan, actor) {
     const existing = sequenceSheet.getLastRow() < 2 ? [] : sequenceSheet.getRange(2, 1, sequenceSheet.getLastRow() - 1, width).getValues();
     const rowById = new Map(existing.map((values, index) => [String(values[sh.sequence_id] || ""), index]));
     const appended = [];
+    const changedRows = new Set();
+    let sequenceCells = 0;
     plan.sequences.forEach(sequence => {
       const index = rowById.get(sequence.sequence_id);
       const values = index === undefined ? new Array(width).fill("") : existing[index];
-      const set = (key, value, keepExisting) => { if (sh[key] === undefined) return; if (keepExisting && String(values[sh[key]] || "") !== "") return; values[sh[key]] = value; };
+      const sameValue = (a, b) => (a instanceof Date ? a.getTime() : String(a ?? "")) === (b instanceof Date ? b.getTime() : String(b ?? ""));
+      const set = (key, value, keepExisting) => {
+        if (sh[key] === undefined) return;
+        if (keepExisting && String(values[sh[key]] || "") !== "") return;
+        if (sameValue(values[sh[key]], value)) return;
+        values[sh[key]] = value;
+        if (key !== "updated_at" && key !== "app_version") { sequenceCells += 1; if (index !== undefined) changedRows.add(index); }
+      };
       set("sequence_id", sequence.sequence_id);
       set("sequence_name", sequence.name, true);
       set("audience", sequence.audience, true);
@@ -5745,11 +5778,11 @@ function writeSequencePlan_(plan, actor) {
       set("created_by", actor || SEQUENCE_MIGRATION_ACTOR, true);
       set("migrated_from", sequence.steps.reduce((all, step) => all.concat(step.campaigns.map(item => item.campaign_id)), []).join(", "), true);
       set("finished_at", sequence.status === "Finished" ? stamp : "", true);
-      set("updated_at", stamp);
-      set("app_version", APP_VERSION);
+      // Updated At moves only when something else in the row changed, so an idle sync writes nothing here.
+      if (index === undefined || changedRows.has(index)) { set("updated_at", stamp); set("app_version", APP_VERSION); }
       if (index === undefined) appended.push(values);
     });
-    if (existing.length) sequenceSheet.getRange(2, 1, existing.length, width).setValues(existing);
+    changedRows.forEach(index => sequenceSheet.getRange(index + 2, 1, 1, width).setValues([existing[index]]));
     if (appended.length) sequenceSheet.getRange(sequenceSheet.getLastRow() + 1, 1, appended.length, width).setValues(appended);
 
     // (3) Sequence ID and Step on the step campaigns. Only these two columns are written.
@@ -5772,8 +5805,7 @@ function writeSequencePlan_(plan, actor) {
         if (String(seqValues[i][0] || "") !== goal.sequence_id) { seqValues[i][0] = goal.sequence_id; campaignCells += 1; }
         if (Number(stepValues[i][0] || 0) !== goal.step) { stepValues[i][0] = goal.step; campaignCells += 1; }
       });
-      seqRange.setValues(seqValues);
-      stepRange.setValues(stepValues);
+      if (campaignCells) { seqRange.setValues(seqValues); stepRange.setValues(stepValues); }
     }
 
     // (4) Directory Sequence ID: the one active sequence of each business, blank once it finished or stopped.
@@ -5782,6 +5814,7 @@ function writeSequencePlan_(plan, actor) {
     const directory = getOutreachSheet_(OUTREACH_SHEET_NAME);
     const dh = getHeaderMap_(directory);
     let directoryCells = 0;
+    const warnings = [];
     if (dh.sequence_id === undefined) throw new Error("Run Repair Hub Structure first: the Directory has no Sequence ID column.");
     if (directory.getLastRow() > 1) {
       const count = directory.getLastRow() - 1;
@@ -5802,18 +5835,32 @@ function writeSequencePlan_(plan, actor) {
         if (goal) setRow(i, goal);
         else if (!touched.has(i) && known.has(String(values[i][0] || ""))) setRow(i, "");
       }));
-      // A row no sequence lists but still holding a known Sequence ID (left over from an older plan).
+      // A row no sequence lists but still holding a known Sequence ID (left over from an older plan). An Account ID
+      // match decides it. An address decides it only when exactly one Directory row has that address: when two rows
+      // share one, an email-only member can't say which business it is, so the cell is left as it is and a warning
+      // is returned for staff (the same rule directoryRecordFor uses in the plan).
+      const rowsByEmail = new Map();
+      emails.forEach((cell, i) => {
+        const email = String(cell[0] || "").trim().toLowerCase();
+        if (email) rowsByEmail.set(email, (rowsByEmail.get(email) || 0) + 1);
+      });
       values.forEach((cell, i) => {
         const current = String(cell[0] || "");
         if (touched.has(i) || !current || !known.has(current)) return;
         const account = accounts[i] ? String(accounts[i][0] || "").trim() : "";
         const email = emails[i] ? String(emails[i][0] || "").trim().toLowerCase() : "";
-        const goal = (account && active.get(`account:${account}`)) || (email && active.get(`email:${email}`)) || "";
-        setRow(i, goal);
+        const byAccount = account ? active.get(`account:${account}`) : "";
+        if (byAccount) return setRow(i, byAccount);
+        const byEmail = email ? active.get(`email:${email}`) : "";
+        if (byEmail && rowsByEmail.get(email) > 1) {
+          warnings.push(`Directory row ${i + 2} shares ${email} with another row; its Sequence ID (${current}) was left as it is. Give the businesses their own addresses or Account IDs.`);
+          return;
+        }
+        setRow(i, byEmail || "");
       });
-      range.setValues(values);
+      if (directoryCells) range.setValues(values);
     }
-    return { sequences:plan.sequences.length, appended:appended.length, campaign_cells:campaignCells, directory_cells:directoryCells };
+    return { sequences:plan.sequences.length, appended:appended.length, sequence_cells:sequenceCells, campaign_cells:campaignCells, directory_cells:directoryCells, warnings:warnings };
   }
 }
 
@@ -5839,12 +5886,16 @@ function sequenceStoredRow_(sequenceId) {
 }
 
 /** Which step drafts to build, from a plan. Pure: tested without sheets. Only migrated (stored) sequences count. */
-function sequenceStepDraftActions_(plan) {
+function sequenceStepDraftActions_(plan, options) {
+  // The first Initial campaign is the one Karl chose. The daily check never drafts Initial again for businesses it
+  // left unsent (blocked, removed, or never approved); only "Build next step" pressed on the card does (options.allow_initial).
+  const allowInitial = !!(options && options.allow_initial);
   const actions = [];
   (plan.sequences || []).filter(sequence => sequence.stored && sequence.status !== "Finished").forEach(sequence => {
     Object.keys(sequence.due_by_step || {}).map(Number).sort((a, b) => a - b).forEach(step => {
       const stage = SEQUENCE_STEP_STAGES[step - 1];
       if (!stage) return;
+      if (step === 1 && !allowInitial) return;
       const campaigns = (sequence.steps[step - 1] || {}).campaigns || [];
       const draft = campaigns.find(item => item.status === "Review");
       const sending = campaigns.find(item => item.status === "Approved" && Number(item.ready_to_send || 0) > 0);
@@ -5865,10 +5916,10 @@ function sequenceStepDraftActions_(plan) {
 function runSequenceStepCheck(options) {
   const opts = options && typeof options === "object" ? options : {};
   const actor = String(opts.actor || SEQUENCE_STEP_CHECK_ACTOR);
-  const sync = syncSequences_(actor);
+  const sync = opts.skip_sync ? { skipped:"not needed (sequence already stored)" } : syncSequences_(actor);
   const plan = sync.plan || buildSequencePlan_(sequenceSourceData_(), { now:new Date(), gap_days:sequenceGapDays_() });
   const only = String(opts.sequence_id || "").trim();
-  const actions = sequenceStepDraftActions_(plan).filter(action => !only || action.sequence_id === only);
+  const actions = sequenceStepDraftActions_(plan, { allow_initial:!!only }).filter(action => !only || action.sequence_id === only);
   const results = actions.map(action => {
     if (action.action !== "create") return action;
     try {
@@ -5886,7 +5937,9 @@ function runSequenceStepCheck(options) {
     appendAudit_("SEQUENCE_STEP_CHECK", "Sequence", only, "", actor, OUTREACH_SEQUENCES_SHEET_NAME, OUTREACH_CAMPAIGNS_SHEET_NAME, "Drafted",
       created.map(item => `${item.campaign_name} (${item.recipient_count})`).join("; ").slice(0, 500));
   }
-  console.log(JSON.stringify({ event:"sequence_step_check", sequence_id:only, synced:sync.skipped ? sync.skipped : { appended:sync.appended, campaign_cells:sync.campaign_cells, directory_cells:sync.directory_cells }, results:results }));
+  const warnings = sync.warnings || [];
+  if (warnings.length) appendAudit_("SEQUENCE_SYNC_WARNING", "Sequence", only, "", actor, OUTREACH_SEQUENCES_SHEET_NAME, OUTREACH_SHEET_NAME, "Left as is", warnings.join(" ").slice(0, 500));
+  console.log(JSON.stringify({ event:"sequence_step_check", sequence_id:only, synced:sync.skipped ? sync.skipped : { appended:sync.appended, sequence_cells:sync.sequence_cells, campaign_cells:sync.campaign_cells, directory_cells:sync.directory_cells }, warnings:warnings, results:results }));
   return results;
 }
 
@@ -5897,8 +5950,9 @@ function apiBuildOutreachSequenceStep_(p) {
   if (!/^SEQ-[A-Z0-9-]{1,60}$/i.test(sequenceId)) throw new Error("That sequence was not found. Refresh the campaign list.");
   if (!getOutreachSs_().getSheetByName(OUTREACH_SEQUENCES_SHEET_NAME)) throw new Error("Sequences have not been set up yet. Run migrateCampaignsToSequences() in the Inventory API editor first.");
   const actor = authenticatedActor_(p, "Sturgeon Distribution Hub");
-  // The step check syncs first, so a sequence made from a new Initial campaign today is stored before it is checked.
-  const results = runSequenceStepCheck({ sequence_id:sequenceId, actor:actor });
+  // A stored sequence needs no sync first (one full read instead of two plus writes, to stay inside the app's
+  // request time). A sequence made from a new Initial campaign today is synced first so it is stored before it is checked.
+  const results = runSequenceStepCheck({ sequence_id:sequenceId, actor:actor, skip_sync:!!sequenceStoredRow_(sequenceId) });
   const created = results.filter(item => item.result === "created");
   const skipped = results.filter(item => item.action === "skip");
   const failed = results.filter(item => item.result === "not created");
@@ -5908,6 +5962,19 @@ function apiBuildOutreachSequenceStep_(p) {
   else if (failed.length) message = `No draft was built: ${failed.map(item => item.error).join("; ")}`;
   else message = "No business in this sequence is due for its next step yet.";
   return { message:message, created:created.map(item => ({ campaign_id:item.campaign_id, campaign_name:item.campaign_name, recipient_count:item.recipient_count, stage:item.stage })), results:results };
+}
+
+/** Names of a sequence's step campaigns still waiting for review (status Review). */
+function sequenceReviewDrafts_(sequenceId) {
+  const sheet = outreachCampaignSheets_().campaigns;
+  if (sheet.getLastRow() < 2) return [];
+  const h = getHeaderMap_(sheet);
+  if (h.sequence_id === undefined) return [];
+  const count = sheet.getLastRow() - 1;
+  const ids = sheet.getRange(2, h.sequence_id + 1, count, 1).getValues();
+  const statuses = sheet.getRange(2, h.status + 1, count, 1).getValues();
+  const names = sheet.getRange(2, h.campaign_name + 1, count, 1).getValues();
+  return ids.map((cell, i) => String(cell[0] || "").trim() === sequenceId && String(statuses[i][0] || "") === "Review" ? String(names[i][0] || "") : null).filter(Boolean);
 }
 
 /** Rename a sequence or change its gap between steps. Writes only those cells of its Outreach Sequences row. */
@@ -5938,6 +6005,12 @@ function apiUpdateOutreachSequence_(p) {
     }
     if (hasGap) {
       const previous = Number(sheet.getRange(row, h.gap_days + 1).getValue() || 0);
+      // A draft built under the old gap was frozen with the businesses due then. Approving it after the gap went up
+      // would send to businesses the sequence now says are not due, so a longer gap waits until the draft is gone.
+      if (gap > (previous || sequenceGapDays_())) {
+        const waiting = sequenceReviewDrafts_(sequenceId);
+        if (waiting.length) throw new Error(`Delete or send "${waiting[0]}" first: it was built with the shorter gap. A shorter gap can be saved any time.`);
+      }
       if (previous !== gap) { sheet.getRange(row, h.gap_days + 1).setValue(gap); changes.push(`gap ${previous || "default"} → ${gap} days`); }
     }
     if (!changes.length) return { message:"Nothing changed.", sequence_id:sequenceId };

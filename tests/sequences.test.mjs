@@ -368,15 +368,15 @@ function fakeSheet(name, rows, id) {
   const data = rows.map(row => row.slice());
   const width = () => Math.max(...data.map(row => row.length));
   const sheet = {
-    data,
+    data, writes:0,
     getName: () => name, getSheetId: () => id, getParent: () => ({ getId: () => "SS" }),
     getLastRow: () => data.length, getLastColumn: () => width(),
     getRange(r, c, nr = 1, nc = 1) {
       return {
         getValues: () => Array.from({ length:nr }, (_, i) => Array.from({ length:nc }, (_, j) => (data[r - 1 + i] || [])[c - 1 + j] ?? "")),
-        setValues(values) { values.forEach((row, i) => { data[r - 1 + i] = data[r - 1 + i] || new Array(width()).fill(""); row.forEach((v, j) => { data[r - 1 + i][c - 1 + j] = v; }); }); return this; },
+        setValues(values) { sheet.writes += 1; values.forEach((row, i) => { data[r - 1 + i] = data[r - 1 + i] || new Array(width()).fill(""); row.forEach((v, j) => { data[r - 1 + i][c - 1 + j] = v; }); }); return this; },
         getValue: () => (data[r - 1] || [])[c - 1] ?? "",
-        setValue(v) { data[r - 1][c - 1] = v; return this; },
+        setValue(v) { sheet.writes += 1; data[r - 1][c - 1] = v; return this; },
       };
     },
   };
@@ -459,7 +459,8 @@ test("the sequence actions are wired: API routes, proxy allow-lists, and the ste
   const proxy = await readFile(new URL("netlify/functions/inventory.js", root), "utf8");
   assert.match(code, /case "updateOutreachSequence": res = apiUpdateOutreachSequence_\(body\)/);
   assert.match(code, /case "buildOutreachSequenceStep": res = apiBuildOutreachSequenceStep_\(body\)/);
-  assert.match(code, /function runSequenceStepCheck\(options\) \{[\s\S]{0,600}const sync = syncSequences_\(actor\);/);
+  assert.match(code, /function runSequenceStepCheck\(options\) \{[\s\S]{0,600}const sync = opts\.skip_sync \?[\s\S]{0,120}syncSequences_\(actor\);/);
+  assert.match(code, /runSequenceStepCheck\(\{ sequence_id:sequenceId, actor:actor, skip_sync:!!sequenceStoredRow_\(sequenceId\) \}\)/);
   assert.doesNotMatch(code, /case "(migrateCampaignsToSequences|previewSequenceMigration|syncSequences_)"/);
   for (const action of ["updateOutreachSequence", "buildOutreachSequenceStep"]) {
     assert.match(proxy, new RegExp(`\\n  "${action}",\\n`));
@@ -473,7 +474,8 @@ test("updating a sequence validates the gap and writes only its name, gap and Up
   const context = await backend();
   const sequences = fakeSheet("Outreach Sequences", [["Sequence ID", "Sequence Name", "Audience", "Criteria", "Step Plan", "Gap Days", "Status", "Created At", "Created By", "Migrated From", "Finished At", "Updated At", "App Version"],
     ["SEQ-A", "Appleton, Sep 25", "aud", "{}", "[]", 7, "Waiting", "c", "Claude", "CMP-A", "", "", ".60"]], 3);
-  wireSheets(context, [sequences]);
+  const campaigns = fakeSheet("Outreach Campaigns", [CAMPAIGN_HEADERS], 1);
+  wireSheets(context, [sequences, campaigns, fakeSheet("Outreach Campaign Recipients", [RECIPIENT_HEADERS], 2)]);
   context.LockService = { getScriptLock: () => ({ tryLock: () => true, releaseLock() {} }) };
   context.CacheService = { getScriptCache: () => ({ get: () => null, put() {}, remove() {} }) };
   context.PropertiesService = { getScriptProperties: () => ({ getProperty: () => null, setProperty() {} }) };
@@ -490,4 +492,98 @@ test("updating a sequence validates the gap and writes only its name, gap and Up
   assert.ok(after[11] instanceof Date || typeof after[11] === "object");
   [0, 2, 3, 4, 6, 7, 8, 9, 10, 12].forEach(i => assert.equal(after[i], before[i], `column ${i} unchanged`));
   assert.equal(audits.length, 1);
+});
+
+// ---------- Chat's Phase 3 review fixes (.62-APP) ----------
+
+const SEQUENCE_HEADERS = ["Sequence ID", "Sequence Name", "Audience", "Criteria", "Step Plan", "Gap Days", "Status", "Created At", "Created By", "Migrated From", "Finished At", "Updated At", "App Version"];
+const DIRECTORY_HEADERS = ["Source Row", "Account ID", "Business", "Email", "Status", "Outcome", "Do Not Email", "Next Email", "Sequence ID"];
+
+test("an email-only member never hands its sequence to two Directory rows that share the address", async () => {
+  const context = await backend();
+  const campaigns = fakeSheet("Outreach Campaigns", [CAMPAIGN_HEADERS,
+    ["CMP-S", "S", "", "Complete", 1, "", "", day(3), "Karl", "", "", "", "", 1, 0, "", JSON.stringify({ campaign_type:"sales_outreach", stage:"Initial" }), "", "", "", "", "SEQ-S", 1]], 1);
+  const sequences = fakeSheet("Outreach Sequences", [SEQUENCE_HEADERS, ["SEQ-S", "S", "", "", "", 7, "Waiting", day(3), "x", "CMP-S", "", "", ""],
+    ["SEQ-OLD", "Old", "", "", "", 7, "Finished", day(60), "x", "CMP-OLD", "", "", ""]], 3);
+  const directory = fakeSheet("Distribution Directory and Leads", [DIRECTORY_HEADERS,
+    [2, "", "Bar One", "shared@example.test", "Sent", "", false, "", "SEQ-OLD"],
+    [3, "", "Bar Two", "shared@example.test", "Sent", "", false, "", "SEQ-OLD"]], 4);
+  wireSheets(context, [campaigns, fakeSheet("Outreach Campaign Recipients", [RECIPIENT_HEADERS], 2), sequences, directory]);
+  context.__plan = {
+    sequences:[{ sequence_id:"SEQ-S", name:"S", stored:true, status:"Waiting", gap_days:7, steps:[{ step:1, stage:"Initial", campaigns:[{ campaign_id:"CMP-S" }] }],
+      members:[{ key:"email:shared@example.test", source_row:0, state:"active" }] }],
+    active_sequence_for:[["email:shared@example.test", "SEQ-S"]],
+  };
+  const counts = vm.runInContext(`writeSequencePlan_(__plan, "t")`, context);
+  assert.equal(directory.data[1][8], "SEQ-OLD");
+  assert.equal(directory.data[2][8], "SEQ-OLD");
+  assert.equal(counts.directory_cells, 0);
+  assert.equal(counts.warnings.length, 2);
+  assert.match(counts.warnings[0], /shares shared@example\.test/);
+});
+
+test("a sync with nothing new writes nothing to any sheet", async () => {
+  const context = await backend();
+  const campaigns = fakeSheet("Outreach Campaigns", [CAMPAIGN_HEADERS,
+    ["CMP-S", "S", "", "Complete", 1, "", "", day(3), "Karl", "", "", "", "", 1, 0, "", "{}", "", "", "", "", "SEQ-S", 1]], 1);
+  const sequences = fakeSheet("Outreach Sequences", [SEQUENCE_HEADERS, ["SEQ-S", "S", "aud", "{}", "[]", 7, "Waiting", "c", "x", "CMP-S", "", "u", ".61"]], 3);
+  const directory = fakeSheet("Distribution Directory and Leads", [DIRECTORY_HEADERS, [2, "A1", "Bar", "a1@example.test", "Sent", "", false, "", "SEQ-S"]], 4);
+  wireSheets(context, [campaigns, fakeSheet("Outreach Campaign Recipients", [RECIPIENT_HEADERS], 2), sequences, directory]);
+  context.__plan = {
+    sequences:[{ sequence_id:"SEQ-S", name:"S", stored:true, status:"Waiting", gap_days:7, audience:"aud", criteria:{}, created_at:"c",
+      steps:[{ step:1, stage:"Initial", campaigns:[{ campaign_id:"CMP-S" }] }], members:[{ key:"account:A1", source_row:2, state:"active" }] }],
+    active_sequence_for:[["account:A1", "SEQ-S"]],
+  };
+  const counts = vm.runInContext(`writeSequencePlan_(__plan, "t")`, context);
+  assert.deepEqual([counts.appended, counts.sequence_cells, counts.campaign_cells, counts.directory_cells], [0, 0, 0, 0]);
+  assert.deepEqual([sequences.writes, campaigns.writes, directory.writes], [0, 0, 0]);
+  assert.equal(sequences.data[1][11], "u", "Updated At stays put when nothing changed");
+});
+
+test("a longer gap waits while a step draft built with the shorter gap is still in review", async () => {
+  const context = await backend();
+  const sequences = fakeSheet("Outreach Sequences", [SEQUENCE_HEADERS, ["SEQ-A", "Appleton", "", "", "", 7, "Draft", "c", "x", "CMP-A", "", "", ""]], 3);
+  const campaigns = fakeSheet("Outreach Campaigns", [CAMPAIGN_HEADERS,
+    ["CMP-A", "Appleton", "", "Complete", 5, "", "", day(30), "Karl", "", "", "", "", 5, 0, "", "{}", "", "", "", "", "SEQ-A", 1],
+    ["CMP-A2", "Appleton — Follow-up 1", "", "Review", 5, "", "", day(1), "Sequence step check", "", "", "", "", 0, 0, "", "{}", "", "", "", "", "SEQ-A", 2]], 1);
+  wireSheets(context, [sequences, campaigns, fakeSheet("Outreach Campaign Recipients", [RECIPIENT_HEADERS], 2)]);
+  context.LockService = { getScriptLock: () => ({ tryLock: () => true, releaseLock() {} }) };
+  vm.runInContext("bumpReadCacheVersion_ = () => {}; appendAudit_ = () => {}; authenticatedActor_ = () => 'Karl'; sequenceGapDays_ = () => 7;", context);
+  assert.throws(() => vm.runInContext(`apiUpdateOutreachSequence_({ sequence_id:"SEQ-A", staff_name:"Karl", gap_days:10 })`, context), /Delete or send "Appleton — Follow-up 1" first/);
+  assert.equal(sequences.data[1][5], 7);
+  const shorter = vm.runInContext(`apiUpdateOutreachSequence_({ sequence_id:"SEQ-A", staff_name:"Karl", gap_days:5 })`, context);
+  assert.equal(shorter.message, "Sequence saved.");
+  assert.equal(sequences.data[1][5], 5);
+  campaigns.data[2][3] = "Deleted";
+  vm.runInContext(`apiUpdateOutreachSequence_({ sequence_id:"SEQ-A", staff_name:"Karl", gap_days:14 })`, context);
+  assert.equal(sequences.data[1][5], 14);
+});
+
+test("the daily check never redrafts Initial; Build next step on the card can", async () => {
+  const context = await backend();
+  context.__plan = { sequences:[{ sequence_id:"SEQ-N", name:"Neenah", stored:true, status:"Next step due", due_by_step:{ 1:3, 2:5 },
+    steps:[{ step:1, stage:"Initial", campaigns:[{ campaign_id:"CMP-N", name:"Neenah", status:"Complete with blocks", sent_count:20 }] },
+      { step:2, stage:"Follow-up 1", campaigns:[] }, { step:3, stage:"Follow-up 2", campaigns:[] }] }] };
+  const daily = vm.runInContext("sequenceStepDraftActions_(__plan)", context);
+  assert.deepEqual(Array.from(daily, item => item.stage), ["Follow-up 1"]);
+  const card = vm.runInContext("sequenceStepDraftActions_(__plan, { allow_initial:true })", context);
+  assert.deepEqual(Array.from(card, item => item.campaign_name), ["Neenah — Initial (more)", "Neenah — Follow-up 1"]);
+});
+
+test("deleting the last live campaign of a sequence puts its businesses back on normal reminders", async () => {
+  const context = await backend();
+  const campaigns = fakeSheet("Outreach Campaigns", [CAMPAIGN_HEADERS,
+    ["CMP-X", "X", "", "Deleted", 2, "", "", day(1), "Karl", "", "", "", "", 0, 0, "", "{}", "", "", "", "", "SEQ-X", 1],
+    ["CMP-Y", "Y", "", "Complete", 2, "", "", day(20), "Karl", "", "", "", "", 2, 0, "", "{}", "", "", "", "", "SEQ-Y", 1],
+    ["CMP-Y2", "Y — Follow-up 1", "", "Deleted", 2, "", "", day(1), "x", "", "", "", "", 0, 0, "", "{}", "", "", "", "", "SEQ-Y", 2]], 1);
+  const directory = fakeSheet("Distribution Directory and Leads", [DIRECTORY_HEADERS,
+    [2, "X1", "a", "x1@example.test", "", "", false, "", "SEQ-X"], [3, "X2", "b", "x2@example.test", "", "", false, "", "SEQ-X"],
+    [4, "Y1", "c", "y1@example.test", "", "", false, "", "SEQ-Y"]], 4);
+  wireSheets(context, [campaigns, directory]);
+  context.__ch = vm.runInContext("getHeaderMap_(__fakeSs.getSheetByName('Outreach Campaigns'))", context);
+  assert.equal(vm.runInContext("releaseSequenceAfterDelete_(__fakeSs.getSheetByName('Outreach Campaigns'), __ch, 'SEQ-X')", context), 2);
+  assert.deepEqual(directory.data.slice(1).map(row => row[8]), ["", "", "SEQ-Y"]);
+  assert.equal(vm.runInContext("releaseSequenceAfterDelete_(__fakeSs.getSheetByName('Outreach Campaigns'), __ch, 'SEQ-Y')", context), 0, "a sequence with a live campaign keeps its businesses");
+  const code = await readFile(new URL("apps-script/Code.gs", root), "utf8");
+  assert.match(code, /function deleteOutreachCampaignUnderLock_[\s\S]{0,3500}releaseSequenceAfterDelete_\(sheets\.campaigns, ch,/);
 });

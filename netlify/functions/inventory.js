@@ -1,9 +1,9 @@
-// App version: 2026.11.05.63-WEB
+// App version: 2026.11.05.64-WEB
 import { gunzipSync } from "node:zlib";
 import { requireStaffSession } from "./auth.js";
 import { fetchWithDriveRelay, relayConfig } from "../lib/drive-relay.js";
 
-const APP_VERSION = "2026.11.05.63-WEB";
+const APP_VERSION = "2026.11.05.64-WEB";
 const STAFF_ACTIONS = new Set([
   "outreachDashboard",
   "outreachRecord",
@@ -141,6 +141,11 @@ function upstreamFailure(policy, lastError, attempts) {
     return new Error(lastError?.name === "AbortError"
       ? "Zoho did not confirm the send before the connection timed out. The outcome is unknown; check Activity Log and Zoho before retrying."
       : `The send connection failed before Zoho confirmation: ${String(lastError)}`);
+  }
+  if (policy.sequenceStep) {
+    return new Error(lastError?.name === "AbortError"
+      ? "Building the next step did not finish before the connection timed out. It may still finish: do not press Build next step again yet. Refresh Campaigns in a minute and look for the new draft on the sequence card."
+      : `Build next step connection failed: ${String(lastError)}`);
   }
   if (policy.snapshot) {
     return new Error(lastError?.name === "AbortError"
@@ -324,6 +329,7 @@ export async function handler(event) {
       attempts:1,
       timeoutMs:SEND_UPSTREAM_TIMEOUT_MS,
       snapshot:true,
+      sequenceStep:action === "buildOutreachSequenceStep",
     } : CAMPAIGN_READ_ACTIONS.has(action) ? {
       attempts:1,
       timeoutMs:SEND_UPSTREAM_TIMEOUT_MS,
