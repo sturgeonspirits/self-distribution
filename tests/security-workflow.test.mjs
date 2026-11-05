@@ -2817,7 +2817,7 @@ test("scheduled campaign sends validate times, run due campaigns, skip guarded r
       "updateCampaignSchedule_", "outreachCampaignSheets_", "outreachCampaignRow_", "campaignScheduleState_", "apiSendOutreachCampaignBatch_",
       "campaignScheduleTimeLabel_", "clearCampaignSchedule_", "appendAudit_", "CAMPAIGN_SCHEDULE_ACTIVE_STATUSES", "CAMPAIGN_SCHEDULE_BATCH_SIZE",
       "campaignScheduleIsDue_", "campaignScheduleUnsafeBlocks_", "OUTREACH_CAMPAIGNS_SHEET_NAME", "console", "outreachHourlyLimit_",
-      "outreachHoldStreak_", "outreachSendAllowance_", "outreachClearReleasedOutboxHold_", "OUTREACH_HOLD_STREAK_PAUSE",
+      "outreachHoldStreak_", "outreachSendAllowance_", "outreachClearReleasedOutboxHold_", "OUTREACH_HOLD_STREAK_PAUSE", "OUTREACH_HOLD_VERIFY_DELAY_MS", "Utilities",
       `${functionSource("runScheduledCampaign_", "outreachStatusForOutcome_")}; return runScheduledCampaign_;`
     )(
       (id, mutate) => mutate(campaign),
@@ -2829,7 +2829,7 @@ test("scheduled campaign sends validate times, run due campaigns, skip guarded r
       new Function(`${functionSource("clearCampaignSchedule_", "campaignScheduleState_")}; return clearCampaignSchedule_;`)(),
       (...args) => audits.push(args),
       ACTIVE, 2, isDue, unsafeBlocks, "Outreach Campaigns", { warn() {}, log() {} }, () => 20,
-      () => holdStreak, () => ({ next_at:Date.now() + 3600000 }), () => ({ cleared:false }), 3,
+      () => holdStreak, () => ({ next_at:Date.now() + 3600000 }), () => ({ cleared:false }), 3, 0, { sleep() {} },
     );
     const result = run("CMP-1", Date.now() + 60000);
     return { result, campaign, calls, audits };

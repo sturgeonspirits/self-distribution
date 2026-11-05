@@ -16,7 +16,7 @@ async function backend({ config = {}, mailerResult } = {}) {
     console: { log() {}, warn() {}, error() {} },
     PropertiesService: { getScriptProperties: () => ({ getProperty: key => properties.get(key) ?? null, setProperty: (key, value) => properties.set(key, String(value)), deleteProperty: key => properties.delete(key) }) },
     UrlFetchApp: { fetch: (url, options) => { fetches.push(JSON.parse(options.payload)); return { getContentText: () => JSON.stringify(mailerResult), getResponseCode: () => 200 }; } },
-    Utilities: { formatDate: date => new Date(date).toISOString().slice(11, 16) },
+    Utilities: { formatDate: date => new Date(date).toISOString().slice(11, 16), sleep() {} },
     Session: {}, SpreadsheetApp: {}, CacheService: {}, LockService: {}, ContentService: {}, MimeType: {}, ScriptApp: {},
   };
   vm.createContext(context);
@@ -130,7 +130,8 @@ test("Send remaining can start the paced schedule now", async () => {
   const source = await readFile(new URL("apps-script/Code.gs", root), "utf8");
   const schedule = source.slice(source.indexOf("function apiScheduleOutreachCampaign_"), source.indexOf("function apiCancelOutreachCampaignSchedule_"));
   assert.match(schedule, /const check = startNow \? \{ send_at:new Date\(\) \} : campaignScheduleValidation_\(p\.send_at, new Date\(\)\);/);
-  assert.match(schedule, /Sending started\. The Hub sends about \$\{outreachHourlyLimit_\(\)\} an hour on its own/);
+  assert.match(schedule, /"Sending started\."/);
+  assert.match(schedule, /The Hub sends about \$\{outreachHourlyLimit_\(\)\} an hour during the sending window/);
 });
 
 test("the mailer reports Zoho's Outbox after real sends only and never fails a send over it", async () => {
@@ -280,4 +281,95 @@ test("the Outbox re-check waits four minutes after a hold starts, so the next fi
   real.properties.set("OUTREACH_SEND_HOLD_UNTIL", String(start + 60 * MIN));
   assert.deepEqual(real.call(`outreachClearReleasedOutboxHold_(${start + 5 * MIN}, { outbox_hold_checked:false })`), { checked:true, cleared:false, held_in_outbox:3 });
   assert.equal(Number(real.properties.get("OUTREACH_SEND_HOLD_UNTIL")), start + 60 * MIN);
+});
+
+// Sending window and same-run hold check (Inventory API .57-APP).
+function chicagoFormat(date, tz, fmt) {
+  const parts = Object.fromEntries(new Intl.DateTimeFormat("en-US", { timeZone:"America/Chicago", weekday:"short", hour:"numeric", minute:"numeric", hourCycle:"h23" })
+    .formatToParts(new Date(date)).map(p => [p.type, p.value]));
+  if (fmt === "u") return String(["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"].indexOf(parts.weekday) + 1);
+  if (fmt === "H") return String(Number(parts.hour));
+  if (fmt === "m") return String(Number(parts.minute));
+  return new Date(date).toISOString();
+}
+
+test("the sending window: weekdays 10 am–2 pm Chicago by default, configurable or off", async () => {
+  const { context, call } = await backend();
+  context.Utilities = { formatDate: chicagoFormat, sleep() {} };
+  const state = (iso, config) => {
+    context.__config = config === undefined ? {} : { outreach_send_window: config };
+    return call(`outreachSendWindowState_(new Date("${iso}"))`);
+  };
+  assert.equal(state("2026-11-05T19:06:00Z").open, true, "Thu 1:06 pm CST");
+  let s = state("2026-11-05T20:30:00Z"); // Thu 2:30 pm
+  assert.equal(s.open, false);
+  assert.equal(s.next_open, "2026-11-06T16:00:00.000Z", "Fri 10 am CST");
+  assert.equal(s.label, "10 am–2 pm, Mon, Tue, Wed, Thu, Fri");
+  s = state("2026-11-07T17:00:00Z"); // Sat 11 am
+  assert.equal(s.open, false);
+  assert.equal(s.next_open, "2026-11-09T16:00:00.000Z", "Mon 10 am");
+  assert.equal(state("2026-11-06T15:59:00Z").open, false, "Fri 9:59 am");
+  assert.equal(state("2026-11-07T17:00:00Z", "off").open, true);
+  s = state("2026-11-05T17:00:00Z", "11:00-13:30 Tue,Thu"); // Thu 11 am
+  assert.equal(s.open, true);
+  assert.equal(state("2026-11-05T19:40:00Z", "11:00-13:30 Tue,Thu").next_open, "2026-11-10T17:00:00.000Z", "Thu 1:40 pm → Tue 11 am");
+  assert.equal(state("2026-11-05T19:06:00Z", "nonsense").label, "10 am–2 pm, Mon, Tue, Wed, Thu, Fri", "a bad setting falls back to the default");
+});
+
+test("outside the window the scheduler sends nothing and notes when it resumes, writing only when the note changes", async () => {
+  const { context } = await backend();
+  context.Utilities = { formatDate: chicagoFormat, sleep() {} };
+  vm.runInContext(`
+    __writes = []; __sent = 0;
+    __headers = { campaign_id:0, status:1, approval_token:2, scheduled_send_at:3, scheduled_by:4, schedule_status:5, schedule_detail:6 };
+    __row = ["CMP-1", "Approved", "tok", new Date(Date.now() - 60000), "Karl", "Sending", ""];
+    outreachCampaignSheets_ = () => ({ campaigns:{ getLastRow:() => 2, getLastColumn:() => 7, getRange:() => ({ getValues:() => [__row.slice()] }) } });
+    getHeaderMap_ = () => __headers;
+    outreachSendWindowState_ = () => ({ open:false, next_open:new Date("2026-11-06T16:00:00Z"), label:"10 am–2 pm, Mon, Tue, Wed, Thu, Fri" });
+    campaignScheduleTimeLabel_ = () => "Fri Nov 6, 10:00 AM CT";
+    updateCampaignSchedule_ = (id, mutate) => { const c = { values:__row, headers:__headers }; mutate(c); __writes.push(__row[6]); };
+    runScheduledCampaign_ = () => { __sent += 1; return {}; };
+    bumpReadCacheVersion_ = () => {};`, context);
+  vm.runInContext(`runScheduledOutreachCampaigns()`, context);
+  vm.runInContext(`runScheduledOutreachCampaigns()`, context);
+  assert.equal(context.__sent, 0);
+  assert.equal(context.__writes.length, 1, "the same note is not rewritten every five minutes");
+  assert.match(context.__writes[0], /^Waiting for the sending window \(10 am–2 pm, Mon, Tue, Wed, Thu, Fri\); next opens Fri Nov 6, 10:00 AM CT\. Continues on its own\.$/);
+});
+
+test("a send reported held is re-checked in the same run; if the Outbox emptied, sending continues", async () => {
+  const { context } = await backend();
+  context.Utilities = { formatDate: chicagoFormat, sleep() { context.__slept = (context.__slept || 0) + 1; } };
+  vm.runInContext(`
+    __headers = { campaign_id:0, status:1, approval_token:2, scheduled_send_at:3, scheduled_by:4, schedule_status:5, schedule_detail:6, app_version:7 };
+    __campaign = { row:2, headers:__headers, values:["CMP-1", "Approved", "tok", new Date(Date.now() - 60000), "Karl", "Sending", "", ""] };
+    __batches = [
+      { sent:1, blocked:0, remaining:10, results:[{ status:"Sent" }], held:true },
+      { sent:1, blocked:0, remaining:9, results:[{ status:"Sent" }] },
+    ];
+    __calls = 0;
+    updateCampaignSchedule_ = (id, mutate) => mutate(__campaign);
+    outreachCampaignSheets_ = () => ({});
+    outreachCampaignRow_ = () => __campaign;
+    apiSendOutreachCampaignBatch_ = () => { __calls += 1; return __batches.shift(); };
+    outreachClearReleasedOutboxHold_ = (now, state, options) => ({ cleared:!!(options && options.force) });
+    appendAudit_ = () => {};`, context);
+  const run = JSON.parse(JSON.stringify(vm.runInContext(`runScheduledCampaign_("CMP-1", Date.now() + 200000, { outbox_hold_checked:false })`, context)));
+  assert.equal(context.__calls, 2, "the cleared hold lets the run send its second email");
+  assert.equal(context.__slept, 1);
+  assert.equal(run.sent, 2);
+  assert.equal(run.state, "Sending");
+
+  // Still held after the re-check: wait it out as before (no second send in this run).
+  vm.runInContext(`
+    __campaign.values[5] = "Sending";
+    __batches = [{ sent:1, blocked:0, remaining:10, results:[{ status:"Sent" }], held:true }];
+    __calls = 0;
+    outreachClearReleasedOutboxHold_ = () => ({ cleared:false });
+    outreachHoldStreak_ = () => 1;
+    outreachSendAllowance_ = () => ({ next_at:Date.now() + 3600000 });`, context);
+  const held = JSON.parse(JSON.stringify(vm.runInContext(`runScheduledCampaign_("CMP-1", Date.now() + 200000, { outbox_hold_checked:false })`, context)));
+  assert.equal(context.__calls, 1);
+  assert.equal(held.state, "Sending");
+  assert.match(context.__campaign.values[6], /^Waiting: Zoho held mail in the Outbox/);
 });

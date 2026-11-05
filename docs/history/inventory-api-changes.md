@@ -3,6 +3,18 @@
 Moved out of the `apps-script/Code.gs` header on 2026-10-17 so the deployed file stays short. Newest first, copied word for word. The header keeps only the current version (`CHANGES IN THIS VERSION`); when a new version is made, move that section to the top of this file.
 
 ```
+CHANGES IN 2026.11.05.56-APP
+- Campaign sequences, Part B Phase 4. Once a day (from the hourly task-manager sync, at or after 6 am), the Hub
+  builds a draft campaign (status Review) for each migrated sequence step that has businesses due, unless a draft
+  is already waiting or that step is still sending. Drafts use the normal create path with a new "sequence"
+  audience (the Directory rows whose Sequence ID is that sequence), so the stage and send-eligibility checks are
+  the same as for any campaign. Nothing is approved or sent automatically. runSequenceStepCheck() runs it now.
+- Each drafted step gets an immediate "Review and approve '<name>'" task in the weekly task manager. Businesses
+  in a sequence no longer get a separate "Send <stage> ..." reminder; the draft's task replaces it.
+- Sequences without a saved name are named by area and start date (e.g. "Appleton, Sep 25").
+- Needs .55's setup first: repairHubStructure(), then migrateCampaignsToSequences(). Until a sequence is
+  migrated, the daily check does nothing.
+
 CHANGES IN 2026.11.05.55-APP
 - Campaign sequences, Part B Phase 2 (claude/chat-request-campaign-sequences-2026-11-05.md). A sequence groups
   the step campaigns of one audience (Initial, Follow-up 1, Follow-up 2); sending is unchanged.

@@ -1,18 +1,17 @@
 /*********************************
  * Inventory API (JSON) for Netlify
- * App version: 2026.11.05.56-APP
+ * App version: 2026.11.05.57-APP
  *
  * CHANGES IN THIS VERSION
- * - Campaign sequences, Part B Phase 4. Once a day (from the hourly task-manager sync, at or after 6 am), the Hub
- *   builds a draft campaign (status Review) for each migrated sequence step that has businesses due, unless a draft
- *   is already waiting or that step is still sending. Drafts use the normal create path with a new "sequence"
- *   audience (the Directory rows whose Sequence ID is that sequence), so the stage and send-eligibility checks are
- *   the same as for any campaign. Nothing is approved or sent automatically. runSequenceStepCheck() runs it now.
- * - Each drafted step gets an immediate "Review and approve '<name>'" task in the weekly task manager. Businesses
- *   in a sequence no longer get a separate "Send <stage> ..." reminder; the draft's task replaces it.
- * - Sequences without a saved name are named by area and start date (e.g. "Appleton, Sep 25").
- * - Needs .55's setup first: repairHubStructure(), then migrateCampaignsToSequences(). Until a sequence is
- *   migrated, the daily check does nothing.
+ * - Sending window: scheduled campaigns and Send remaining send only from 10 am to 2 pm Chicago time, Monday to
+ *   Friday, so email lands late morning to early afternoon before places get busy. Outside it a campaign waits and
+ *   its detail says when the next window opens. Hub Configuration "outreach_send_window" changes it (for example
+ *   "10:30-13:30 Tue-Fri") or turns it off ("off"). One-off emails and "Send up to 2" are not limited.
+ * - A send the mailer reports as held is re-checked about 45 seconds later in the same run; if Zoho's Outbox has
+ *   emptied (the usual case: the email was only in transit), sending continues at the normal pace of about 20 an
+ *   hour instead of one email per five-minute run. A real hold still stops sending for up to an hour.
+ * - Still includes the sequences code from .55/.56; it does nothing until repairHubStructure() and
+ *   migrateCampaignsToSequences() are run.
  *
  * DEPLOY
  * - Apps Script project: Inventory API
@@ -22,7 +21,7 @@
  * Earlier version notes: docs/history/inventory-api-changes.md (move this version's notes there when the version changes).
  *********************************/
 
-const APP_VERSION = "2026.11.05.56-APP";
+const APP_VERSION = "2026.11.05.57-APP";
 
 const SHEET_NAMES = {
   STORES: "Stores",
@@ -7005,7 +7004,7 @@ function apiScheduleOutreachCampaign_(p) {
   appendAudit_("SCHEDULE_OUTREACH_CAMPAIGN", "Campaign", p.campaign_id, "", staffName, OUTREACH_CAMPAIGNS_SHEET_NAME, OUTREACH_CAMPAIGNS_SHEET_NAME, "Scheduled", label);
   const installed = campaignSchedulerInstalled_();
   return {
-    message:startNow ? `Sending started. The Hub sends about ${outreachHourlyLimit_()} an hour on its own; you can close this page.${installed === false ? " Warning: the scheduled sender is not installed; run installOutreachCampaignScheduler() in Apps Script or this will not send." : ""}` : `Scheduled for ${label}. No email was sent now.${installed === false ? " Warning: the scheduled sender is not installed; run installOutreachCampaignScheduler() in Apps Script or this will not send." : ""}`,
+    message:startNow ? `${(() => { const w = outreachSendWindowState_(new Date()); return w.open ? "Sending started." : `Queued: it starts when the sending window opens${w.next_open ? ` (${campaignScheduleTimeLabel_(w.next_open)})` : ""}.`; })()} The Hub sends about ${outreachHourlyLimit_()} an hour during the sending window (${outreachSendWindowState_(new Date()).label}) on its own; you can close this page.${installed === false ? " Warning: the scheduled sender is not installed; run installOutreachCampaignScheduler() in Apps Script or this will not send." : ""}` : `Scheduled for ${label}. No email was sent now.${installed === false ? " Warning: the scheduled sender is not installed; run installOutreachCampaignScheduler() in Apps Script or this will not send." : ""}`,
     scheduled_send_at:check.send_at.toISOString(), scheduler_installed:installed,
   };
 }
@@ -7022,6 +7021,59 @@ function apiCancelOutreachCampaignSchedule_(p) {
   return { message:"Schedule cancelled. No further scheduled email will be sent for this campaign." };
 }
 
+// ---------- Sending window (2026-11-05) ----------
+// Campaign email should land late morning to early afternoon, before bars and restaurants get busy, not whenever the
+// pacer allows. Scheduled campaigns and Send remaining send only inside this window (Hub time, America/Chicago);
+// outside it they wait and say when the next window opens. A one-off email and "Send up to 2" are not limited.
+// Hub Configuration "outreach_send_window", e.g. "10:00-14:00 Mon-Fri" (days: Mon..Sun, ranges or lists), or "off".
+const OUTREACH_SEND_WINDOW_CONFIG_KEY = "outreach_send_window";
+const OUTREACH_SEND_WINDOW_DEFAULT = "10:00-14:00 Mon-Fri";
+const OUTREACH_WEEKDAYS = ["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"];
+
+function outreachSendWindow_() {
+  const raw = String(getHubConfigurationValue_(OUTREACH_SEND_WINDOW_CONFIG_KEY) || "").trim() || OUTREACH_SEND_WINDOW_DEFAULT;
+  if (/^off$/i.test(raw)) return null;
+  const parse = text => {
+    const match = String(text || "").match(/^(\d{1,2}):(\d{2})\s*-\s*(\d{1,2}):(\d{2})\s*(.*)$/);
+    if (!match) return null;
+    const start = Number(match[1]) * 60 + Number(match[2]);
+    const end = Number(match[3]) * 60 + Number(match[4]);
+    if (!(start >= 0 && end <= 24 * 60 && start < end)) return null;
+    const days = new Set();
+    const spec = String(match[5] || "").trim() || "Mon-Sun";
+    for (const part of spec.split(/[,\s]+/).filter(Boolean)) {
+      const range = part.split("-").map(item => OUTREACH_WEEKDAYS.findIndex(day => day.toLowerCase() === item.slice(0, 3).toLowerCase()));
+      if (range.some(index => index < 0) || range.length > 2) return null;
+      if (range.length === 1) days.add(range[0] + 1);
+      else for (let d = range[0]; ; d = (d + 1) % 7) { days.add(d + 1); if (d === range[1]) break; }
+    }
+    return days.size ? { start:start, end:end, days:days, text:text } : null;
+  };
+  return parse(raw) || parse(OUTREACH_SEND_WINDOW_DEFAULT);
+}
+
+/** Whether campaign sends may go now, and if not, when the window next opens (approximate across a DST change). */
+function outreachSendWindowState_(now, sendWindow) {
+  const at = now instanceof Date ? now : new Date();
+  const window = sendWindow === undefined ? outreachSendWindow_() : sendWindow;
+  if (!window) return { open:true, next_open:null, label:"any time" };
+  const timeZone = "America/Chicago";
+  const day = Number(Utilities.formatDate(at, timeZone, "u")); // 1 = Monday
+  const minute = Number(Utilities.formatDate(at, timeZone, "H")) * 60 + Number(Utilities.formatDate(at, timeZone, "m"));
+  const hhmm = value => { const h = Math.floor(value / 60); const m = value % 60; return `${h % 12 || 12}${m ? `:${String(m).padStart(2, "0")}` : ""} ${h < 12 ? "am" : "pm"}`; };
+  const dayList = Array.from(window.days).sort((a, b) => a - b).map(d => OUTREACH_WEEKDAYS[d - 1]).join(", ");
+  const label = `${hhmm(window.start)}–${hhmm(window.end)}, ${dayList}`;
+  if (window.days.has(day) && minute >= window.start && minute < window.end) return { open:true, next_open:null, label:label };
+  for (let ahead = 0; ahead <= 7; ahead += 1) {
+    const candidate = ((day - 1 + ahead) % 7) + 1;
+    if (!window.days.has(candidate)) continue;
+    if (ahead === 0 && minute >= window.start) continue;
+    const minutes = ahead * 1440 + window.start - minute;
+    return { open:false, next_open:new Date(at.getTime() + minutes * 60000), label:label };
+  }
+  return { open:false, next_open:null, label:label };
+}
+
 function runScheduledOutreachCampaigns() {
   const startedAt = Date.now();
   const deadlineAt = startedAt + CAMPAIGN_SCHEDULE_RUN_BUDGET_MS;
@@ -7029,11 +7081,27 @@ function runScheduledOutreachCampaigns() {
   const h = getHeaderMap_(sheets.campaigns);
   if (sheets.campaigns.getLastRow() < 2 || h.schedule_status === undefined) return { runs:[] };
   const now = new Date();
-  const due = sheets.campaigns.getRange(2, 1, sheets.campaigns.getLastRow() - 1, sheets.campaigns.getLastColumn()).getValues()
-    .map((values, index) => campaignScheduleState_({ row:index + 2, values:values, headers:h }))
+  const rowValues = sheets.campaigns.getRange(2, 1, sheets.campaigns.getLastRow() - 1, sheets.campaigns.getLastColumn()).getValues();
+  const due = rowValues
+    .map((values, index) => Object.assign(campaignScheduleState_({ row:index + 2, values:values, headers:h }), { schedule_detail:h.schedule_detail === undefined ? "" : String(values[h.schedule_detail] || "") }))
     .filter(state => campaignScheduleIsDue_(state, now))
     .sort((a, b) => new Date(a.scheduled_send_at).getTime() - new Date(b.scheduled_send_at).getTime());
   const runs = [];
+  const sendWindow = outreachSendWindowState_(now);
+  if (!sendWindow.open) {
+    // Outside the sending window: nothing sends. Say when it resumes (written only when the text changes).
+    const detail = `Waiting for the sending window (${sendWindow.label})${sendWindow.next_open ? `; next opens ${campaignScheduleTimeLabel_(sendWindow.next_open)}` : ""}. Continues on its own.`;
+    due.forEach(state => {
+      try {
+        if (state.schedule_detail !== detail && h.schedule_detail !== undefined) {
+          updateCampaignSchedule_(state.campaign_id, campaign => { campaign.values[campaign.headers.schedule_detail] = detail; });
+        }
+      } catch (error) { console.warn(`Schedule detail not updated for ${state.campaign_id}: ${String(error.message || error)}`); }
+      runs.push({ campaign_id:state.campaign_id, state:"Window closed", sent:0, skipped:0, detail:detail });
+    });
+    console.log(JSON.stringify({ event:"outreach_campaign_schedule_run", due:due.length, runs:runs, window_closed:true }));
+    return { runs:runs };
+  }
   const holdCheck = { outbox_hold_checked:false };
   for (const state of due) {
     if (Date.now() > deadlineAt) break;
@@ -7076,6 +7144,7 @@ function runScheduledCampaign_(campaignId, deadlineAt, holdCheck) {
   }
   if (!state) return { campaign_id:campaignId, state:"Not due", sent:0, skipped:0, detail:"" };
   const actor = `Scheduled send (${state.scheduled_by || "staff"})`;
+  let verifiedHold = false;
   while (Date.now() < deadlineAt) {
     const sheets = outreachCampaignSheets_();
     const campaign = outreachCampaignRow_(sheets.campaigns, campaignId);
@@ -7100,6 +7169,13 @@ function runScheduledCampaign_(campaignId, deadlineAt, holdCheck) {
     if (unsafe.length) {
       return finish("Paused", `Paused at ${campaignScheduleTimeLabel_(new Date())} after ${unsafe[0].business}: ${String(unsafe[0].detail || "").slice(0, 300)}. Delivery may be uncertain; open the campaign and check before resuming. ${sent} sent, ${skipped} skipped this run.`);
     }
+    if (res.held && Number(res.sent || 0) > 0 && !verifiedHold && Date.now() + OUTREACH_HOLD_VERIFY_DELAY_MS < deadlineAt) {
+      // The mailer counts the Outbox 1.5 s after sending, while a normal email is usually still in transit. Look again
+      // shortly; if the Outbox has emptied, it was not a real hold, so clear it and carry on within the pace limits.
+      verifiedHold = true;
+      Utilities.sleep(OUTREACH_HOLD_VERIFY_DELAY_MS);
+      if (outreachClearReleasedOutboxHold_(Date.now(), holdCheck, { force:true }).cleared) continue;
+    }
     if (res.held) {
       // A Zoho Outbox hold waits out the hour and then continues on its own. Only repeated holds with no clean send
       // in between (a sign Zoho may be blocking the account) pause the campaign for a person to check.
@@ -7118,7 +7194,7 @@ function runScheduledCampaign_(campaignId, deadlineAt, holdCheck) {
     if (!Number(res.remaining || 0)) {
       return finish("Done", `Finished ${campaignScheduleTimeLabel_(new Date())}. ${sent} sent and ${skipped} skipped in the final run; see the recipient list for the full result.`);
     }
-    break; // One small batch per five-minute run keeps the sends spread out.
+    break; // One small batch per five-minute run keeps the sends spread out (a cleared transient hold continues above).
   }
   return finish("Sending", `Sending slowly: ${sent} sent and ${skipped} skipped in the latest run; continues automatically every five minutes (about ${outreachHourlyLimit_()} an hour).`);
 }
@@ -7412,6 +7488,7 @@ const OUTREACH_HOLD_MS = 60 * 60 * 1000;
 // report is usually not a real hold (2026-11-05: every Appleton send was reported held and went out within ~2 min).
 // Checking again at the next five-minute run tells a transient one from a real one; a real hold keeps the full hour.
 const OUTREACH_OUTBOX_RELEASE_CHECK_DELAY_MS = 4 * 60 * 1000;
+const OUTREACH_HOLD_VERIFY_DELAY_MS = 45 * 1000; // Same-run re-check after a send was reported held.
 const OUTREACH_WINDOW_MS = 60 * 60 * 1000;
 const OUTREACH_BURST_WINDOW_MS = 5 * 60 * 1000;
 
@@ -7438,12 +7515,13 @@ function outreachRecordSend_(at, held) {
 
 // The mailer reported a hold immediately after the last send, but Zoho can release it much sooner than the fixed
 // hour. This read-only check is called at most once by each scheduler invocation, once four minutes have elapsed.
-function outreachClearReleasedOutboxHold_(now, runState) {
+function outreachClearReleasedOutboxHold_(now, runState, options) {
   const at = typeof now === "number" ? now : Date.now();
+  const force = !!(options && options.force); // The scheduler's own re-check right after a send it just made.
   const properties = PropertiesService.getScriptProperties();
   const holdUntil = Number(properties.getProperty(OUTREACH_SEND_HOLD_PROPERTY) || 0);
-  if (!holdUntil || holdUntil <= at || at - (holdUntil - OUTREACH_HOLD_MS) < OUTREACH_OUTBOX_RELEASE_CHECK_DELAY_MS) return { checked:false, cleared:false, held_in_outbox:-1 };
-  if (runState && runState.outbox_hold_checked) return { checked:false, cleared:false, held_in_outbox:-1 };
+  if (!holdUntil || holdUntil <= at || (!force && at - (holdUntil - OUTREACH_HOLD_MS) < OUTREACH_OUTBOX_RELEASE_CHECK_DELAY_MS)) return { checked:false, cleared:false, held_in_outbox:-1 };
+  if (!force && runState && runState.outbox_hold_checked) return { checked:false, cleared:false, held_in_outbox:-1 };
   if (runState) runState.outbox_hold_checked = true;
   let held = -1;
   try { held = Number(callOutreachMailer_({ action:"getOutboxHeldCount" }).held_in_outbox); }
