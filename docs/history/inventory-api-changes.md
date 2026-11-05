@@ -3,6 +3,13 @@
 Moved out of the `apps-script/Code.gs` header on 2026-10-17 so the deployed file stays short. Newest first, copied word for word. The header keeps only the current version (`CHANGES IN THIS VERSION`); when a new version is made, move that section to the top of this file.
 
 ```
+CHANGES IN 2026.11.05.54-APP
+- A Zoho Outbox "hold" is re-checked at the next five-minute run (after 4 minutes, was 10). The mailer counts the
+  Outbox 1.5 s after each send, when a normal email is usually still in transit, so on 2026-11-05 every Appleton
+  Follow-up 2 send was reported held and then went out within about 2 minutes, which slowed the campaign to roughly
+  one email every 10–15 minutes. An empty Outbox at the re-check clears the hold; a real hold keeps the full hour,
+  and three held sends in a row with nothing released still pause the campaign.
+
 CHANGES IN 2026.11.05.53-APP
 - Review fixes for .52 (claude/review-7361d41-2026-11-05.md); .52 itself was never deployed, so its notes (Closed
   result, campaign dates and states, early Outbox release, header guard) ship in this version too.

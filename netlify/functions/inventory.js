@@ -1,9 +1,9 @@
-// App version: 2026.10.17.54-WEB
+// App version: 2026.11.05.62-WEB
 import { gunzipSync } from "node:zlib";
 import { requireStaffSession } from "./auth.js";
 import { fetchWithDriveRelay, relayConfig } from "../lib/drive-relay.js";
 
-const APP_VERSION = "2026.10.17.54-WEB";
+const APP_VERSION = "2026.11.05.62-WEB";
 const STAFF_ACTIONS = new Set([
   "outreachDashboard",
   "outreachRecord",
@@ -14,6 +14,7 @@ const STAFF_ACTIONS = new Set([
   "checkInboundReplies",
   "outreachCampaigns",
   "outreachCampaign",
+  "outreachSequences",
   "previewOutreachCampaign",
   "createOutreachCampaign",
   "updateOutreachCampaignRecipient",
@@ -87,14 +88,14 @@ const SEND_ACTIONS = new Set(["sendOutreachEmail", "sendOutreachTestEmail", "sen
 const SNAPSHOT_ACTIONS = new Set(["createOutreachCampaign"]);
 // Actions allowed over GET: the same list as READ_ACTIONS in apps-script/Code.gs. Anything that
 // changes data must be a POST, so a link or image tag cannot trigger it with a staff cookie.
-const GET_READ_ACTIONS = new Set(["initData", "listSkus", "sellSheet", "managerGrid", "salesSinceCount", "outreachDashboard", "outreachRecord", "outreachSendStatus", "outreachNewsletterContacts", "outreachCampaigns", "outreachCampaign", "previewOutreachCampaign", "customerWorkQueue", "customerAccountIndex", "hubSystemStatus", "salesReport", "inboundReplies"]);
-const CAMPAIGN_READ_ACTIONS = new Set(["outreachCampaigns", "outreachCampaign", "previewOutreachCampaign"]);
+const GET_READ_ACTIONS = new Set(["initData", "listSkus", "sellSheet", "managerGrid", "salesSinceCount", "outreachDashboard", "outreachRecord", "outreachSendStatus", "outreachNewsletterContacts", "outreachCampaigns", "outreachCampaign", "outreachSequences", "previewOutreachCampaign", "customerWorkQueue", "customerAccountIndex", "hubSystemStatus", "salesReport", "inboundReplies"]);
+const CAMPAIGN_READ_ACTIONS = new Set(["outreachCampaigns", "outreachCampaign", "outreachSequences", "previewOutreachCampaign"]);
 // 2026.10.02.13-WEB: initializeHardenedHub is no longer proxied; the request is refused as unknown.
 const ADMIN_ACTIONS = new Set(["repairHubStructure", "reconcileIntegrations", "recalculateOutreachMiles", "backfillEngagementDetails", "upsertProduct", "addSkuToStore"]);
 const ACTION_AREAS = new Map([
   ["outreachDashboard", "outreach"], ["outreachRecord", "outreach"], ["outreachSendStatus", "outreach"], ["outreachNewsletterContacts", "outreach"],
   ["inboundReplies", "outreach"], ["resolveInboundReply", "outreach"], ["checkInboundReplies", "outreach"],
-  ["outreachCampaigns", "outreach"], ["outreachCampaign", "outreach"], ["previewOutreachCampaign", "outreach"], ["createOutreachCampaign", "outreach"], ["updateOutreachCampaignRecipient", "outreach"], ["setOutreachCampaignRecipientExclusion", "outreach"], ["setOutreachCampaignRecipientExclusions", "outreach"],
+  ["outreachCampaigns", "outreach"], ["outreachCampaign", "outreach"], ["outreachSequences", "outreach"], ["previewOutreachCampaign", "outreach"], ["createOutreachCampaign", "outreach"], ["updateOutreachCampaignRecipient", "outreach"], ["setOutreachCampaignRecipientExclusion", "outreach"], ["setOutreachCampaignRecipientExclusions", "outreach"],
   ["approveOutreachCampaign", "outreach"], ["reopenOutreachCampaign", "outreach"], ["deleteOutreachCampaign", "outreach"], ["renameOutreachCampaign", "outreach"], ["reconcileCampaignSends", "outreach"], ["rebuildCampaignRecipients", "outreach"], ["sendOutreachCampaignBatch", "outreach"],
   ["scheduleOutreachCampaign", "outreach"], ["cancelOutreachCampaignSchedule", "outreach"],
   ["saveOutreachDraft", "outreach"], ["updateOutreachOutcome", "outreach"], ["logOutreachContact", "outreach"], ["updateOutreachBusiness", "outreach"],
