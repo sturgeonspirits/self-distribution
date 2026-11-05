@@ -3,6 +3,12 @@
 Moved out of the `apps-script/Code.gs` header on 2026-10-17 so the deployed file stays short. Newest first, copied word for word. The header keeps only the current version (`CHANGES IN THIS VERSION`); when a new version is made, move that section to the top of this file.
 
 ```
+CHANGES IN 2026.11.05.51-APP
+- Zoho Outbox holds no longer stop a campaign until someone clicks again. A scheduled campaign (including Send
+  remaining) waits out the hold and then continues on its own; its detail says when. It pauses for a person only
+  after Zoho holds 3 sends in a row with no clean send between (script property OUTREACH_SEND_HOLD_STREAK), or
+  when a delivery is uncertain, as before. The hold itself (no campaign sends for an hour) is unchanged.
+
 CHANGES IN 2026.10.30.50-APP
 - Send pacing: campaign emails go out at most 20 an hour (Hub Configuration "outreach_hourly_send_limit") and at
   most a twelfth of that in any 5 minutes, counting every real send the Hub makes. The scheduler sends one batch of

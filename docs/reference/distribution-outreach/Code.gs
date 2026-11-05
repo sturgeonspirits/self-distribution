@@ -1,13 +1,13 @@
 /**
  * Sturgeon Spirits Distribution Outreach
  *
- * VERSION: 2026.10.30.34-APP
+ * VERSION: 2026.11.05.35-APP
  *
  * CHANGES IN THIS VERSION
- * - After every real send (campaign, single, welcome, newsletter, payment reminder) the mailer checks the Zoho
- *   Outbox and returns held_in_outbox: how many messages Zoho is holding instead of sending (the hourly sending
- *   limit). The Activity Log detail says so too. The Hub (Inventory API .50) stops campaign sending and pauses
- *   scheduled campaigns when it sees one. Read-only check; no new Zoho scopes. Test sends are not checked.
+ * - Closed Directory businesses are refused for sales, Cocktail list, customer invite, welcome, and payment-reminder
+ *   sends. Closed is not presented as an address-fix action.
+ * - Adds getOutboxHeldCount, a secret-authenticated read-only action for Inventory API to release a stale hold once
+ *   Zoho's Outbox is empty. It reuses the existing folder/message read scopes and returns -1 when unknown.
  *
  * DEPLOY
  * - Apps Script project: distribution outreach
@@ -19,7 +19,7 @@
  * Earlier version notes: docs/history/distribution-outreach-changes.md (move this version's notes there when the version changes).
  */
 
-const OUTREACH_VERSION = '2026.10.30.34-APP';
+const OUTREACH_VERSION = '2026.11.05.35-APP';
 const NURTURE_CHECK_IN_DUPLICATE_COOLDOWN_DAYS = 60;
 
 const OUTREACH = Object.freeze({
@@ -157,6 +157,7 @@ function doPost(e) {
     assertAppServiceToken_(body.service_token);
     const action = String(body.action || '');
     if (action === 'appMailerStatus') return appJson_(Object.assign({ ok:true, version:OUTREACH_VERSION }, appMailerStatus_()));
+    if (action === 'getOutboxHeldCount') return appJson_(Object.assign({ ok:true, version:OUTREACH_VERSION }, getOutboxHeldCountRequest_()));
     if (action === 'sendAppEmail') return appJson_(Object.assign({ ok:true, version:OUTREACH_VERSION }, sendAppEmailRequest_(body, false)));
     if (action === 'sendNewsletterEmail') return appJson_(Object.assign({ ok:true, version:OUTREACH_VERSION }, sendNewsletterEmailRequest_(body)));
     if (action === 'sendWelcomeEmail') return appJson_(Object.assign({ ok:true, version:OUTREACH_VERSION }, sendAppEmailRequest_(body, false, validateWelcomeRecipient_)));
@@ -309,7 +310,7 @@ function validateAppLead_(body, testMode) {
   if (business !== String(body.business || '').trim() || email !== String(body.recipient || '').trim().toLowerCase()) throw new Error('Source lead changed. Refresh the Hub before sending.');
   if (stage.toLowerCase() !== String(body.message_stage || '').trim().toLowerCase()) throw new Error('Email stage changed. Refresh the Hub before sending.');
   if (!testMode && !isValidEmail_(email)) throw new Error('Recipient email is invalid.');
-  if (!testMode && (isTicked_(row[OUTREACH.COL.DO_NOT_EMAIL - 1]) || ['do not contact', 'not interested', 'unsubscribed'].indexOf(status) >= 0 || ['bad address', 'not interested', 'unsubscribed', 'do not contact'].indexOf(outcome) >= 0)) {
+  if (!testMode && (isTicked_(row[OUTREACH.COL.DO_NOT_EMAIL - 1]) || ['closed', 'do not contact', 'not interested', 'unsubscribed'].indexOf(status) >= 0 || ['bad address', 'closed', 'not interested', 'unsubscribed', 'do not contact'].indexOf(outcome) >= 0)) {
     throw new Error('The source lead is blocked from email.');
   }
   const duplicate = appSentHistory_().some(function (item) {
@@ -330,6 +331,25 @@ function validateAppLead_(body, testMode) {
 // A checkbox, or "TRUE" / "Yes" / "1" typed in the cell, counts as ticked (the Hub reads it the same way).
 function isTicked_(value) {
   return value === true || /^(true|yes|y|1)$/i.test(String(value === null || value === undefined ? '' : value).trim());
+}
+
+// Closed is a business-level result, not an email-address repair task. Match by Account ID when available so a
+// payment reminder or Cocktail-list contact using another address is still refused for the closed business.
+function assertDirectoryRecipientNotClosed_(accountId, email) {
+  const normalizedAccount = String(accountId || '').trim();
+  const normalizedEmail = String(email || '').trim().toLowerCase();
+  if (!normalizedAccount && !normalizedEmail) return;
+  const sheet = assertStagingEnvironment_().getSheetByName(OUTREACH.LEADS_SHEET);
+  if (!sheet || sheet.getLastRow() < OUTREACH.FIRST_DATA_ROW) return;
+  const rows = sheet.getRange(OUTREACH.FIRST_DATA_ROW, 1, sheet.getLastRow() - 1, Math.max(sheet.getLastColumn(), OUTREACH.COL.LAST_DATA_COLUMN)).getValues();
+  const closed = rows.some(function (row) {
+    const sameAccount = normalizedAccount && String(row[OUTREACH.COL.ACCOUNT_ID - 1] || '').trim() === normalizedAccount;
+    const sameEmail = normalizedEmail && String(row[OUTREACH.COL.EMAIL - 1] || '').trim().toLowerCase() === normalizedEmail;
+    if (!sameAccount && !sameEmail) return false;
+    return String(row[OUTREACH.COL.STATUS - 1] || '').trim().toLowerCase() === 'closed'
+      || String(row[OUTREACH.COL.OUTCOME - 1] || '').trim().toLowerCase() === 'closed';
+  });
+  if (closed) throw new Error('This business is marked Closed in the Directory.');
 }
 
 // Order-online invite to a current customer. The Hub chooses the audience; this check is the
@@ -360,7 +380,7 @@ function validateCustomerLead_(body, testMode) {
   if (business !== String(body.business || '').trim() || email !== String(body.recipient || '').trim().toLowerCase()) throw new Error('Customer row changed. Refresh the Hub before sending.');
   if (!testMode && !isValidEmail_(email)) throw new Error('Recipient email is invalid.');
   const dneBlocks = isTicked_(row[OUTREACH.COL.DO_NOT_EMAIL - 1]) && !automaticCustomerDoNotEmail_(row);
-  if (!testMode && (dneBlocks || ['do not contact', 'not interested', 'unsubscribed', 'bad address'].indexOf(status) >= 0 || ['bad address', 'not interested', 'unsubscribed', 'do not contact'].indexOf(outcome) >= 0)) {
+  if (!testMode && (dneBlocks || ['closed', 'do not contact', 'not interested', 'unsubscribed', 'bad address'].indexOf(status) >= 0 || ['bad address', 'closed', 'not interested', 'unsubscribed', 'do not contact'].indexOf(outcome) >= 0)) {
     throw new Error('The customer is blocked from email.');
   }
   const accountId = String(row[OUTREACH.COL.ACCOUNT_ID - 1] || '').trim();
@@ -391,6 +411,9 @@ function validateWelcomeRecipient_(body, testMode) {
   if (business !== String(body.business || '').trim()) throw new Error('Customer row changed. Refresh the Hub before sending.');
   if (rowAccountId && String(body.account_id || '').trim() && rowAccountId !== String(body.account_id).trim()) throw new Error('Customer account changed. Refresh the Hub before sending.');
   if (!testMode && !isValidEmail_(email)) throw new Error('Recipient email is invalid.');
+  if (!testMode && (String(row[OUTREACH.COL.STATUS - 1] || '').trim().toLowerCase() === 'closed' || String(row[OUTREACH.COL.OUTCOME - 1] || '').trim().toLowerCase() === 'closed')) {
+    throw new Error('This business is marked Closed in the Directory.');
+  }
   if (!testMode && email === rowEmail) {
     const status = String(row[OUTREACH.COL.STATUS - 1] || '').trim().toLowerCase();
     const outcome = String(row[OUTREACH.COL.OUTCOME - 1] || '').trim().toLowerCase();
@@ -427,6 +450,7 @@ function validateNewsletterContact_(body, testMode) {
   if (!testMode && !isValidEmail_(email)) throw new Error('Recipient email is invalid.');
   if (!testMode && status !== 'Subscribed') throw new Error('Newsletter contact is not subscribed.');
   const business = String((organizationIndex >= 0 && row[organizationIndex]) || (sourceBusinessIndex >= 0 && row[sourceBusinessIndex]) || (nameIndex >= 0 && row[nameIndex]) || email).trim();
+  if (!testMode) assertDirectoryRecipientNotClosed_(accountIndex >= 0 ? String(row[accountIndex] || '').trim() : '', email);
   return { sheet:sheet, row:row, rowNumber:rowIndex + 2, business:business, email:email, stage:OUTREACH.COCKTAIL_LIST_STAGE, account_id:accountIndex >= 0 ? String(row[accountIndex] || '').trim() : '' };
 }
 
@@ -535,6 +559,12 @@ function outboxHeldCount_(settings) {
   }
 }
 
+// Hub-only read used after a ten-minute hold. It neither sends nor modifies any Zoho message; -1 preserves the
+// current hold when Zoho cannot be read safely.
+function getOutboxHeldCountRequest_() {
+  return { held_in_outbox:outboxHeldCount_(getSettings_()) };
+}
+
 function acceptedLogDetail_(accepted) {
   const held = Number(accepted && accepted.held_in_outbox || 0);
   return held > 0
@@ -601,6 +631,7 @@ function assertPaymentReminderRequest_(body) {
   if (!subject || subject.length > 200 || !html || html.length > 100000) throw new Error('A valid payment-reminder subject and message are required.');
   if (!invoices.length || invoices.length > 100 || invoices.some(function (value) { return value.length > 120; })) throw new Error('At least one valid invoice number is required.');
   if (!Number.isInteger(amount) || amount <= 0) throw new Error('A positive outstanding amount is required.');
+  assertDirectoryRecipientNotClosed_(accountId, recipient);
   return { token:token, account_id:accountId, business:business, recipient:recipient, subject:subject, html:html, invoice_numbers:invoices, outstanding_amount_cents:amount, requested_by:String(body.requested_by || '').trim().slice(0, 120) };
 }
 
@@ -1069,8 +1100,8 @@ function assertPilotLeadEligible_(row) {
   const stage = String(row[OUTREACH.COL.STAGE - 1] || 'Initial').trim();
   const status = String(row[OUTREACH.COL.STATUS - 1] || '').trim();
   const outcome = String(row[OUTREACH.COL.OUTCOME - 1] || '').trim();
-  const blockedStatus = ['Replied', 'Interested', 'Not interested', 'Bad address', 'Do not contact'].indexOf(status) !== -1;
-  const blockedOutcome = ['Bad address', 'Unsubscribed'].indexOf(outcome) !== -1;
+  const blockedStatus = ['Replied', 'Interested', 'Not interested', 'Bad address', 'Closed', 'Do not contact'].indexOf(status) !== -1;
+  const blockedOutcome = ['Bad address', 'Closed', 'Unsubscribed'].indexOf(outcome) !== -1;
 
   if (!isValidEmail_(email)) throw new Error('The source lead does not have a valid email address.');
   if (['Confirmed', 'Published', 'Supplied'].indexOf(confidence) === -1) {

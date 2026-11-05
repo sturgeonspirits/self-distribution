@@ -14,7 +14,7 @@ async function backend({ config = {}, mailerResult } = {}) {
   const fetches = [];
   const context = {
     console: { log() {}, warn() {}, error() {} },
-    PropertiesService: { getScriptProperties: () => ({ getProperty: key => properties.get(key) ?? null, setProperty: (key, value) => properties.set(key, String(value)) }) },
+    PropertiesService: { getScriptProperties: () => ({ getProperty: key => properties.get(key) ?? null, setProperty: (key, value) => properties.set(key, String(value)), deleteProperty: key => properties.delete(key) }) },
     UrlFetchApp: { fetch: (url, options) => { fetches.push(JSON.parse(options.payload)); return { getContentText: () => JSON.stringify(mailerResult), getResponseCode: () => 200 }; } },
     Utilities: { formatDate: date => new Date(date).toISOString().slice(11, 16) },
     Session: {}, SpreadsheetApp: {}, CacheService: {}, LockService: {}, ContentService: {}, MimeType: {}, ScriptApp: {},
@@ -67,6 +67,22 @@ test("a hold stops campaign sends for an hour and says to check Zoho", async () 
   assert.equal(a.next_at, now + 60 * MIN);
   assert.match(call(`outreachPacingMessage_(outreachSendAllowance_(${now + 10 * MIN}))`), /Zoho was holding mail in the Outbox/);
   assert.equal(call(`outreachSendAllowance_(${now + 61 * MIN}).allowed`), 2);
+});
+
+test("an empty Zoho Outbox releases a hold after ten minutes, while unknown results keep it", async () => {
+  const now = Date.parse("2026-11-05T20:00:00Z");
+  const empty = await backend({ mailerResult: { ok:true, held_in_outbox:0 } });
+  empty.properties.set("OUTREACH_SEND_HOLD_UNTIL", String(now + 50 * MIN));
+  empty.properties.set("OUTREACH_SEND_HOLD_STREAK", "2");
+  assert.deepEqual(empty.call(`outreachClearReleasedOutboxHold_(${now + 11 * MIN}, { outbox_hold_checked:false })`), { checked:true, cleared:true, held_in_outbox:0 });
+  assert.equal(empty.properties.get("OUTREACH_SEND_HOLD_UNTIL"), undefined);
+  assert.equal(empty.properties.get("OUTREACH_SEND_HOLD_STREAK"), "0");
+  assert.equal(empty.fetches[0].action, "getOutboxHeldCount");
+
+  const unknown = await backend({ mailerResult: { ok:true, held_in_outbox:-1 } });
+  unknown.properties.set("OUTREACH_SEND_HOLD_UNTIL", String(now + 50 * MIN));
+  assert.deepEqual(unknown.call(`outreachClearReleasedOutboxHold_(${now + 11 * MIN}, { outbox_hold_checked:false })`), { checked:true, cleared:false, held_in_outbox:-1 });
+  assert.equal(Number(unknown.properties.get("OUTREACH_SEND_HOLD_UNTIL")), now + 50 * MIN);
 });
 
 test("real sends are recorded; tests, replays and reads are not", async () => {
@@ -124,6 +140,8 @@ test("the mailer reports Zoho's Outbox after real sends only and never fails a s
   assert.match(send, /appendAppLog_\(lead, body, deliveredTo, testMode \? 'APP TEST SENT' : 'APP SENT', accepted\.message_id, acceptedLogDetail_\(accepted\)\);/);
   const reminder = mailer.slice(mailer.indexOf("function sendPaymentReminderRequest_"), mailer.indexOf("// ---------- Inbox reading"));
   assert.match(reminder, /accepted\.held_in_outbox = outboxHeldCount_\(settings\);/);
+  assert.match(mailer, /action === 'getOutboxHeldCount'/);
+  assert.match(mailer, /function getOutboxHeldCountRequest_\(\)/);
 
   const check = mailer.slice(mailer.indexOf("const OUTBOX_CHECK_DELAY_MS"), mailer.indexOf("function sendNewsletterEmailRequest_"));
   const make = folders => {

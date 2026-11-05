@@ -3,6 +3,12 @@
 Moved out of the `docs/reference/distribution-outreach/Code.gs` header on 2026-10-17 so the deployed file stays short. Newest first, copied word for word. The header keeps only the current version (`CHANGES IN THIS VERSION`); when a new version is made, move that section to the top of this file.
 
 ```
+CHANGES IN 2026.10.30.34-APP
+- After every real send (campaign, single, welcome, newsletter, payment reminder) the mailer checks the Zoho
+  Outbox and returns held_in_outbox: how many messages Zoho is holding instead of sending (the hourly sending
+  limit). The Activity Log detail says so too. The Hub (Inventory API .50) stops campaign sending and pauses
+  scheduled campaigns when it sees one. Read-only check; no new Zoho scopes. Test sends are not checked.
+
 CHANGES IN 2026.10.12.33-APP
 - Order-online invite (sendCustomerEmail): the Do Not Email box that approval ticks automatically (to keep current
   customers out of sales outreach) no longer blocks the customer's own ordering link. It counts as automatic when

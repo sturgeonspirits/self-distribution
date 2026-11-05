@@ -16,8 +16,8 @@ History, kept word for word:
 | Component | Source version | Deployment state |
 | --- | --- | --- |
 | Netlify web app and staff proxy | `2026.11.01.60-WEB` on `codex/work` | **Pending release:** Replies panel no longer widens the page on narrow phones. Production Hub `.59` (2026-10-30); staff proxy `.54`; sign-up `.55`; order and sell sheet `.58`. |
-| Inventory API Apps Script | `2026.11.05.51-APP` on `codex/work` | **Deployed 2026-11-05** by Karl (project **Inventory API**, attached to **Distribution Hub - Inventory Backend**). No web change. |
-| Distribution Outreach Apps Script | `2026.10.30.34-APP` in `docs/reference/distribution-outreach/Code.gs` | **Deployed 2026-10-30** (project **distribution outreach**, attached to **Distribution Hub**; active version 25, direct sending enabled). |
+| Inventory API Apps Script | `2026.11.05.52-APP` on `codex/work` | **Pending Deploy 1 / Phase 1 review:** Closed outcome, truthful campaign state/dates, early Outbox release, header-append guard. Last deployed `.51` (2026-11-05). |
+| Distribution Outreach Apps Script | `2026.11.05.35-APP` in `docs/reference/distribution-outreach/Code.gs` | **Pending Deploy 1 / Phase 1 review:** Closed blocks every mail type; read-only Outbox-count action. Last deployed `.34` (2026-10-30). |
 | Public customer Netlify proxy | `2026.10.08.5-WEB` | Deployed 2026-10-08. |
 | Badger invoice parser | `2026.10.08.3` in `docs/reference/badger-parser/Code.gs` | Live in the Badger Invoice Tracker since 2026-10-08; daily 5:45 am import reads Badger directly (no PDFs). Watch: a new Badger product spelling may need a row in the Sales Data product table (N–O). |
 
@@ -53,6 +53,7 @@ Setup steps recorded in the history whose completion was **not re-verified** on 
 
 ## Recent changes (one line each; details in `docs/history/` and git)
 
+- 2026-11-05 `.52-APP` / outreach `.35-APP` (pending Claude Phase 1 review; no deploy): Closed is a permanent non-emailable outcome; outcome dialog is immediately usable while refreshing its record; campaign cards show current schedule and sent dates, clear finished schedules, and refresh Sending/Scheduled state; scheduler releases a hold early after 10 minutes when Zoho's Outbox is empty; live-header checks prevent duplicate campaign columns.
 - 2026-11-05 `.51-APP` (deployed 2026-11-05; Apps Script only): a Zoho Outbox hold makes a scheduled campaign (and Send remaining) wait out the hour and continue on its own instead of pausing until someone clicks again; it pauses only after 3 held sends in a row with no clean send (`OUTREACH_SEND_HOLD_STREAK`) or an uncertain delivery. Prompted by the Appleton Follow-up 2 campaign pausing twice on 2026-11-05 after Zoho held one email for a couple of minutes. Tests: `tests/send-pacing.test.mjs`.
 - 2026-11-01 `.60-WEB` (pending release): allow Outreach reply cards and completed-reply rows to shrink and wrap so 390 px phones and the 280 px Galaxy Fold do not scroll sideways.
 - 2026-11-01: verified live `.50-APP`, outreach `.34-APP`, and `.59-WEB`; unauthenticated inventory returns 401 and authenticated Outreach/Orders load. Pinned the Badger parser test clock to its October fixture so the full suite remains stable across month boundaries (production parser unchanged).

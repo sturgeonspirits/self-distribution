@@ -1824,11 +1824,12 @@ test("Cocktail list review fixes memoize cooldowns, suppress opt-outs, validate 
     getLastColumn:() => 6,
     getRange:(row) => ({ getValues:() => [row === 1 ? ["Contact ID", "Account ID", "Name", "Email", "Organization", "Status"] : newsletterRows[0]] }),
   };
-  const validateNewsletter = new Function("assertStagingEnvironment_", "OUTREACH", "appHeaderKey_", "isValidEmail_", `${validatorSource}; return validateNewsletterContact_;`)(
+  const validateNewsletter = new Function("assertStagingEnvironment_", "OUTREACH", "appHeaderKey_", "isValidEmail_", "assertDirectoryRecipientNotClosed_", `${validatorSource}; return validateNewsletterContact_;`)(
     () => ({ getSheetByName:() => newsletterSheet }),
     { NEWSLETTER_CONTACTS_SHEET:"Newsletter Contacts", COCKTAIL_LIST_STAGE:"Cocktail list" },
     value => String(value).trim().toLowerCase().replace(/[^a-z0-9]+/g, "_").replace(/^_+|_+$/g, ""),
     value => /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(value),
+    () => {},
   );
   const payload = { action:"sendNewsletterEmail", idempotency_token:"campaign-contact-1-token", account_id:"ACC-1", newsletter_contact_id:"contact-1", business:"Example Bar", recipient:"cocktails@example.test", message_stage:"Cocktail list", subject:"October ideas", html:"<p>Hello</p>" };
   const lead = validateNewsletter(payload, false);
@@ -2002,7 +2003,7 @@ test("source contains formula protection, global error listeners, and recoverabl
   assert.match(backend, /OUTREACH_CAMPAIGN_RECIPIENTS_SHEET_NAME/);
   assert.match(backend, /batch size must be between 1 and 20/i);
   assert.match(backend, /const OUTREACH_OUTCOME_VALUES = \[/);
-  assert.match(backend, /"Wrong contact", "Bad address", "Not interested", "Unsubscribed"/);
+  assert.match(backend, /"Wrong contact", "Bad address", "Closed", "Not interested", "Unsubscribed"/);
   assert.match(backend, /requireValueInList\(OUTREACH_OUTCOME_VALUES, true\)/);
   assert.match(backend.slice(backend.indexOf("\nfunction apiUpdateOutreachOutcome_("), backend.indexOf("\nfunction apiLogOutreachContact_(")), /writeChangedRowCells_\(sheet, rowNumber, originalValues, values\);/, "an outcome save writes only the changed cells");
   const outcomeDialogSource = index.slice(index.indexOf("function setOutcomeDialogEditing"), index.indexOf("async function openContactLogForRecord"));
@@ -2247,10 +2248,12 @@ test("outreach nurture lifecycle handles cocktail replies, tasting visits, and d
 
   assert.equal(statusForOutcome("Wants cocktail list"), "Nurture");
   assert.equal(statusForOutcome("Tasting visit"), "Interested");
+  assert.equal(statusForOutcome("Closed"), "Closed");
   assert.equal(nextStage("Follow-up 2"), "Nurture check-in");
   assert.ok(eligibility({ email:"cocktails@example.test", next_email:"Follow-up 1", status:"Nurture", outcome:"Wants cocktail list", activity:[] }).includes("Recipient receives the cocktail list instead of sales outreach"));
   assert.deepEqual(eligibility({ email:"nurture@example.test", next_email:"Nurture check-in", status:"Nurture", next_follow_up:new Date(Date.now() - 86400000), activity:[] }), []);
   assert.ok(eligibility({ email:"tomorrow@example.test", next_email:"Follow-up 1", status:"Sent", next_follow_up:new Date(Date.now() + 2 * 86400000), activity:[] }).includes("Follow-up date has not arrived"));
+  assert.ok(eligibility({ email:"closed@example.test", next_email:"Initial", status:"Closed", activity:[] }).includes("Business is excluded from email"));
 
   const upsertSource = functionSource("upsertNewsletterFromCocktailReply_", "appendOutreachActivity_");
   const headers = ["contact_id", "account_id", "name", "email", "organization", "relationship_type", "status", "consent_source", "consent_date", "source_row", "source_business", "topics", "notes", "updated_at", "updated_by", "app_version"];
@@ -2355,6 +2358,33 @@ test("Deploy A review corrections repair validations and retain a campaign's sta
   const backendVersion = backend.match(/const APP_VERSION = "([^"]+)";/)[1];
   assert.ok(status.includes(`| Inventory API Apps Script | \`${backendVersion}\``), `PROJECT_STATUS.md lists Inventory API ${backendVersion}`);
   assert.ok(status.includes(`| Distribution Outreach Apps Script | \`${mailerVersion}\``), `PROJECT_STATUS.md lists Distribution Outreach ${mailerVersion}`);
+});
+
+test("Phase 1 Closed result, campaign display, and duplicate-header guard stay wired", async () => {
+  const [backend, index, mailer] = await Promise.all([
+    readFile(new URL("apps-script/Code.gs", root), "utf8"),
+    readFile(new URL("index.html", root), "utf8"),
+    readFile(new URL("docs/reference/distribution-outreach/Code.gs", root), "utf8"),
+  ]);
+  const outcomeValues = new Function(`${backend.slice(backend.indexOf("const OUTREACH_OUTCOME_VALUES"), backend.indexOf("const OUTREACH_FOLLOW_UP_OUTCOMES"))}; return { outcomes:OUTREACH_OUTCOME_VALUES, statuses:OUTREACH_DIRECTORY_STATUS_VALUES };`)();
+  assert.ok(outcomeValues.outcomes.includes("Closed"));
+  assert.ok(outcomeValues.statuses.includes("Closed"));
+  const repairSource = backend.slice(backend.indexOf("function repairOutreachDirectoryValidations_"), backend.indexOf("const OUTREACH_MONTHLY_CONTENT_SECTION"));
+  const repaired = new Function("setOutreachDirectoryValidation_", "OUTREACH_DIRECTORY_STAGE_VALUES", "OUTREACH_DIRECTORY_STATUS_VALUES", "OUTREACH_OUTCOME_VALUES", `${repairSource}; return repairOutreachDirectoryValidations_;`)(
+    (_sheet, header, values) => ({ header, values }), [], outcomeValues.statuses, outcomeValues.outcomes,
+  )({});
+  assert.deepEqual(repaired.status.values, outcomeValues.statuses, "repair uses the Status constant");
+  assert.deepEqual(repaired.outcome.values, outcomeValues.outcomes, "repair uses the Outcome constant");
+  assert.match(backend, /getRange\(1, 1, 1, sheet\.getLastColumn\(\)\)\.getValues\(\)\[0\]\.map\(normalizeHeader_\)/);
+  assert.match(backend, /clearCampaignSchedule_\(campaign, "", ""\);/);
+  assert.match(index, /data-outcome="Closed"/);
+  assert.match(index, /<option>Closed<\/option>/);
+  assert.match(index, /openOutcomeDialog\(record\);[\s\S]*?openOutcomeDialog\(fullRecord, true\)/);
+  assert.match(index, /String\(campaign\?\.status \|\| ""\)\.startsWith\("Complete"\)/);
+  assert.match(index, /function campaignDeliveryDateLabel\(campaign\)/);
+  assert.match(index, /scheduleOpenCampaignRefresh_\(campaign\)/);
+  assert.match(mailer, /function assertDirectoryRecipientNotClosed_\(/);
+  assert.match(mailer, /action === 'getOutboxHeldCount'/);
 });
 
 test("campaign rebuild UI and first-draft save gate preserve review-before-send", async () => {
@@ -2787,7 +2817,7 @@ test("scheduled campaign sends validate times, run due campaigns, skip guarded r
       "updateCampaignSchedule_", "outreachCampaignSheets_", "outreachCampaignRow_", "campaignScheduleState_", "apiSendOutreachCampaignBatch_",
       "campaignScheduleTimeLabel_", "clearCampaignSchedule_", "appendAudit_", "CAMPAIGN_SCHEDULE_ACTIVE_STATUSES", "CAMPAIGN_SCHEDULE_BATCH_SIZE",
       "campaignScheduleIsDue_", "campaignScheduleUnsafeBlocks_", "OUTREACH_CAMPAIGNS_SHEET_NAME", "console", "outreachHourlyLimit_",
-      "outreachHoldStreak_", "outreachSendAllowance_", "OUTREACH_HOLD_STREAK_PAUSE",
+      "outreachHoldStreak_", "outreachSendAllowance_", "outreachClearReleasedOutboxHold_", "OUTREACH_HOLD_STREAK_PAUSE",
       `${functionSource("runScheduledCampaign_", "outreachStatusForOutcome_")}; return runScheduledCampaign_;`
     )(
       (id, mutate) => mutate(campaign),
@@ -2799,7 +2829,7 @@ test("scheduled campaign sends validate times, run due campaigns, skip guarded r
       new Function(`${functionSource("clearCampaignSchedule_", "campaignScheduleState_")}; return clearCampaignSchedule_;`)(),
       (...args) => audits.push(args),
       ACTIVE, 2, isDue, unsafeBlocks, "Outreach Campaigns", { warn() {}, log() {} }, () => 20,
-      () => holdStreak, () => ({ next_at:Date.now() + 3600000 }), 3,
+      () => holdStreak, () => ({ next_at:Date.now() + 3600000 }), () => ({ cleared:false }), 3,
     );
     const result = run("CMP-1", Date.now() + 60000);
     return { result, campaign, calls, audits };

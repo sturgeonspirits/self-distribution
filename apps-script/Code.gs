@@ -1,12 +1,16 @@
 /*********************************
  * Inventory API (JSON) for Netlify
- * App version: 2026.11.05.51-APP
+ * App version: 2026.11.05.52-APP
  *
  * CHANGES IN THIS VERSION
- * - Zoho Outbox holds no longer stop a campaign until someone clicks again. A scheduled campaign (including Send
- *   remaining) waits out the hold and then continues on its own; its detail says when. It pauses for a person only
- *   after Zoho holds 3 sends in a row with no clean send between (script property OUTREACH_SEND_HOLD_STREAK), or
- *   when a delivery is uncertain, as before. The hold itself (no campaign sends for an hour) is unchanged.
+ * - Adds Closed as a permanent, non-actionable Directory result. Closed businesses are excluded from all Hub email
+ *   audiences and follow-up queues, and the strict Directory Status / Outcome dropdowns are repaired with it.
+ * - Campaign cards now show their delivery date or range, finished campaigns clear stale scheduling fields, and an
+ *   open Scheduled / Sending campaign refreshes itself about once a minute.
+ * - A scheduled sender checks Zoho's Outbox after a hold has lasted ten minutes; when it is empty, it clears the
+ *   fixed-hour hold and continues. The mailer action is read-only and an unknown count keeps the hold.
+ * - Header repair reads the live header row before appending, preventing a stale header cache from creating duplicate
+ *   Schedule Detail or Message Stage columns.
  *
  * DEPLOY
  * - Apps Script project: Inventory API
@@ -16,7 +20,7 @@
  * Earlier version notes: docs/history/inventory-api-changes.md (move this version's notes there when the version changes).
  *********************************/
 
-const APP_VERSION = "2026.11.05.51-APP";
+const APP_VERSION = "2026.11.05.52-APP";
 
 const SHEET_NAMES = {
   STORES: "Stores",
@@ -291,12 +295,18 @@ function getHeaderMap_(sheet) {
   return map;
 }
 function ensureHeaderColumns_(sheet, columns) {
-  const h = getHeaderMap_(sheet);
-  const missing = columns.filter(col => h[normalizeHeader_(col)] === undefined);
+  // Do not trust the in-process header cache here: other helpers can append a column before this helper runs.
+  // Reading the live row prevents a second copy of a column such as Schedule Detail or Message Stage.
+  const actual = sheet.getLastColumn()
+    ? sheet.getRange(1, 1, 1, sheet.getLastColumn()).getValues()[0].map(normalizeHeader_)
+    : [];
+  const present = new Set(actual.filter(Boolean));
+  const missing = columns.filter(col => !present.has(normalizeHeader_(col)));
   missing.forEach(col => {
     sheet.getRange(1, sheet.getLastColumn() + 1).setValue(col);
   });
-  if (missing.length) __HEADER_CACHE.delete(headerCacheKey_(sheet));
+  // Refresh even when nothing was appended: the cache may be the stale map that prompted this check.
+  __HEADER_CACHE.delete(headerCacheKey_(sheet));
   return getHeaderMap_(sheet);
 }
 function toBool_(v) { return ["TRUE","YES","Y","1"].includes(String(v).toUpperCase()); }
@@ -2153,7 +2163,9 @@ function outreachStatusLower_(record) {
 
 function isDoNotContact_(record) {
   const status = outreachStatusLower_(record);
-  return record.do_not_email || status === "do not contact" || status === "not interested";
+  const outcome = String(record.outcome || "").trim().toLowerCase();
+  return record.do_not_email || ["do not contact", "not interested", "closed"].includes(status)
+    || ["closed", "unsubscribed", "not interested", "do not contact"].includes(outcome);
 }
 
 function isSentOutreach_(record) {
@@ -2304,7 +2316,7 @@ function outreachWeeklyExclusionReasons_(record) {
   if (status !== "not contacted") reasons.push("Already contacted or not ready");
   if (nextEmail && nextEmail !== "initial") reasons.push("Next email is not the initial message");
   if (record.last_emailed) reasons.push("Email was already sent");
-  if (record.do_not_email || ["bad address", "unsubscribed", "not interested", "do not contact"].includes(outcome)) {
+  if (record.do_not_email || ["bad address", "closed", "unsubscribed", "not interested", "do not contact"].includes(outcome)) {
     reasons.push("Excluded from email");
   }
   return reasons;
@@ -3769,7 +3781,7 @@ function newsletterCocktailListEligibility_(record) {
   // An active customer who subscribed to the Cocktail list still receives it; any
   // recorded opt-out (status, outcome, newsletter or program) still excludes them.
   const activeCustomer = directoryStatus === "existing customer" && String(record.program_ordering_status || "").trim().toLowerCase() === "active";
-  const optOut = ["do not contact", "unsubscribed", "bad address", "not interested"];
+  const optOut = ["closed", "do not contact", "unsubscribed", "bad address", "not interested"];
   if ((record.do_not_email && !activeCustomer) || optOut.includes(directoryStatus) || optOut.includes(directoryOutcome)) reasons.push("Business is excluded from email");
   if (["unsubscribed", "declined"].includes(programStatus)) reasons.push("Account program excludes newsletter email");
   const cooldown = outreachCrossSendCooldownReason_(email, true);
@@ -3936,7 +3948,7 @@ function customerInviteEligibility_(record) {
   const status = String(record.status || "").trim().toLowerCase();
   const outcome = String(record.outcome || "").trim().toLowerCase();
   const confidence = String(record.email_confidence || "").trim().toLowerCase();
-  const optOut = ["do not contact", "not interested", "unsubscribed", "bad address"];
+  const optOut = ["closed", "do not contact", "not interested", "unsubscribed", "bad address"];
   if (!String(record.account_id || "").trim()) reasons.push("No Account ID on the Directory row");
   if (!email) reasons.push("No email on file");
   else if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) reasons.push("Recipient email is invalid");
@@ -4307,12 +4319,18 @@ function campaignObject_(campaign, recipients, includeRecipients) {
     };
   });
   const counts = recipientObjects.reduce((all, item) => { all[item.status || "Unknown"] = (all[item.status || "Unknown"] || 0) + 1; return all; }, {});
+  const sentDates = recipientObjects
+    .filter(item => /^sent/i.test(item.status))
+    .map(item => outreachDate_(item.sent_at))
+    .filter(Boolean)
+    .sort((a, b) => a.getTime() - b.getTime());
   const result = {
     campaign_id:String(value("campaign_id") || ""), name:String(value("campaign_name") || ""), audience:String(value("audience") || ""),
     status:String(value("status") || ""), recipient_count:Number(value("recipient_count") || recipientObjects.length),
     audience_checksum:String(value("audience_checksum") || ""), unsegmented_count:Number(value("unsegmented_count") || 0),
     created_at:value("created_at") || "", created_by:String(value("created_by") || ""), approved_at:value("approved_at") || "",
-    approved_by:String(value("approved_by") || ""), sent_count:Number(value("sent_count") || 0), blocked_count:Number(value("blocked_count") || 0),
+    approved_by:String(value("approved_by") || ""), last_batch_at:value("last_batch_at") || "", sent_count:Number(value("sent_count") || 0), blocked_count:Number(value("blocked_count") || 0),
+    sent_at_start:sentDates.length ? sentDates[0].toISOString() : "", sent_at_end:sentDates.length ? sentDates[sentDates.length - 1].toISOString() : "",
     counts:counts,
     criteria:campaignStoredCriteria_(value("criteria")),
     scheduled_send_at:value("scheduled_send_at") || "", scheduled_by:String(value("scheduled_by") || ""),
@@ -4334,10 +4352,11 @@ function apiGetOutreachCampaigns_() {
   const recipientCount = Math.max(0, sheets.recipients.getLastRow() - 1);
   const recipientIds = recipientCount ? sheets.recipients.getRange(2, recipientHeaders.campaign_id + 1, recipientCount, 1).getValues() : [];
   const recipientStatuses = recipientCount ? sheets.recipients.getRange(2, recipientHeaders.status + 1, recipientCount, 1).getValues() : [];
-  const listHeaders = { campaign_id:0, status:1 };
+  const recipientSentAt = recipientCount && recipientHeaders.sent_at !== undefined ? sheets.recipients.getRange(2, recipientHeaders.sent_at + 1, recipientCount, 1).getValues() : [];
+  const listHeaders = { campaign_id:0, status:1, sent_at:2 };
   const allRecipients = recipientIds.map((id, index) => ({
     row:index + 2,
-    values:[id[0], recipientStatuses[index]?.[0] || ""],
+    values:[id[0], recipientStatuses[index]?.[0] || "", recipientSentAt[index]?.[0] || ""],
     headers:listHeaders,
   }));
   const campaigns = sheets.campaigns.getRange(2, 1, sheets.campaigns.getLastRow() - 1, sheets.campaigns.getLastColumn()).getValues()
@@ -5304,9 +5323,9 @@ function apiSendOutreachCampaignBatch_(p) {
     campaign.values[ch.blocked_count] = blockedTotal; campaign.values[ch.app_version] = APP_VERSION;
     if (!remaining) {
       campaign.values[ch.status] = needsRecording ? "Complete with recording warnings" : blockedTotal ? "Complete with blocks" : "Complete";
-      if (CAMPAIGN_SCHEDULE_ACTIVE_STATUSES.includes(String(campaign.values[ch.schedule_status] || ""))) {
-        clearCampaignSchedule_(campaign, "Done", `Finished ${campaignScheduleTimeLabel_(new Date())}: every approved recipient has been sent or skipped.`);
-      }
+      // A completed campaign has no active schedule. Clear stale Paused/Scheduled/Sending labels too, so it
+      // cannot show a red schedule badge or create a task after all recipients are resolved.
+      clearCampaignSchedule_(campaign, "", "");
     }
     sheets.campaigns.getRange(campaign.row, 1, 1, campaign.values.length).setValues([campaign.values]);
     appendAudit_("SEND_OUTREACH_CAMPAIGN_BATCH", "Campaign", p.campaign_id, "", staffName, OUTREACH_CAMPAIGN_RECIPIENTS_SHEET_NAME, OUTREACH_ACTIVITY_SHEET_NAME, heldInOutbox ? "Held by Zoho" : blocked ? "Stopped for review" : "Completed", `${sent} sent; ${blocked} blocked; ${remaining} remaining.${heldInOutbox ? ` Zoho is holding ${heldInOutbox} in the Outbox.` : ""}`);
@@ -6351,16 +6370,17 @@ function runScheduledOutreachCampaigns() {
     .filter(state => campaignScheduleIsDue_(state, now))
     .sort((a, b) => new Date(a.scheduled_send_at).getTime() - new Date(b.scheduled_send_at).getTime());
   const runs = [];
+  const holdCheck = { outbox_hold_checked:false };
   for (const state of due) {
     if (Date.now() > deadlineAt) break;
-    runs.push(runScheduledCampaign_(state.campaign_id, deadlineAt));
+    runs.push(runScheduledCampaign_(state.campaign_id, deadlineAt, holdCheck));
   }
   if (runs.some(run => run.sent || run.skipped || run.state !== "Sending")) bumpReadCacheVersion_();
   console.log(JSON.stringify({ event:"outreach_campaign_schedule_run", due:due.length, runs:runs, total_ms:Date.now() - startedAt }));
   return { runs:runs };
 }
 
-function runScheduledCampaign_(campaignId, deadlineAt) {
+function runScheduledCampaign_(campaignId, deadlineAt, holdCheck) {
   let sent = 0;
   let skipped = 0;
   const finish = (state, detail) => {
@@ -6399,6 +6419,7 @@ function runScheduledCampaign_(campaignId, deadlineAt) {
     if (!current || current.status !== "Approved" || current.schedule_status !== "Sending") {
       return { campaign_id:campaignId, state:"Stopped", sent:sent, skipped:skipped, detail:"Schedule cancelled, reopened, or completed during the run." };
     }
+    const release = outreachClearReleasedOutboxHold_(Date.now(), holdCheck);
     let res;
     try {
       res = apiSendOutreachCampaignBatch_({ campaign_id:campaignId, approval_token:current.approval_token, batch_size:CAMPAIGN_SCHEDULE_BATCH_SIZE,
@@ -6427,7 +6448,8 @@ function runScheduledCampaign_(campaignId, deadlineAt) {
       return finish("Sending", `Waiting: Zoho held mail in the Outbox, so sending is on hold until ${resumeAt} and then continues on its own. ${sent} sent this run; ${waiting} still waiting.`);
     }
     if (res.paced) {
-      return finish("Sending", `${res.message} ${Number(res.remaining || 0)} waiting; continues automatically.`);
+      const releaseDetail = release.cleared ? " Zoho's Outbox is empty, so the hold was cleared." : "";
+      return finish("Sending", `${res.message}${releaseDetail} ${Number(res.remaining || 0)} waiting; continues automatically.`);
     }
     if (!Number(res.remaining || 0)) {
       return finish("Done", `Finished ${campaignScheduleTimeLabel_(new Date())}. ${sent} sent and ${skipped} skipped in the final run; see the recipient list for the full result.`);
@@ -6454,6 +6476,7 @@ function outreachStatusForOutcome_(outcome) {
     "Visit in person": "Interested",
     "Wrong contact": "Needs email",
     "Bad address": "Needs email",
+    "Closed": "Closed",
     "Not interested": "Not interested",
     "Unsubscribed": "Do not contact",
   };
@@ -6462,11 +6485,11 @@ function outreachStatusForOutcome_(outcome) {
 
 const OUTREACH_OUTCOME_VALUES = [
   "Interested", "Schedule tasting", "Tasting visit", "Wants cocktail list", "Follow up later", "Visit in person",
-  "Wrong contact", "Bad address", "Not interested", "Unsubscribed",
+  "Wrong contact", "Bad address", "Closed", "Not interested", "Unsubscribed",
 ];
 const OUTREACH_DIRECTORY_STAGE_VALUES = ["Initial", "Follow-up 1", "Follow-up 2", "Nurture check-in", "Reactivation", "Complete"];
 const OUTREACH_DIRECTORY_STATUS_VALUES = [
-  "Not contacted", "Sent", "Follow-up due", "Follow-up sent", "Replied", "Interested", "Not interested", "Bad address",
+  "Not contacted", "Sent", "Follow-up due", "Follow-up sent", "Replied", "Interested", "Not interested", "Bad address", "Closed",
   "Do not contact", "Needs email", "Verify email", "Send error", "Existing customer", "Reactivation due", "Reactivation sent",
   "Use reactivation", "Nurture",
 ];
@@ -6721,6 +6744,7 @@ const OUTREACH_SEND_HOLD_PROPERTY = "OUTREACH_SEND_HOLD_UNTIL";
 const OUTREACH_HOLD_STREAK_PROPERTY = "OUTREACH_SEND_HOLD_STREAK";
 const OUTREACH_HOLD_STREAK_PAUSE = 3; // A scheduled campaign pauses for a person to check after this many in a row.
 const OUTREACH_HOLD_MS = 60 * 60 * 1000;
+const OUTREACH_OUTBOX_RELEASE_CHECK_DELAY_MS = 10 * 60 * 1000;
 const OUTREACH_WINDOW_MS = 60 * 60 * 1000;
 const OUTREACH_BURST_WINDOW_MS = 5 * 60 * 1000;
 
@@ -6743,6 +6767,24 @@ function outreachRecordSend_(at, held) {
   properties.setProperty(OUTREACH_SEND_TIMES_PROPERTY, JSON.stringify(times.slice(-300)));
   if (held) properties.setProperty(OUTREACH_SEND_HOLD_PROPERTY, String(at + OUTREACH_HOLD_MS));
   properties.setProperty(OUTREACH_HOLD_STREAK_PROPERTY, String(held ? outreachHoldStreak_() + 1 : 0));
+}
+
+// The mailer reported a hold immediately after the last send, but Zoho can release it much sooner than the fixed
+// hour. This read-only check is called at most once by each scheduler invocation, after ten minutes have elapsed.
+function outreachClearReleasedOutboxHold_(now, runState) {
+  const at = typeof now === "number" ? now : Date.now();
+  const properties = PropertiesService.getScriptProperties();
+  const holdUntil = Number(properties.getProperty(OUTREACH_SEND_HOLD_PROPERTY) || 0);
+  if (!holdUntil || holdUntil <= at || at - (holdUntil - OUTREACH_HOLD_MS) < OUTREACH_OUTBOX_RELEASE_CHECK_DELAY_MS) return { checked:false, cleared:false, held_in_outbox:-1 };
+  if (runState && runState.outbox_hold_checked) return { checked:false, cleared:false, held_in_outbox:-1 };
+  if (runState) runState.outbox_hold_checked = true;
+  let held = -1;
+  try { held = Number(callOutreachMailer_({ action:"getOutboxHeldCount" }).held_in_outbox); }
+  catch (error) { console.warn(`Outbox hold release check failed: ${String(error.message || error)}`); }
+  if (held !== 0 || Number(properties.getProperty(OUTREACH_SEND_HOLD_PROPERTY) || 0) !== holdUntil) return { checked:true, cleared:false, held_in_outbox:held };
+  properties.deleteProperty(OUTREACH_SEND_HOLD_PROPERTY);
+  properties.setProperty(OUTREACH_HOLD_STREAK_PROPERTY, "0");
+  return { checked:true, cleared:true, held_in_outbox:0 };
 }
 
 function outreachHoldStreak_() {
@@ -6893,7 +6935,7 @@ function outreachSendEligibility_(record, options) {
   const outcome = String(record.outcome || "").trim().toLowerCase();
   const confidence = String(record.email_confidence || "").trim().toLowerCase();
   if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) reasons.push("Recipient email is invalid");
-  if (record.do_not_email || ["do not contact", "not interested", "unsubscribed"].includes(status) || ["bad address", "unsubscribed", "not interested", "do not contact"].includes(outcome)) reasons.push("Business is excluded from email");
+  if (record.do_not_email || ["closed", "do not contact", "not interested", "unsubscribed"].includes(status) || ["bad address", "closed", "unsubscribed", "not interested", "do not contact"].includes(outcome)) reasons.push("Business is excluded from email");
   if (outreachIsCocktailListOutcome_(outcome)) reasons.push("Recipient receives the cocktail list instead of sales outreach");
   const crossSendCooldown = outreachCrossSendCooldownReason_(email, false);
   if (crossSendCooldown) reasons.push(crossSendCooldown);
