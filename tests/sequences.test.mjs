@@ -193,7 +193,7 @@ test("the step check runs once a day from the hourly sync, not before 6 am", asy
   const context = await backend();
   const properties = new Map();
   let runs = 0;
-  context.PropertiesService = { getScriptProperties: () => ({ getProperty: key => properties.get(key) ?? null, setProperty: (key, value) => properties.set(key, String(value)) }) };
+  context.PropertiesService = { getScriptProperties: () => ({ getProperty: key => properties.get(key) ?? null, setProperty: (key, value) => properties.set(key, String(value)), deleteProperty: key => properties.delete(key) }) };
   context.Session = { getScriptTimeZone: () => "UTC" };
   context.Utilities = { formatDate: (date, tz, fmt) => (fmt === "H" ? String(new Date(date).getUTCHours()) : new Date(date).toISOString().slice(0, 10)) };
   context.__count = () => { runs += 1; return []; };
@@ -247,4 +247,90 @@ test("drafted steps are tied to their sequence and get a Review and approve task
   // Drafting never approves or sends.
   const check = code.slice(code.indexOf("function runSequenceStepCheck("), code.indexOf("function maybeRunSequenceStepCheck_"));
   assert.doesNotMatch(check, /apiApproveOutreachCampaign_|apiSendOutreachCampaignBatch_|apiScheduleOutreachCampaign_/);
+});
+
+// ---------- Fixes from chat's review (claude/chat-review-findings-sequences-2026-11-05.md), .58-APP ----------
+
+test("criteria-less campaigns: only a plain sales audience starts a sequence; Cocktail list and invites stay single", async () => {
+  const context = await backend();
+  const plan = build(context, {
+    campaigns:[
+      campaign("CMP-OLD", null, { row:{ audience:"Eligible initial prospects" } }),
+      campaign("CMP-CL", null, { row:{ audience:"Cocktail list · subscribed contacts" } }),
+      campaign("CMP-INV", null, { row:{ audience:"Current customers · order online invite" } }),
+      campaign("CMP-X", null, { row:{ audience:"Something else" } }),
+    ],
+    recipients:[recipient("CMP-OLD", "L1", "Sent", 30)],
+    activity:[sent("L1", "Initial", 30)],
+    directory:[dir("L1")],
+  });
+  assert.deepEqual(plan.sequences.map(s => s.sequence_id), ["SEQ-OLD"]);
+  assert.deepEqual(plan.singles.map(s => s.campaign_id).sort(), ["CMP-CL", "CMP-INV", "CMP-X"]);
+});
+
+test("a re-sent step restarts the gap from its latest send", async () => {
+  const context = await backend();
+  const plan = build(context, {
+    campaigns:[campaign("CMP-R", "Initial"), campaign("CMP-R1", "Follow-up 1", { criteria:{ source_campaign_id:"CMP-R" } })],
+    recipients:[recipient("CMP-R", "R1", "Sent", 40), recipient("CMP-R1", "R1", "Sent", 20)],
+    activity:[sent("R1", "Initial", 40), sent("R1", "Follow-up 1", 20), sent("R1", "Follow-up 1", 1)],
+    directory:[dir("R1", "Follow-up sent")],
+  });
+  const member = plan.sequences[0].members[0];
+  assert.equal(member.next_step, 3);
+  assert.equal(member.due, false, "Follow-up 1 went again yesterday, so Follow-up 2 is not due for 6 more days");
+  assert.equal(member.sent.find(s => s.step === 2).at.slice(0, 10), day(20).slice(0, 10), "the card still shows the first send");
+});
+
+test("an address shared by two businesses never advances either from an address-only Activity row", async () => {
+  const context = await backend();
+  const shared = "owner@example.test";
+  const plan = build(context, {
+    campaigns:[campaign("CMP-S", "Initial")],
+    recipients:[
+      { campaign_id:"CMP-S", account_id:"S1", business_name:"Bar One", recipient_email:shared, status:"Sent", sent_at:day(30) },
+      { campaign_id:"CMP-S", account_id:"S2", business_name:"Bar Two", recipient_email:shared, status:"Sent", sent_at:day(30) },
+    ],
+    activity:[
+      { timestamp:day(30), stage:"Initial", result:"APP SENT", account_id:"S1", intended_recipient:shared },
+      { timestamp:day(30), stage:"Initial", result:"APP SENT", account_id:"S2", intended_recipient:shared },
+      { timestamp:day(10), stage:"Follow-up 1", result:"APP SENT", account_id:"", intended_recipient:shared }, // address only
+      { timestamp:day(9), stage:"Follow-up 1", result:"APP SENT", account_id:"S1", intended_recipient:"elsewhere@example.test" },
+    ],
+    directory:[{ ...dir("S1"), email:shared }, { ...dir("S2", "Sent", "", 3), email:shared }],
+  });
+  const by = Object.fromEntries(plan.sequences[0].members.map(m => [m.account_id, m]));
+  assert.equal(by.S1.next_step, 3, "S1's own account-keyed Follow-up 1 counts");
+  assert.equal(by.S2.next_step, 2, "the address-only row is ambiguous and counts for nobody");
+});
+
+test("the migration plans and deletes under one lock, and a sequence step needs its columns", async () => {
+  const code = await readFile(new URL("apps-script/Code.gs", root), "utf8");
+  const migrate = code.slice(code.indexOf("function migrateCampaignsToSequences()"), code.indexOf("// ---------- Sequence step check"));
+  const lockAt = migrate.indexOf("lock.tryLock(30000)");
+  assert.ok(lockAt > 0 && lockAt < migrate.indexOf("const first = buildSequencePlan_"), "the lock is taken before the plan");
+  assert.match(migrate, /deleteOutreachCampaignUnderLock_\(/);
+  assert.doesNotMatch(migrate, /apiDeleteOutreachCampaign_\(/);
+  assert.match(code, /function apiDeleteOutreachCampaign_\(p\) \{[\s\S]*?try \{ return deleteOutreachCampaignUnderLock_\(p\); \}\s*finally \{ lock\.releaseLock\(\); \}/);
+  assert.match(code, /criteria\.audience_mode === "sequence" && \(campaignHeaders\.sequence_id === undefined \|\| campaignHeaders\.step === undefined\)\) \{\s*throw new Error\("Outreach Campaigns has no Sequence ID \/ Step columns\. Run repairHubStructure\(\) first\."\);/);
+});
+
+test("a failing step check is retried (at most three times a day) and raises a task; success clears it", async () => {
+  const context = await backend();
+  const properties = new Map();
+  context.PropertiesService = { getScriptProperties: () => ({ getProperty: key => properties.get(key) ?? null, setProperty: (key, value) => properties.set(key, String(value)), deleteProperty: key => properties.delete(key) }) };
+  context.Session = { getScriptTimeZone: () => "UTC" };
+  context.Utilities = { formatDate: (date, tz, fmt) => (fmt === "H" ? String(new Date(date).getUTCHours()) : new Date(date).toISOString().slice(0, 10)) };
+  context.__fail = true;
+  vm.runInContext(`runSequenceStepCheck = () => { if (__fail) throw new Error("Sheet read timed out"); return []; };`, context);
+  const at = hour => `new Date("2026-11-06T${String(hour).padStart(2, "0")}:10:00Z")`;
+  for (const hour of [6, 7, 8]) assert.throws(() => vm.runInContext(`maybeRunSequenceStepCheck_(${at(hour)})`, context), /timed out/);
+  assert.equal(vm.runInContext(`maybeRunSequenceStepCheck_(${at(9)}).reason`, context), "failed three times today");
+  assert.equal(properties.get("SEQUENCE_STEP_CHECK_LAST_DAY"), undefined, "a failed check never marks the day done");
+  assert.equal(vm.runInContext(`sequenceStepCheckFailure_(${at(9)}).message`, context), "Sheet read timed out");
+  context.__fail = false;
+  assert.equal(vm.runInContext(`maybeRunSequenceStepCheck_(new Date("2026-11-07T06:10:00Z")).ran`, context), true);
+  assert.equal(vm.runInContext(`sequenceStepCheckFailure_(new Date("2026-11-07T06:10:00Z"))`, context), null);
+  const code = await readFile(new URL("apps-script/Code.gs", root), "utf8");
+  assert.match(code, /title:"Sequence step check failed: due follow-ups were not drafted today"/);
 });

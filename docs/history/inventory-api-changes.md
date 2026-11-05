@@ -3,6 +3,17 @@
 Moved out of the `apps-script/Code.gs` header on 2026-10-17 so the deployed file stays short. Newest first, copied word for word. The header keeps only the current version (`CHANGES IN THIS VERSION`); when a new version is made, move that section to the top of this file.
 
 ```
+CHANGES IN 2026.11.05.57-APP
+- Sending window: scheduled campaigns and Send remaining send only from 10 am to 2 pm Chicago time, Monday to
+  Friday, so email lands late morning to early afternoon before places get busy. Outside it a campaign waits and
+  its detail says when the next window opens. Hub Configuration "outreach_send_window" changes it (for example
+  "10:30-13:30 Tue-Fri") or turns it off ("off"). One-off emails and "Send up to 2" are not limited.
+- A send the mailer reports as held is re-checked about 45 seconds later in the same run; if Zoho's Outbox has
+  emptied (the usual case: the email was only in transit), sending continues at the normal pace of about 20 an
+  hour instead of one email per five-minute run. A real hold still stops sending for up to an hour.
+- Still includes the sequences code from .55/.56; it does nothing until repairHubStructure() and
+  migrateCampaignsToSequences() are run.
+
 CHANGES IN 2026.11.05.56-APP
 - Campaign sequences, Part B Phase 4. Once a day (from the hourly task-manager sync, at or after 6 am), the Hub
   builds a draft campaign (status Review) for each migrated sequence step that has businesses due, unless a draft

@@ -1,17 +1,24 @@
 /*********************************
  * Inventory API (JSON) for Netlify
- * App version: 2026.11.05.57-APP
+ * App version: 2026.11.05.58-APP
  *
  * CHANGES IN THIS VERSION
- * - Sending window: scheduled campaigns and Send remaining send only from 10 am to 2 pm Chicago time, Monday to
- *   Friday, so email lands late morning to early afternoon before places get busy. Outside it a campaign waits and
- *   its detail says when the next window opens. Hub Configuration "outreach_send_window" changes it (for example
- *   "10:30-13:30 Tue-Fri") or turns it off ("off"). One-off emails and "Send up to 2" are not limited.
- * - A send the mailer reports as held is re-checked about 45 seconds later in the same run; if Zoho's Outbox has
- *   emptied (the usual case: the email was only in transit), sending continues at the normal pace of about 20 an
- *   hour instead of one email per five-minute run. A real hold still stops sending for up to an hour.
- * - Still includes the sequences code from .55/.56; it does nothing until repairHubStructure() and
- *   migrateCampaignsToSequences() are run.
+ * - Fixes from chat's review (claude/chat-review-findings-sequences-2026-11-05.md):
+ *   - A campaign with no stored criteria starts a sequence only if its Audience is plainly a sales stage; Cocktail
+ *     list, ordering-link invites and unknown labels stay single campaigns.
+ *   - A re-sent step restarts the gap from its latest send (the card still shows the first send).
+ *   - An Activity row with an Account ID counts only for that account; an address-only row counts only when the
+ *     address belongs to one business.
+ *   - migrateCampaignsToSequences() plans, deletes duplicates and writes under one script lock
+ *     (deleteOutreachCampaignUnderLock_ is the shared delete body).
+ *   - The "next window opens" time is right across daylight-saving changes.
+ *   - If the sending window closes during the 45-second hold re-check, the run stops instead of sending again.
+ *   - A sequence step can't be created without the Sequence ID / Step columns (run repairHubStructure() first).
+ *   - A failing daily step check is retried up to three hourly syncs, isn't marked done, and raises a "Sequence
+ *     step check failed" task until a check succeeds.
+ *   - outreachSequences is cached like the other Hub reads ("refresh" rebuilds it) and reports read/build times.
+ * - Still includes .57 (sending window, same-run hold re-check) and the sequences code from .55/.56, which does
+ *   nothing until repairHubStructure() and migrateCampaignsToSequences() are run.
  *
  * DEPLOY
  * - Apps Script project: Inventory API
@@ -21,7 +28,7 @@
  * Earlier version notes: docs/history/inventory-api-changes.md (move this version's notes there when the version changes).
  *********************************/
 
-const APP_VERSION = "2026.11.05.57-APP";
+const APP_VERSION = "2026.11.05.58-APP";
 
 const SHEET_NAMES = {
   STORES: "Stores",
@@ -4958,6 +4965,10 @@ function apiCreateOutreachCampaign_(p) {
     const audienceChecksum = campaignAudienceChecksum_(audience, recipientRows.map(values => ({ values:values, headers:recipientHeaders })), criteriaJson);
     const unsegmentedCount = ["cocktail_list", "customer_invite"].includes(criteria.campaign_type) ? 0 : eligible.filter(record => !String(record.segment || "").trim()).length;
     const campaignHeaders = getHeaderMap_(sheets.campaigns);
+    // A sequence step must carry its Sequence ID and Step, or it would be an unlinked draft that is drafted again.
+    if (criteria.audience_mode === "sequence" && (campaignHeaders.sequence_id === undefined || campaignHeaders.step === undefined)) {
+      throw new Error("Outreach Campaigns has no Sequence ID / Step columns. Run repairHubStructure() first.");
+    }
     if (sheets.campaigns.getLastRow() >= 2) {
       const matching = sheets.campaigns.getRange(2, 1, sheets.campaigns.getLastRow() - 1, sheets.campaigns.getLastColumn()).getValues()
         .find(row => ["Review", "Approved"].includes(String(row[campaignHeaders.status] || "")) && String(row[campaignHeaders.audience_checksum] || "") === audienceChecksum);
@@ -5111,7 +5122,13 @@ function apiDeleteOutreachCampaign_(p) {
   if (p.confirm_delete !== true) throw new Error("Confirm the deletion before deleting a campaign.");
   const lock = LockService.getScriptLock();
   if (!lock.tryLock(10000)) throw new Error("Another campaign update is in progress. Try again in a moment.");
-  try {
+  try { return deleteOutreachCampaignUnderLock_(p); }
+  finally { lock.releaseLock(); }
+}
+
+/** The delete itself. The caller must hold the script lock (the sequence migration deletes inside its own lock). */
+function deleteOutreachCampaignUnderLock_(p) {
+  {
     const sheets = outreachCampaignSheets_();
     const campaign = outreachCampaignRow_(sheets.campaigns, p.campaign_id);
     if (!campaign) throw new Error("Campaign not found.");
@@ -5151,7 +5168,7 @@ function apiDeleteOutreachCampaign_(p) {
     sheets.campaigns.getRange(campaign.row, 1, 1, campaign.values.length).setValues([campaign.values]);
     appendAudit_("DELETE_OUTREACH_CAMPAIGN", "Campaign", p.campaign_id, "", actor, OUTREACH_CAMPAIGNS_SHEET_NAME, OUTREACH_CAMPAIGN_RECIPIENTS_SHEET_NAME, CAMPAIGN_DELETED_STATUS, `Was ${previousStatus}; ${recipients.length} unsent recipients retired. ${String(campaign.values[ch.campaign_name] || "")}`.slice(0, 500));
     return { message:`Campaign deleted. ${recipients.length} unsent recipients were removed from it; no email was sent.`, recipient_count:recipients.length };
-  } finally { lock.releaseLock(); }
+  }
 }
 
 // ---------- Campaign sequences (2026-11-05, Part B Phase 2) ----------
@@ -5187,10 +5204,12 @@ function sequenceStepNumber_(stage) {
 function sequenceCampaignStage_(campaign) {
   const stage = String(campaign?.criteria?.stage || "").trim();
   if (stage) return stage;
-  // The oldest campaigns have no stored criteria; their Audience text starts with the stage when it isn't Initial.
-  const match = String(campaign?.audience || "").match(/^(Follow-up 1|Follow-up 2|Nurture check-in|Reactivation)\b/i);
-  if (!match) return "Initial";
-  return ["Follow-up 1", "Follow-up 2", "Nurture check-in", "Reactivation"].find(item => item.toLowerCase() === match[1].toLowerCase());
+  // The oldest campaigns have no stored criteria. Only an Audience that is plainly a sales stage counts as one;
+  // anything else (a Cocktail list, an ordering-link invite, an unknown label) stays a single campaign.
+  const audience = String(campaign?.audience || "").trim();
+  const match = audience.match(/^(Follow-up 1|Follow-up 2|Nurture check-in|Reactivation)\b/i);
+  if (match) return ["Follow-up 1", "Follow-up 2", "Nurture check-in", "Reactivation"].find(item => item.toLowerCase() === match[1].toLowerCase());
+  return /^(Eligible initial prospects|Initial prospects)\b/i.test(audience) ? "Initial" : "";
 }
 
 function sequenceIsStepCampaign_(campaign) {
@@ -5295,12 +5314,23 @@ function buildSequencePlan_(data, options) {
     const step = sequenceStepNumber_(row.stage);
     if (!step) return;
     const at = outreachDate_(row.timestamp);
-    if (row.account_id) addSend(`account:${String(row.account_id).trim()}`, step, at);
-    [row.intended_recipient, row.delivered_to].forEach(address => {
-      const email = String(address || "").trim().toLowerCase();
-      if (email) addSend(`email:${email}`, step, at);
-    });
+    // A row with an Account ID counts only for that account; an address-only row is matched by address below,
+    // and only when that address belongs to a single business.
+    if (String(row.account_id || "").trim()) { addSend(`account:${String(row.account_id).trim()}`, step, at); return; }
+    new Set([row.intended_recipient, row.delivered_to].map(address => String(address || "").trim().toLowerCase()).filter(Boolean))
+      .forEach(email => addSend(`email:${email}`, step, at));
   });
+  // Addresses shared by more than one business (by Account ID) in the Directory or the campaign recipients.
+  const accountsByEmail = new Map();
+  const noteAddress = (email, account) => {
+    const address = String(email || "").trim().toLowerCase();
+    if (!address) return;
+    if (!accountsByEmail.has(address)) accountsByEmail.set(address, new Set());
+    accountsByEmail.get(address).add(String(account || "").trim() || `row:${address}`);
+  };
+  (data.directory || []).forEach(record => noteAddress(record.email, record.account_id));
+  (data.recipients || []).forEach(item => noteAddress(item.recipient_email, item.account_id));
+  const sharedAddress = email => (accountsByEmail.get(email)?.size || 0) > 1;
 
   const directoryByAccount = new Map();
   const directoryByEmail = new Map();
@@ -5383,15 +5413,19 @@ function buildSequencePlan_(data, options) {
       const record = directoryRecordFor(member);
       const evidence = []
         .concat(member.account_id ? sends.get(`account:${member.account_id}`) || [] : [])
-        .concat(member.email ? sends.get(`email:${member.email}`) || [] : [])
+        .concat(member.email && !sharedAddress(member.email) ? sends.get(`email:${member.email}`) || [] : [])
         .concat(member.recipient_sends);
+      // First send of each step (shown on the card) and latest send (a re-sent step restarts the gap).
       const firstSent = {};
+      const latestSent = {};
       evidence.forEach(item => {
-        const current = firstSent[item.step];
-        if (current === undefined || (item.at && (!current || item.at.getTime() < current.getTime()))) firstSent[item.step] = item.at || current || null;
+        const first = firstSent[item.step];
+        if (first === undefined || (item.at && (!first || item.at.getTime() < first.getTime()))) firstSent[item.step] = item.at || first || null;
+        const latest = latestSent[item.step];
+        if (latest === undefined || (item.at && (!latest || item.at.getTime() > latest.getTime()))) latestSent[item.step] = item.at || latest || null;
       });
       const reached = Object.keys(firstSent).map(Number).reduce((max, step) => Math.max(max, step), 0);
-      const lastSentAt = reached ? firstSent[reached] : null;
+      const lastSentAt = reached ? latestSent[reached] : null;
       const stop = sequenceStopReason_(record);
       let state;
       // A business that got the last step is finished (the send itself moves it to Nurture), whatever came after.
@@ -5547,9 +5581,18 @@ function ensureSequenceStructure_() {
 
 /** Staff read: sequences with their steps and counts (no per-business lists; those come with one sequence). */
 function apiGetOutreachSequences_(p) {
-  const plan = buildSequencePlan_(sequenceSourceData_(), { now:new Date(), gap_days:sequenceGapDays_() });
   const wanted = String(p?.sequence_id || "").trim();
+  // Cached like the other Hub reads (a send or save bumps the cache version); "refresh" rebuilds it.
+  return cachedReadPayload_(`outreach_sequences${wanted ? `:${wanted}` : ""}`, () => outreachSequencesPayload_(wanted), toBool_(p?.refresh));
+}
+
+function outreachSequencesPayload_(wanted) {
+  const startedAt = Date.now();
+  const data = sequenceSourceData_();
+  const readMs = Date.now() - startedAt;
+  const plan = buildSequencePlan_(data, { now:new Date(), gap_days:sequenceGapDays_() });
   return {
+    performance:{ stages:{ read_ms:readMs, build_ms:Date.now() - startedAt - readMs }, rows:{ campaigns:data.campaigns.length, recipients:data.recipients.length, activity:data.activity.length, directory:data.directory.length } },
     migrated:plan.sequences.some(item => item.stored),
     gap_days:plan.gap_days,
     sequences:plan.sequences.map(item => {
@@ -5615,17 +5658,20 @@ function previewSequenceMigration() {
  */
 function migrateCampaignsToSequences() {
   ensureSequenceStructure_();
-  const first = buildSequencePlan_(sequenceSourceData_(), { now:new Date(), gap_days:sequenceGapDays_() });
-  const deleted = [];
-  first.deletions.forEach(item => {
-    apiDeleteOutreachCampaign_({ campaign_id:item.campaign_id, staff_name:SEQUENCE_MIGRATION_ACTOR, confirm_delete:true });
-    deleted.push(item.name);
-  });
+  // One lock for the whole migration: the duplicates are worked out and deleted from the same reading of the
+  // sheets, so a draft edited in the meantime can't be deleted on the strength of an older plan.
   const lock = LockService.getScriptLock();
   if (!lock.tryLock(30000)) throw new Error("Another campaign update is in progress. Run the migration again in a minute.");
   try {
     __HEADER_CACHE.clear();
-    const plan = buildSequencePlan_(sequenceSourceData_(), { now:new Date(), gap_days:sequenceGapDays_() });
+    const first = buildSequencePlan_(sequenceSourceData_(), { now:new Date(), gap_days:sequenceGapDays_() });
+    const deleted = [];
+    first.deletions.forEach(item => {
+      deleteOutreachCampaignUnderLock_({ campaign_id:item.campaign_id, staff_name:SEQUENCE_MIGRATION_ACTOR, confirm_delete:true });
+      deleted.push(item.name);
+    });
+    __HEADER_CACHE.clear();
+    const plan = deleted.length ? buildSequencePlan_(sequenceSourceData_(), { now:new Date(), gap_days:sequenceGapDays_() }) : first;
     const stamp = new Date();
     const ss = getOutreachSs_();
 
@@ -5722,6 +5768,9 @@ function migrateCampaignsToSequences() {
 // the draft gets a "Review and approve" task in his weekly task manager. Businesses that come due after a step was
 // already sent get a smaller "(more)" draft of the same step.
 const SEQUENCE_STEP_CHECK_LAST_DAY_PROPERTY = "SEQUENCE_STEP_CHECK_LAST_DAY";
+// JSON { day, attempts, message } while today's check keeps failing; cleared by a successful check.
+const SEQUENCE_STEP_CHECK_ERROR_PROPERTY = "SEQUENCE_STEP_CHECK_ERROR";
+const SEQUENCE_STEP_CHECK_MAX_ATTEMPTS = 3; // per day: a failing check is retried at most three hourly syncs.
 const SEQUENCE_STEP_CHECK_HOUR = 6;
 const SEQUENCE_STEP_CHECK_ACTOR = "Sequence step check";
 
@@ -5784,9 +5833,31 @@ function maybeRunSequenceStepCheck_(now) {
   const today = Utilities.formatDate(at, timeZone, "yyyy-MM-dd");
   const properties = PropertiesService.getScriptProperties();
   if (properties.getProperty(SEQUENCE_STEP_CHECK_LAST_DAY_PROPERTY) === today) return { ran:false, reason:"already ran today" };
-  // Mark the day first: a failing check is logged and retried tomorrow rather than every hour.
-  properties.setProperty(SEQUENCE_STEP_CHECK_LAST_DAY_PROPERTY, today);
-  return { ran:true, results:runSequenceStepCheck() };
+  let failure = null;
+  try { failure = JSON.parse(properties.getProperty(SEQUENCE_STEP_CHECK_ERROR_PROPERTY) || "null"); } catch (error) { failure = null; }
+  const attempts = failure && failure.day === today ? Number(failure.attempts || 0) : 0;
+  if (attempts >= SEQUENCE_STEP_CHECK_MAX_ATTEMPTS) return { ran:false, reason:"failed three times today" };
+  try {
+    const results = runSequenceStepCheck();
+    // Done for today only once the check itself ran. A step that could not be drafted is in the results and is
+    // tried again tomorrow; it does not make the whole check fail.
+    properties.setProperty(SEQUENCE_STEP_CHECK_LAST_DAY_PROPERTY, today);
+    properties.deleteProperty(SEQUENCE_STEP_CHECK_ERROR_PROPERTY);
+    return { ran:true, results:results };
+  } catch (error) {
+    // The task sync turns this into a task, so sequence businesses are never left with no reminder at all.
+    properties.setProperty(SEQUENCE_STEP_CHECK_ERROR_PROPERTY, JSON.stringify({ day:today, attempts:attempts + 1, message:String(error && error.message || error).slice(0, 300) }));
+    throw error;
+  }
+}
+
+/** Today's step-check failure, if it keeps failing, for the task sync. */
+function sequenceStepCheckFailure_(now) {
+  try {
+    const failure = JSON.parse(PropertiesService.getScriptProperties().getProperty(SEQUENCE_STEP_CHECK_ERROR_PROPERTY) || "null");
+    const today = Utilities.formatDate(now instanceof Date ? now : new Date(), Session.getScriptTimeZone() || "America/Chicago", "yyyy-MM-dd");
+    return failure && failure.day === today ? failure : null;
+  } catch (error) { return null; }
 }
 
 // Campaign names are internal labels (the list, review window and follow-up source picker); no email uses them,
@@ -7052,6 +7123,10 @@ function outreachSendWindow_() {
   return parse(raw) || parse(OUTREACH_SEND_WINDOW_DEFAULT);
 }
 
+function outreachWindowWaitingDetail_(sendWindow) {
+  return `Waiting for the sending window (${sendWindow.label})${sendWindow.next_open ? `; next opens ${campaignScheduleTimeLabel_(sendWindow.next_open)}` : ""}. Continues on its own.`;
+}
+
 /** Whether campaign sends may go now, and if not, when the window next opens (approximate across a DST change). */
 function outreachSendWindowState_(now, sendWindow) {
   const at = now instanceof Date ? now : new Date();
@@ -7069,7 +7144,14 @@ function outreachSendWindowState_(now, sendWindow) {
     if (!window.days.has(candidate)) continue;
     if (ahead === 0 && minute >= window.start) continue;
     const minutes = ahead * 1440 + window.start - minute;
-    return { open:false, next_open:new Date(at.getTime() + minutes * 60000), label:label };
+    // Adding local minutes is off by an hour across a daylight-saving change; correct it against Chicago time.
+    let nextOpen = new Date(at.getTime() + minutes * 60000);
+    const localStart = Number(Utilities.formatDate(nextOpen, timeZone, "H")) * 60 + Number(Utilities.formatDate(nextOpen, timeZone, "m"));
+    let drift = window.start - localStart;
+    if (drift > 720) drift -= 1440;
+    if (drift < -720) drift += 1440;
+    nextOpen = new Date(nextOpen.getTime() + drift * 60000);
+    return { open:false, next_open:nextOpen, label:label };
   }
   return { open:false, next_open:null, label:label };
 }
@@ -7090,7 +7172,7 @@ function runScheduledOutreachCampaigns() {
   const sendWindow = outreachSendWindowState_(now);
   if (!sendWindow.open) {
     // Outside the sending window: nothing sends. Say when it resumes (written only when the text changes).
-    const detail = `Waiting for the sending window (${sendWindow.label})${sendWindow.next_open ? `; next opens ${campaignScheduleTimeLabel_(sendWindow.next_open)}` : ""}. Continues on its own.`;
+    const detail = outreachWindowWaitingDetail_(sendWindow);
     due.forEach(state => {
       try {
         if (state.schedule_detail !== detail && h.schedule_detail !== undefined) {
@@ -7174,7 +7256,12 @@ function runScheduledCampaign_(campaignId, deadlineAt, holdCheck) {
       // shortly; if the Outbox has emptied, it was not a real hold, so clear it and carry on within the pace limits.
       verifiedHold = true;
       Utilities.sleep(OUTREACH_HOLD_VERIFY_DELAY_MS);
-      if (outreachClearReleasedOutboxHold_(Date.now(), holdCheck, { force:true }).cleared) continue;
+      if (outreachClearReleasedOutboxHold_(Date.now(), holdCheck, { force:true }).cleared) {
+        // The window may have closed during the wait; never start another batch outside it.
+        const windowNow = outreachSendWindowState_(new Date());
+        if (windowNow.open) continue;
+        return finish("Sending", outreachWindowWaitingDetail_(windowNow));
+      }
     }
     if (res.held) {
       // A Zoho Outbox hold waits out the hour and then continues on its own. Only repeated holds with no clean send
@@ -11645,6 +11732,17 @@ function taskManagerHubItems_(now, timeZone) {
       description:taskManagerDescription_([line, "Open it in Outreach > Campaigns > Review campaign. This task closes itself."], key),
     });
   });
+
+  // Sequences: today's step check failed, so no step was drafted. Say so rather than leave due businesses silent.
+  const stepCheckFailure = sequenceStepCheckFailure_(now);
+  if (stepCheckFailure) {
+    const key = `${TASK_MANAGER_KEY_PREFIX}seqcheck-${stepCheckFailure.day}`;
+    items.push({
+      key:key, kind:"campaign", summary:true, priority:"high", title:"Sequence step check failed: due follow-ups were not drafted today",
+      slot:taskManagerSlot_(now, timeZone),
+      description:taskManagerDescription_([taskManagerClip_(stepCheckFailure.message, 300), "Run runSequenceStepCheck() in the Inventory API editor, or tell Claude. This task closes itself after a successful check."], key),
+    });
+  }
 
   // Orders & Accounts: new applications and online orders.
   rowsWithSource_(getCustomerApplicationsSheet_(false)).map(customerApplicationRecord_).forEach(application => {

@@ -353,6 +353,7 @@ test("a send reported held is re-checked in the same run; if the Outbox emptied,
     outreachCampaignRow_ = () => __campaign;
     apiSendOutreachCampaignBatch_ = () => { __calls += 1; return __batches.shift(); };
     outreachClearReleasedOutboxHold_ = (now, state, options) => ({ cleared:!!(options && options.force) });
+    outreachSendWindowState_ = () => ({ open:true });
     appendAudit_ = () => {};`, context);
   const run = JSON.parse(JSON.stringify(vm.runInContext(`runScheduledCampaign_("CMP-1", Date.now() + 200000, { outbox_hold_checked:false })`, context)));
   assert.equal(context.__calls, 2, "the cleared hold lets the run send its second email");
@@ -372,4 +373,35 @@ test("a send reported held is re-checked in the same run; if the Outbox emptied,
   assert.equal(context.__calls, 1);
   assert.equal(held.state, "Sending");
   assert.match(context.__campaign.values[6], /^Waiting: Zoho held mail in the Outbox/);
+});
+
+test("the next window opens at 10 am Chicago across both daylight-saving changes", async () => {
+  const { context, call } = await backend();
+  context.Utilities = { formatDate: chicagoFormat, sleep() {} };
+  context.__config = {};
+  // Spring forward (Sun Mar 8, 2026): Fri 3 pm CST → Mon 10 am CDT = 15:00Z.
+  assert.equal(call(`outreachSendWindowState_(new Date("2026-03-06T21:00:00Z")).next_open`), "2026-03-09T15:00:00.000Z");
+  // Fall back (Sun Nov 1, 2026): Fri 3 pm CDT → Mon 10 am CST = 16:00Z.
+  assert.equal(call(`outreachSendWindowState_(new Date("2026-10-30T20:00:00Z")).next_open`), "2026-11-02T16:00:00.000Z");
+});
+
+test("a window that closes during the 45-second hold re-check stops the run before a second batch", async () => {
+  const { context } = await backend();
+  context.Utilities = { formatDate: chicagoFormat, sleep() {} };
+  vm.runInContext(`
+    __headers = { campaign_id:0, status:1, approval_token:2, scheduled_send_at:3, scheduled_by:4, schedule_status:5, schedule_detail:6, app_version:7 };
+    __campaign = { row:2, headers:__headers, values:["CMP-1", "Approved", "tok", new Date(Date.now() - 60000), "Karl", "Sending", "", ""] };
+    __calls = 0;
+    updateCampaignSchedule_ = (id, mutate) => mutate(__campaign);
+    outreachCampaignSheets_ = () => ({});
+    outreachCampaignRow_ = () => __campaign;
+    apiSendOutreachCampaignBatch_ = () => { __calls += 1; return { sent:1, blocked:0, remaining:10, results:[{ status:"Sent" }], held:true }; };
+    outreachClearReleasedOutboxHold_ = () => ({ cleared:true });
+    outreachSendWindowState_ = () => ({ open:false, next_open:new Date("2026-11-06T16:00:00Z"), label:"10 am–2 pm, Mon, Tue, Wed, Thu, Fri" });
+    campaignScheduleTimeLabel_ = () => "Fri Nov 6, 10:00 AM CT";
+    appendAudit_ = () => {};`, context);
+  const run = JSON.parse(JSON.stringify(vm.runInContext(`runScheduledCampaign_("CMP-1", Date.now() + 200000, { outbox_hold_checked:false })`, context)));
+  assert.equal(context.__calls, 1);
+  assert.equal(run.state, "Sending");
+  assert.match(context.__campaign.values[6], /^Waiting for the sending window/);
 });
