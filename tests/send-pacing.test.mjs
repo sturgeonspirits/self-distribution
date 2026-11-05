@@ -69,7 +69,7 @@ test("a hold stops campaign sends for an hour and says to check Zoho", async () 
   assert.equal(call(`outreachSendAllowance_(${now + 61 * MIN}).allowed`), 2);
 });
 
-test("an empty Zoho Outbox releases a hold after ten minutes, while unknown results keep it", async () => {
+test("an empty Zoho Outbox releases a hold at the next run (after four minutes), while unknown results keep it", async () => {
   const now = Date.parse("2026-11-05T20:00:00Z");
   const empty = await backend({ mailerResult: { ok:true, held_in_outbox:0 } });
   empty.properties.set("OUTREACH_SEND_HOLD_UNTIL", String(now + 50 * MIN));
@@ -266,4 +266,18 @@ test("the result window cannot be saved twice when business details arrive mid-s
   assert.match(save, /finally \{\s*outcomeSaveInProgress = false;\s*\}/);
   const open = index.slice(index.indexOf("async function openOutcomeDialogForRecord"), index.indexOf("function displayDetailValue"));
   assert.equal((open.match(/\|\| outcomeSaveInProgress\) return;/g) || []).length, 2, "both the loaded and the failed path leave a save alone");
+});
+
+test("the Outbox re-check waits four minutes after a hold starts, so the next five-minute run can release it", async () => {
+  const start = Date.parse("2026-11-05T18:36:00Z");
+  const early = await backend({ mailerResult: { ok:true, held_in_outbox:0 } });
+  early.properties.set("OUTREACH_SEND_HOLD_UNTIL", String(start + 60 * MIN));
+  assert.deepEqual(early.call(`outreachClearReleasedOutboxHold_(${start + 3 * MIN}, { outbox_hold_checked:false })`), { checked:false, cleared:false, held_in_outbox:-1 });
+  assert.equal(early.fetches.length, 0, "no mailer call before four minutes");
+  assert.deepEqual(early.call(`outreachClearReleasedOutboxHold_(${start + 5 * MIN}, { outbox_hold_checked:false })`), { checked:true, cleared:true, held_in_outbox:0 });
+  // A real hold (mail still in the Outbox) keeps the full hour.
+  const real = await backend({ mailerResult: { ok:true, held_in_outbox:3 } });
+  real.properties.set("OUTREACH_SEND_HOLD_UNTIL", String(start + 60 * MIN));
+  assert.deepEqual(real.call(`outreachClearReleasedOutboxHold_(${start + 5 * MIN}, { outbox_hold_checked:false })`), { checked:true, cleared:false, held_in_outbox:3 });
+  assert.equal(Number(real.properties.get("OUTREACH_SEND_HOLD_UNTIL")), start + 60 * MIN);
 });

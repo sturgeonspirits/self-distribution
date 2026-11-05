@@ -1,14 +1,13 @@
 /*********************************
  * Inventory API (JSON) for Netlify
- * App version: 2026.11.05.53-APP
+ * App version: 2026.11.05.54-APP
  *
  * CHANGES IN THIS VERSION
- * - Review fixes for .52 (claude/review-7361d41-2026-11-05.md); .52 itself was never deployed, so its notes (Closed
- *   result, campaign dates and states, early Outbox release, header guard) ship in this version too.
- * - ensureHeaderColumns_ returns the cached header map with no extra read when every column is already there. It
- *   reads the live header row only when a column looks missing, which is the only case that could duplicate one.
- * - isDoNotContact_ adds only Closed (status or outcome). Outcomes Unsubscribed / Not interested / Do not contact
- *   again count only through status, as before .52, so the Due today queue and follow-up tasks are unchanged.
+ * - A Zoho Outbox "hold" is re-checked at the next five-minute run (after 4 minutes, was 10). The mailer counts the
+ *   Outbox 1.5 s after each send, when a normal email is usually still in transit, so on 2026-11-05 every Appleton
+ *   Follow-up 2 send was reported held and then went out within about 2 minutes, which slowed the campaign to roughly
+ *   one email every 10–15 minutes. An empty Outbox at the re-check clears the hold; a real hold keeps the full hour,
+ *   and three held sends in a row with nothing released still pause the campaign.
  *
  * DEPLOY
  * - Apps Script project: Inventory API
@@ -18,7 +17,7 @@
  * Earlier version notes: docs/history/inventory-api-changes.md (move this version's notes there when the version changes).
  *********************************/
 
-const APP_VERSION = "2026.11.05.53-APP";
+const APP_VERSION = "2026.11.05.54-APP";
 
 const SHEET_NAMES = {
   STORES: "Stores",
@@ -6745,7 +6744,10 @@ const OUTREACH_SEND_HOLD_PROPERTY = "OUTREACH_SEND_HOLD_UNTIL";
 const OUTREACH_HOLD_STREAK_PROPERTY = "OUTREACH_SEND_HOLD_STREAK";
 const OUTREACH_HOLD_STREAK_PAUSE = 3; // A scheduled campaign pauses for a person to check after this many in a row.
 const OUTREACH_HOLD_MS = 60 * 60 * 1000;
-const OUTREACH_OUTBOX_RELEASE_CHECK_DELAY_MS = 10 * 60 * 1000;
+// The mailer counts the Outbox 1.5 s after a send, when a normal email is often still in transit, so a single "held"
+// report is usually not a real hold (2026-11-05: every Appleton send was reported held and went out within ~2 min).
+// Checking again at the next five-minute run tells a transient one from a real one; a real hold keeps the full hour.
+const OUTREACH_OUTBOX_RELEASE_CHECK_DELAY_MS = 4 * 60 * 1000;
 const OUTREACH_WINDOW_MS = 60 * 60 * 1000;
 const OUTREACH_BURST_WINDOW_MS = 5 * 60 * 1000;
 
@@ -6771,7 +6773,7 @@ function outreachRecordSend_(at, held) {
 }
 
 // The mailer reported a hold immediately after the last send, but Zoho can release it much sooner than the fixed
-// hour. This read-only check is called at most once by each scheduler invocation, after ten minutes have elapsed.
+// hour. This read-only check is called at most once by each scheduler invocation, once four minutes have elapsed.
 function outreachClearReleasedOutboxHold_(now, runState) {
   const at = typeof now === "number" ? now : Date.now();
   const properties = PropertiesService.getScriptProperties();

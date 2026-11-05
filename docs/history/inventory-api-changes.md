@@ -3,6 +3,14 @@
 Moved out of the `apps-script/Code.gs` header on 2026-10-17 so the deployed file stays short. Newest first, copied word for word. The header keeps only the current version (`CHANGES IN THIS VERSION`); when a new version is made, move that section to the top of this file.
 
 ```
+CHANGES IN 2026.11.05.53-APP
+- Review fixes for .52 (claude/review-7361d41-2026-11-05.md); .52 itself was never deployed, so its notes (Closed
+  result, campaign dates and states, early Outbox release, header guard) ship in this version too.
+- ensureHeaderColumns_ returns the cached header map with no extra read when every column is already there. It
+  reads the live header row only when a column looks missing, which is the only case that could duplicate one.
+- isDoNotContact_ adds only Closed (status or outcome). Outcomes Unsubscribed / Not interested / Do not contact
+  again count only through status, as before .52, so the Due today queue and follow-up tasks are unchanged.
+
 CHANGES IN 2026.11.05.52-APP
 - Adds Closed as a permanent, non-actionable Directory result. Closed businesses are excluded from all Hub email
   audiences and follow-up queues, and the strict Directory Status / Outcome dropdowns are repaired with it.
