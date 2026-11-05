@@ -2771,7 +2771,7 @@ test("scheduled campaign sends validate times, run due campaigns, skip guarded r
   assert.equal(unsafeBlocks([{ status:"Blocked", mailer_attempted:true, business:"Bar" }]).length, 1);
 
   // Run one campaign against an in-memory sheet and a scripted batch sender.
-  const runCampaign = (batches, { cancelAfterFirst = false } = {}) => {
+  const runCampaign = (batches, { cancelAfterFirst = false, holdStreak = 1 } = {}) => {
     const headers = { campaign_id:0, status:1, approval_token:2, scheduled_send_at:3, scheduled_by:4, schedule_status:5, schedule_detail:6, app_version:7 };
     const campaign = { row:2, headers, values:["CMP-1", "Approved", "tok", new Date(Date.now() - 3600000), "Karl", "Scheduled", "", ""] };
     const calls = [];
@@ -2787,6 +2787,7 @@ test("scheduled campaign sends validate times, run due campaigns, skip guarded r
       "updateCampaignSchedule_", "outreachCampaignSheets_", "outreachCampaignRow_", "campaignScheduleState_", "apiSendOutreachCampaignBatch_",
       "campaignScheduleTimeLabel_", "clearCampaignSchedule_", "appendAudit_", "CAMPAIGN_SCHEDULE_ACTIVE_STATUSES", "CAMPAIGN_SCHEDULE_BATCH_SIZE",
       "campaignScheduleIsDue_", "campaignScheduleUnsafeBlocks_", "OUTREACH_CAMPAIGNS_SHEET_NAME", "console", "outreachHourlyLimit_",
+      "outreachHoldStreak_", "outreachSendAllowance_", "OUTREACH_HOLD_STREAK_PAUSE",
       `${functionSource("runScheduledCampaign_", "outreachStatusForOutcome_")}; return runScheduledCampaign_;`
     )(
       (id, mutate) => mutate(campaign),
@@ -2798,6 +2799,7 @@ test("scheduled campaign sends validate times, run due campaigns, skip guarded r
       new Function(`${functionSource("clearCampaignSchedule_", "campaignScheduleState_")}; return clearCampaignSchedule_;`)(),
       (...args) => audits.push(args),
       ACTIVE, 2, isDue, unsafeBlocks, "Outreach Campaigns", { warn() {}, log() {} }, () => 20,
+      () => holdStreak, () => ({ next_at:Date.now() + 3600000 }), 3,
     );
     const result = run("CMP-1", Date.now() + 60000);
     return { result, campaign, calls, audits };
@@ -2828,11 +2830,16 @@ test("scheduled campaign sends validate times, run due campaigns, skip guarded r
   assert.equal(paced.campaign.values[5], "Sending");
   assert.match(paced.campaign.values[6], /^Pacing: 20 emails .* 12 waiting; continues automatically\.$/);
 
-  // Zoho holding mail in the Outbox pauses the schedule, so the task manager sync raises a task.
+  // Zoho holding mail in the Outbox (2026-11-05 .51): the schedule waits out the hold and continues on its own.
   const held = runCampaign([{ sent:1, blocked:0, remaining:9, results:[{ status:"Sent" }], held:true, message:"Zoho accepted the last email but is holding 1 in the Outbox." }]);
-  assert.equal(held.result.state, "Paused");
-  assert.equal(held.campaign.values[5], "Paused");
-  assert.match(held.campaign.values[6], /holding 1 in the Outbox\. 1 sent this run; 9 still waiting\./);
+  assert.equal(held.result.state, "Sending");
+  assert.equal(held.campaign.values[5], "Sending");
+  assert.match(held.campaign.values[6], /^Waiting: Zoho held mail in the Outbox, .* continues on its own\. 1 sent this run; 9 still waiting\.$/);
+  assert.equal(held.audits.length, 0);
+  // Three holds in a row pause it, so the task manager sync raises a task.
+  const heldAgain = runCampaign([{ sent:1, blocked:0, remaining:9, results:[{ status:"Sent" }], held:true }], { holdStreak:3 });
+  assert.equal(heldAgain.result.state, "Paused");
+  assert.match(heldAgain.campaign.values[6], /3 times in a row/);
 
   const paused = runCampaign([
     { sent:1, blocked:1, remaining:5, results:[{ status:"Sent" }, { status:"Blocked", mailer_attempted:true, business:"Uncertain Bar", detail:"Zoho did not return a verified message ID." }] },

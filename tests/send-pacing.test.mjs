@@ -145,3 +145,62 @@ test("the mailer reports Zoho's Outbox after real sends only and never fails a s
   assert.equal(vm.runInContext(`outboxHeldCount_({ "Zoho account ID":"1" })`, broken), -1);
   assert.match(vm.runInContext(`acceptedLogDetail_({ held_in_outbox:1 })`, make([])), /holding 1 email in the Outbox/);
 });
+
+test("held sends build a streak that a clean send resets", async () => {
+  const { call, properties } = await backend();
+  const now = Date.parse("2026-11-05T17:20:00Z");
+  call(`outreachRecordSend_(${now}, true)`);
+  call(`outreachRecordSend_(${now + MIN}, true)`);
+  assert.equal(call(`outreachHoldStreak_()`), 2);
+  call(`outreachRecordSend_(${now + 2 * MIN}, false)`);
+  assert.equal(call(`outreachHoldStreak_()`), 0);
+  properties.set("OUTREACH_SEND_HOLD_STREAK", "nonsense");
+  assert.equal(call(`outreachHoldStreak_()`), 0);
+});
+
+// Runs runScheduledCampaign_ against one stubbed campaign and one stubbed batch result.
+async function scheduledRun(batchResult, { streak = 0, holdUntil = 0 } = {}) {
+  const b = await backend();
+  if (streak) b.properties.set("OUTREACH_SEND_HOLD_STREAK", String(streak));
+  if (holdUntil) b.properties.set("OUTREACH_SEND_HOLD_UNTIL", String(holdUntil));
+  b.context.__batch = batchResult;
+  vm.runInContext(`
+    __campaign = { row:2, headers:{ campaign_id:0, status:1, approval_token:2, scheduled_send_at:3, scheduled_by:4, schedule_status:5, schedule_detail:6, app_version:7 },
+      values:["CMP-1", "Approved", "tok", new Date(Date.now() - 60000), "Karl", "Sending", "", ""] };
+    __audits = [];
+    updateCampaignSchedule_ = (id, mutate) => mutate(__campaign);
+    outreachCampaignSheets_ = () => ({});
+    outreachCampaignRow_ = () => __campaign;
+    apiSendOutreachCampaignBatch_ = () => __batch;
+    appendAudit_ = (...args) => __audits.push(args[0]);`, b.context);
+  const run = b.call(`runScheduledCampaign_("CMP-1", Date.now() + 60000)`);
+  return { run, campaign: b.call(`__campaign.values`), audits: b.call(`__audits`) };
+}
+
+test("a Zoho hold makes a scheduled campaign wait and continue on its own, not pause", async () => {
+  // A send that Zoho held: keeps Sending, says when it resumes, no pause audit.
+  const holdUntil = Date.now() + 60 * MIN;
+  let r = await scheduledRun({ sent:1, blocked:0, remaining:53, results:[{ status:"Sent" }], held:true }, { streak:1, holdUntil });
+  assert.equal(r.run.state, "Sending");
+  assert.equal(r.campaign[5], "Sending");
+  assert.match(r.campaign[6], /^Waiting: Zoho held mail in the Outbox, so sending is on hold until .+ and then continues on its own\. 1 sent this run; 53 still waiting\.$/);
+  assert.deepEqual(r.audits, []);
+
+  // A run that starts during the hold (nothing sent) also just waits.
+  r = await scheduledRun({ sent:0, blocked:0, remaining:53, results:[], paced:true, held:true }, { streak:1, holdUntil });
+  assert.equal(r.run.state, "Sending");
+  assert.equal(r.campaign[5], "Sending");
+
+  // Three holds in a row with no clean send between: pause for a person to check Zoho.
+  r = await scheduledRun({ sent:1, blocked:0, remaining:52, results:[{ status:"Sent" }], held:true }, { streak:3, holdUntil });
+  assert.equal(r.run.state, "Paused");
+  assert.equal(r.campaign[5], "Paused");
+  assert.match(r.campaign[6], /held mail in the Outbox 3 times in a row/);
+  assert.deepEqual(r.audits, ["SCHEDULED_OUTREACH_CAMPAIGN_PAUSED"]);
+
+  // An uncertain delivery still pauses, even when Zoho also reported a hold.
+  r = await scheduledRun({ sent:0, blocked:1, remaining:53, held:true,
+    results:[{ status:"Blocked", mailer_attempted:true, business:"Club Tavern", detail:"unreadable response" }] }, { streak:1, holdUntil });
+  assert.equal(r.run.state, "Paused");
+  assert.match(r.campaign[6], /after Club Tavern: unreadable response\. Delivery may be uncertain/);
+});

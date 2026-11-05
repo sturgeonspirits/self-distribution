@@ -3,6 +3,15 @@
 Moved out of the `apps-script/Code.gs` header on 2026-10-17 so the deployed file stays short. Newest first, copied word for word. The header keeps only the current version (`CHANGES IN THIS VERSION`); when a new version is made, move that section to the top of this file.
 
 ```
+CHANGES IN 2026.10.30.50-APP
+- Send pacing: campaign emails go out at most 20 an hour (Hub Configuration "outreach_hourly_send_limit") and at
+  most a twelfth of that in any 5 minutes, counting every real send the Hub makes. The scheduler sends one batch of
+  up to 2 per five-minute run. "Send remaining" now hands the campaign to the scheduler (start_now) instead of
+  sending from the browser. Zoho blocked karl@ for exceeding its hourly limit on 2026-10-30.
+- When the mailer (distribution outreach .34) reports Zoho holding mail in the Outbox, campaign sending stops for an
+  hour, the recipient's result says so, and a scheduled campaign pauses (which the task manager sync turns into a
+  task). Needs distribution outreach .34 for the Outbox report; pacing works without it.
+
 CHANGES IN 2026.10.29.49-APP
 - Weekly task manager sync: every hour the Hub writes its waiting work into the Tasks tab of "Karl weekly task
   manager" (open replies, personal follow-ups due this week, one task per campaign whose businesses are due for
