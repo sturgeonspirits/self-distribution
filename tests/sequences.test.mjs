@@ -587,3 +587,18 @@ test("deleting the last live campaign of a sequence puts its businesses back on 
   const code = await readFile(new URL("apps-script/Code.gs", root), "utf8");
   assert.match(code, /function deleteOutreachCampaignUnderLock_[\s\S]{0,3500}releaseSequenceAfterDelete_\(sheets\.campaigns, ch,/);
 });
+
+test("a follow-up draft Karl deletes is drafted again at the next daily check (Karl, 2026-11-05: next day is good)", async () => {
+  const context = await backend();
+  const data = {
+    campaigns:[campaign("CMP-R", "Initial"),
+      campaign("CMP-R2", "Follow-up 1", { criteria:{ source_campaign_id:"CMP-R" }, row:{ status:"Deleted", sent_count:0, created_at:day(1), sequence_id:"SEQ-R", step:2 } })],
+    recipients:[recipient("CMP-R", "R1", "Sent", 10), recipient("CMP-R2", "R1", "Deleted")],
+    activity:[sent("R1", "Initial", 10)],
+    directory:[Object.assign(dir("R1", "Sent", "", 2), { sequence_id:"SEQ-R" })],
+    sequences:[{ sequence_id:"SEQ-R", name:"Ripon", gap_days:7 }],
+  };
+  context.__plan = build(context, data);
+  const actions = vm.runInContext("sequenceStepDraftActions_(__plan)", context);
+  assert.deepEqual(Array.from(actions, item => [item.action, item.campaign_name]), [["create", "Ripon — Follow-up 1"]]);
+});
