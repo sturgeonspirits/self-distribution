@@ -1,12 +1,20 @@
 /*********************************
  * Inventory API (JSON) for Netlify
- * App version: 2026.11.05.60-APP
+ * App version: 2026.11.05.61-APP
  *
  * CHANGES IN THIS VERSION
- * - Sequences: a sent date stored as a bare Sheets serial number (a few recipient rows hold e.g. 46301.51552) is
- *   read as that day, not as milliseconds after 1970. Only the step dates shown in the preview and on the cards
- *   were affected ("Dec 31–Oct 6" for Appleton Follow-up 1 in the 2026-11-05 live preview); due dates use the
- *   latest send and were right.
+ * - Sequences Phase 3 (server). New Initial campaigns become sequences on their own: syncSequences_() (no
+ *   deletions) runs before every step check and writes the same three things the migration wrote, through the new
+ *   shared writeSequencePlan_(): the Outreach Sequences row, Sequence ID / Step on step campaigns, and the Directory
+ *   Sequence ID. The Directory pass now also clears a Sequence ID that a stored sequence left behind (the business
+ *   finished, stopped, or no sequence lists it); an ID the Hub never wrote is left alone. Missing columns stop
+ *   with "Run Repair Hub Structure first" instead of writing to a wrong column.
+ * - A gap set on one sequence (Gap Days) is now used for that sequence's due dates, not just shown.
+ * - New staff actions: updateOutreachSequence (name and days between steps; writes only those cells and Updated
+ *   At) and buildOutreachSequenceStep ("Build next step" on a card: syncs, then drafts what is due for that one
+ *   sequence, same rules as the daily check; nothing is approved or sent). runSequenceStepCheck(options) takes
+ *   { sequence_id, actor }; the editor call with no options is unchanged.
+ * - The api "actions" list now includes outreachSequences and the two new actions.
  *
  * DEPLOY
  * - Apps Script project: Inventory API
@@ -16,7 +24,7 @@
  * Earlier version notes: docs/history/inventory-api-changes.md (move this version's notes there when the version changes).
  *********************************/
 
-const APP_VERSION = "2026.11.05.60-APP";
+const APP_VERSION = "2026.11.05.61-APP";
 
 const SHEET_NAMES = {
   STORES: "Stores",
@@ -997,7 +1005,7 @@ function handle_(e, body, isGet) {
   try {
     assertAuthorized_(e, body);
     if (!action) {
-      return json_({ ok:true, service:"sturgeon-distribution-hub", version:APP_VERSION, actions:["initData","listSkus","sellSheet","addSkuToStore","upsertProduct","submitCounts","createReorder","managerGrid","salesSinceCount","updateStoreContacts","outreachDashboard","outreachRecord","outreachSendStatus","outreachNewsletterContacts","outreachCampaigns","outreachCampaign","previewOutreachCampaign","createOutreachCampaign","updateOutreachCampaignRecipient","setOutreachCampaignRecipientExclusion","setOutreachCampaignRecipientExclusions","approveOutreachCampaign","reopenOutreachCampaign","deleteOutreachCampaign","renameOutreachCampaign","reconcileCampaignSends","rebuildCampaignRecipients","sendOutreachCampaignBatch","scheduleOutreachCampaign","cancelOutreachCampaignSchedule","saveOutreachDraft","sendOutreachEmail","sendOutreachTestEmail","updateOutreachOutcome","logOutreachContact","updateOutreachBusiness","updateOutreachPrograms","createOutreachBusiness","importOutreachBusinesses","recalculateOutreachMiles","backfillEngagementDetails","upsertNewsletterContact","submitCustomerApplication","submitOnlineOrderRequest","customerWorkQueue","customerAccountIndex","linkBadgerInvoice","syncBadgerStatus","markBadgerInvoicePayment","recordBadgerCheck","resolvePaymentReminder","badgerReconcilePreview","applyBadgerReconcile","previewBadgerPaymentReminder","sendBadgerPaymentReminder","previewBadgerInvoice","createBadgerInvoice","adoptBadgerInvoice","failBadgerInvoiceCreation","updateCustomerApplication","previewApplicationWelcome","sendApplicationWelcome","updateOnlineOrderRequest","hubSystemStatus","salesReport","inboundReplies","resolveInboundReply","checkInboundReplies","initializeHardenedHub","repairHubStructure","reconcileIntegrations"] });
+      return json_({ ok:true, service:"sturgeon-distribution-hub", version:APP_VERSION, actions:["initData","listSkus","sellSheet","addSkuToStore","upsertProduct","submitCounts","createReorder","managerGrid","salesSinceCount","updateStoreContacts","outreachDashboard","outreachRecord","outreachSendStatus","outreachNewsletterContacts","outreachCampaigns","outreachCampaign","outreachSequences","previewOutreachCampaign","createOutreachCampaign","updateOutreachCampaignRecipient","setOutreachCampaignRecipientExclusion","setOutreachCampaignRecipientExclusions","approveOutreachCampaign","reopenOutreachCampaign","deleteOutreachCampaign","renameOutreachCampaign","updateOutreachSequence","buildOutreachSequenceStep","reconcileCampaignSends","rebuildCampaignRecipients","sendOutreachCampaignBatch","scheduleOutreachCampaign","cancelOutreachCampaignSchedule","saveOutreachDraft","sendOutreachEmail","sendOutreachTestEmail","updateOutreachOutcome","logOutreachContact","updateOutreachBusiness","updateOutreachPrograms","createOutreachBusiness","importOutreachBusinesses","recalculateOutreachMiles","backfillEngagementDetails","upsertNewsletterContact","submitCustomerApplication","submitOnlineOrderRequest","customerWorkQueue","customerAccountIndex","linkBadgerInvoice","syncBadgerStatus","markBadgerInvoicePayment","recordBadgerCheck","resolvePaymentReminder","badgerReconcilePreview","applyBadgerReconcile","previewBadgerPaymentReminder","sendBadgerPaymentReminder","previewBadgerInvoice","createBadgerInvoice","adoptBadgerInvoice","failBadgerInvoiceCreation","updateCustomerApplication","previewApplicationWelcome","sendApplicationWelcome","updateOnlineOrderRequest","hubSystemStatus","salesReport","inboundReplies","resolveInboundReply","checkInboundReplies","initializeHardenedHub","repairHubStructure","reconcileIntegrations"] });
     }
 
     // A link or image tag can trigger a GET, so only read actions are accepted that way.
@@ -1032,6 +1040,8 @@ function handle_(e, body, isGet) {
       case "reopenOutreachCampaign": res = apiReopenOutreachCampaign_(body); break;
       case "deleteOutreachCampaign": res = apiDeleteOutreachCampaign_(body); break;
       case "renameOutreachCampaign": res = apiRenameOutreachCampaign_(body); break;
+      case "updateOutreachSequence": res = apiUpdateOutreachSequence_(body); break;
+      case "buildOutreachSequenceStep": res = apiBuildOutreachSequenceStep_(body); break;
       case "reconcileCampaignSends": res = apiReconcileCampaignSends_(body); break;
       case "rebuildCampaignRecipients": res = apiRebuildCampaignRecipients_(body); break;
       case "sendOutreachCampaignBatch": res = apiSendOutreachCampaignBatch_(body); break;
@@ -5391,6 +5401,9 @@ function buildSequencePlan_(data, options) {
   // Pass 3: where each business is in the sequence it belongs to.
   groups.forEach(group => {
     const steps = group.steps;
+    const saved = stored.get(group.sequence_id);
+    // A gap Karl set on this sequence wins over the Campaign Settings default.
+    const sequenceGap = Number(saved?.gap_days) > 0 ? Number(saved.gap_days) : gapDays;
     const live = group.campaigns.filter(campaign => !deleted.has(campaign.campaign_id));
     const members = new Map();
     live.forEach(campaign => {
@@ -5431,7 +5444,7 @@ function buildSequencePlan_(data, options) {
       else if (stop) state = "stopped";
       else if (member.queued_step > reached) state = "sending";
       else state = "active";
-      const dueAt = state === "active" ? (lastSentAt ? new Date(lastSentAt.getTime() + gapDays * 86400000) : now) : null;
+      const dueAt = state === "active" ? (lastSentAt ? new Date(lastSentAt.getTime() + sequenceGap * 86400000) : now) : null;
       const row = {
         key:member.key, account_id:member.account_id, email:member.email, business:member.business || record?.business || "",
         source_row:record?.source_row || 0, directory_sequence_id:String(record?.sequence_id || ""),
@@ -5447,7 +5460,6 @@ function buildSequencePlan_(data, options) {
       }
     });
 
-    const saved = stored.get(group.sequence_id);
     const migratedFrom = new Set(String(saved?.migrated_from || "").split(/[,\s]+/).filter(Boolean));
     const stepSummaries = steps.map(step => {
       const stepCampaigns = step.campaigns.filter(campaign => !deleted.has(campaign.campaign_id)).map(campaign => {
@@ -5493,7 +5505,7 @@ function buildSequencePlan_(data, options) {
       audience:String(saved?.audience || root.audience || ""),
       criteria:root.criteria || null,
       root_campaign_id:root.campaign_id,
-      gap_days:Number(saved?.gap_days) > 0 ? Number(saved.gap_days) : gapDays,
+      gap_days:sequenceGap,
       stored:!!saved,
       status:status,
       member_count:memberRows.length,
@@ -5671,6 +5683,43 @@ function migrateCampaignsToSequences() {
     });
     __HEADER_CACHE.clear();
     const plan = deleted.length ? buildSequencePlan_(sequenceSourceData_(), { now:new Date(), gap_days:sequenceGapDays_() }) : first;
+    const counts = writeSequencePlan_(plan, SEQUENCE_MIGRATION_ACTOR);
+    bumpReadCacheVersion_();
+    appendAudit_("MIGRATE_OUTREACH_SEQUENCES", "Sequence", "", "", SEQUENCE_MIGRATION_ACTOR, OUTREACH_SEQUENCES_SHEET_NAME, OUTREACH_CAMPAIGNS_SHEET_NAME, "Migrated",
+      `${plan.sequences.length} sequences (${counts.appended} new); ${counts.campaign_cells} campaign cells; ${counts.directory_cells} Directory cells; deleted ${deleted.length}.`.slice(0, 500));
+    const summary = `Migrated ${plan.sequences.length} sequences (${counts.appended} new). Deleted ${deleted.length} duplicate campaign${deleted.length === 1 ? "" : "s"}${deleted.length ? `: ${deleted.join(", ")}` : ""}. Updated ${counts.campaign_cells} campaign cells and ${counts.directory_cells} Directory cells.`;
+    console.log(summary + "\n\n" + sequencePlanText_(plan));
+    return summary;
+  } finally {
+    lock.releaseLock();
+  }
+}
+
+/**
+ * Keeps the sequence records current without deleting anything: a new Initial campaign becomes a sequence, a new
+ * step campaign gets its Sequence ID and Step, and each business's Directory Sequence ID follows where it is. Runs
+ * before every step check. Does nothing until migrateCampaignsToSequences() has created the Outreach Sequences tab.
+ */
+function syncSequences_(actor) {
+  if (!getOutreachSs_().getSheetByName(OUTREACH_SEQUENCES_SHEET_NAME)) return { skipped:"Sequences have not been migrated yet." };
+  const lock = LockService.getScriptLock();
+  if (!lock.tryLock(30000)) throw new Error("Another campaign update is in progress. Try again in a minute.");
+  try {
+    __HEADER_CACHE.clear();
+    const plan = buildSequencePlan_(sequenceSourceData_(), { now:new Date(), gap_days:sequenceGapDays_() });
+    const counts = writeSequencePlan_(plan, actor || SEQUENCE_STEP_CHECK_ACTOR);
+    const changed = !!(counts.appended || counts.campaign_cells || counts.directory_cells);
+    if (changed) bumpReadCacheVersion_();
+    // The plan is current unless this sync just stored a new sequence (its "stored" flag is now out of date).
+    return Object.assign({ changed:changed, plan:counts.appended ? null : plan }, counts);
+  } finally {
+    lock.releaseLock();
+  }
+}
+
+/** Writes a plan to the Sequences tab, the campaigns' Sequence ID / Step and the Directory. Caller holds the lock. */
+function writeSequencePlan_(plan, actor) {
+  {  // (block kept so the steps below read as they did inside migrateCampaignsToSequences)
     const stamp = new Date();
     const ss = getOutreachSs_();
 
@@ -5693,7 +5742,7 @@ function migrateCampaignsToSequences() {
       set("gap_days", sequence.gap_days, true);
       set("status", sequence.status);
       set("created_at", sequence.created_at ? new Date(sequence.created_at) : stamp, true);
-      set("created_by", SEQUENCE_MIGRATION_ACTOR, true);
+      set("created_by", actor || SEQUENCE_MIGRATION_ACTOR, true);
       set("migrated_from", sequence.steps.reduce((all, step) => all.concat(step.campaigns.map(item => item.campaign_id)), []).join(", "), true);
       set("finished_at", sequence.status === "Finished" ? stamp : "", true);
       set("updated_at", stamp);
@@ -5707,6 +5756,7 @@ function migrateCampaignsToSequences() {
     const sheets = outreachCampaignSheets_();
     const ch = getHeaderMap_(sheets.campaigns);
     let campaignCells = 0;
+    if (ch.sequence_id === undefined || ch.step === undefined) throw new Error("Run Repair Hub Structure first: Outreach Campaigns has no Sequence ID or Step column.");
     if (sheets.campaigns.getLastRow() > 1) {
       const count = sheets.campaigns.getLastRow() - 1;
       const ids = sheets.campaigns.getRange(2, ch.campaign_id + 1, count, 1).getValues();
@@ -5727,35 +5777,43 @@ function migrateCampaignsToSequences() {
     }
 
     // (4) Directory Sequence ID: the one active sequence of each business, blank once it finished or stopped.
+    // A Sequence ID left behind by a sequence the business is no longer moving through (it finished, stopped, or
+    // its draft was deleted) is cleared; an ID this Hub never wrote (not a known sequence) is left alone.
     const directory = getOutreachSheet_(OUTREACH_SHEET_NAME);
     const dh = getHeaderMap_(directory);
     let directoryCells = 0;
+    if (dh.sequence_id === undefined) throw new Error("Run Repair Hub Structure first: the Directory has no Sequence ID column.");
     if (directory.getLastRow() > 1) {
-      const range = directory.getRange(2, dh.sequence_id + 1, directory.getLastRow() - 1, 1);
+      const count = directory.getLastRow() - 1;
+      const range = directory.getRange(2, dh.sequence_id + 1, count, 1);
       const values = range.getValues();
+      const accounts = dh.account_id === undefined ? [] : directory.getRange(2, dh.account_id + 1, count, 1).getValues();
+      const emails = dh.email === undefined ? [] : directory.getRange(2, dh.email + 1, count, 1).getValues();
       const active = new Map(plan.active_sequence_for);
-      const planned = new Set(plan.sequences.map(item => item.sequence_id));
+      const known = new Set(plan.sequences.map(item => item.sequence_id));
+      const sequenceSheetNow = ss.getSheetByName(OUTREACH_SEQUENCES_SHEET_NAME);
+      if (sequenceSheetNow) getAllRowsAsObjects_(sequenceSheetNow).forEach(row => { if (row.sequence_id) known.add(String(row.sequence_id).trim()); });
+      const touched = new Set();
+      const setRow = (i, goal) => { touched.add(i); if (String(values[i][0] || "") !== goal) { values[i][0] = goal; directoryCells += 1; } };
       plan.sequences.forEach(sequence => sequence.members.forEach(member => {
-        if (!member.source_row) return;
         const i = member.source_row - 2;
-        if (i < 0 || i >= values.length) return;
+        if (!member.source_row || i < 0 || i >= values.length) return;
         const goal = active.get(member.key) || "";
-        const current = String(values[i][0] || "");
-        // Never clear a Sequence ID that belongs to a sequence this plan does not know about.
-        if (goal) { if (current !== goal) { values[i][0] = goal; directoryCells += 1; } }
-        else if (current && planned.has(current) && current === sequence.sequence_id) { values[i][0] = ""; directoryCells += 1; }
+        if (goal) setRow(i, goal);
+        else if (!touched.has(i) && known.has(String(values[i][0] || ""))) setRow(i, "");
       }));
+      // A row no sequence lists but still holding a known Sequence ID (left over from an older plan).
+      values.forEach((cell, i) => {
+        const current = String(cell[0] || "");
+        if (touched.has(i) || !current || !known.has(current)) return;
+        const account = accounts[i] ? String(accounts[i][0] || "").trim() : "";
+        const email = emails[i] ? String(emails[i][0] || "").trim().toLowerCase() : "";
+        const goal = (account && active.get(`account:${account}`)) || (email && active.get(`email:${email}`)) || "";
+        setRow(i, goal);
+      });
       range.setValues(values);
     }
-
-    bumpReadCacheVersion_();
-    appendAudit_("MIGRATE_OUTREACH_SEQUENCES", "Sequence", "", "", SEQUENCE_MIGRATION_ACTOR, OUTREACH_SEQUENCES_SHEET_NAME, OUTREACH_CAMPAIGNS_SHEET_NAME, "Migrated",
-      `${plan.sequences.length} sequences (${appended.length} new); ${campaignCells} campaign cells; ${directoryCells} Directory cells; deleted ${deleted.length}.`.slice(0, 500));
-    const summary = `Migrated ${plan.sequences.length} sequences (${appended.length} new). Deleted ${deleted.length} duplicate campaign${deleted.length === 1 ? "" : "s"}${deleted.length ? `: ${deleted.join(", ")}` : ""}. Updated ${campaignCells} campaign cells and ${directoryCells} Directory cells.`;
-    console.log(summary + "\n\n" + sequencePlanText_(plan));
-    return summary;
-  } finally {
-    lock.releaseLock();
+    return { sequences:plan.sequences.length, appended:appended.length, campaign_cells:campaignCells, directory_cells:directoryCells };
   }
 }
 
@@ -5799,14 +5857,22 @@ function sequenceStepDraftActions_(plan) {
   return actions;
 }
 
-/** Builds the due step drafts now. Safe to run from the editor; the hourly task sync runs it once a day. */
-function runSequenceStepCheck() {
-  const plan = buildSequencePlan_(sequenceSourceData_(), { now:new Date(), gap_days:sequenceGapDays_() });
-  const actions = sequenceStepDraftActions_(plan);
+/**
+ * Builds the due step drafts now. Safe to run from the editor; the hourly task sync runs it once a day. It first
+ * syncs the sequences, so an Initial campaign sent since yesterday is a sequence before its follow-up comes due.
+ * options.sequence_id limits it to one sequence (the "Build next step" button); options.actor names who asked.
+ */
+function runSequenceStepCheck(options) {
+  const opts = options && typeof options === "object" ? options : {};
+  const actor = String(opts.actor || SEQUENCE_STEP_CHECK_ACTOR);
+  const sync = syncSequences_(actor);
+  const plan = sync.plan || buildSequencePlan_(sequenceSourceData_(), { now:new Date(), gap_days:sequenceGapDays_() });
+  const only = String(opts.sequence_id || "").trim();
+  const actions = sequenceStepDraftActions_(plan).filter(action => !only || action.sequence_id === only);
   const results = actions.map(action => {
     if (action.action !== "create") return action;
     try {
-      const res = apiCreateOutreachCampaign_({ preview_confirmed:true, staff_name:SEQUENCE_STEP_CHECK_ACTOR, campaign_name:action.campaign_name,
+      const res = apiCreateOutreachCampaign_({ preview_confirmed:true, staff_name:actor, campaign_name:action.campaign_name,
         criteria:{ audience_mode:"sequence", sequence_id:action.sequence_id, stage:action.stage } });
       return Object.assign({}, action, { result:res.already_exists ? "already exists" : "created", campaign_id:res.campaign_id, recipient_count:res.recipient_count });
     } catch (error) {
@@ -5817,11 +5883,69 @@ function runSequenceStepCheck() {
   const created = results.filter(item => item.result === "created");
   if (created.length) {
     bumpReadCacheVersion_();
-    appendAudit_("SEQUENCE_STEP_CHECK", "Sequence", "", "", SEQUENCE_STEP_CHECK_ACTOR, OUTREACH_SEQUENCES_SHEET_NAME, OUTREACH_CAMPAIGNS_SHEET_NAME, "Drafted",
+    appendAudit_("SEQUENCE_STEP_CHECK", "Sequence", only, "", actor, OUTREACH_SEQUENCES_SHEET_NAME, OUTREACH_CAMPAIGNS_SHEET_NAME, "Drafted",
       created.map(item => `${item.campaign_name} (${item.recipient_count})`).join("; ").slice(0, 500));
   }
-  console.log(JSON.stringify({ event:"sequence_step_check", results:results }));
+  console.log(JSON.stringify({ event:"sequence_step_check", sequence_id:only, synced:sync.skipped ? sync.skipped : { appended:sync.appended, campaign_cells:sync.campaign_cells, directory_cells:sync.directory_cells }, results:results }));
   return results;
+}
+
+/** "Build next step" on a sequence card: drafts whatever step is due for that sequence now, without waiting for 6 am. */
+function apiBuildOutreachSequenceStep_(p) {
+  requireFields_(p || {}, ["sequence_id", "staff_name"]);
+  const sequenceId = String(p.sequence_id || "").trim();
+  if (!/^SEQ-[A-Z0-9-]{1,60}$/i.test(sequenceId)) throw new Error("That sequence was not found. Refresh the campaign list.");
+  if (!getOutreachSs_().getSheetByName(OUTREACH_SEQUENCES_SHEET_NAME)) throw new Error("Sequences have not been set up yet. Run migrateCampaignsToSequences() in the Inventory API editor first.");
+  const actor = authenticatedActor_(p, "Sturgeon Distribution Hub");
+  // The step check syncs first, so a sequence made from a new Initial campaign today is stored before it is checked.
+  const results = runSequenceStepCheck({ sequence_id:sequenceId, actor:actor });
+  const created = results.filter(item => item.result === "created");
+  const skipped = results.filter(item => item.action === "skip");
+  const failed = results.filter(item => item.result === "not created");
+  let message;
+  if (created.length) message = `Draft ready for review: ${created.map(item => `"${item.campaign_name}" (${item.recipient_count} business${Number(item.recipient_count) === 1 ? "" : "es"})`).join(", ")}.`;
+  else if (skipped.length) message = `Nothing new to build: ${skipped.map(item => item.reason).join("; ")}.`;
+  else if (failed.length) message = `No draft was built: ${failed.map(item => item.error).join("; ")}`;
+  else message = "No business in this sequence is due for its next step yet.";
+  return { message:message, created:created.map(item => ({ campaign_id:item.campaign_id, campaign_name:item.campaign_name, recipient_count:item.recipient_count, stage:item.stage })), results:results };
+}
+
+/** Rename a sequence or change its gap between steps. Writes only those cells of its Outreach Sequences row. */
+function apiUpdateOutreachSequence_(p) {
+  requireFields_(p || {}, ["sequence_id", "staff_name"]);
+  const sequenceId = String(p.sequence_id || "").trim();
+  const hasName = p.sequence_name !== undefined && p.sequence_name !== null;
+  const hasGap = p.gap_days !== undefined && p.gap_days !== null && String(p.gap_days) !== "";
+  if (!hasName && !hasGap) throw new Error("Nothing to change.");
+  const name = hasName ? publicText_(p.sequence_name, 120, "Sequence name") : "";
+  if (hasName && !name) throw new Error("Enter a sequence name.");
+  const gap = hasGap ? Number(p.gap_days) : 0;
+  if (hasGap && (!Number.isInteger(gap) || gap < 1 || gap > 90)) throw new Error("Days between steps must be a whole number from 1 to 90.");
+  const lock = LockService.getScriptLock();
+  if (!lock.tryLock(10000)) throw new Error("Another campaign update is in progress. Try again in a moment.");
+  try {
+    const sheet = getOutreachSs_().getSheetByName(OUTREACH_SEQUENCES_SHEET_NAME);
+    if (!sheet || sheet.getLastRow() < 2) throw new Error("That sequence was not found. Refresh the campaign list.");
+    const h = getHeaderMap_(sheet);
+    const ids = sheet.getRange(2, h.sequence_id + 1, sheet.getLastRow() - 1, 1).getValues();
+    const index = ids.findIndex(row => String(row[0] || "").trim() === sequenceId);
+    if (index < 0) throw new Error("That sequence was not found. Refresh the campaign list.");
+    const row = index + 2;
+    const changes = [];
+    if (hasName) {
+      const previous = String(sheet.getRange(row, h.sequence_name + 1).getValue() || "");
+      if (previous !== name) { sheet.getRange(row, h.sequence_name + 1).setValue(name); changes.push(`name "${previous}" → "${name}"`); }
+    }
+    if (hasGap) {
+      const previous = Number(sheet.getRange(row, h.gap_days + 1).getValue() || 0);
+      if (previous !== gap) { sheet.getRange(row, h.gap_days + 1).setValue(gap); changes.push(`gap ${previous || "default"} → ${gap} days`); }
+    }
+    if (!changes.length) return { message:"Nothing changed.", sequence_id:sequenceId };
+    if (h.updated_at !== undefined) sheet.getRange(row, h.updated_at + 1).setValue(new Date());
+    bumpReadCacheVersion_();
+    appendAudit_("UPDATE_OUTREACH_SEQUENCE", "Sequence", sequenceId, "", authenticatedActor_(p, "Sturgeon Distribution Hub"), OUTREACH_SEQUENCES_SHEET_NAME, OUTREACH_SEQUENCES_SHEET_NAME, "Updated", changes.join("; ").slice(0, 500));
+    return { message:"Sequence saved.", sequence_id:sequenceId, sequence_name:hasName ? name : undefined, gap_days:hasGap ? gap : undefined };
+  } finally { lock.releaseLock(); }
 }
 
 /** Runs runSequenceStepCheck() at most once per day, at or after 6 am Hub time. Called by the hourly task sync. */

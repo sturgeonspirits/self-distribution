@@ -1,10 +1,10 @@
 <!doctype html>
-<!-- App version: 2026.11.05.61-WEB -->
+<!-- App version: 2026.11.05.63-WEB -->
 <html>
 <head>
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover"/>
-  <meta name="app-version" content="2026.11.05.61-WEB" />
+  <meta name="app-version" content="2026.11.05.63-WEB" />
   <meta name="theme-color" content="#536f77" />
   <link rel="icon" href="/assets/distribution-hub-icon.svg" type="image/svg+xml" />
   <link rel="manifest" href="/site.webmanifest" />
@@ -279,6 +279,19 @@
     .campaignDeleteRow{margin-top:18px;padding-top:12px;border-top:1px solid var(--line);justify-content:flex-start;align-items:center}
     .outreachShowMore{display:block;width:100%;margin:4px 0 12px;padding:14px;border:1px solid var(--line);border-radius:10px;background:#fff;color:var(--text);font:inherit;font-weight:900;cursor:pointer}
     .outreachShowMore span{font-weight:600;color:var(--muted,#6b7280)}
+    /* Sequence cards (2026-11-05, Phase 3): one card per audience, its steps listed in order. */
+    .outreachSectionLabel{margin:10px 2px 0;font-size:12px;font-weight:1000;letter-spacing:.04em;text-transform:uppercase;color:var(--muted)}
+    .sequenceSteps{display:grid;gap:6px;margin-top:10px}
+    .sequenceStep{display:grid;grid-template-columns:minmax(92px,auto) 1fr;gap:4px 10px;align-items:start;padding:8px 10px;border:1px solid var(--line);border-radius:8px;background:#fafafa}
+    .sequenceStep.upcoming{background:#fff;border-style:dashed}
+    .sequenceStepName{font-weight:1000;font-size:13px}
+    .sequenceStepInfo{font-size:12px;color:var(--muted);line-height:1.35}
+    .sequenceStepCampaigns{grid-column:1 / -1;display:flex;flex-wrap:wrap;gap:6px}
+    .sequenceCampaignChip{display:inline-flex;flex-wrap:wrap;min-height:0;align-items:baseline;gap:2px 8px;max-width:100%;padding:6px 10px;border:1px solid var(--line);border-radius:10px;background:#fff;color:var(--text);font:inherit;font-size:12px;font-weight:800;cursor:pointer;text-align:left}
+    .sequenceCampaignChip span{overflow-wrap:anywhere;min-width:0}
+    .sequenceCampaignChip em{font-style:normal;font-weight:600;color:var(--muted);white-space:nowrap}
+    .sequenceCampaignChip.review{border-color:var(--amber-line);background:var(--amber-bg)}
+    .sequenceCampaignChip.sending{border-color:var(--blue-line);background:var(--blue-bg)}
     .outreachCard.priority{
       border-left:4px solid var(--amber);
     }
@@ -2555,6 +2568,22 @@
     </div>
   </dialog>
 
+  <dialog id="outreachSequenceDialog">
+    <div class="dlgHeader">
+      <div><div class="dlgTitle">Sequence settings</div><div class="smallMuted" id="outreachSequenceSubtitle"></div></div>
+      <button id="closeOutreachSequenceBtn" type="button">Close</button>
+    </div>
+    <div class="dlgBody">
+      <label for="outreachSequenceName">Sequence name</label>
+      <input id="outreachSequenceName" type="text" maxlength="120" autocomplete="off" />
+      <label for="outreachSequenceGap">Days between steps</label>
+      <input id="outreachSequenceGap" type="number" min="1" max="90" step="1" inputmode="numeric" />
+      <div class="smallMuted">Each business gets the next step this many days after its last one. The Hub drafts the step when it comes due; you still review and approve it.</div>
+      <div class="status" id="outreachSequenceStatus" role="status" aria-live="polite"></div>
+      <div class="dlgActions"><button class="primary" id="saveOutreachSequenceBtn" type="button">Save</button></div>
+    </div>
+  </dialog>
+
   <dialog id="outreachCampaignCriteriaDialog">
     <div class="dlgHeader">
       <div><div class="dlgTitle">Create campaign</div><div class="smallMuted">Choose the audience criteria before recipients are frozen for review.</div></div>
@@ -2751,7 +2780,7 @@
 
   <footer style="max-width:1200px;margin:18px auto 120px;padding:0 12px;text-align:center;color:#6b7280;font-size:12px;">
     Designed by <a href="https://scriptspirit.dev" target="_blank" rel="noopener noreferrer" style="color:#1d4ed8;text-decoration:none;font-weight:700;">Script Spirit</a>
-<span id="appVersionFooter"> • Version 2026.11.05.61-WEB</span>
+<span id="appVersionFooter"> • Version 2026.11.05.63-WEB</span>
   </footer>
 
 
@@ -2774,7 +2803,7 @@
   window.addEventListener("unhandledrejection", e => console.error("Unhandled promise rejection:", e.reason));
   window.addEventListener("error", e => console.error("Unhandled error:", e.error || e.message));
   const $ = (id) => document.getElementById(id);
-  const APP_VERSION = "2026.11.05.61-WEB";
+  const APP_VERSION = "2026.11.05.63-WEB";
   $("appVersionFooter").textContent = ` • Version ${APP_VERSION}`;
   function screenCacheKey(screen){ return `distribution_hub:${APP_VERSION}:${staffSession?.email || "unknown"}:${screen}`; }
   function readScreenCache(screen){
@@ -4680,6 +4709,143 @@
     renderOutreach();
     const elapsed = Number(res.performance?.total_ms || 0);
     setOutreachStatus(`Campaigns updated ${new Date().toLocaleTimeString([], { hour:"numeric", minute:"2-digit" })}${elapsed ? ` in ${(elapsed / 1000).toFixed(1)}s` : ""}.`);
+    loadOutreachSequences().catch(error => console.warn("Sequences could not be loaded", error));
+  }
+
+  // Sequences load separately, after the campaign list, so a slow or failed load never holds up the list: until
+  // they arrive (or if they can't), Campaigns shows every campaign as its own card, as before.
+  var outreachSequences = null;
+  var outreachSequencesLoadedAt = 0;
+  var outreachSequencesLoadRequest = 0;
+  var outreachShowFinishedSequences = false;
+  const OUTREACH_SEQUENCES_MIN_RELOAD_MS = 30000;
+  async function loadOutreachSequences(force = false){
+    if (!force && outreachSequences && Date.now() - outreachSequencesLoadedAt < OUTREACH_SEQUENCES_MIN_RELOAD_MS) return;
+    const requestId = ++outreachSequencesLoadRequest;
+    if (!outreachSequences) {
+      const cached = readScreenCache("sequences");
+      if (cached) { outreachSequences = cached.payload; if (outreachView === "campaigns") renderOutreachCampaigns(); }
+    }
+    const res = await staffApiGet({ action:"outreachSequences" });
+    if (requestId !== outreachSequencesLoadRequest) return;
+    if (!res.ok) throw new Error(res.error || "Sequences could not be loaded.");
+    outreachSequences = { migrated:!!res.migrated, gap_days:res.gap_days, sequences:res.sequences || [], warnings:res.warnings || [] };
+    outreachSequencesLoadedAt = Date.now();
+    writeScreenCache("sequences", outreachSequences);
+    if (outreachView === "campaigns") renderOutreachCampaigns();
+  }
+
+  const SEQUENCE_STAGE_NAMES = ["Initial", "Follow-up 1", "Follow-up 2"];
+  function sequenceDayLabel(value){
+    const date = value ? new Date(value) : null;
+    return date && !Number.isNaN(date.getTime()) ? date.toLocaleDateString([], { month:"short", day:"numeric" }) : "";
+  }
+  function sequenceDateRange(first, last){
+    const a = sequenceDayLabel(first), b = sequenceDayLabel(last);
+    return a && b && a !== b ? `${a} – ${b}` : (a || b);
+  }
+  function sequenceStatusBadge(status){
+    const tone = status === "Finished" ? "green" : status === "Sending" ? "blue" : status === "Waiting" ? "" : "amber";
+    return `<span class="badge ${tone}">${escapeHtml(status || "Waiting")}</span>`;
+  }
+  function plural(count, word, many){ return `${count} ${count === 1 ? word : (many || `${word}s`)}`; }
+
+  function sequenceCardHtml(sequence){
+    const counts = sequence.counts || {};
+    const due = sequence.due_by_step || {};
+    const dueSteps = Object.keys(due).map(Number).sort((a, b) => a - b);
+    const steps = (sequence.steps || []).map(step => {
+      const campaigns = step.campaigns || [];
+      const range = sequenceDateRange(step.first_sent_at, step.last_sent_at);
+      const sentText = Number(step.members_sent || 0) ? `${plural(Number(step.members_sent), "business", "businesses")} sent${range ? ` · ${range}` : ""}` : "";
+      const dueText = due[step.step] ? `Due for ${plural(Number(due[step.step]), "business", "businesses")}` : "";
+      const info = [sentText, dueText].filter(Boolean).join(" · ") || (campaigns.length ? "Not sent yet" : "Not started");
+      const chips = campaigns.map(item => {
+        const sending = item.status === "Approved" && Number(item.ready_to_send || 0) > 0;
+        const tone = item.status === "Review" ? "review" : sending ? "sending" : "";
+        const state = item.status === "Review" ? "needs review" : sending ? `${Number(item.ready_to_send)} left to send` : item.status === "Approved" ? "approved" : `${Number(item.sent_count || 0)} sent`;
+        const label = `${state}${item.separate_campaign ? " · separate campaign" : ""}`;
+        return `<button class="sequenceCampaignChip ${tone}" type="button" data-sequence-campaign="${escapeHtml(item.campaign_id)}" title="Open ${escapeHtml(item.name)}"><span>${escapeHtml(item.name)}</span><em>${escapeHtml(label)}</em></button>`;
+      }).join("");
+      return `<div class="sequenceStep${campaigns.length || step.members_sent ? "" : " upcoming"}"><div class="sequenceStepName">${escapeHtml(step.stage)}</div><div class="sequenceStepInfo">${escapeHtml(info)}</div>${chips ? `<div class="sequenceStepCampaigns">${chips}</div>` : ""}</div>`;
+    }).join("");
+    const stopTitle = Object.keys(sequence.stop_reasons || {}).map(key => `${key}: ${sequence.stop_reasons[key]}`).join("\n");
+    const badges = [
+      dueSteps.length ? `<span class="badge amber">${escapeHtml(dueSteps.map(step => `${SEQUENCE_STAGE_NAMES[step - 1]} due for ${due[step]}`).join(", "))}</span>` : "",
+      sequence.next_due_at ? `<span class="badge">Next due ${escapeHtml(sequenceDayLabel(sequence.next_due_at))}</span>` : "",
+      counts.sending ? `<span class="badge blue">${Number(counts.sending)} sending</span>` : "",
+      counts.finished ? `<span class="badge green">${Number(counts.finished)} finished</span>` : "",
+      counts.stopped ? `<span class="badge" title="${escapeHtml(stopTitle)}">${Number(counts.stopped)} stopped</span>` : "",
+    ].join("");
+    const canBuild = sequence.status !== "Finished" && dueSteps.length > 0;
+    const details = [plural(Number(sequence.member_count || 0), "business", "businesses"), `${plural(Number(sequence.gap_days || 7), "day")} between steps`, sequence.stored ? "" : "new, saved at the next daily check"].filter(Boolean).join(" • ");
+    return `
+      <article class="outreachCard sequenceCard" data-sequence-id="${escapeHtml(sequence.sequence_id)}">
+        <div class="outreachCardTop"><div><div class="businessName">${escapeHtml(sequence.name)}</div><div class="contactLine">${escapeHtml(details)}</div></div>${sequenceStatusBadge(sequence.status)}</div>
+        <div class="sequenceSteps">${steps}</div>
+        ${badges ? `<div class="outreachMeta">${badges}</div>` : ""}
+        <div class="outreachActions">${canBuild ? `<button class="actionBtn primary" type="button" data-sequence-action="build"><i data-lucide="file-plus-2"></i><span>Build next step</span></button>` : ""}<button class="actionBtn" type="button" data-sequence-action="settings"${sequence.stored ? "" : " disabled title=\"Saved at the next daily check\""}><i data-lucide="settings-2"></i><span>Name and timing</span></button></div>
+      </article>`;
+  }
+
+  async function buildOutreachSequenceStep(sequence, button){
+    const staffName = $("outreachStaffName").value.trim();
+    if (!staffName) return toast("Enter your staff name before building a step.");
+    button.disabled = true;
+    setOutreachStatus(`Building the next step of ${sequence.name}…`);
+    try {
+      const res = await staffApiPost({ action:"buildOutreachSequenceStep", sequence_id:sequence.sequence_id, staff_name:staffName });
+      if (!res.ok) throw new Error(res.error || "The step could not be built.");
+      setOutreachStatus(res.message || "Done.");
+      toast(res.message || "Done.");
+      await loadOutreachCampaigns();
+      await loadOutreachSequences(true);
+      const created = (res.created || [])[0];
+      if (created?.campaign_id) await openOutreachCampaign(created.campaign_id);
+    } finally { button.disabled = false; }
+  }
+
+  var selectedOutreachSequence = null;
+  function openOutreachSequenceSettings(sequence){
+    selectedOutreachSequence = sequence;
+    $("outreachSequenceSubtitle").textContent = `${sequence.sequence_id} • ${plural(Number(sequence.member_count || 0), "business", "businesses")}`;
+    $("outreachSequenceName").value = sequence.name || "";
+    $("outreachSequenceGap").value = String(Number(sequence.gap_days || outreachSequences?.gap_days || 7));
+    $("outreachSequenceStatus").textContent = "";
+    $("saveOutreachSequenceBtn").disabled = false;
+    $("outreachSequenceDialog").showModal();
+    $("outreachSequenceName").focus();
+  }
+
+  async function saveOutreachSequenceSettings(){
+    const sequence = selectedOutreachSequence;
+    if (!sequence) return;
+    const staffName = $("outreachStaffName").value.trim();
+    if (!staffName) { $("outreachSequenceStatus").textContent = "Enter your staff name first."; return; }
+    const name = $("outreachSequenceName").value.trim();
+    const gap = Number($("outreachSequenceGap").value);
+    if (!name) { $("outreachSequenceStatus").textContent = "Enter a sequence name."; return; }
+    if (!Number.isInteger(gap) || gap < 1 || gap > 90) { $("outreachSequenceStatus").textContent = "Days between steps must be a whole number from 1 to 90."; return; }
+    $("saveOutreachSequenceBtn").disabled = true;
+    $("outreachSequenceStatus").textContent = "Saving…";
+    try {
+      const res = await staffApiPost({ action:"updateOutreachSequence", sequence_id:sequence.sequence_id, sequence_name:name, gap_days:gap, staff_name:staffName });
+      if (!res.ok) throw new Error(res.error || "The sequence could not be saved.");
+      $("outreachSequenceDialog").close();
+      toast(res.message || "Sequence saved.");
+      await loadOutreachSequences(true);
+    } catch (error) {
+      $("outreachSequenceStatus").textContent = error.message || String(error);
+    } finally { $("saveOutreachSequenceBtn").disabled = false; }
+  }
+
+  function outreachCampaignCardHtml(campaign){
+    return `
+        <article class="outreachCard" data-campaign-id="${escapeHtml(campaign.campaign_id)}">
+          <div class="outreachCardTop"><div><div class="businessName">${escapeHtml(campaign.name)}</div><div class="contactLine">${escapeHtml(campaign.audience)} • ${escapeHtml(campaign.created_by || "Staff")}</div></div><span class="badge ${campaign.status === "Complete" ? "green" : campaign.status === "Approved" ? "blue" : "amber"}">${escapeHtml(campaign.status)}</span></div>
+          <div class="outreachMeta"><span class="badge">${escapeHtml(campaign.criteria?.stage || "Initial")}</span>${campaignScheduleBadge(campaign)}<span class="badge">${Number(campaign.recipient_count || 0)} recipients</span><span class="badge blue">${Number(campaign.sent_count || 0)} sent</span><span class="badge">${escapeHtml(campaignDeliveryDateLabel(campaign))}</span>${Number(campaign.unsegmented_count || 0) ? `<span class="badge amber">${Number(campaign.unsegmented_count)} unsegmented</span>` : ""}${Number(campaign.blocked_count || 0) ? `<span class="badge red">${Number(campaign.blocked_count)} blocked</span>` : ""}</div>
+          <div class="outreachActions"><button class="actionBtn primary" type="button" data-campaign-action="review"><i data-lucide="clipboard-check"></i><span>Review campaign</span></button></div>
+        </article>`;
   }
 
   var lastOutreachCampaignsHtml = "";
@@ -4687,21 +4853,36 @@
   const OUTREACH_CAMPAIGN_BATCH = 10;
   var outreachCampaignsShown = OUTREACH_CAMPAIGN_BATCH;
   function renderOutreachCampaigns(){
-    const allCampaigns = outreachData.campaigns || [];
+    const everyCampaign = outreachData.campaigns || [];
+    // Once sequences are loaded, a campaign that is a step of a sequence is shown on that sequence's card (its
+    // chip opens it) and only the rest are listed below as single campaigns.
+    const sequences = outreachSequences?.migrated ? (outreachSequences.sequences || []) : [];
+    const inSequence = new Set();
+    sequences.forEach(sequence => (sequence.steps || []).forEach(step => (step.campaigns || []).forEach(item => inSequence.add(item.campaign_id))));
+    const allCampaigns = everyCampaign.filter(campaign => !inSequence.has(campaign.campaign_id));
     const campaigns = allCampaigns.slice(0, outreachCampaignsShown);
     const olderCount = allCampaigns.length - campaigns.length;
-    $("outreachAudienceCount").textContent = `${allCampaigns.length} campaign${allCampaigns.length === 1 ? "" : "s"}`;
+    const openSequences = sequences.filter(sequence => sequence.status !== "Finished");
+    const finishedSequences = sequences.filter(sequence => sequence.status === "Finished");
+    $("outreachAudienceCount").textContent = sequences.length
+      ? `${plural(sequences.length, "sequence")} • ${plural(allCampaigns.length, "other campaign")}`
+      : `${everyCampaign.length} campaign${everyCampaign.length === 1 ? "" : "s"}`;
+    const sequenceHtml = sequences.length ? `
+      <div class="outreachSectionLabel">Sequences</div>
+      ${openSequences.map(sequenceCardHtml).join("")}
+      ${finishedSequences.length ? (outreachShowFinishedSequences
+        ? finishedSequences.map(sequenceCardHtml).join("") + `<button class="outreachShowMore" type="button" data-sequences-toggle-finished>Hide finished sequences</button>`
+        : `<button class="outreachShowMore" type="button" data-sequences-toggle-finished>Show finished sequences <span>(${finishedSequences.length})</span></button>`) : ""}
+      ${allCampaigns.length ? `<div class="outreachSectionLabel">Other campaigns</div>` : ""}` : "";
     const html = `
       <article class="outreachCard priority">
-        <div class="outreachCardTop"><div><div class="businessName">New outreach campaign</div><div class="contactLine">Choose Initial, a due follow-up, or a due nurture check-in before freezing the eligible audience for review. No email is sent when the campaign is created.</div></div><span class="badge amber">Draft</span></div>
+        <div class="outreachCardTop"><div><div class="businessName">New outreach campaign</div><div class="contactLine">${sequences.length
+          ? "Start a new audience with Initial. It becomes a sequence, and the Hub drafts each follow-up for your review when it comes due. No email is sent when the campaign is created."
+          : "Choose Initial, a due follow-up, or a due nurture check-in before freezing the eligible audience for review. No email is sent when the campaign is created."}</div></div><span class="badge amber">Draft</span></div>
         <div class="outreachActions"><button class="actionBtn primary" type="button" data-campaign-action="create"><i data-lucide="send-horizontal"></i><span>Create campaign</span></button></div>
       </article>
-      ${campaigns.map(campaign => `
-        <article class="outreachCard" data-campaign-id="${escapeHtml(campaign.campaign_id)}">
-          <div class="outreachCardTop"><div><div class="businessName">${escapeHtml(campaign.name)}</div><div class="contactLine">${escapeHtml(campaign.audience)} • ${escapeHtml(campaign.created_by || "Staff")}</div></div><span class="badge ${campaign.status === "Complete" ? "green" : campaign.status === "Approved" ? "blue" : "amber"}">${escapeHtml(campaign.status)}</span></div>
-          <div class="outreachMeta"><span class="badge">${escapeHtml(campaign.criteria?.stage || "Initial")}</span>${campaignScheduleBadge(campaign)}<span class="badge">${Number(campaign.recipient_count || 0)} recipients</span><span class="badge blue">${Number(campaign.sent_count || 0)} sent</span><span class="badge">${escapeHtml(campaignDeliveryDateLabel(campaign))}</span>${Number(campaign.unsegmented_count || 0) ? `<span class="badge amber">${Number(campaign.unsegmented_count)} unsegmented</span>` : ""}${Number(campaign.blocked_count || 0) ? `<span class="badge red">${Number(campaign.blocked_count)} blocked</span>` : ""}</div>
-          <div class="outreachActions"><button class="actionBtn primary" type="button" data-campaign-action="review"><i data-lucide="clipboard-check"></i><span>Review campaign</span></button></div>
-        </article>`).join("")}${olderCount > 0 ? `<button class="outreachShowMore" type="button" data-campaigns-show-older>Show older campaigns <span>(${campaigns.length} of ${allCampaigns.length} shown)</span></button>` : ""}`;
+      ${sequenceHtml}
+      ${campaigns.map(outreachCampaignCardHtml).join("")}${olderCount > 0 ? `<button class="outreachShowMore" type="button" data-campaigns-show-older>Show older campaigns <span>(${campaigns.length} of ${allCampaigns.length} shown)</span></button>` : ""}`;
     // A background refresh that brings back the same campaigns leaves the list alone, so the phone
     // is not redrawing it mid-scroll. Another view drawing into the list clears the marker.
     const list = $("outreachList");
@@ -8530,6 +8711,24 @@
       renderOutreachCampaigns();
       return;
     }
+    if (event.target.closest("[data-sequences-toggle-finished]")) {
+      outreachShowFinishedSequences = !outreachShowFinishedSequences;
+      renderOutreachCampaigns();
+      return;
+    }
+    const sequenceChip = event.target.closest("[data-sequence-campaign]");
+    if (sequenceChip) {
+      openOutreachCampaign(sequenceChip.dataset.sequenceCampaign).catch(handleOutreachLoadError);
+      return;
+    }
+    const sequenceButton = event.target.closest("[data-sequence-action]");
+    if (sequenceButton) {
+      const sequence = (outreachSequences?.sequences || []).find(item => item.sequence_id === sequenceButton.closest("[data-sequence-id]")?.dataset.sequenceId);
+      if (!sequence) return;
+      if (sequenceButton.dataset.sequenceAction === "build") buildOutreachSequenceStep(sequence, sequenceButton).catch(error => toast(error.message || String(error)));
+      else openOutreachSequenceSettings(sequence);
+      return;
+    }
     if (event.target.closest("[data-outreach-show-more]")) {
       outreachShownLimit += OUTREACH_LIST_BATCH;
       renderOutreach();
@@ -8657,6 +8856,9 @@
   $("reopenOutreachCampaignBtn").addEventListener("click", () => reopenOutreachCampaign());
   $("deleteOutreachCampaignBtn").addEventListener("click", () => deleteOutreachCampaign());
   $("renameOutreachCampaignBtn").addEventListener("click", () => renameOutreachCampaign());
+  $("closeOutreachSequenceBtn").addEventListener("click", () => $("outreachSequenceDialog").close());
+  $("saveOutreachSequenceBtn").addEventListener("click", () => saveOutreachSequenceSettings());
+  $("outreachSequenceName").addEventListener("keydown", event => { if (event.key === "Enter") { event.preventDefault(); saveOutreachSequenceSettings(); } });
   $("campaignNameInput").addEventListener("input", () => {
     const value = $("campaignNameInput").value.trim();
     $("renameOutreachCampaignBtn").disabled = !value || value === (selectedOutreachCampaign?.name || "");

@@ -3,6 +3,12 @@
 Moved out of the `apps-script/Code.gs` header on 2026-10-17 so the deployed file stays short. Newest first, copied word for word. The header keeps only the current version (`CHANGES IN THIS VERSION`); when a new version is made, move that section to the top of this file.
 
 ```
+CHANGES IN 2026.11.05.60-APP
+- Sequences: a sent date stored as a bare Sheets serial number (a few recipient rows hold e.g. 46301.51552) is
+  read as that day, not as milliseconds after 1970. Only the step dates shown in the preview and on the cards
+  were affected ("Dec 31–Oct 6" for Appleton Follow-up 1 in the 2026-11-05 live preview); due dates use the
+  latest send and were right.
+
 CHANGES IN 2026.11.05.59-APP
 - Sequences: a business whose Directory Next Email is "Complete" counts as stopped ("Ended early"), so it is not
   counted as due and gets no step draft. Karl ended the 67 Sep 23 prospects outside the area this way on

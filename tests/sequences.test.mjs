@@ -361,3 +361,133 @@ test("a sent date stored as a bare Sheets serial number is read as that day, not
   assert.equal(plan.sequences[0].steps[0].first_sent_at.slice(0, 10), "2026-10-06");
   assert.equal(plan.sequences[0].members[0].sent[0].at.slice(0, 10), "2026-10-06");
 });
+
+// ---------- Phase 3 (.61-APP): sync, per-sequence gap, Directory reconciliation, sequence actions ----------
+
+function fakeSheet(name, rows, id) {
+  const data = rows.map(row => row.slice());
+  const width = () => Math.max(...data.map(row => row.length));
+  const sheet = {
+    data,
+    getName: () => name, getSheetId: () => id, getParent: () => ({ getId: () => "SS" }),
+    getLastRow: () => data.length, getLastColumn: () => width(),
+    getRange(r, c, nr = 1, nc = 1) {
+      return {
+        getValues: () => Array.from({ length:nr }, (_, i) => Array.from({ length:nc }, (_, j) => (data[r - 1 + i] || [])[c - 1 + j] ?? "")),
+        setValues(values) { values.forEach((row, i) => { data[r - 1 + i] = data[r - 1 + i] || new Array(width()).fill(""); row.forEach((v, j) => { data[r - 1 + i][c - 1 + j] = v; }); }); return this; },
+        getValue: () => (data[r - 1] || [])[c - 1] ?? "",
+        setValue(v) { data[r - 1][c - 1] = v; return this; },
+      };
+    },
+  };
+  return sheet;
+}
+
+const CAMPAIGN_HEADERS = ["Campaign ID", "Campaign Name", "Audience", "Status", "Recipient Count", "Audience Checksum", "Unsegmented Count", "Created At", "Created By",
+  "Approved At", "Approved By", "Approval Token", "Last Batch At", "Sent Count", "Blocked Count", "App Version", "Criteria", "Scheduled Send At", "Scheduled By",
+  "Schedule Status", "Schedule Detail", "Sequence ID", "Step"];
+const RECIPIENT_HEADERS = ["Campaign ID", "Source Row", "Account ID", "Business Name", "Recipient Email", "Contact", "City", "ZIP", "Miles", "Priority",
+  "Email Confidence", "Segment", "Wave", "Message Stage", "Subject", "Body Text", "HTML", "Content Checksum", "Status", "Result Detail", "Zoho Message ID",
+  "Sent At", "Idempotency Token", "App Version", "Newsletter Contact ID"];
+
+function wireSheets(context, sheets) {
+  const byName = new Map(sheets.map(sheet => [sheet.getName(), sheet]));
+  context.__fakeSs = { getId: () => "SS", getSheetByName: name => byName.get(name) || null };
+  vm.runInContext("__OUTREACH_SS = __fakeSs; __HEADER_CACHE.clear();", context);
+}
+
+test("a gap set on one sequence moves only that sequence's due date", async () => {
+  const context = await backend();
+  const data = {
+    campaigns:[campaign("CMP-A", "Initial"), campaign("CMP-B", "Initial", { row:{ created_at:day(39) } })],
+    recipients:[recipient("CMP-A", "A1", "Sent", 8), recipient("CMP-B", "B1", "Sent", 8)],
+    activity:[sent("A1", "Initial", 8), sent("B1", "Initial", 8)],
+    directory:[dir("A1", "Sent", "", 2), dir("B1", "Sent", "", 3)],
+    sequences:[{ sequence_id:"SEQ-A", sequence_name:"A", gap_days:14 }, { sequence_id:"SEQ-B", sequence_name:"B", gap_days:"" }],
+  };
+  const plan = build(context, data);
+  const a = plan.sequences.find(item => item.sequence_id === "SEQ-A");
+  const b = plan.sequences.find(item => item.sequence_id === "SEQ-B");
+  assert.equal(a.gap_days, 14);
+  assert.deepEqual(a.due_by_step, {});
+  assert.equal(a.status, "Waiting");
+  assert.equal(b.gap_days, 7);
+  assert.deepEqual(b.due_by_step, { 2:1 });
+});
+
+test("writing a plan stores a new Initial campaign as a sequence and keeps the Directory Sequence ID in step", async () => {
+  const context = await backend();
+  const campaigns = fakeSheet("Outreach Campaigns", [CAMPAIGN_HEADERS,
+    ["CMP-OLD", "Old", "", "Complete", 1, "", "", day(40), "Karl", "", "", "", "", 1, 0, "", JSON.stringify({ campaign_type:"sales_outreach", stage:"Initial" }), "", "", "", "", "SEQ-OLD", 1],
+    ["CMP-NEW", "New", "", "Complete", 2, "", "", day(3), "Karl", "", "", "", "", 2, 0, "", JSON.stringify({ campaign_type:"sales_outreach", stage:"Initial", center:{ label:"Neenah" } }), "", "", "", "", "", ""],
+  ], 1);
+  const recipients = fakeSheet("Outreach Campaign Recipients", [RECIPIENT_HEADERS], 2);
+  const sequences = fakeSheet("Outreach Sequences", [["Sequence ID", "Sequence Name", "Audience", "Criteria", "Step Plan", "Gap Days", "Status", "Created At", "Created By", "Migrated From", "Finished At", "Updated At", "App Version"],
+    ["SEQ-OLD", "Old area", "", "", "", 7, "Waiting", day(40), "Claude migration", "CMP-OLD", "", "", ""]], 3);
+  const directory = fakeSheet("Distribution Directory and Leads", [["Source Row", "Account ID", "Business", "Email", "Status", "Outcome", "Do Not Email", "Next Email", "Sequence ID"],
+    [2, "N1", "Biz N1", "n1@example.test", "Sent", "", false, "", ""],
+    [3, "N2", "Biz N2", "n2@example.test", "Closed", "Closed", false, "", "SEQ-OLD"],   // stale: a stored sequence it is not in
+    [4, "X1", "Biz X1", "x1@example.test", "Sent", "", false, "", "SEQ-HAND-MADE"],  // an ID this Hub never wrote: left alone
+  ], 4);
+  wireSheets(context, [campaigns, recipients, sequences, directory]);
+  context.__plan = build(context, {
+    campaigns:[campaign("CMP-OLD", "Initial", { row:{ sequence_id:"SEQ-OLD", step:1 } }), campaign("CMP-NEW", "Initial", { row:{ created_at:day(3) } })],
+    recipients:[recipient("CMP-NEW", "N1", "Sent", 3), recipient("CMP-NEW", "N2", "Sent", 3)],
+    activity:[sent("N1", "Initial", 3), sent("N2", "Initial", 3)],
+    directory:[dir("N1", "Sent", "", 2), Object.assign(dir("N2", "Closed", "Closed", 3), { sequence_id:"SEQ-OLD" }), Object.assign(dir("X1", "Sent", "", 4), { sequence_id:"SEQ-HAND-MADE" })],
+    sequences:[{ sequence_id:"SEQ-OLD", sequence_name:"Old area", gap_days:7 }],
+  });
+  const counts = vm.runInContext(`writeSequencePlan_(__plan, "Sequence step check")`, context);
+  assert.equal(counts.appended, 1);
+  assert.equal(sequences.data.length, 3);
+  assert.equal(sequences.data[2][0], "SEQ-NEW");
+  assert.equal(sequences.data[2][8], "Sequence step check");
+  assert.equal(sequences.data[1][1], "Old area", "an existing sequence keeps its name");
+  assert.deepEqual(campaigns.data[2].slice(21), ["SEQ-NEW", 1]);
+  assert.equal(directory.data[1][8], "SEQ-NEW", "an active business gets its sequence");
+  assert.equal(directory.data[2][8], "", "a closed business is cleared of a sequence it no longer moves through");
+  assert.equal(directory.data[3][8], "SEQ-HAND-MADE");
+  // Running it again changes nothing.
+  context.__plan2 = JSON.parse(JSON.stringify(context.__plan));
+  context.__plan2.sequences.forEach(item => { item.stored = true; });
+  const again = vm.runInContext(`writeSequencePlan_(__plan2, "Sequence step check")`, context);
+  assert.deepEqual([again.appended, again.campaign_cells, again.directory_cells], [0, 0, 0]);
+});
+
+test("the sequence actions are wired: API routes, proxy allow-lists, and the step check syncs first", async () => {
+  const code = await readFile(new URL("apps-script/Code.gs", root), "utf8");
+  const proxy = await readFile(new URL("netlify/functions/inventory.js", root), "utf8");
+  assert.match(code, /case "updateOutreachSequence": res = apiUpdateOutreachSequence_\(body\)/);
+  assert.match(code, /case "buildOutreachSequenceStep": res = apiBuildOutreachSequenceStep_\(body\)/);
+  assert.match(code, /function runSequenceStepCheck\(options\) \{[\s\S]{0,600}const sync = syncSequences_\(actor\);/);
+  assert.doesNotMatch(code, /case "(migrateCampaignsToSequences|previewSequenceMigration|syncSequences_)"/);
+  for (const action of ["updateOutreachSequence", "buildOutreachSequenceStep"]) {
+    assert.match(proxy, new RegExp(`\\n  "${action}",\\n`));
+    assert.match(proxy, new RegExp(`\\["${action}", "outreach"\\]`));
+    assert.doesNotMatch(proxy.match(/const GET_READ_ACTIONS = new Set\(\[[^\]]*\]/)[0], new RegExp(`"${action}"`));
+  }
+  assert.match(proxy, /const SNAPSHOT_ACTIONS = new Set\(\[[^\]]*"buildOutreachSequenceStep"/);
+});
+
+test("updating a sequence validates the gap and writes only its name, gap and Updated At cells", async () => {
+  const context = await backend();
+  const sequences = fakeSheet("Outreach Sequences", [["Sequence ID", "Sequence Name", "Audience", "Criteria", "Step Plan", "Gap Days", "Status", "Created At", "Created By", "Migrated From", "Finished At", "Updated At", "App Version"],
+    ["SEQ-A", "Appleton, Sep 25", "aud", "{}", "[]", 7, "Waiting", "c", "Claude", "CMP-A", "", "", ".60"]], 3);
+  wireSheets(context, [sequences]);
+  context.LockService = { getScriptLock: () => ({ tryLock: () => true, releaseLock() {} }) };
+  context.CacheService = { getScriptCache: () => ({ get: () => null, put() {}, remove() {} }) };
+  context.PropertiesService = { getScriptProperties: () => ({ getProperty: () => null, setProperty() {} }) };
+  const audits = [];
+  vm.runInContext("bumpReadCacheVersion_ = () => {}; appendAudit_ = (...args) => __audits.push(args); authenticatedActor_ = () => 'Karl';", Object.assign(context, { __audits:audits }));
+  assert.throws(() => vm.runInContext(`apiUpdateOutreachSequence_({ sequence_id:"SEQ-A", staff_name:"Karl", gap_days:0 })`, context), /1 to 90/);
+  assert.throws(() => vm.runInContext(`apiUpdateOutreachSequence_({ sequence_id:"SEQ-Z", staff_name:"Karl", sequence_name:"X" })`, context), /not found/);
+  const before = sequences.data[1].slice();
+  const res = vm.runInContext(`apiUpdateOutreachSequence_({ sequence_id:"SEQ-A", staff_name:"Karl", sequence_name:"Appleton bars", gap_days:10 })`, context);
+  assert.equal(res.message, "Sequence saved.");
+  const after = sequences.data[1];
+  assert.equal(after[1], "Appleton bars");
+  assert.equal(after[5], 10);
+  assert.ok(after[11] instanceof Date || typeof after[11] === "object");
+  [0, 2, 3, 4, 6, 7, 8, 9, 10, 12].forEach(i => assert.equal(after[i], before[i], `column ${i} unchanged`));
+  assert.equal(audits.length, 1);
+});

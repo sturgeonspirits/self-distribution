@@ -1,9 +1,9 @@
-// App version: 2026.11.05.62-WEB
+// App version: 2026.11.05.63-WEB
 import { gunzipSync } from "node:zlib";
 import { requireStaffSession } from "./auth.js";
 import { fetchWithDriveRelay, relayConfig } from "../lib/drive-relay.js";
 
-const APP_VERSION = "2026.11.05.62-WEB";
+const APP_VERSION = "2026.11.05.63-WEB";
 const STAFF_ACTIONS = new Set([
   "outreachDashboard",
   "outreachRecord",
@@ -24,6 +24,8 @@ const STAFF_ACTIONS = new Set([
   "reopenOutreachCampaign",
   "deleteOutreachCampaign",
   "renameOutreachCampaign",
+  "updateOutreachSequence",
+  "buildOutreachSequenceStep",
   "reconcileCampaignSends",
   "rebuildCampaignRecipients",
   "sendOutreachCampaignBatch",
@@ -85,7 +87,7 @@ const READ_UPSTREAM_TIMEOUT_MS = 11500;
 // uncertain send because the original request may still be holding the lock.
 const SEND_UPSTREAM_TIMEOUT_MS = 24000;
 const SEND_ACTIONS = new Set(["sendOutreachEmail", "sendOutreachTestEmail", "sendOutreachCampaignBatch", "sendBadgerPaymentReminder", "sendApplicationWelcome", "createBadgerInvoice"]);
-const SNAPSHOT_ACTIONS = new Set(["createOutreachCampaign"]);
+const SNAPSHOT_ACTIONS = new Set(["createOutreachCampaign", "buildOutreachSequenceStep"]);
 // Actions allowed over GET: the same list as READ_ACTIONS in apps-script/Code.gs. Anything that
 // changes data must be a POST, so a link or image tag cannot trigger it with a staff cookie.
 const GET_READ_ACTIONS = new Set(["initData", "listSkus", "sellSheet", "managerGrid", "salesSinceCount", "outreachDashboard", "outreachRecord", "outreachSendStatus", "outreachNewsletterContacts", "outreachCampaigns", "outreachCampaign", "outreachSequences", "previewOutreachCampaign", "customerWorkQueue", "customerAccountIndex", "hubSystemStatus", "salesReport", "inboundReplies"]);
@@ -96,7 +98,7 @@ const ACTION_AREAS = new Map([
   ["outreachDashboard", "outreach"], ["outreachRecord", "outreach"], ["outreachSendStatus", "outreach"], ["outreachNewsletterContacts", "outreach"],
   ["inboundReplies", "outreach"], ["resolveInboundReply", "outreach"], ["checkInboundReplies", "outreach"],
   ["outreachCampaigns", "outreach"], ["outreachCampaign", "outreach"], ["outreachSequences", "outreach"], ["previewOutreachCampaign", "outreach"], ["createOutreachCampaign", "outreach"], ["updateOutreachCampaignRecipient", "outreach"], ["setOutreachCampaignRecipientExclusion", "outreach"], ["setOutreachCampaignRecipientExclusions", "outreach"],
-  ["approveOutreachCampaign", "outreach"], ["reopenOutreachCampaign", "outreach"], ["deleteOutreachCampaign", "outreach"], ["renameOutreachCampaign", "outreach"], ["reconcileCampaignSends", "outreach"], ["rebuildCampaignRecipients", "outreach"], ["sendOutreachCampaignBatch", "outreach"],
+  ["approveOutreachCampaign", "outreach"], ["reopenOutreachCampaign", "outreach"], ["deleteOutreachCampaign", "outreach"], ["renameOutreachCampaign", "outreach"], ["updateOutreachSequence", "outreach"], ["buildOutreachSequenceStep", "outreach"], ["reconcileCampaignSends", "outreach"], ["rebuildCampaignRecipients", "outreach"], ["sendOutreachCampaignBatch", "outreach"],
   ["scheduleOutreachCampaign", "outreach"], ["cancelOutreachCampaignSchedule", "outreach"],
   ["saveOutreachDraft", "outreach"], ["updateOutreachOutcome", "outreach"], ["logOutreachContact", "outreach"], ["updateOutreachBusiness", "outreach"],
   ["updateOutreachPrograms", "outreach"], ["upsertNewsletterContact", "outreach"], ["createOutreachBusiness", "outreach"],
