@@ -30,6 +30,7 @@ Standing facts:
 
 ## Open items
 
+- **Next build (Karl, 2026-11-05):** `claude/chat-request-campaign-sequences-2026-11-05.md`. Part A small outreach fixes (Closed result, usable result window while loading, truthful campaign card, finished-campaign labels, card dates, early hold release, duplicate header columns) = Deploy 1. Part B campaign sequences (one campaign per list with steps, each step approved separately, step drafts and KWTM review tasks when due, old campaigns migrated) = Deploy 2.
 - Zoho's usage policy disallows bulk/marketing mail through Zoho Mail at any pace. `.50`/`.34`/`.59` now pace sends and stop on Outbox holds, but moving outreach to a dedicated sender remains open.
 - Bitters: Badger invoices used 187mL (unit 7) but SKUs list 50ml (unit 19); Karl to decide which the Hub should invoice. Canned-cocktail unit support is deployed in Inventory API `.50`.
 - Chat round 2 of `claude/chat-review-campaign-tools-2026-10-17.md` (unique-match P2 fix `67aa20c`; re-applied sell-sheet change and narrow-phone header fix `bf89d1d`) was not confirmed before the 2026-10-17 promotion.
