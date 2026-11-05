@@ -349,3 +349,15 @@ test("Next Email Complete ends a business's sequence without counting it as due"
   assert.equal(by.F2.state, "active");
   assert.deepEqual(plan.sequences[0].due_by_step, { 2:1 });
 });
+
+test("a sent date stored as a bare Sheets serial number is read as that day, not 1970", async () => {
+  const context = await backend();
+  const plan = build(context, {
+    campaigns:[campaign("CMP-D", "Initial")],
+    recipients:[{ ...recipient("CMP-D", "D9", "Sent"), sent_at:46301.51552 }],
+    activity:[],
+    directory:[dir("D9")],
+  });
+  assert.equal(plan.sequences[0].steps[0].first_sent_at.slice(0, 10), "2026-10-06");
+  assert.equal(plan.sequences[0].members[0].sent[0].at.slice(0, 10), "2026-10-06");
+});

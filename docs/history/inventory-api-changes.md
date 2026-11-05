@@ -3,6 +3,13 @@
 Moved out of the `apps-script/Code.gs` header on 2026-10-17 so the deployed file stays short. Newest first, copied word for word. The header keeps only the current version (`CHANGES IN THIS VERSION`); when a new version is made, move that section to the top of this file.
 
 ```
+CHANGES IN 2026.11.05.59-APP
+- Sequences: a business whose Directory Next Email is "Complete" counts as stopped ("Ended early"), so it is not
+  counted as due and gets no step draft. Karl ended the 67 Sep 23 prospects outside the area this way on
+  2026-11-05 (their Next Email set to Complete and Next Follow-Up cleared); the 26 within 15 miles continue.
+- Includes everything in .58 (review fixes), .57 (sending window, same-run hold re-check) and the sequences code
+  from .55/.56, which does nothing until repairHubStructure() and migrateCampaignsToSequences() are run.
+
 CHANGES IN 2026.11.05.58-APP
 - Fixes from chat's review (claude/chat-review-findings-sequences-2026-11-05.md):
   - A campaign with no stored criteria starts a sequence only if its Audience is plainly a sales stage; Cocktail

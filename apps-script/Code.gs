@@ -1,13 +1,12 @@
 /*********************************
  * Inventory API (JSON) for Netlify
- * App version: 2026.11.05.59-APP
+ * App version: 2026.11.05.60-APP
  *
  * CHANGES IN THIS VERSION
- * - Sequences: a business whose Directory Next Email is "Complete" counts as stopped ("Ended early"), so it is not
- *   counted as due and gets no step draft. Karl ended the 67 Sep 23 prospects outside the area this way on
- *   2026-11-05 (their Next Email set to Complete and Next Follow-Up cleared); the 26 within 15 miles continue.
- * - Includes everything in .58 (review fixes), .57 (sending window, same-run hold re-check) and the sequences code
- *   from .55/.56, which does nothing until repairHubStructure() and migrateCampaignsToSequences() are run.
+ * - Sequences: a sent date stored as a bare Sheets serial number (a few recipient rows hold e.g. 46301.51552) is
+ *   read as that day, not as milliseconds after 1970. Only the step dates shown in the preview and on the cards
+ *   were affected ("Dec 31–Oct 6" for Appleton Follow-up 1 in the 2026-11-05 live preview); due dates use the
+ *   latest send and were right.
  *
  * DEPLOY
  * - Apps Script project: Inventory API
@@ -17,7 +16,7 @@
  * Earlier version notes: docs/history/inventory-api-changes.md (move this version's notes there when the version changes).
  *********************************/
 
-const APP_VERSION = "2026.11.05.59-APP";
+const APP_VERSION = "2026.11.05.60-APP";
 
 const SHEET_NAMES = {
   STORES: "Stores",
@@ -5238,6 +5237,14 @@ function sequenceDefaultName_(root) {
   return date ? `${area}, ${months[date.getMonth()]} ${date.getDate()}` : area;
 }
 
+// A few sheet cells hold a date as a bare number (Sheets serial days, e.g. 46301.51 = Oct 6, 2026), which
+// outreachDate_ would read as milliseconds after 1970. Read small numbers as serial days instead.
+function sequenceDate_(value) {
+  const number = typeof value === "number" ? value : (typeof value === "string" && /^\d{5}(\.\d+)?$/.test(value.trim()) ? Number(value) : NaN);
+  if (Number.isFinite(number) && number > 20000 && number < 100000) return new Date(Math.round((number - 25569) * 86400000));
+  return outreachDate_(value);
+}
+
 function sequenceDateIso_(value) {
   const date = outreachDate_(value);
   return date ? date.toISOString() : "";
@@ -5304,7 +5311,7 @@ function buildSequencePlan_(data, options) {
     if (!result.includes("SENT") || result.includes("TEST")) return;
     const step = sequenceStepNumber_(row.stage);
     if (!step) return;
-    const at = outreachDate_(row.timestamp);
+    const at = sequenceDate_(row.timestamp);
     // A row with an Account ID counts only for that account; an address-only row is matched by address below,
     // and only when that address belongs to a single business.
     if (String(row.account_id || "").trim()) { addSend(`account:${String(row.account_id).trim()}`, step, at); return; }
@@ -5373,8 +5380,8 @@ function buildSequencePlan_(data, options) {
     activeRecipients(campaign.campaign_id).forEach(item => {
       const key = sequenceMemberKey_(item.account_id, item.recipient_email);
       if (!key) return;
-      const sentAt = /^sent/i.test(String(item.status || "")) ? outreachDate_(item.sent_at) : null;
-      const listedAt = outreachDate_(campaign.created_at);
+      const sentAt = /^sent/i.test(String(item.status || "")) ? sequenceDate_(item.sent_at) : null;
+      const listedAt = sequenceDate_(campaign.created_at);
       const rank = [sentAt ? (step === 1 ? 0 : 1) : 2, (sentAt || listedAt || new Date(8.64e15)).getTime()];
       const current = owner.get(key);
       if (!current || better(rank, current.rank)) owner.set(key, { sequence_id:group.sequence_id, rank:rank });
@@ -5393,7 +5400,7 @@ function buildSequencePlan_(data, options) {
         if (!key || owner.get(key)?.sequence_id !== group.sequence_id) return;
         const member = members.get(key) || { key:key, account_id:String(item.account_id || "").trim(), email:String(item.recipient_email || "").trim().toLowerCase(),
           business:String(item.business_name || "").trim(), queued_step:0, recipient_sends:[] };
-        if (/^sent/i.test(String(item.status || ""))) member.recipient_sends.push({ step:step, at:outreachDate_(item.sent_at) });
+        if (/^sent/i.test(String(item.status || ""))) member.recipient_sends.push({ step:step, at:sequenceDate_(item.sent_at) });
         if (campaign.status === "Approved" && String(item.status || "") === "Ready to send") member.queued_step = Math.max(member.queued_step, step);
         members.set(key, member);
       });
@@ -5445,7 +5452,7 @@ function buildSequencePlan_(data, options) {
     const stepSummaries = steps.map(step => {
       const stepCampaigns = step.campaigns.filter(campaign => !deleted.has(campaign.campaign_id)).map(campaign => {
         const recipients = recipientsByCampaign.get(campaign.campaign_id) || [];
-        const sentDates = recipients.filter(item => /^sent/i.test(String(item.status || ""))).map(item => outreachDate_(item.sent_at)).filter(Boolean).sort((a, b) => a - b);
+        const sentDates = recipients.filter(item => /^sent/i.test(String(item.status || ""))).map(item => sequenceDate_(item.sent_at)).filter(Boolean).sort((a, b) => a - b);
         const count = status => recipients.filter(item => String(item.status || "") === status).length;
         return {
           campaign_id:campaign.campaign_id, name:campaign.name, status:campaign.status,
