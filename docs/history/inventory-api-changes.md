@@ -3,6 +3,24 @@
 Moved out of the `apps-script/Code.gs` header on 2026-10-17 so the deployed file stays short. Newest first, copied word for word. The header keeps only the current version (`CHANGES IN THIS VERSION`); when a new version is made, move that section to the top of this file.
 
 ```
+CHANGES IN 2026.11.05.58-APP
+- Fixes from chat's review (claude/chat-review-findings-sequences-2026-11-05.md):
+  - A campaign with no stored criteria starts a sequence only if its Audience is plainly a sales stage; Cocktail
+    list, ordering-link invites and unknown labels stay single campaigns.
+  - A re-sent step restarts the gap from its latest send (the card still shows the first send).
+  - An Activity row with an Account ID counts only for that account; an address-only row counts only when the
+    address belongs to one business.
+  - migrateCampaignsToSequences() plans, deletes duplicates and writes under one script lock
+    (deleteOutreachCampaignUnderLock_ is the shared delete body).
+  - The "next window opens" time is right across daylight-saving changes.
+  - If the sending window closes during the 45-second hold re-check, the run stops instead of sending again.
+  - A sequence step can't be created without the Sequence ID / Step columns (run repairHubStructure() first).
+  - A failing daily step check is retried up to three hourly syncs, isn't marked done, and raises a "Sequence
+    step check failed" task until a check succeeds.
+  - outreachSequences is cached like the other Hub reads ("refresh" rebuilds it) and reports read/build times.
+- Still includes .57 (sending window, same-run hold re-check) and the sequences code from .55/.56, which does
+  nothing until repairHubStructure() and migrateCampaignsToSequences() are run.
+
 CHANGES IN 2026.11.05.57-APP
 - Sending window: scheduled campaigns and Send remaining send only from 10 am to 2 pm Chicago time, Monday to
   Friday, so email lands late morning to early afternoon before places get busy. Outside it a campaign waits and

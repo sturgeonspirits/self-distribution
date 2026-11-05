@@ -1,24 +1,13 @@
 /*********************************
  * Inventory API (JSON) for Netlify
- * App version: 2026.11.05.58-APP
+ * App version: 2026.11.05.59-APP
  *
  * CHANGES IN THIS VERSION
- * - Fixes from chat's review (claude/chat-review-findings-sequences-2026-11-05.md):
- *   - A campaign with no stored criteria starts a sequence only if its Audience is plainly a sales stage; Cocktail
- *     list, ordering-link invites and unknown labels stay single campaigns.
- *   - A re-sent step restarts the gap from its latest send (the card still shows the first send).
- *   - An Activity row with an Account ID counts only for that account; an address-only row counts only when the
- *     address belongs to one business.
- *   - migrateCampaignsToSequences() plans, deletes duplicates and writes under one script lock
- *     (deleteOutreachCampaignUnderLock_ is the shared delete body).
- *   - The "next window opens" time is right across daylight-saving changes.
- *   - If the sending window closes during the 45-second hold re-check, the run stops instead of sending again.
- *   - A sequence step can't be created without the Sequence ID / Step columns (run repairHubStructure() first).
- *   - A failing daily step check is retried up to three hourly syncs, isn't marked done, and raises a "Sequence
- *     step check failed" task until a check succeeds.
- *   - outreachSequences is cached like the other Hub reads ("refresh" rebuilds it) and reports read/build times.
- * - Still includes .57 (sending window, same-run hold re-check) and the sequences code from .55/.56, which does
- *   nothing until repairHubStructure() and migrateCampaignsToSequences() are run.
+ * - Sequences: a business whose Directory Next Email is "Complete" counts as stopped ("Ended early"), so it is not
+ *   counted as due and gets no step draft. Karl ended the 67 Sep 23 prospects outside the area this way on
+ *   2026-11-05 (their Next Email set to Complete and Next Follow-Up cleared); the 26 within 15 miles continue.
+ * - Includes everything in .58 (review fixes), .57 (sending window, same-run hold re-check) and the sequences code
+ *   from .55/.56, which does nothing until repairHubStructure() and migrateCampaignsToSequences() are run.
  *
  * DEPLOY
  * - Apps Script project: Inventory API
@@ -28,7 +17,7 @@
  * Earlier version notes: docs/history/inventory-api-changes.md (move this version's notes there when the version changes).
  *********************************/
 
-const APP_VERSION = "2026.11.05.58-APP";
+const APP_VERSION = "2026.11.05.59-APP";
 
 const SHEET_NAMES = {
   STORES: "Stores",
@@ -5234,6 +5223,8 @@ function sequenceStopReason_(record) {
   if (outcome) return outcome;
   const status = SEQUENCE_STOP_STATUSES[String(record.status || "").trim().toLowerCase()];
   if (status) return status;
+  // Next Email "Complete" ends the sales emails for a business (e.g. outside the area we serve).
+  if (String(record.next_email || "").trim().toLowerCase() === "complete") return "Ended early (Next Email set to Complete)";
   if (record.do_not_email) return "Do not email";
   return "";
 }
@@ -5554,7 +5545,8 @@ function sequenceSourceData_() {
   const directory = getAllRowsAsObjects_(getOutreachSheet_(OUTREACH_SHEET_NAME)).map((row, index) => {
     const record = campaignDirectoryRecord_(row, index + 2);
     return { source_row:record.source_row, account_id:record.account_id, business:record.business, email:record.email,
-      status:record.status, outcome:record.outcome, do_not_email:record.do_not_email, sequence_id:String(row.sequence_id || "").trim() };
+      status:record.status, outcome:record.outcome, do_not_email:record.do_not_email, next_email:record.next_email,
+      sequence_id:String(row.sequence_id || "").trim() };
   });
   const sequenceSheet = ss.getSheetByName(OUTREACH_SEQUENCES_SHEET_NAME);
   const sequences = sequenceSheet ? getAllRowsAsObjects_(sequenceSheet).map(row => ({

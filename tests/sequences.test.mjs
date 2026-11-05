@@ -334,3 +334,18 @@ test("a failing step check is retried (at most three times a day) and raises a t
   const code = await readFile(new URL("apps-script/Code.gs", root), "utf8");
   assert.match(code, /title:"Sequence step check failed: due follow-ups were not drafted today"/);
 });
+
+test("Next Email Complete ends a business's sequence without counting it as due", async () => {
+  const context = await backend();
+  const plan = build(context, {
+    campaigns:[campaign("CMP-F", "Initial")],
+    recipients:[recipient("CMP-F", "F1", "Sent", 40), recipient("CMP-F", "F2", "Sent", 40)],
+    activity:[sent("F1", "Initial", 40), sent("F2", "Initial", 40)],
+    directory:[{ ...dir("F1"), next_email:"Complete" }, { ...dir("F2", "Sent", "", 3), next_email:"Follow-up 1" }],
+  });
+  const by = Object.fromEntries(plan.sequences[0].members.map(m => [m.account_id, m]));
+  assert.equal(by.F1.state, "stopped");
+  assert.match(by.F1.stop_reason, /^Ended early/);
+  assert.equal(by.F2.state, "active");
+  assert.deepEqual(plan.sequences[0].due_by_step, { 2:1 });
+});
