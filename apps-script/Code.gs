@@ -1,17 +1,18 @@
 /*********************************
  * Inventory API (JSON) for Netlify
- * App version: 2026.11.05.55-APP
+ * App version: 2026.11.05.56-APP
  *
  * CHANGES IN THIS VERSION
- * - Campaign sequences, Part B Phase 2 (claude/chat-request-campaign-sequences-2026-11-05.md). A sequence groups
- *   the step campaigns of one audience (Initial, Follow-up 1, Follow-up 2); sending is unchanged.
- *   - repairHubStructure() adds an "Outreach Sequences" tab, Sequence ID and Step columns on Outreach Campaigns,
- *     and a Sequence ID column on the Directory.
- *   - New staff read action outreachSequences: each sequence's steps, dates, and how many businesses are sending,
- *     due, waiting, finished or stopped. Where a business is comes from the Activity Log, not campaign names.
- *   - Editor-only previewSequenceMigration() (writes nothing) and migrateCampaignsToSequences() (idempotent):
- *     fold existing campaigns into sequences, delete never-sent duplicate campaigns through the normal delete
- *     path, and mark each business's active sequence. Not reachable from the web app.
+ * - Campaign sequences, Part B Phase 4. Once a day (from the hourly task-manager sync, at or after 6 am), the Hub
+ *   builds a draft campaign (status Review) for each migrated sequence step that has businesses due, unless a draft
+ *   is already waiting or that step is still sending. Drafts use the normal create path with a new "sequence"
+ *   audience (the Directory rows whose Sequence ID is that sequence), so the stage and send-eligibility checks are
+ *   the same as for any campaign. Nothing is approved or sent automatically. runSequenceStepCheck() runs it now.
+ * - Each drafted step gets an immediate "Review and approve '<name>'" task in the weekly task manager. Businesses
+ *   in a sequence no longer get a separate "Send <stage> ..." reminder; the draft's task replaces it.
+ * - Sequences without a saved name are named by area and start date (e.g. "Appleton, Sep 25").
+ * - Needs .55's setup first: repairHubStructure(), then migrateCampaignsToSequences(). Until a sequence is
+ *   migrated, the daily check does nothing.
  *
  * DEPLOY
  * - Apps Script project: Inventory API
@@ -21,7 +22,7 @@
  * Earlier version notes: docs/history/inventory-api-changes.md (move this version's notes there when the version changes).
  *********************************/
 
-const APP_VERSION = "2026.11.05.55-APP";
+const APP_VERSION = "2026.11.05.56-APP";
 
 const SHEET_NAMES = {
   STORES: "Stores",
@@ -3668,6 +3669,20 @@ function campaignCriteriaFromRequest_(p) {
   if (!Number.isFinite(radius) || radius < 0 || radius > 1000) throw new Error("Campaign radius must be from 0 to 1,000 miles.");
   if (!Number.isInteger(minFit) || minFit < 1 || minFit > 5) throw new Error("Campaign minimum fit must be from 1 to 5.");
   if (!stages.includes(stage)) throw new Error("Campaign stage must be Initial, Follow-up 1, Follow-up 2, or Nurture check-in.");
+  // A sequence step (Phase 4): the businesses whose Directory Sequence ID is this sequence, filtered by the same
+  // stage and send-eligibility checks as any campaign. No distance, fit or area filters.
+  if (String(source.audience_mode || "") === "sequence" || String(source.sequence_id || "").trim()) {
+    const sequenceId = String(source.sequence_id || "").trim();
+    if (!sequenceId) throw new Error("Choose the sequence this step belongs to.");
+    if (!SEQUENCE_STEP_STAGES.includes(stage)) throw new Error("A sequence step must be Initial, Follow-up 1, or Follow-up 2.");
+    const stored = sequenceStoredRow_(sequenceId);
+    if (!stored) throw new Error("That sequence was not found. Run migrateCampaignsToSequences() first.");
+    return {
+      schema:3, campaign_type:"sales_outreach", audience_mode:"sequence", stage:stage,
+      sequence_id:sequenceId, sequence_name:String(stored.name || sequenceId).slice(0, 120), source_campaign_id:"",
+      center:campaignCenterForCriteria_("distillery", ""), radius_miles:1000, min_fit:1, filters:{}, max_recipients:maxRecipients,
+    };
+  }
   // "Same businesses as the source campaign": only the stage check applies (who is due for this email); no distance,
   // fit or area filters, so a follow-up reaches the group the earlier email went to wherever it was centered.
   // The stored center/radius/fit come from the source campaign so labels and distances still read sensibly.
@@ -3714,6 +3729,9 @@ function campaignAudienceLabel_(criteria) {
   if (criteria?.campaign_type === "customer_invite") return `Current customers · order online invite${criteria?.max_recipients ? ` · first ${criteria.max_recipients}` : ""}`;
   if (criteria?.campaign_type === "cocktail_list") return `Cocktail list · subscribed newsletter contacts${criteria?.max_recipients ? ` · first ${criteria.max_recipients}` : ""}`;
   const stage = String(criteria?.stage || "Initial");
+  if (criteria?.audience_mode === "sequence") {
+    return `${stage === "Initial" ? "Initial prospects" : `${stage} due`} · sequence ${criteria.sequence_name || criteria.sequence_id}${criteria.max_recipients ? ` · first ${criteria.max_recipients}` : ""}`;
+  }
   if (criteria?.audience_mode === "source") {
     const sourceLabel = criteria.source_campaign_name ? `${criteria.source_campaign_name} (${criteria.source_campaign_id})` : criteria.source_campaign_id;
     return `${stage === "Initial" ? "Initial prospects" : `${stage} due`} · same businesses as ${sourceLabel}${criteria.max_recipients ? ` · first ${criteria.max_recipients}` : ""}`;
@@ -3733,7 +3751,7 @@ function campaignCriteriaFailures_(record, criteria) {
   if (!criteria) return [];
   if (criteria.campaign_type === "cocktail_list" || criteria.campaign_type === "customer_invite") return [];
   // Source-audience follow-ups are limited by campaignSourceRows_ instead of distance, fit or area.
-  if (criteria.audience_mode === "source") return [];
+  if (criteria.audience_mode === "source" || criteria.audience_mode === "sequence") return [];
   const failures = [];
   const miles = campaignDistanceForCriteria_(record, criteria);
   if (miles === null || miles > Number(criteria.radius_miles)) failures.push("distance");
@@ -4180,8 +4198,12 @@ function campaignDirectoryStageSelection_(criteria) {
   const directoryRecords = getAllRowsAsObjects_(leadSheet).map((row, index) => campaignDirectoryRecord_(row, index + 2));
   const initialSentEmails = campaignInitialSentEmailSet_(directoryRecords);
   const activityMap = stage === "Initial" ? null : outreachActivityMap_();
-  const source = campaignSourceRows_(criteria.source_campaign_id, directoryRecords);
-  const sourceRows = source ? source.rows : null;
+  const source = criteria.audience_mode === "sequence" ? null : campaignSourceRows_(criteria.source_campaign_id, directoryRecords);
+  // A sequence step's pool is the businesses whose Directory Sequence ID is that sequence.
+  const sequenceRows = criteria.audience_mode === "sequence"
+    ? new Set(directoryRecords.filter(record => String(record.directory_row?.sequence_id || "").trim() === String(criteria.sequence_id || "")).map(record => record.source_row))
+    : null;
+  const sourceRows = source ? source.rows : sequenceRows;
   // Why businesses were left out, so a preview with few or no recipients says what is in the way
   // (for example a follow-up date that has not arrived) instead of only "0 eligible".
   const leftOut = {};
@@ -4227,7 +4249,7 @@ function campaignDirectoryStageSelection_(criteria) {
   }).sort((a, b) => Number(a.campaign_miles) - Number(b.campaign_miles) || outreachPriorityScore_(b) - outreachPriorityScore_(a) || String(a.business).localeCompare(String(b.business)));
   const records = criteria.max_recipients === null ? eligible : eligible.slice(0, criteria.max_recipients);
   if (records.length < eligible.length) leftOut[`Over the ${criteria.max_recipients}-recipient maximum`] = eligible.length - records.length;
-  return { records:records, initial_sent_emails:initialSentEmails, left_out:leftOut, left_out_names:leftOutNames, source_group_size:source ? sourceRows.size + Object.values(source.unmatched).reduce((total, names) => total + names.length, 0) : null };
+  return { records:records, initial_sent_emails:initialSentEmails, left_out:leftOut, left_out_names:leftOutNames, source_group_size:source ? sourceRows.size + Object.values(source.unmatched).reduce((total, names) => total + names.length, 0) : sequenceRows ? sequenceRows.size : null };
 }
 
 function campaignDirectoryInitialSelection_(criteria) {
@@ -4951,6 +4973,7 @@ function apiCreateOutreachCampaign_(p) {
     setCampaign("recipient_count", eligible.length); setCampaign("audience_checksum", audienceChecksum); setCampaign("unsegmented_count", unsegmentedCount);
     setCampaign("created_at", new Date()); setCampaign("created_by", authenticatedActor_(p, "Sturgeon Distribution Hub"));
     setCampaign("sent_count", 0); setCampaign("blocked_count", 0); setCampaign("app_version", APP_VERSION); setCampaign("criteria", criteriaJson);
+    if (criteria.audience_mode === "sequence") { setCampaign("sequence_id", criteria.sequence_id); setCampaign("step", sequenceStepNumber_(criteria.stage)); }
     sheets.campaigns.getRange(sheets.campaigns.getLastRow() + 1, 1, 1, campaignValues.length).setValues([campaignValues]);
     appendAudit_("CREATE_OUTREACH_CAMPAIGN", "Campaign", campaignId, "", authenticatedActor_(p, "Sturgeon Distribution Hub"), OUTREACH_SHEET_NAME, OUTREACH_CAMPAIGN_RECIPIENTS_SHEET_NAME, "Review", `${eligible.length} frozen recipients; ${audience}.`);
     return { message:"Campaign created for review. No email was sent.", campaign_id:campaignId, recipient_count:eligible.length, audience_checksum:audienceChecksum, unsegmented_count:unsegmentedCount, preview_recipient_count:eligibility.preview_count, removed_by_duplicate_checks:eligibility.removed_by_duplicate_checks };
@@ -5197,6 +5220,15 @@ function sequenceStopReason_(record) {
   return "";
 }
 
+// Default name for a sequence that has no saved name: its area and start date, e.g. "Appleton, Sep 25".
+function sequenceDefaultName_(root) {
+  const center = root?.criteria?.center;
+  const area = !center ? "First prospects" : center.type === "distillery" ? "Oshkosh area" : String(center.label || center.zip || "Area").trim();
+  const date = outreachDate_(root?.created_at);
+  const months = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"];
+  return date ? `${area}, ${months[date.getMonth()]} ${date.getDate()}` : area;
+}
+
 function sequenceDateIso_(value) {
   const date = outreachDate_(value);
   return date ? date.toISOString() : "";
@@ -5426,7 +5458,7 @@ function buildSequencePlan_(data, options) {
     const root = group.root;
     sequences.push({
       sequence_id:group.sequence_id,
-      name:String(saved?.name || root.name || group.sequence_id),
+      name:String(saved?.name || sequenceDefaultName_(root)),
       audience:String(saved?.audience || root.audience || ""),
       criteria:root.criteria || null,
       root_campaign_id:root.campaign_id,
@@ -5681,6 +5713,81 @@ function migrateCampaignsToSequences() {
   } finally {
     lock.releaseLock();
   }
+}
+
+// ---------- Sequence step check (2026-11-05, Part B Phase 4) ----------
+// Once a day (from the hourly task-manager sync, at or after 6 am) the Hub looks at each migrated sequence. When
+// businesses are due for the next step and that step has no draft waiting and nothing still sending, it builds the
+// step's draft campaign (status Review) for them with the normal create path, so the same stage, send-eligibility
+// and duplicate checks apply. Nothing is approved or sent: every step still needs Karl's review and approval, and
+// the draft gets a "Review and approve" task in his weekly task manager. Businesses that come due after a step was
+// already sent get a smaller "(more)" draft of the same step.
+const SEQUENCE_STEP_CHECK_LAST_DAY_PROPERTY = "SEQUENCE_STEP_CHECK_LAST_DAY";
+const SEQUENCE_STEP_CHECK_HOUR = 6;
+const SEQUENCE_STEP_CHECK_ACTOR = "Sequence step check";
+
+function sequenceStoredRow_(sequenceId) {
+  const sheet = getOutreachSs_().getSheetByName(OUTREACH_SEQUENCES_SHEET_NAME);
+  if (!sheet) return null;
+  const row = getAllRowsAsObjects_(sheet).find(item => String(item.sequence_id || "").trim() === String(sequenceId || "").trim());
+  return row ? { sequence_id:String(row.sequence_id).trim(), name:String(row.sequence_name || "").trim(), gap_days:Number(row.gap_days || 0) } : null;
+}
+
+/** Which step drafts to build, from a plan. Pure: tested without sheets. Only migrated (stored) sequences count. */
+function sequenceStepDraftActions_(plan) {
+  const actions = [];
+  (plan.sequences || []).filter(sequence => sequence.stored && sequence.status !== "Finished").forEach(sequence => {
+    Object.keys(sequence.due_by_step || {}).map(Number).sort((a, b) => a - b).forEach(step => {
+      const stage = SEQUENCE_STEP_STAGES[step - 1];
+      if (!stage) return;
+      const campaigns = (sequence.steps[step - 1] || {}).campaigns || [];
+      const draft = campaigns.find(item => item.status === "Review");
+      const sending = campaigns.find(item => item.status === "Approved" && Number(item.ready_to_send || 0) > 0);
+      const base = { sequence_id:sequence.sequence_id, sequence_name:sequence.name, step:step, stage:stage, due_count:Number(sequence.due_by_step[step] || 0) };
+      if (draft) actions.push(Object.assign(base, { action:"skip", reason:`"${draft.name}" is already waiting for review` }));
+      else if (sending) actions.push(Object.assign(base, { action:"skip", reason:`"${sending.name}" is still sending` }));
+      else actions.push(Object.assign(base, { action:"create", campaign_name:`${sequence.name} — ${stage}${campaigns.some(item => Number(item.sent_count || 0) > 0) ? " (more)" : ""}`.slice(0, 120) }));
+    });
+  });
+  return actions;
+}
+
+/** Builds the due step drafts now. Safe to run from the editor; the hourly task sync runs it once a day. */
+function runSequenceStepCheck() {
+  const plan = buildSequencePlan_(sequenceSourceData_(), { now:new Date(), gap_days:sequenceGapDays_() });
+  const actions = sequenceStepDraftActions_(plan);
+  const results = actions.map(action => {
+    if (action.action !== "create") return action;
+    try {
+      const res = apiCreateOutreachCampaign_({ preview_confirmed:true, staff_name:SEQUENCE_STEP_CHECK_ACTOR, campaign_name:action.campaign_name,
+        criteria:{ audience_mode:"sequence", sequence_id:action.sequence_id, stage:action.stage } });
+      return Object.assign({}, action, { result:res.already_exists ? "already exists" : "created", campaign_id:res.campaign_id, recipient_count:res.recipient_count });
+    } catch (error) {
+      // Usually "none eligible": the Directory's follow-up date has not arrived yet. The next daily check retries.
+      return Object.assign({}, action, { result:"not created", error:String(error && error.message || error).slice(0, 300) });
+    }
+  });
+  const created = results.filter(item => item.result === "created");
+  if (created.length) {
+    bumpReadCacheVersion_();
+    appendAudit_("SEQUENCE_STEP_CHECK", "Sequence", "", "", SEQUENCE_STEP_CHECK_ACTOR, OUTREACH_SEQUENCES_SHEET_NAME, OUTREACH_CAMPAIGNS_SHEET_NAME, "Drafted",
+      created.map(item => `${item.campaign_name} (${item.recipient_count})`).join("; ").slice(0, 500));
+  }
+  console.log(JSON.stringify({ event:"sequence_step_check", results:results }));
+  return results;
+}
+
+/** Runs runSequenceStepCheck() at most once per day, at or after 6 am Hub time. Called by the hourly task sync. */
+function maybeRunSequenceStepCheck_(now) {
+  const at = now instanceof Date ? now : new Date();
+  const timeZone = Session.getScriptTimeZone() || "America/Chicago";
+  if (Number(Utilities.formatDate(at, timeZone, "H")) < SEQUENCE_STEP_CHECK_HOUR) return { ran:false, reason:"before 6 am" };
+  const today = Utilities.formatDate(at, timeZone, "yyyy-MM-dd");
+  const properties = PropertiesService.getScriptProperties();
+  if (properties.getProperty(SEQUENCE_STEP_CHECK_LAST_DAY_PROPERTY) === today) return { ran:false, reason:"already ran today" };
+  // Mark the day first: a failing check is logged and retried tomorrow rather than every hour.
+  properties.setProperty(SEQUENCE_STEP_CHECK_LAST_DAY_PROPERTY, today);
+  return { ran:true, results:runSequenceStepCheck() };
 }
 
 // Campaign names are internal labels (the list, review window and follow-up source picker); no email uses them,
@@ -11217,6 +11324,9 @@ function removeTaskManagerSync() {
 }
 
 function runTaskManagerSync() {
+  // Once a day, build drafts for sequence steps that came due, so their review tasks are in this same sync.
+  try { maybeRunSequenceStepCheck_(new Date()); }
+  catch (error) { console.error(`Sequence step check failed: ${String(error && error.message || error)}`); }
   try { syncTaskManager_({}); }
   catch (error) { console.error(`Task manager sync failed: ${String(error && error.message || error)}`); }
 }
@@ -11384,6 +11494,9 @@ function taskManagerHubItems_(now, timeZone) {
     }
 
     if (!TASK_MANAGER_SEQUENCE_STATUSES.includes(status)) return;
+    // A business in a sequence gets its next step drafted by the daily sequence step check, and the draft gets its
+    // own "Review and approve" task, so no separate "Send ..." reminder is made for it.
+    if (String(row.sequence_id || "").trim()) return;
     const due = status === "reactivation due" || (!!followUpKey && followUpKey <= todayKey);
     if (!due) return;
     const businessKey = record.account_id || `row:${record.source_row}`;
@@ -11429,7 +11542,12 @@ function taskManagerHubItems_(now, timeZone) {
     const remaining = Math.max(0, campaign.recipient_count - campaign.sent_count);
     const ageDays = campaign.created_at ? (now.getTime() - campaign.created_at.getTime()) / 86400000 : 0;
     const approvedDays = campaign.approved_at ? (now.getTime() - campaign.approved_at.getTime()) / 86400000 : ageDays;
-    if (campaign.status === "Review" && ageDays >= 1) {
+    if (campaign.status === "Review" && campaign.sequence_id) {
+      // A sequence step the Hub drafted when it came due: ask for review right away, not after a day.
+      state = "review";
+      title = `Review and approve '${campaign.name}' (${campaign.recipient_count} business${campaign.recipient_count === 1 ? "" : "es"})`;
+      line = `Drafted ${taskManagerShortDate_(campaign.created_at, timeZone)} because these businesses are due for this step. Check the wording, then approve and send.`;
+    } else if (campaign.status === "Review" && ageDays >= 1) {
       state = "review";
       title = `Review or delete campaign '${campaign.name}' (${campaign.recipient_count})`;
       line = `Created ${taskManagerShortDate_(campaign.created_at, timeZone)} and still waiting for review.`;
@@ -11513,6 +11631,7 @@ function taskManagerCampaignInfo_() {
       sent_count:Number(row.sent_count || 0),
       created_at:outreachDate_(row.created_at) || null,
       approved_at:outreachDate_(row.approved_at) || null,
+      sequence_id:String(row.sequence_id || "").trim(),
     });
   });
   const lastSent = new Map();

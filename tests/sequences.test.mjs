@@ -162,3 +162,89 @@ test("the read action and the sequence structure are wired into the API, repair 
   assert.doesNotMatch(code, /case "migrateCampaignsToSequences"/);
   assert.doesNotMatch(proxy, /migrateCampaignsToSequences/);
 });
+
+// ---------- Phase 4: daily step drafts (Inventory API .55-APP) ----------
+
+test("step drafts: only migrated sequences, never over a waiting draft or a step still sending; later ones say (more)", async () => {
+  const context = await backend();
+  context.__plan = {
+    sequences:[
+      { sequence_id:"SEQ-1", name:"Oshkosh", stored:true, status:"Next step due", due_by_step:{ 3:84, 2:12 },
+        steps:[{ campaigns:[{ name:"Init", status:"Complete", sent_count:107 }] }, { campaigns:[{ name:"FU1", status:"Complete", sent_count:89 }] }, { campaigns:[] }] },
+      { sequence_id:"SEQ-2", name:"Fond du Lac", stored:true, status:"Needs review", due_by_step:{ 2:44 },
+        steps:[{ campaigns:[] }, { campaigns:[{ name:"Fond du Lac — Follow-up 1", status:"Review", sent_count:0 }] }, { campaigns:[] }] },
+      { sequence_id:"SEQ-3", name:"Appleton", stored:true, status:"Sending", due_by_step:{ 3:2 },
+        steps:[{ campaigns:[] }, { campaigns:[] }, { campaigns:[{ name:"FU2", status:"Approved", ready_to_send:51, sent_count:3 }] }] },
+      { sequence_id:"SEQ-4", name:"Not migrated", stored:false, status:"Next step due", due_by_step:{ 2:5 }, steps:[{ campaigns:[] }, { campaigns:[] }, { campaigns:[] }] },
+    ],
+  };
+  const actions = JSON.parse(JSON.stringify(vm.runInContext(`sequenceStepDraftActions_(__plan)`, context)));
+  assert.deepEqual(actions.map(a => [a.sequence_id, a.stage, a.action]), [
+    ["SEQ-1", "Follow-up 1", "create"], ["SEQ-1", "Follow-up 2", "create"],
+    ["SEQ-2", "Follow-up 1", "skip"], ["SEQ-3", "Follow-up 2", "skip"],
+  ]);
+  assert.equal(actions[0].campaign_name, "Oshkosh — Follow-up 1 (more)", "Follow-up 1 already went to most of them");
+  assert.equal(actions[1].campaign_name, "Oshkosh — Follow-up 2");
+  assert.match(actions[2].reason, /already waiting for review/);
+  assert.match(actions[3].reason, /still sending/);
+});
+
+test("the step check runs once a day from the hourly sync, not before 6 am", async () => {
+  const context = await backend();
+  const properties = new Map();
+  let runs = 0;
+  context.PropertiesService = { getScriptProperties: () => ({ getProperty: key => properties.get(key) ?? null, setProperty: (key, value) => properties.set(key, String(value)) }) };
+  context.Session = { getScriptTimeZone: () => "UTC" };
+  context.Utilities = { formatDate: (date, tz, fmt) => (fmt === "H" ? String(new Date(date).getUTCHours()) : new Date(date).toISOString().slice(0, 10)) };
+  context.__count = () => { runs += 1; return []; };
+  vm.runInContext(`runSequenceStepCheck = () => __count();`, context);
+  assert.equal(vm.runInContext(`maybeRunSequenceStepCheck_(new Date("2026-11-06T05:10:00Z")).ran`, context), false);
+  assert.equal(vm.runInContext(`maybeRunSequenceStepCheck_(new Date("2026-11-06T06:10:00Z")).ran`, context), true);
+  assert.equal(vm.runInContext(`maybeRunSequenceStepCheck_(new Date("2026-11-06T09:10:00Z")).ran`, context), false);
+  assert.equal(vm.runInContext(`maybeRunSequenceStepCheck_(new Date("2026-11-07T06:10:00Z")).ran`, context), true);
+  assert.equal(runs, 2);
+});
+
+test("a sequence step's criteria, label and audience: its Directory members at that stage only", async () => {
+  const context = await backend();
+  vm.runInContext(`
+    sequenceStoredRow_ = id => (id === "SEQ-1" ? { sequence_id:"SEQ-1", name:"Oshkosh" } : null);
+    campaignCenterForCriteria_ = () => ({ type:"distillery", label:"Distillery (54902)", zip:"54902", latitude:43.99, longitude:-88.52 });`, context);
+  const criteria = JSON.parse(JSON.stringify(vm.runInContext(`campaignCriteriaFromRequest_({ criteria:{ audience_mode:"sequence", sequence_id:"SEQ-1", stage:"Follow-up 2" } })`, context)));
+  assert.equal(criteria.audience_mode, "sequence");
+  assert.equal(criteria.sequence_name, "Oshkosh");
+  assert.equal(criteria.stage, "Follow-up 2");
+  context.__criteria = criteria;
+  assert.equal(vm.runInContext(`campaignAudienceLabel_(__criteria)`, context), "Follow-up 2 due · sequence Oshkosh");
+  assert.deepEqual(JSON.parse(JSON.stringify(vm.runInContext(`campaignCriteriaFailures_({ craft_spirit_fit:1 }, __criteria)`, context))), []);
+  assert.throws(() => vm.runInContext(`campaignCriteriaFromRequest_({ criteria:{ audience_mode:"sequence", sequence_id:"SEQ-9", stage:"Follow-up 1" } })`, context), /not found/);
+  assert.throws(() => vm.runInContext(`campaignCriteriaFromRequest_({ criteria:{ audience_mode:"sequence", sequence_id:"SEQ-1", stage:"Nurture check-in" } })`, context), /sequence step must be/);
+
+  const row = (name, sequenceId, nextEmail) => ({ business_name:name, email:`${name.toLowerCase()}@example.test`, account_id:`ACC-${name}`, status:"Follow-up sent",
+    next_email:nextEmail, relationship:"Prospect", sequence_id:sequenceId });
+  context.__rows = [row("A", "SEQ-1", "Follow-up 2"), row("B", "SEQ-1", "Follow-up 1"), row("C", "SEQ-2", "Follow-up 2"), row("D", "", "Follow-up 2")];
+  vm.runInContext(`
+    getOutreachSheet_ = () => ({});
+    getAllRowsAsObjects_ = () => __rows;
+    campaignInitialSentEmailSet_ = () => new Set();
+    outreachActivityMap_ = () => new Map();
+    outreachSendEligibility_ = () => [];
+    campaignDistanceForCriteria_ = () => 0;
+    outreachPriorityScore_ = () => 0;`, context);
+  const selection = JSON.parse(JSON.stringify(vm.runInContext(`(() => { const s = campaignDirectoryStageSelection_(__criteria); return { names:s.records.map(r => r.business), left:s.left_out, size:s.source_group_size }; })()`, context)));
+  assert.deepEqual(selection.names, ["A"]);
+  assert.equal(selection.size, 2);
+  assert.deepEqual(selection.left, { "Due for Follow-up 1 instead":1 });
+});
+
+test("drafted steps are tied to their sequence and get a Review and approve task; sequence members get no separate Send reminder", async () => {
+  const code = await readFile(new URL("apps-script/Code.gs", root), "utf8");
+  const create = code.slice(code.indexOf("function apiCreateOutreachCampaign_"), code.indexOf("function apiApproveOutreachCampaign_"));
+  assert.match(create, /if \(criteria\.audience_mode === "sequence"\) \{ setCampaign\("sequence_id", criteria\.sequence_id\); setCampaign\("step", sequenceStepNumber_\(criteria\.stage\)\); \}/);
+  assert.match(code, /if \(campaign\.status === "Review" && campaign\.sequence_id\) \{\s*\/\/[^\n]*\n\s*state = "review";\s*title = `Review and approve '\$\{campaign\.name\}'/);
+  assert.match(code, /if \(String\(row\.sequence_id \|\| ""\)\.trim\(\)\) return;\s*const due = status === "reactivation due"/);
+  assert.match(code, /function runTaskManagerSync\(\) \{\s*\/\/[^\n]*\n\s*try \{ maybeRunSequenceStepCheck_\(new Date\(\)\); \}/);
+  // Drafting never approves or sends.
+  const check = code.slice(code.indexOf("function runSequenceStepCheck("), code.indexOf("function maybeRunSequenceStepCheck_"));
+  assert.doesNotMatch(check, /apiApproveOutreachCampaign_|apiSendOutreachCampaignBatch_|apiScheduleOutreachCampaign_/);
+});

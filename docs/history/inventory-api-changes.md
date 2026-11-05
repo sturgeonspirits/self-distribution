@@ -3,6 +3,17 @@
 Moved out of the `apps-script/Code.gs` header on 2026-10-17 so the deployed file stays short. Newest first, copied word for word. The header keeps only the current version (`CHANGES IN THIS VERSION`); when a new version is made, move that section to the top of this file.
 
 ```
+CHANGES IN 2026.11.05.55-APP
+- Campaign sequences, Part B Phase 2 (claude/chat-request-campaign-sequences-2026-11-05.md). A sequence groups
+  the step campaigns of one audience (Initial, Follow-up 1, Follow-up 2); sending is unchanged.
+  - repairHubStructure() adds an "Outreach Sequences" tab, Sequence ID and Step columns on Outreach Campaigns,
+    and a Sequence ID column on the Directory.
+  - New staff read action outreachSequences: each sequence's steps, dates, and how many businesses are sending,
+    due, waiting, finished or stopped. Where a business is comes from the Activity Log, not campaign names.
+  - Editor-only previewSequenceMigration() (writes nothing) and migrateCampaignsToSequences() (idempotent):
+    fold existing campaigns into sequences, delete never-sent duplicate campaigns through the normal delete
+    path, and mark each business's active sequence. Not reachable from the web app.
+
 CHANGES IN 2026.11.05.54-APP
 - A Zoho Outbox "hold" is re-checked at the next five-minute run (after 4 minutes, was 10). The mailer counts the
   Outbox 1.5 s after each send, when a normal email is usually still in transit, so on 2026-11-05 every Appleton

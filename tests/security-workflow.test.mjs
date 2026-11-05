@@ -3261,7 +3261,7 @@ test("the create window defaults a source campaign to the same businesses and th
   const [backend, index] = await Promise.all(["apps-script/Code.gs", "index.html"].map(path => readFile(new URL(path, root), "utf8")));
   assert.match(backend, /source\.use_source_audience === true/);
   assert.match(backend, /audience_mode:"source"/);
-  assert.match(backend, /if \(criteria\.audience_mode === "source"\) return \[\];/);
+  assert.match(backend, /if \(criteria\.audience_mode === "source" \|\| criteria\.audience_mode === "sequence"\) return \[\];/);
   assert.match(index, /id="outreachCampaignCriteriaSameAudience" type="checkbox" checked/);
   assert.match(index, /use_source_audience:campaignSameAudienceMode\(\)/);
   assert.match(index, /\{ "Initial":"Follow-up 1", "Follow-up 1":"Follow-up 2", "Follow-up 2":"Nurture check-in"/);
