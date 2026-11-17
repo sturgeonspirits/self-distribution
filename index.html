@@ -1,10 +1,10 @@
 <!doctype html>
-<!-- App version: 2026.11.17.66-WEB -->
+<!-- App version: 2026.11.17.68-WEB -->
 <html>
 <head>
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover"/>
-  <meta name="app-version" content="2026.11.17.66-WEB" />
+  <meta name="app-version" content="2026.11.17.68-WEB" />
   <meta name="theme-color" content="#536f77" />
   <link rel="icon" href="/assets/distribution-hub-icon.svg" type="image/svg+xml" />
   <link rel="manifest" href="/site.webmanifest" />
@@ -2796,7 +2796,7 @@
 
   <footer style="max-width:1200px;margin:18px auto 120px;padding:0 12px;text-align:center;color:#6b7280;font-size:12px;">
     Designed by <a href="https://scriptspirit.dev" target="_blank" rel="noopener noreferrer" style="color:#1d4ed8;text-decoration:none;font-weight:700;">Script Spirit</a>
-<span id="appVersionFooter"> • Version 2026.11.17.66-WEB</span>
+<span id="appVersionFooter"> • Version 2026.11.17.68-WEB</span>
   </footer>
 
 
@@ -2819,7 +2819,7 @@
   window.addEventListener("unhandledrejection", e => console.error("Unhandled promise rejection:", e.reason));
   window.addEventListener("error", e => console.error("Unhandled error:", e.error || e.message));
   const $ = (id) => document.getElementById(id);
-  const APP_VERSION = "2026.11.17.66-WEB";
+  const APP_VERSION = "2026.11.17.68-WEB";
   $("appVersionFooter").textContent = ` • Version ${APP_VERSION}`;
   function screenCacheKey(screen){ return `distribution_hub:${APP_VERSION}:${staffSession?.email || "unknown"}:${screen}`; }
   function readScreenCache(screen){
@@ -4552,6 +4552,12 @@
     return `<button class="actionBtn ${primary ? "primary" : ""}" type="button" data-reply-action="zoho"><i data-lucide="reply"></i><span>Answer in Zoho</span></button>`;
   }
 
+  // Karl, 2026-11-17 (2026.11.17.68-WEB): he often answers straight from his own mailbox, which the Hub can't see.
+  // "Email sent" closes the card as answered (Handled, "Email sent directly"); Undo on the Done row reopens it.
+  function replyEmailSentButton(){
+    return `<button class="actionBtn" type="button" data-reply-action="emailed"><i data-lucide="send"></i><span>Email sent</span></button>`;
+  }
+
   function replyDoneText(reply){
     const when = reply.handled_at ? ` · ${formatOutreachDate(reply.handled_at)}` : "";
     const by = reply.handled_by && !/^(reply checker|claude skill)$/i.test(reply.handled_by) ? ` by ${reply.handled_by}` : "";
@@ -4644,8 +4650,10 @@
       actions = optional && hasBusiness && suggested
         ? `<button class="actionBtn primary" type="button" data-reply-action="result"><span>${escapeHtml(`Record: ${suggested}`)}</span></button>
            ${replyAnswerButton(false)}
+           ${replyEmailSentButton()}
            <button class="actionBtn" type="button" data-reply-action="result-other"><span>Different result…</span></button>`
         : `${replyAnswerButton(true)}
+           ${replyEmailSentButton()}
            <button class="actionBtn" type="button" data-reply-action="close"><span>Close without answering…</span></button>
            ${!hasBusiness ? `<button class="actionBtn" type="button" data-reply-action="dismiss"><span>Not from a business we email</span></button>` : ""}`;
     }
@@ -4663,7 +4671,7 @@
         <div class="outreachMeta">${tags}</div>
         <details><summary>${bounce ? "Read the bounce" : "Read their email"}</summary><div class="replyText">${escapeHtml(reply.reply_text || "")}</div><div class="smallMuted">${escapeHtml(reply.subject || "(no subject)")} · Matched by: ${escapeHtml(reply.matched_by || "")}${reply.classifier ? ` · Sorted by: ${escapeHtml(reply.classifier)}` : ""}</div></details>
         <div class="outreachActions replyActions">${actions}</div>
-        ${person && actions.includes("data-reply-action=\"zoho\"") ? `<div class="replyHint">Answer from sales@, not karl@, so the Hub can see your answer.</div>` : ""}
+        ${person && actions.includes("data-reply-action=\"zoho\"") ? `<div class="replyHint">Answer from sales@ and the Hub sees it on its own. Answered from another address or by phone? Press Email sent.</div>` : ""}
       </article>`;
   }
 
@@ -4762,6 +4770,7 @@
     }
     let status = "Handled", note = "", extra = null;
     if (action === "no-outcome") extra = { no_outcome:true };
+    else if (action === "emailed") note = "Email sent directly";
     else if (action === "dismiss") { status = "Dismissed"; note = "Not from a business we email"; }
     else if (action === "address-fine") note = "Address is fine (keep emailing)";
     else if (action === "keep-emailing") {
