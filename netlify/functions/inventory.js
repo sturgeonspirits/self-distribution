@@ -1,9 +1,9 @@
-// App version: 2026.11.17.67-WEB
+// App version: 2026.11.17.73-WEB
 import { gunzipSync } from "node:zlib";
 import { requireStaffSession } from "./auth.js";
 import { fetchWithDriveRelay, relayConfig } from "../lib/drive-relay.js";
 
-const APP_VERSION = "2026.11.17.67-WEB";
+const APP_VERSION = "2026.11.17.73-WEB";
 const STAFF_ACTIONS = new Set([
   "outreachDashboard",
   "outreachRecord",
@@ -137,11 +137,35 @@ async function fetchAppsScript(url, options = {}, policy = {}) {
   throw upstreamFailure(policy, lastError, attempts);
 }
 
+// Timeout wording per action (2026.11.17.73-WEB). Karl, 2026-11-17: Create Badger invoice timed out with a message
+// about Zoho, although the invoice had been created in Badger. Each message now names what it was waiting on, what
+// may already have happened, and how to check; the error carries code UPSTREAM_TIMEOUT so the page can check itself.
+const SEND_TIMEOUT_MESSAGES = {
+  createBadgerInvoice:"Badger didn't confirm the invoice before the connection timed out, but it may have been created. The Hub is checking the order now. Don't press Create invoice again until it shows the result.",
+  sendOutreachCampaignBatch:"Zoho didn't confirm this batch before the connection timed out. Some emails may have gone out. Refresh Campaigns in a minute before sending more.",
+  sendBadgerPaymentReminder:"Zoho didn't confirm the payment reminder before the connection timed out. It may have gone out: check Sent in Zoho (sales@) before sending it again.",
+  sendApplicationWelcome:"Zoho didn't confirm the welcome email before the connection timed out. It may have gone out: check Sent in Zoho (sales@) before sending it again.",
+};
+const DEFAULT_SEND_TIMEOUT_MESSAGE = "Zoho didn't confirm the email before the connection timed out. It may have gone out: check Activity Log or Sent in Zoho (sales@) before sending it again.";
+
+function upstreamTimedOut(error) {
+  return error?.name === "AbortError" || /deadline|timed out|timeout/i.test(String(error?.message || error || ""));
+}
+
 function upstreamFailure(policy, lastError, attempts) {
+  const failure = upstreamFailureMessage(policy, lastError, attempts);
+  if (upstreamTimedOut(lastError)) failure.code = "UPSTREAM_TIMEOUT";
+  return failure;
+}
+
+function upstreamFailureMessage(policy, lastError, attempts) {
   if (policy.send) {
-    return new Error(lastError?.name === "AbortError"
-      ? "Zoho did not confirm the send before the connection timed out. The outcome is unknown; check Activity Log and Zoho before retrying."
-      : `The send connection failed before Zoho confirmation: ${String(lastError)}`);
+    if (!upstreamTimedOut(lastError)) {
+      return new Error(policy.action === "createBadgerInvoice"
+        ? `The connection failed before Badger confirmed the invoice (${String(lastError?.message || lastError)}). Reload the order to see whether it was created before trying again.`
+        : `The send connection failed before Zoho confirmation: ${String(lastError?.message || lastError)}`);
+    }
+    return new Error(SEND_TIMEOUT_MESSAGES[policy.action] || DEFAULT_SEND_TIMEOUT_MESSAGE);
   }
   if (policy.sequenceStep) {
     return new Error(lastError?.name === "AbortError"
@@ -158,9 +182,12 @@ function upstreamFailure(policy, lastError, attempts) {
       ? "Campaign review took too long to load. The campaign remains unchanged; wait a minute and refresh Campaigns."
       : `Campaign review connection failed: ${String(lastError)}`);
   }
-  return new Error(lastError?.name === "AbortError"
-    ? `Google Sheets took too long to answer after ${attempts} ${attempts === 1 ? "attempt" : "attempts"}.`
-    : `Inventory API connection failed after ${attempts} ${attempts === 1 ? "attempt" : "attempts"}: ${String(lastError)}`);
+  if (upstreamTimedOut(lastError)) {
+    return new Error(policy.write
+      ? "The Hub's server (Google Apps Script) didn't answer before the connection timed out. If you were saving something, it may still have saved: reload before trying again."
+      : `The Hub's server (Google Apps Script) took too long to answer${attempts > 1 ? ` after ${attempts} tries` : ""}. Nothing changed; try again in a minute.`);
+  }
+  return new Error(`The Hub's server connection failed${attempts > 1 ? ` after ${attempts} tries` : ""}: ${String(lastError?.message || lastError)}`);
 }
 
 // When the Drive relay is configured, send the request once and take whichever arrives
@@ -326,6 +353,7 @@ export async function handler(event) {
       attempts:SEND_UPSTREAM_ATTEMPTS,
       timeoutMs:SEND_UPSTREAM_TIMEOUT_MS,
       send:true,
+      action:action,
     } : snapshotRequest ? {
       attempts:1,
       timeoutMs:SEND_UPSTREAM_TIMEOUT_MS,
@@ -341,13 +369,14 @@ export async function handler(event) {
       // the first request still owns the Apps Script lock.
       attempts:UPSTREAM_WRITE_ATTEMPTS,
       timeoutMs:UPSTREAM_TIMEOUT_MS,
+      write:true,
     });
     return proxyResult(resp, cors);
   } catch (err) {
     return {
       statusCode: 500,
       headers: cors,
-      body: JSON.stringify({ ok: false, error: String(err) }),
+      body: JSON.stringify({ ok: false, error: String(err?.message || err), code: err?.code || "" }),
     };
   }
 }

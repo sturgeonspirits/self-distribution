@@ -1,12 +1,13 @@
 /*********************************
  * Inventory API (JSON) for Netlify
- * App version: 2026.11.17.72-APP
+ * App version: 2026.11.17.74-APP
  *
  * CHANGES IN THIS VERSION
- * Create Badger invoice timed out (Karl, 2026-11-17, Acorn Ridge order): preview rebuilt the whole Orders &
- * Accounts queue just to find the account's Badger customer ID and last invoice, then called Badger four times,
- * past the staff proxy's 25 s limit. badgerInvoiceDraft_ now reads the account from the Hub's read cache
- * (badgerInvoiceAccount_), falling back to a rebuild only when the account isn't in it. Prices are still read fresh.
+ * Badger invoice numbers (Karl, 2026-11-17: "we now have 0171 and 171 as separate invoices"): invoices ran
+ * SS0163-SS0170, then SS171-SS173 were entered without the leading zero. The Hub read only four-digit numbers, so
+ * it made SS0171 for Acorn Ridge beside Fox and Crow's SS171. badgerNextInvoiceNumber_ now counts every SS invoice
+ * by value and writes the next one without leading zeros (SS174); badgerValidateInvoiceNumber_ refuses a number
+ * whose value is already used in any form; the validate-for-create URL allows 1-4 digits.
  *
  * DEPLOY
  * - Apps Script project: Inventory API
@@ -16,7 +17,7 @@
  * Earlier version notes: docs/history/inventory-api-changes.md (move this version's notes there when the version changes).
  *********************************/
 
-const APP_VERSION = "2026.11.17.72-APP";
+const APP_VERSION = "2026.11.17.74-APP";
 
 const SHEET_NAMES = {
   STORES: "Stores",
@@ -9034,7 +9035,7 @@ function badgerUrl_(method, path) {
   const normalizedMethod = String(method || "").toUpperCase();
   const normalizedPath = String(path || "");
   const allowed = (normalizedMethod === "POST" && new Set(["/Login/Authenticate", "/Api/invoice/Paged", "/Api/Invoice/Paged/orderorinvoicenumber", "/api/invoice"]).has(normalizedPath))
-    || (normalizedMethod === "GET" && (/^\/api\/invoice\/\d+$/.test(normalizedPath) || /^\/api\/customer\/\d+$/.test(normalizedPath) || /^\/api\/invoice\/validateforcreate\?number=\d{4}&date=\d{4}-\d{2}-\d{2}$/.test(normalizedPath)));
+    || (normalizedMethod === "GET" && (/^\/api\/invoice\/\d+$/.test(normalizedPath) || /^\/api\/customer\/\d+$/.test(normalizedPath) || /^\/api\/invoice\/validateforcreate\?number=\d{1,4}&date=\d{4}-\d{2}-\d{2}$/.test(normalizedPath)));
   if (!allowed) throw new Error("Badger request method or path is not allow-listed.");
   return `${BADGER_BASE_URL}${normalizedPath}`;
 }
@@ -9792,7 +9793,12 @@ function badgerValidationError_(payload) {
 }
 
 function badgerValidateInvoiceNumber_(invoiceNumber, date) {
-  if (!/^SS\d{4}$/.test(String(invoiceNumber || "")) || !/^\d{4}-\d{2}-\d{2}$/.test(String(date || ""))) throw new Error("Proposed Badger invoice number or date is invalid.");
+  if (!/^SS[1-9]\d{0,3}$/.test(String(invoiceNumber || "")) || !/^\d{4}-\d{2}-\d{2}$/.test(String(date || ""))) throw new Error("Proposed Badger invoice number or date is invalid.");
+  // Badger compares numbers as text, so it would accept SS0172 next to SS172; the tracker import treats them as the
+  // same invoice. Refuse any number whose value is already used, with or without leading zeros (2026.11.17.74-APP).
+  const serial = badgerInvoiceSerial_(invoiceNumber);
+  const clash = readBadgerInvoices_().find(invoice => badgerInvoiceSerial_(invoice.invoice_number) === serial);
+  if (clash) throw new Error(`Invoice number ${invoiceNumber} is already used in Badger (${clash.invoice_number}). Preview again for the next number.`);
   const orderNumber = String(invoiceNumber).slice(2);
   const payload = badgerJson_(`/api/invoice/validateforcreate?number=${orderNumber}&date=${date}`, { method:"get" }, "Badger invoice-number validation");
   const error = badgerValidationError_(payload);
@@ -9834,10 +9840,19 @@ function badgerInvoiceAccount_(accountId) {
   return account || currentBadgerPaymentAccount_(accountId, false);
 }
 
+// Invoice numbers (2026.11.17.74-APP). Karl's invoices ran SS0163-SS0170, then were entered as SS171-SS173 without
+// the leading zero. Reading only four-digit numbers, the Hub skipped SS171-SS173 and created SS0171 beside Fox and
+// Crow's SS171 (Karl, 2026-11-17). The next number now counts every SS invoice by value and is written without
+// leading zeros, matching the newest invoices: after SS173 comes SS174.
+function badgerInvoiceSerial_(invoiceNumber) {
+  const match = /^SS0*(\d{1,4})$/.exec(normalizeBadgerInvoiceNumber_(invoiceNumber));
+  return match ? Number(match[1]) : null;
+}
+
 function badgerNextInvoiceNumber_() {
-  const highest = readBadgerInvoices_().map(invoice => /^SS(\d{4})$/.exec(normalizeBadgerInvoiceNumber_(invoice.invoice_number))).filter(Boolean).map(match => Number(match[1])).reduce((max, number) => Math.max(max, number), 0);
+  const highest = readBadgerInvoices_().map(invoice => badgerInvoiceSerial_(invoice.invoice_number)).filter(serial => serial !== null).reduce((max, serial) => Math.max(max, serial), 0);
   if (highest >= 9999) throw new Error("No four-digit Badger invoice number remains.");
-  return `SS${String(highest + 1).padStart(4, "0")}`;
+  return `SS${highest + 1}`;
 }
 
 function badgerBillToCustomer_(customer) {

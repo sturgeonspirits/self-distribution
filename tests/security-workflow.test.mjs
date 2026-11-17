@@ -2458,7 +2458,7 @@ test("Badger Phase 5 invoice creation is review-gated and uses a narrow API boun
   assert.match(urlSource, /\/Api\/Invoice\/Paged\/orderorinvoicenumber/);
   assert.match(urlSource, /\^\\\/api\\\/invoice\\\/\\d\+\$/);
   assert.match(urlSource, /\^\\\/api\\\/customer\\\/\\d\+\$/);
-  assert.match(urlSource, /validateforcreate\\\?number=\\d\{4\}/);
+  assert.match(urlSource, /validateforcreate\\\?number=\\d\{1,4\}/);
   assert.doesNotMatch(urlSource, /validateforcreate\\\?number=SS/);
   assert.match(urlSource, /method or path is not allow-listed/);
   const badgerUrl = vm.runInNewContext(`const BADGER_BASE_URL = "https://badger.example"; ${urlSource}; badgerUrl_`);
@@ -2495,9 +2495,17 @@ test("Badger Phase 5 invoice creation is review-gated and uses a narrow API boun
   assert.match(validationError({ data:0, isSuccess:false, hasErrors:true, errors:["The invoice number is already used."] }), /already used/);
   assert.equal(validationError({ isSuccess:true, hasErrors:false }), "");
   let validationPath = "";
-  const validateInvoiceNumber = vm.runInNewContext(`${validationSource}\n${backend.slice(backend.indexOf("function badgerValidateInvoiceNumber_"), backend.indexOf("function badgerOrderForInvoice_"))}; badgerValidateInvoiceNumber_`, { badgerJson_:(path) => { validationPath = path; return { isSuccess:true, hasErrors:false }; } });
-  assert.equal(validateInvoiceNumber("SS0163", "2026-09-30"), true);
-  assert.match(validationPath, /number=0163/);
+  // 2026.11.17.74-APP: numbers are written without leading zeros, and a value already used in any form is refused.
+  const serialSource = `${backend.slice(backend.indexOf("function normalizeBadgerInvoiceNumber_"), backend.indexOf("const BADGER_CUSTOMER_NAME_SUFFIXES"))}\n${backend.slice(backend.indexOf("function badgerInvoiceSerial_"), backend.indexOf("function badgerBillToCustomer_"))}`;
+  const stored = [{ invoice_number:"SS0169" }, { invoice_number:"SS0170" }, { invoice_number:"SS171" }, { invoice_number:"SS172" }, { invoice_number:"SS173" }, { invoice_number:"SS0171" }];
+  const numbering = vm.runInNewContext(`${serialSource}; ({ next:badgerNextInvoiceNumber_, serial:badgerInvoiceSerial_ })`, { readBadgerInvoices_:() => stored });
+  assert.equal(numbering.next(), "SS174", "counts SS171-SS173 and SS0171 by value");
+  assert.equal(numbering.serial("SS0171"), numbering.serial("SS171"));
+  const validateInvoiceNumber = vm.runInNewContext(`${validationSource}\n${serialSource}\n${backend.slice(backend.indexOf("function badgerValidateInvoiceNumber_"), backend.indexOf("function badgerOrderForInvoice_"))}; badgerValidateInvoiceNumber_`, { badgerJson_:(path) => { validationPath = path; return { isSuccess:true, hasErrors:false }; }, readBadgerInvoices_:() => stored });
+  assert.equal(validateInvoiceNumber("SS174", "2026-11-17"), true);
+  assert.match(validationPath, /number=174&/);
+  assert.throws(() => validateInvoiceNumber("SS0172", "2026-11-17"), /invalid/, "no leading zeros");
+  assert.throws(() => validateInvoiceNumber("SS170", "2026-11-17"), /already used in Badger \(SS0170\)/);
 
   const customerSource = backend.slice(backend.indexOf("function badgerBillToCustomer_"), backend.indexOf("function badgerInvoiceDraft_"));
   const billToCustomer = vm.runInNewContext(`${customerSource}; badgerBillToCustomer_`);

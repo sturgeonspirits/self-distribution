@@ -124,3 +124,16 @@ test("invoice preview reads the account from the read cache, not a full rebuild 
   assert.deepEqual(calls, [["queue", {}]], "cached read, no _cache_bypass");
   assert.equal(lookup("ACC-2").rebuilt, true, "an account missing from the cache falls back to a rebuild");
 });
+
+test("timeouts name what they waited on, and a timed-out Create invoice rechecks the order (2026.11.17.73-WEB / .75-WEB)", async () => {
+  const [proxy, index] = await Promise.all([read("netlify/functions/inventory.js"), read("index.html")]);
+  assert.match(proxy, /createBadgerInvoice:"Badger didn't confirm the invoice before the connection timed out, but it may have been created\./);
+  assert.match(proxy, /if \(upstreamTimedOut\(lastError\)\) failure\.code = "UPSTREAM_TIMEOUT";/);
+  assert.match(proxy, /send:true,\n      action:action,/);
+  assert.match(proxy, /error: String\(err\?\.message \|\| err\), code: err\?\.code \|\| ""/, "no \"Error:\" prefix, and the code reaches the page");
+  assert.doesNotMatch(proxy, /Zoho did not confirm the send before the connection timed out/);
+  assert.match(index, /if \(error\?\.code === "UPSTREAM_TIMEOUT" && await badgerInvoiceCreatedAfterTimeout\(record\)\) return;/);
+  assert.match(index, /toast\(`Badger invoice \$\{refreshed\.badger_invoice_number\} was created\.`\)/);
+  const unknown = index.slice(index.indexOf("function campaignSendOutcomeIsUnknown"), index.indexOf("function campaignSendOutcomeIsUnknown") + 300);
+  assert.match(unknown, /timed out/, "campaign sends still treat the new wording as an unknown outcome");
+});

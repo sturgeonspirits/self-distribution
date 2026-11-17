@@ -3,6 +3,12 @@
 Moved out of the `apps-script/Code.gs` header on 2026-10-17 so the deployed file stays short. Newest first, copied word for word. The header keeps only the current version (`CHANGES IN THIS VERSION`); when a new version is made, move that section to the top of this file.
 
 ```
+CHANGES IN 2026.11.17.72-APP
+Create Badger invoice timed out (Karl, 2026-11-17, Acorn Ridge order): preview rebuilt the whole Orders &
+Accounts queue just to find the account's Badger customer ID and last invoice, then called Badger four times,
+past the staff proxy's 25 s limit. badgerInvoiceDraft_ now reads the account from the Hub's read cache
+(badgerInvoiceAccount_), falling back to a rebuild only when the account isn't in it. Prices are still read fresh.
+
 CHANGES IN 2026.11.17.69-APP
 Duplicate replies (Karl, 2026-11-17: "i clicked email sent and nothing changed"): one email from Mark Wilton
 reached the sales@ Inbox twice with two Zoho message IDs, so the reply checker listed it twice and closing one

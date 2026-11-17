@@ -1,10 +1,10 @@
 <!doctype html>
-<!-- App version: 2026.11.17.71-WEB -->
+<!-- App version: 2026.11.17.75-WEB -->
 <html>
 <head>
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover"/>
-  <meta name="app-version" content="2026.11.17.71-WEB" />
+  <meta name="app-version" content="2026.11.17.75-WEB" />
   <meta name="theme-color" content="#536f77" />
   <link rel="icon" href="/assets/distribution-hub-icon.svg" type="image/svg+xml" />
   <link rel="manifest" href="/site.webmanifest" />
@@ -2797,7 +2797,7 @@
 
   <footer style="max-width:1200px;margin:18px auto 120px;padding:0 12px;text-align:center;color:#6b7280;font-size:12px;">
     Designed by <a href="https://scriptspirit.dev" target="_blank" rel="noopener noreferrer" style="color:#1d4ed8;text-decoration:none;font-weight:700;">Script Spirit</a>
-<span id="appVersionFooter"> • Version 2026.11.17.71-WEB</span>
+<span id="appVersionFooter"> • Version 2026.11.17.75-WEB</span>
   </footer>
 
 
@@ -2820,7 +2820,7 @@
   window.addEventListener("unhandledrejection", e => console.error("Unhandled promise rejection:", e.reason));
   window.addEventListener("error", e => console.error("Unhandled error:", e.error || e.message));
   const $ = (id) => document.getElementById(id);
-  const APP_VERSION = "2026.11.17.71-WEB";
+  const APP_VERSION = "2026.11.17.75-WEB";
   $("appVersionFooter").textContent = ` • Version ${APP_VERSION}`;
   function screenCacheKey(screen){ return `distribution_hub:${APP_VERSION}:${staffSession?.email || "unknown"}:${screen}`; }
   function readScreenCache(screen){
@@ -4193,7 +4193,28 @@
       if (!result.ok) throw new Error(result.error || "Badger invoice creation failed.");
       await loadCustomerWorkQueue(); toast(result.message || "Badger invoice created");
       const refreshed = customerData.orders.find(item => item.request_id === record.request_id); if (refreshed) openCustomerRecord(refreshed);
-    } catch (error) { $("badgerInvoiceStatus").textContent = error?.message || String(error); button.disabled = false; }
+    } catch (error) {
+      $("badgerInvoiceStatus").textContent = error?.message || String(error);
+      // A timeout doesn't mean it failed: Badger often finishes after the page stops waiting (2026.11.17.73-WEB).
+      if (error?.code === "UPSTREAM_TIMEOUT" && await badgerInvoiceCreatedAfterTimeout(record)) return;
+      button.disabled = false;
+    }
+  }
+
+  /** After a timed-out Create, reload the order twice (now, then 20 s later); true when Badger's invoice is on it. */
+  async function badgerInvoiceCreatedAfterTimeout(record){
+    for (const waitMs of [0, 20000]) {
+      if (waitMs) { $("badgerInvoiceStatus").textContent = "Still checking with Badger…"; await new Promise(resolve => setTimeout(resolve, waitMs)); }
+      try { clearScreenCache("customer-work"); await loadCustomerWorkQueue(); } catch (_) { continue; }
+      const refreshed = (customerData.orders || []).find(item => item.request_id === record.request_id);
+      if (refreshed?.badger_invoice_number) {
+        toast(`Badger invoice ${refreshed.badger_invoice_number} was created.`);
+        openCustomerRecord(refreshed);
+        return true;
+      }
+    }
+    $("badgerInvoiceStatus").textContent = "The order doesn't show a Badger invoice yet. Wait a minute, then close this window and reopen the order before pressing Create invoice again.";
+    return false;
   }
 
   async function adoptBadgerInvoice(){
