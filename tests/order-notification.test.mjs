@@ -137,3 +137,27 @@ test("timeouts name what they waited on, and a timed-out Create invoice rechecks
   const unknown = index.slice(index.indexOf("function campaignSendOutcomeIsUnknown"), index.indexOf("function campaignSendOutcomeIsUnknown") + 300);
   assert.match(unknown, /timed out/, "campaign sends still treat the new wording as an unknown outcome");
 });
+
+test("orders and account invoices link to Badger's print page (2026.11.17.76-APP / .77-WEB)", async () => {
+  const [backend, index] = await Promise.all([read("apps-script/Code.gs"), read("index.html")]);
+  assert.match(backend, /orders\.forEach\(order => order\.operational_statuses = orderOperationalStatuses_\(order\)\);\n  badgerInvoiceIdsForOrders_\(orders\);/);
+  const helper = functionSource(backend, "badgerInvoiceIdsForOrders_", "badgerInvoiceAccount_");
+  const sheet = { getLastRow:() => 2 };
+  const attach = new Function("getOutreachSs_", "rowsWithSource_", "readBadgerInvoices_", "normalizeBadgerInvoiceNumber_", "BADGER_INVOICE_CREATIONS_SHEET_NAME", "console",
+    `${helper}; return badgerInvoiceIdsForOrders_;`)(
+    () => ({ getSheetByName:() => sheet }),
+    () => [{ request_id:"ORD-1", status:"CREATED", badger_invoice_id:"72639" }, { request_id:"ORD-2", status:"FAILED", badger_invoice_id:"" }],
+    () => [{ invoice_number:"SS173", badger_id:"72624" }],
+    value => String(value || "").toUpperCase().replace(/[^A-Z0-9]/g, ""), "Badger Invoice Creations", { warn(){} });
+  const orders = [{ request_id:"ORD-1", badger_invoice_number:"SS0171" }, { request_id:"ORD-3", badger_invoice_number:"SS173" }, { request_id:"ORD-4", badger_invoice_number:"" }];
+  attach(orders);
+  assert.deepEqual(orders.map(order => order.badger_invoice_id), ["72639", "72624", ""]);
+  assert.match(index, /const BADGER_PRINT_BASE_URL = "https:\/\/badgerstatecoop\.com\/BSWCSite\/member\/invoice\/print\/";/);
+  assert.match(index, /\$\{record\.badger_invoice_number \? badgerPrintLink\(record\.badger_invoice_id\) : ""\}/);
+  assert.match(index, /\$\{badgerPrintLink\(invoice\.badger_id, "Print"\)\}/);
+  const link = index.slice(index.indexOf("function badgerPrintLink"), index.indexOf("function orderNextStepHint"));
+  const badgerPrintLink = new Function("escapeHtml", "BADGER_PRINT_BASE_URL", `${link}; return badgerPrintLink;`)(value => String(value), "https://badgerstatecoop.com/BSWCSite/member/invoice/print/");
+  assert.match(badgerPrintLink("72639"), /href="https:\/\/badgerstatecoop\.com\/BSWCSite\/member\/invoice\/print\/72639" target="_blank" rel="noopener"/);
+  assert.equal(badgerPrintLink(""), "");
+  assert.equal(badgerPrintLink("72639/../x"), "");
+});

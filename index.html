@@ -1,10 +1,10 @@
 <!doctype html>
-<!-- App version: 2026.11.17.75-WEB -->
+<!-- App version: 2026.11.17.77-WEB -->
 <html>
 <head>
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover"/>
-  <meta name="app-version" content="2026.11.17.75-WEB" />
+  <meta name="app-version" content="2026.11.17.77-WEB" />
   <meta name="theme-color" content="#536f77" />
   <link rel="icon" href="/assets/distribution-hub-icon.svg" type="image/svg+xml" />
   <link rel="manifest" href="/site.webmanifest" />
@@ -2797,7 +2797,7 @@
 
   <footer style="max-width:1200px;margin:18px auto 120px;padding:0 12px;text-align:center;color:#6b7280;font-size:12px;">
     Designed by <a href="https://scriptspirit.dev" target="_blank" rel="noopener noreferrer" style="color:#1d4ed8;text-decoration:none;font-weight:700;">Script Spirit</a>
-<span id="appVersionFooter"> • Version 2026.11.17.75-WEB</span>
+<span id="appVersionFooter"> • Version 2026.11.17.77-WEB</span>
   </footer>
 
 
@@ -2820,7 +2820,7 @@
   window.addEventListener("unhandledrejection", e => console.error("Unhandled promise rejection:", e.reason));
   window.addEventListener("error", e => console.error("Unhandled error:", e.error || e.message));
   const $ = (id) => document.getElementById(id);
-  const APP_VERSION = "2026.11.17.75-WEB";
+  const APP_VERSION = "2026.11.17.77-WEB";
   $("appVersionFooter").textContent = ` • Version ${APP_VERSION}`;
   function screenCacheKey(screen){ return `distribution_hub:${APP_VERSION}:${staffSession?.email || "unknown"}:${screen}`; }
   function readScreenCache(screen){
@@ -3557,8 +3557,16 @@
     return "";
   }
 
+  // Badger prints an invoice at /BSWCSite/member/invoice/print/<Badger invoice ID> (Karl, 2026-11-17). The button opens
+  // that page in a new tab (Badger asks you to sign in if needed); press Print Invoice there. (2026.11.17.77-WEB)
+  const BADGER_PRINT_BASE_URL = "https://badgerstatecoop.com/BSWCSite/member/invoice/print/";
+  function badgerPrintLink(badgerId, label = "Print invoice"){
+    const id = String(badgerId || "").trim();
+    return /^\d+$/.test(id) ? `<a class="actionBtn" href="${BADGER_PRINT_BASE_URL}${id}" target="_blank" rel="noopener" title="Opens the invoice on Badger's site; press Print Invoice there"><i data-lucide="printer"></i><span>${escapeHtml(label)}</span></a>` : "";
+  }
+
   function orderNextStepHint(record){
-    if (String(record.badger_invoice_number || "").trim()) return `Badger invoice ${escapeHtml(record.badger_invoice_number)}.`;
+    if (String(record.badger_invoice_number || "").trim()) return `Badger invoice ${escapeHtml(record.badger_invoice_number)}.${record.badger_invoice_id ? " Print invoice opens it on Badger's site; press Print Invoice there." : " Print invoice appears after the next Badger sync."}`;
     const steps = [];
     if (!record.account_id) steps.push("pick its account (Account, below)");
     if (record.workflow_status !== "Confirmed") steps.push("set Order status to Confirmed and Save order");
@@ -3795,7 +3803,7 @@
       $("customerRecordSubtitle").textContent = `Account • ${record.account_id}`;
       const history = record.history || [];
       const invoices = record.invoices || [];
-      const invoiceLedgerHtml = invoices.length ? `<div class="workflowLineList">${invoices.map(invoice => `<div class="workflowLine"><span><strong>${escapeHtml(invoice.invoice_number || "Invoice")}</strong> • ${escapeHtml(invoice.customer_name || record.business_name)}<br><small>${escapeHtml(invoice.match_method || "Linked")}</small></span><strong>${escapeHtml([invoice.amount && `Amount ${badgerAmountLabel(invoice.amount)}`, invoice.invoice_status, formatOutreachDate(invoice.invoice_date)].filter(Boolean).join(" • "))}</strong></div>`).join("")}</div>` : `<div class="smallMuted">No Badger invoices are linked to this account.</div>`;
+      const invoiceLedgerHtml = invoices.length ? `<div class="workflowLineList">${invoices.map(invoice => `<div class="workflowLine"><span><strong>${escapeHtml(invoice.invoice_number || "Invoice")}</strong> • ${escapeHtml(invoice.customer_name || record.business_name)}<br><small>${escapeHtml(invoice.match_method || "Linked")}</small></span><strong>${escapeHtml([invoice.amount && `Amount ${badgerAmountLabel(invoice.amount)}`, invoice.invoice_status, formatOutreachDate(invoice.invoice_date)].filter(Boolean).join(" • "))}</strong>${badgerPrintLink(invoice.badger_id, "Print")}</div>`).join("")}</div>` : `<div class="smallMuted">No Badger invoices are linked to this account.</div>`;
       const historyHtml = history.length ? `<div class="activityTimeline">${history.map(item => `
         <div class="activityItem">
           <strong>${escapeHtml(item.type || "Activity")} · ${escapeHtml(item.title || item.status || "Recorded")}</strong>
@@ -3876,7 +3884,7 @@
         <div><label for="customerRecordDeliveryStatus">Delivery status</label><select id="customerRecordDeliveryStatus">${selectOptionsHtml(DELIVERY_STATUSES, record.delivery_status || "Not scheduled")}</select></div>
         <div><label for="customerRecordDeliveryDate">Requested delivery date</label><input id="customerRecordDeliveryDate" type="date" value="${escapeHtml(customerInputDate(record.requested_delivery_date))}" /></div>
         <div class="full"><label for="customerRecordStaffNotes">Staff notes</label><textarea id="customerRecordStaffNotes" maxlength="4000">${escapeHtml(record.staff_notes || "")}</textarea></div>
-        <div class="full"><div class="status" id="customerRecordStatusMessage"></div><div class="dlgActions">${record.workflow_status === "Confirmed" && !record.badger_invoice_number ? '<button id="previewBadgerInvoiceBtn" type="button">Create Badger invoice</button>' : ""}<button class="primary" id="saveCustomerRecordBtn" type="button">Save order</button></div></div>
+        <div class="full"><div class="status" id="customerRecordStatusMessage"></div><div class="dlgActions">${record.workflow_status === "Confirmed" && !record.badger_invoice_number ? '<button id="previewBadgerInvoiceBtn" type="button">Create Badger invoice</button>' : ""}${record.badger_invoice_number ? badgerPrintLink(record.badger_invoice_id) : ""}<button class="primary" id="saveCustomerRecordBtn" type="button">Save order</button></div></div>
       </div>` : `
       <div class="workflowEditGrid">
         <div><label for="customerRecordStatus">Application status</label><select id="customerRecordStatus">${selectOptionsHtml(APPLICATION_STATUSES, record.workflow_status || "New")}</select><p class="smallMuted">Approved sets up the account and ordering link, then shows the welcome email for you to edit and send. Account active means the welcome email went out.</p></div>

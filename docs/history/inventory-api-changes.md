@@ -3,6 +3,13 @@
 Moved out of the `apps-script/Code.gs` header on 2026-10-17 so the deployed file stays short. Newest first, copied word for word. The header keeps only the current version (`CHANGES IN THIS VERSION`); when a new version is made, move that section to the top of this file.
 
 ```
+CHANGES IN 2026.11.17.74-APP
+Badger invoice numbers (Karl, 2026-11-17: "we now have 0171 and 171 as separate invoices"): invoices ran
+SS0163-SS0170, then SS171-SS173 were entered without the leading zero. The Hub read only four-digit numbers, so
+it made SS0171 for Acorn Ridge beside Fox and Crow's SS171. badgerNextInvoiceNumber_ now counts every SS invoice
+by value and writes the next one without leading zeros (SS174); badgerValidateInvoiceNumber_ refuses a number
+whose value is already used in any form; the validate-for-create URL allows 1-4 digits.
+
 CHANGES IN 2026.11.17.72-APP
 Create Badger invoice timed out (Karl, 2026-11-17, Acorn Ridge order): preview rebuilt the whole Orders &
 Accounts queue just to find the account's Badger customer ID and last invoice, then called Badger four times,

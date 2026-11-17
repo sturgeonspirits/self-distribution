@@ -1,13 +1,11 @@
 /*********************************
  * Inventory API (JSON) for Netlify
- * App version: 2026.11.17.74-APP
+ * App version: 2026.11.17.76-APP
  *
  * CHANGES IN THIS VERSION
- * Badger invoice numbers (Karl, 2026-11-17: "we now have 0171 and 171 as separate invoices"): invoices ran
- * SS0163-SS0170, then SS171-SS173 were entered without the leading zero. The Hub read only four-digit numbers, so
- * it made SS0171 for Acorn Ridge beside Fox and Crow's SS171. badgerNextInvoiceNumber_ now counts every SS invoice
- * by value and writes the next one without leading zeros (SS174); badgerValidateInvoiceNumber_ refuses a number
- * whose value is already used in any form; the validate-for-create URL allows 1-4 digits.
+ * Print invoice (Karl, 2026-11-17): customerWorkQueue gives each order with a Badger invoice its Badger invoice ID
+ * (badger_invoice_id), from Badger Invoice Creations for invoices the Hub created, otherwise from the synced Badger
+ * Invoice Status tab by number. The Hub links it to Badger's print page, /BSWCSite/member/invoice/print/<ID>.
  *
  * DEPLOY
  * - Apps Script project: Inventory API
@@ -17,7 +15,7 @@
  * Earlier version notes: docs/history/inventory-api-changes.md (move this version's notes there when the version changes).
  *********************************/
 
-const APP_VERSION = "2026.11.17.74-APP";
+const APP_VERSION = "2026.11.17.76-APP";
 
 const SHEET_NAMES = {
   STORES: "Stores",
@@ -9828,6 +9826,26 @@ function badgerCustomerIdForAccount_(accountId, account) {
   return String(match.customer_id);
 }
 
+// Badger's own invoice ID on each order, for the Hub's Print invoice button (2026.11.17.76-APP). Badger prints an
+// invoice at /BSWCSite/member/invoice/print/<Badger ID> (Karl, 2026-11-17). Invoices the Hub created are on Badger
+// Invoice Creations at once; others come from the synced Badger Invoice Status tab by invoice number.
+function badgerInvoiceIdsForOrders_(orders) {
+  const byRequest = new Map(), byNumber = new Map();
+  try {
+    const sheet = getOutreachSs_().getSheetByName(BADGER_INVOICE_CREATIONS_SHEET_NAME);
+    if (sheet && sheet.getLastRow() > 1) rowsWithSource_(sheet).forEach(row => {
+      if (String(row.status || "") === "CREATED" && /^\d+$/.test(String(row.badger_invoice_id || ""))) byRequest.set(String(row.request_id || ""), String(row.badger_invoice_id));
+    });
+  } catch (error) { console.warn("Badger invoice creations unavailable: " + String(error?.message || error)); }
+  try {
+    readBadgerInvoices_().forEach(invoice => { if (/^\d+$/.test(invoice.badger_id)) byNumber.set(normalizeBadgerInvoiceNumber_(invoice.invoice_number), invoice.badger_id); });
+  } catch (error) { console.warn("Badger invoice status unavailable: " + String(error?.message || error)); }
+  (orders || []).forEach(order => {
+    const number = normalizeBadgerInvoiceNumber_(order.badger_invoice_number);
+    order.badger_invoice_id = number ? (byRequest.get(String(order.request_id || "")) || byNumber.get(number) || "") : "";
+  });
+}
+
 // Invoice preview and create read the account from the Hub's read cache (2026.11.17.72-APP). Rebuilding the whole
 // Orders & Accounts queue (15-20 s) and then calling Badger four times ran past the staff proxy's 25 s limit (Karl,
 // 2026-11-17, Acorn Ridge order: "Google Sheets took too long to answer"). The account is only used for its Badger
@@ -10615,6 +10633,7 @@ function apiGetCustomerWorkQueue_(p) {
     .sort((a, b) => recordTimestamp_(b.submitted_at) - recordTimestamp_(a.submitted_at));
   mark("application_order_read_ms");
   orders.forEach(order => order.operational_statuses = orderOperationalStatuses_(order));
+  badgerInvoiceIdsForOrders_(orders);
   // Prices for the order window and the list of products staff can add to an order (2026.11.17.65-APP).
   // A catalog read failure leaves prices blank instead of failing the whole queue.
   let orderPrices = [];
