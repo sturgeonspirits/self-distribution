@@ -1,10 +1,10 @@
 <!doctype html>
-<!-- App version: 2026.11.17.70-WEB -->
+<!-- App version: 2026.11.17.71-WEB -->
 <html>
 <head>
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover"/>
-  <meta name="app-version" content="2026.11.17.70-WEB" />
+  <meta name="app-version" content="2026.11.17.71-WEB" />
   <meta name="theme-color" content="#536f77" />
   <link rel="icon" href="/assets/distribution-hub-icon.svg" type="image/svg+xml" />
   <link rel="manifest" href="/site.webmanifest" />
@@ -2797,7 +2797,7 @@
 
   <footer style="max-width:1200px;margin:18px auto 120px;padding:0 12px;text-align:center;color:#6b7280;font-size:12px;">
     Designed by <a href="https://scriptspirit.dev" target="_blank" rel="noopener noreferrer" style="color:#1d4ed8;text-decoration:none;font-weight:700;">Script Spirit</a>
-<span id="appVersionFooter"> • Version 2026.11.17.70-WEB</span>
+<span id="appVersionFooter"> • Version 2026.11.17.71-WEB</span>
   </footer>
 
 
@@ -2820,7 +2820,7 @@
   window.addEventListener("unhandledrejection", e => console.error("Unhandled promise rejection:", e.reason));
   window.addEventListener("error", e => console.error("Unhandled error:", e.error || e.message));
   const $ = (id) => document.getElementById(id);
-  const APP_VERSION = "2026.11.17.70-WEB";
+  const APP_VERSION = "2026.11.17.71-WEB";
   $("appVersionFooter").textContent = ` • Version ${APP_VERSION}`;
   function screenCacheKey(screen){ return `distribution_hub:${APP_VERSION}:${staffSession?.email || "unknown"}:${screen}`; }
   function readScreenCache(screen){
@@ -3560,7 +3560,7 @@
   function orderNextStepHint(record){
     if (String(record.badger_invoice_number || "").trim()) return `Badger invoice ${escapeHtml(record.badger_invoice_number)}.`;
     const steps = [];
-    if (!record.account_id) steps.push("link it to an account (Account ID below)");
+    if (!record.account_id) steps.push("pick its account (Account, below)");
     if (record.workflow_status !== "Confirmed") steps.push("set Order status to Confirmed and Save order");
     steps.push("press Create Badger invoice");
     return `To invoice: ${steps.join(", then ")}.`;
@@ -3870,7 +3870,7 @@
       <div class="workflowEditGrid">
         <div><label for="customerRecordStatus">Order status</label><select id="customerRecordStatus">${selectOptionsHtml(ORDER_STATUSES, record.workflow_status || "New")}</select></div>
         <div><label for="customerRecordAssigned">Assigned to</label><input id="customerRecordAssigned" value="${escapeHtml(record.assigned_to || "")}" /></div>
-        <div class="full"><label for="customerRecordAccountId">Account ID</label><input id="customerRecordAccountId" value="${escapeHtml(record.account_id || "")}" placeholder="Link this order to a directory account" /></div>
+        <div class="full"><label for="customerRecordAccountId">Account</label><input id="customerRecordAccountId" list="badgerAccountPicker" autocomplete="off" value="${escapeHtml(record.account_id || "")}" placeholder="Type the business name or city, then pick it" /><div class="smallMuted" id="customerRecordAccountHint"></div></div>
         <div><label for="customerRecordInvoiceStatus">Badger invoice status</label><select id="customerRecordInvoiceStatus">${selectOptionsHtml(INVOICE_STATUSES, record.invoice_status || "Not started")}</select></div>
         <div><label for="customerRecordInvoiceNumber">Badger invoice number</label><input id="customerRecordInvoiceNumber" value="${escapeHtml(record.badger_invoice_number || "")}" /></div>
         <div><label for="customerRecordDeliveryStatus">Delivery status</label><select id="customerRecordDeliveryStatus">${selectOptionsHtml(DELIVERY_STATUSES, record.delivery_status || "Not scheduled")}</select></div>
@@ -3881,7 +3881,7 @@
       <div class="workflowEditGrid">
         <div><label for="customerRecordStatus">Application status</label><select id="customerRecordStatus">${selectOptionsHtml(APPLICATION_STATUSES, record.workflow_status || "New")}</select><p class="smallMuted">Approved sets up the account and ordering link, then shows the welcome email for you to edit and send. Account active means the welcome email went out.</p></div>
         <div><label for="customerRecordAssigned">Assigned to</label><input id="customerRecordAssigned" value="${escapeHtml(record.assigned_to || "")}" /></div>
-        <div class="full"><label for="customerRecordAccountId">Account ID</label><input id="customerRecordAccountId" value="${escapeHtml(record.account_id || "")}" placeholder="Leave blank to match or create during activation" /></div>
+        <div class="full"><label for="customerRecordAccountId">Account</label><input id="customerRecordAccountId" list="badgerAccountPicker" autocomplete="off" value="${escapeHtml(record.account_id || "")}" placeholder="Type the business name or city, or leave blank to match or create during activation" /><div class="smallMuted" id="customerRecordAccountHint"></div></div>
         <div><label for="customerRecordCustomerId">Customer ID</label><input id="customerRecordCustomerId" value="${escapeHtml(record.customer_id || "")}" /></div>
         <div><label for="customerRecordInventoryRoute">Inventory route</label><input id="customerRecordInventoryRoute" value="${escapeHtml(record.inventory_route || "")}" placeholder="Unassigned" /></div>
         <div><label for="customerRecordInventoryStoreId">Inventory store ID</label><input id="customerRecordInventoryStoreId" value="${escapeHtml(record.inventory_store_id || "")}" placeholder="Generated if blank" /></div>
@@ -3901,6 +3901,44 @@
       </div>${editor}`;
     $("customerRecordDialog").showModal();
     refreshIcons();
+    hydrateRecordAccountField(record);
+  }
+
+  // Account picker for orders and applications (2026.11.17.71-WEB). Karl, 2026-11-17: the field only took the long
+  // Account ID, with nothing to match it to. It now uses the same business-and-city list as Badger invoice linking,
+  // shows the linked business by name, and suggests the account whose email (or name) matches.
+  function suggestedAccountFor(record){
+    const email = String(record.email || "").trim().toLowerCase();
+    const emailMatch = email ? (customerData.accounts || []).find(account => [account.email, account.ap_email].some(value => String(value || "").toLowerCase().split(/[\s,;]+/).includes(email))) : null;
+    if (emailMatch) return customerAccountIndex.find(account => account.account_id === emailMatch.account_id) || null;
+    const name = String(record.business_name || "").trim().toLowerCase();
+    if (!name) return null;
+    const nameMatches = customerAccountIndex.filter(account => {
+      const candidate = String(account.business_name || "").trim().toLowerCase();
+      return candidate.length >= 4 && (name.includes(candidate) || candidate.includes(name));
+    });
+    return nameMatches.length === 1 ? nameMatches[0] : null;
+  }
+
+  async function hydrateRecordAccountField(record){
+    if (!$("customerRecordAccountId")) return;
+    try { await ensureCustomerAccountIndex(); } catch (_) { return; }
+    const input = $("customerRecordAccountId"), hint = $("customerRecordAccountHint");
+    if (selectedCustomerRecord !== record || !input || !hint) return;
+    const linked = customerAccountIndex.find(account => account.account_id === record.account_id);
+    if (linked && input.value === record.account_id) input.value = customerAccountLabel(linked);
+    if (record.account_id) return;
+    const suggestion = suggestedAccountFor(record);
+    if (suggestion) hint.innerHTML = `Looks like <strong>${escapeHtml(suggestion.business_name)}${suggestion.city ? ` (${escapeHtml(suggestion.city)})` : ""}</strong>. <button class="replyLink" type="button" data-use-account="${escapeHtml(suggestion.account_id)}">Use this account</button>`;
+  }
+
+  function recordAccountIdFromField(){
+    const value = $("customerRecordAccountId").value.trim();
+    if (!value) return "";
+    if (badgerAccountPickerByLabel.has(value)) return badgerAccountPickerByLabel.get(value);
+    const id = (value.match(/(ACC-[A-Za-z0-9-]{8,})\s*$/) || [])[1];
+    if (id) return id;
+    throw new Error("Pick the business from the list: type part of its name or city, then choose it.");
   }
 
   function applicationWelcomeHtml(record){
@@ -4234,6 +4272,9 @@
       return;
     }
     localStorage.setItem("customer_staff_name", staffName);
+    let recordAccountId = "";
+    try { recordAccountId = recordAccountIdFromField(); }
+    catch (error) { $("customerRecordStatusMessage").textContent = error.message; return; }
     const button = $("saveCustomerRecordBtn");
     button.disabled = true;
     $("customerRecordStatusMessage").textContent = "Saving...";
@@ -4241,7 +4282,7 @@
     const payload = isOrder ? {
       action:"updateOnlineOrderRequest",
       request_id:selectedCustomerRecord.request_id,
-      account_id:$("customerRecordAccountId").value.trim(),
+      account_id:recordAccountId,
       workflow_status:$("customerRecordStatus").value,
       badger_invoice_number:$("customerRecordInvoiceNumber").value.trim(),
       invoice_status:$("customerRecordInvoiceStatus").value,
@@ -4253,7 +4294,7 @@
     } : {
       action:"updateCustomerApplication",
       application_id:selectedCustomerRecord.application_id,
-      account_id:$("customerRecordAccountId").value.trim(),
+      account_id:recordAccountId,
       workflow_status:$("customerRecordStatus").value,
       customer_id:$("customerRecordCustomerId").value.trim(),
       inventory_tracking:$("customerRecordInventoryTracking").checked,
@@ -8708,7 +8749,20 @@
       .catch(error => { $("customerWorkflowStatus").textContent = error?.message || "The account list could not be loaded."; });
   });
   $("closeCustomerRecordBtn").addEventListener("click", () => $("customerRecordDialog").close());
+  $("customerRecordBody").addEventListener("focusin", event => {
+    if (event.target.id !== "customerRecordAccountId") return;
+    ensureCustomerAccountIndex().then(() => filterBadgerAccountPicker(event.target.value)).catch(() => {});
+  });
+  $("customerRecordBody").addEventListener("input", event => {
+    if (event.target.id === "customerRecordAccountId") filterBadgerAccountPicker(event.target.value);
+  });
   $("customerRecordBody").addEventListener("click", event => {
+    const useAccount = event.target.closest("[data-use-account]");
+    if (useAccount) {
+      const account = customerAccountIndex.find(item => item.account_id === useAccount.dataset.useAccount);
+      if (account) { $("customerRecordAccountId").value = customerAccountLabel(account); $("customerRecordAccountHint").textContent = "Press Save order to keep it."; }
+      return;
+    }
     if (event.target.closest("#copySellSheetLinkBtn") && selectedCustomerRecord?.account_id) {
       const button = event.target.closest("#copySellSheetLinkBtn");
       button.disabled = true;

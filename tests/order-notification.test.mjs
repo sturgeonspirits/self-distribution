@@ -92,3 +92,19 @@ test("staff can add or remove order products before invoicing, and the Hub opens
   assert.match(index, /class="orderNotesBox"/);
   assert.match(index, /const orderLines = isOrder \? orderLinesSectionHtml\(record\) : "";/);
 });
+
+test("order and application windows pick the account by business name (2026.11.17.71-WEB)", async () => {
+  const index = await read("index.html");
+  assert.equal((index.match(/<input id="customerRecordAccountId" list="badgerAccountPicker" autocomplete="off"/g) || []).length, 2);
+  assert.match(index, /hydrateRecordAccountField\(record\);\n  \}/);
+  assert.equal((index.match(/account_id:recordAccountId,/g) || []).length, 2, "both saves send the picked account's ID");
+  const pick = index.slice(index.indexOf("function recordAccountIdFromField"), index.indexOf("function recordAccountIdFromField") + 600);
+  const recordAccountIdFromField = new Function("$", "badgerAccountPickerByLabel", `${pick.slice(0, pick.indexOf("\n  }") + 4)}; return recordAccountIdFromField;`);
+  const label = "Tim's Hardware Store (Princeton) — ACC-B013655ADA72404598FDF784A3807052";
+  const field = value => () => ({ value });
+  const map = new Map([[label, "ACC-B013655ADA72404598FDF784A3807052"]]);
+  assert.equal(recordAccountIdFromField(field(label), map)(), "ACC-B013655ADA72404598FDF784A3807052");
+  assert.equal(recordAccountIdFromField(field("ACC-B013655ADA72404598FDF784A3807052"), map)(), "ACC-B013655ADA72404598FDF784A3807052");
+  assert.equal(recordAccountIdFromField(field(""), map)(), "");
+  assert.throws(() => recordAccountIdFromField(field("Tims hardware"), map)(), /Pick the business from the list/);
+});
