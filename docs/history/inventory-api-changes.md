@@ -3,6 +3,12 @@
 Moved out of the `apps-script/Code.gs` header on 2026-10-17 so the deployed file stays short. Newest first, copied word for word. The header keeps only the current version (`CHANGES IN THIS VERSION`); when a new version is made, move that section to the top of this file.
 
 ```
+CHANGES IN 2026.11.17.69-APP
+Duplicate replies (Karl, 2026-11-17: "i clicked email sent and nothing changed"): one email from Mark Wilton
+reached the sales@ Inbox twice with two Zoho message IDs, so the reply checker listed it twice and closing one
+card left its twin. checkInboundReplies_ now skips a message whose sender, subject and first 300 characters of
+new text match a reply stored within two minutes of it (counted as summary.duplicates). Existing rows unchanged.
+
 CHANGES IN 2026.11.17.65-APP
 New orders are readable without opening the spreadsheet (Karl, 2026-11-17: the email's "Review this order in
 the staging sheet" link showed a header row with no bottles; the products live on Online Order Lines):

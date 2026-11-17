@@ -108,3 +108,19 @@ test("order and application windows pick the account by business name (2026.11.1
   assert.equal(recordAccountIdFromField(field(""), map)(), "");
   assert.throws(() => recordAccountIdFromField(field("Tims hardware"), map)(), /Pick the business from the list/);
 });
+
+test("invoice preview reads the account from the read cache, not a full rebuild (2026.11.17.72-APP)", async () => {
+  const backend = await read("apps-script/Code.gs");
+  const draft = functionSource(backend, "badgerInvoiceDraft_", "apiPreviewBadgerInvoice_");
+  assert.match(draft, /const account = accountSnapshot \|\| badgerInvoiceAccount_\(order\.account_id\);/);
+  assert.doesNotMatch(draft, /currentBadgerPaymentAccount_\(/);
+  const helper = functionSource(backend, "badgerInvoiceAccount_", "badgerNextInvoiceNumber_");
+  const calls = [];
+  const lookup = new Function("apiGetCustomerWorkQueue_", "currentBadgerPaymentAccount_", "console", `${helper}; return badgerInvoiceAccount_;`)(
+    p => { calls.push(["queue", p]); return { accounts:[{ account_id:"ACC-1", invoices:[] }] }; },
+    id => { calls.push(["rebuild", id]); return { account_id:id, rebuilt:true }; },
+    { warn(){} });
+  assert.deepEqual(lookup("ACC-1"), { account_id:"ACC-1", invoices:[] });
+  assert.deepEqual(calls, [["queue", {}]], "cached read, no _cache_bypass");
+  assert.equal(lookup("ACC-2").rebuilt, true, "an account missing from the cache falls back to a rebuild");
+});

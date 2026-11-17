@@ -1,12 +1,12 @@
 /*********************************
  * Inventory API (JSON) for Netlify
- * App version: 2026.11.17.69-APP
+ * App version: 2026.11.17.72-APP
  *
  * CHANGES IN THIS VERSION
- * Duplicate replies (Karl, 2026-11-17: "i clicked email sent and nothing changed"): one email from Mark Wilton
- * reached the sales@ Inbox twice with two Zoho message IDs, so the reply checker listed it twice and closing one
- * card left its twin. checkInboundReplies_ now skips a message whose sender, subject and first 300 characters of
- * new text match a reply stored within two minutes of it (counted as summary.duplicates). Existing rows unchanged.
+ * Create Badger invoice timed out (Karl, 2026-11-17, Acorn Ridge order): preview rebuilt the whole Orders &
+ * Accounts queue just to find the account's Badger customer ID and last invoice, then called Badger four times,
+ * past the staff proxy's 25 s limit. badgerInvoiceDraft_ now reads the account from the Hub's read cache
+ * (badgerInvoiceAccount_), falling back to a rebuild only when the account isn't in it. Prices are still read fresh.
  *
  * DEPLOY
  * - Apps Script project: Inventory API
@@ -16,7 +16,7 @@
  * Earlier version notes: docs/history/inventory-api-changes.md (move this version's notes there when the version changes).
  *********************************/
 
-const APP_VERSION = "2026.11.17.69-APP";
+const APP_VERSION = "2026.11.17.72-APP";
 
 const SHEET_NAMES = {
   STORES: "Stores",
@@ -9822,6 +9822,18 @@ function badgerCustomerIdForAccount_(accountId, account) {
   return String(match.customer_id);
 }
 
+// Invoice preview and create read the account from the Hub's read cache (2026.11.17.72-APP). Rebuilding the whole
+// Orders & Accounts queue (15-20 s) and then calling Badger four times ran past the staff proxy's 25 s limit (Karl,
+// 2026-11-17, Acorn Ridge order: "Google Sheets took too long to answer"). The account is only used for its Badger
+// customer ID and last invoice, which don't change between loading the page and previewing; any write (linking an
+// invoice, saving the order) starts a new cache version. An account missing from the cache falls back to a rebuild.
+function badgerInvoiceAccount_(accountId) {
+  let cached = null;
+  try { cached = apiGetCustomerWorkQueue_({}); } catch (error) { console.warn("Cached work queue unavailable: " + String(error?.message || error)); }
+  const account = (cached?.accounts || []).find(item => String(item.account_id || "") === String(accountId || ""));
+  return account || currentBadgerPaymentAccount_(accountId, false);
+}
+
 function badgerNextInvoiceNumber_() {
   const highest = readBadgerInvoices_().map(invoice => /^SS(\d{4})$/.exec(normalizeBadgerInvoiceNumber_(invoice.invoice_number))).filter(Boolean).map(match => Number(match[1])).reduce((max, number) => Math.max(max, number), 0);
   if (highest >= 9999) throw new Error("No four-digit Badger invoice number remains.");
@@ -9846,7 +9858,7 @@ function badgerInvoiceDraft_(requestId, p, skipValidation, accountSnapshot) {
   if (String(order.workflow_status || "") !== "Confirmed") throw new Error("Only Confirmed orders can create a Badger invoice.");
   if (String(order.badger_invoice_number || "").trim()) throw new Error("This order already has a Badger invoice.");
   if (!String(order.account_id || "").trim()) throw new Error("Link this order to an account before creating a Badger invoice.");
-  const account = accountSnapshot || currentBadgerPaymentAccount_(order.account_id, false);
+  const account = accountSnapshot || badgerInvoiceAccount_(order.account_id);
   const customerId = badgerCustomerIdForAccount_(order.account_id, account);
   const customer = badgerJson_(`/api/customer/${customerId}`, { method:"get" }, "Badger customer lookup");
   const customerData = badgerBillToCustomer_(customer?.data || customer);
