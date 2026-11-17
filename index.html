@@ -1,10 +1,10 @@
 <!doctype html>
-<!-- App version: 2026.11.05.63-WEB -->
+<!-- App version: 2026.11.17.66-WEB -->
 <html>
 <head>
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover"/>
-  <meta name="app-version" content="2026.11.05.63-WEB" />
+  <meta name="app-version" content="2026.11.17.66-WEB" />
   <meta name="theme-color" content="#536f77" />
   <link rel="icon" href="/assets/distribution-hub-icon.svg" type="image/svg+xml" />
   <link rel="manifest" href="/site.webmanifest" />
@@ -717,6 +717,22 @@
       font-size:13px;
     }
     .workflowLine strong{text-align:right;white-space:nowrap}
+    /* Order window products table (2026.11.17.66-WEB): what was ordered, prices and totals, ready to invoice. */
+    .orderLinesTable{width:100%;border-collapse:collapse;font-size:14px;margin-top:8px}
+    .orderLinesTable th,.orderLinesTable td{padding:8px 6px;border-bottom:1px solid var(--line);text-align:right;vertical-align:top}
+    .orderLinesTable th:first-child,.orderLinesTable td:first-child{text-align:left}
+    .orderLinesTable th{font-size:12px;color:var(--muted);font-weight:600}
+    .orderLinesTable tfoot td{font-weight:700;border-bottom:0}
+    .orderLinesTable .skuId{display:block;font-size:11px;color:var(--muted)}
+    .orderLinesTable .removeLineBtn{min-height:0;min-width:0;width:auto;padding:5px 9px;font-size:13px;line-height:1}
+    .orderNotesBox{background:#fff4cc;color:#3d3200;border:1px solid #e6c34d;border-radius:8px;padding:10px 12px;margin:12px 0 0;white-space:pre-wrap;font-size:14px}
+    .orderAddLine{display:grid;grid-template-columns:minmax(0,1fr) 72px 96px auto;gap:6px;margin-top:12px;align-items:center}
+    .orderAddLine input,.orderAddLine select{margin:0}
+    @media (max-width:640px){
+      .orderAddLine{grid-template-columns:minmax(0,1fr) 72px 96px}.orderAddLine button{grid-column:1 / -1}
+      .orderLinesTable .colBottles{display:none}
+      .orderLinesTable th,.orderLinesTable td{padding:8px 4px}
+    }
     .workflowEditGrid{
       display:grid;
       grid-template-columns:1fr 1fr;
@@ -2780,7 +2796,7 @@
 
   <footer style="max-width:1200px;margin:18px auto 120px;padding:0 12px;text-align:center;color:#6b7280;font-size:12px;">
     Designed by <a href="https://scriptspirit.dev" target="_blank" rel="noopener noreferrer" style="color:#1d4ed8;text-decoration:none;font-weight:700;">Script Spirit</a>
-<span id="appVersionFooter"> • Version 2026.11.05.63-WEB</span>
+<span id="appVersionFooter"> • Version 2026.11.17.66-WEB</span>
   </footer>
 
 
@@ -2803,7 +2819,7 @@
   window.addEventListener("unhandledrejection", e => console.error("Unhandled promise rejection:", e.reason));
   window.addEventListener("error", e => console.error("Unhandled error:", e.error || e.message));
   const $ = (id) => document.getElementById(id);
-  const APP_VERSION = "2026.11.05.63-WEB";
+  const APP_VERSION = "2026.11.17.66-WEB";
   $("appVersionFooter").textContent = ` • Version ${APP_VERSION}`;
   function screenCacheKey(screen){ return `distribution_hub:${APP_VERSION}:${staffSession?.email || "unknown"}:${screen}`; }
   function readScreenCache(screen){
@@ -2830,6 +2846,7 @@
   let activeAppSection = ["inventory", "outreach", "customers"].includes(localStorage.getItem("distribution_section"))
     ? localStorage.getItem("distribution_section")
     : "inventory";
+  if (new URLSearchParams(location.search).has("order")) activeAppSection = "customers";
   let salesData = { lines: [], summary: { total_sold_units: 0, counted_skus: 0, total_skus: 0 } };
   let salesLoadedStoreId = "";
 
@@ -2897,6 +2914,12 @@
   let customerWorkQueueLoadRequest = 0;
   let selectedCustomerRecord = null;
   let selectedBadgerInvoice = null;
+  // ?order=ORD-... (the link in the new-order email, 2026.11.17.66-WEB) opens that order once customer work loads.
+  let pendingOrderLink = (() => {
+    const id = String(new URLSearchParams(location.search).get("order") || "").trim();
+    return /^ORD-[A-Za-z0-9-]{4,60}$/.test(id) ? id : "";
+  })();
+  if (pendingOrderLink) customerView = "online_requests";
   let staffAccessCode = "";
   let staffSession = null;
   let inventoryLoaded = false;
@@ -3483,7 +3506,7 @@
     const requestId = ++customerWorkQueueLoadRequest;
     const cached = !customerLoaded && readScreenCache("customer-work");
     if (cached) {
-      customerData = { accounts:cached.payload.accounts || [], applications:cached.payload.applications || [], orders:cached.payload.orders || [], unmatchedBadgerInvoices:cached.payload.unmatched_badger_invoices || [], ignoredBadgerInvoices:cached.payload.ignored_badger_invoices || [], voidedBadgerInvoices:cached.payload.voided_badger_invoices || [], summary:cached.payload.summary || {} };
+      customerData = { accounts:cached.payload.accounts || [], applications:cached.payload.applications || [], orders:cached.payload.orders || [], unmatchedBadgerInvoices:cached.payload.unmatched_badger_invoices || [], ignoredBadgerInvoices:cached.payload.ignored_badger_invoices || [], voidedBadgerInvoices:cached.payload.voided_badger_invoices || [], summary:cached.payload.summary || {}, orderCatalog:cached.payload.order_catalog || [] };
       customerLoaded = true; showCustomerAccessState(); renderCustomerWorkflow();
       $("customerWorkflowStatus").textContent = `Updating… showing data from ${cachedTimeLabel(cached)}.`;
     } else $("customerWorkflowStatus").textContent = "Loading customer work...";
@@ -3505,13 +3528,103 @@
       ignoredBadgerInvoices:result.ignored_badger_invoices || [],
       voidedBadgerInvoices:result.voided_badger_invoices || [],
       summary:result.summary || {},
+      orderCatalog:result.order_catalog || [],
     };
     customerLoaded = true;
     writeScreenCache("customer-work", result);
     showCustomerAccessState();
     renderCustomerWorkflow();
+    openPendingOrderLink();
     const elapsed = Number(result.performance?.total_ms || 0);
     $("customerWorkflowStatus").textContent = `Updated ${new Date().toLocaleTimeString([], { hour:"numeric", minute:"2-digit" })}${elapsed ? ` in ${(elapsed / 1000).toFixed(1)}s` : ""}${result.performance?.cache_hit ? " (server cache)" : ""}.`;
+  }
+
+  // Opens the order named in ?order= from fresh data (cached data can predate a just-submitted order).
+  function openPendingOrderLink(){
+    if (!pendingOrderLink) return;
+    const requestId = pendingOrderLink;
+    pendingOrderLink = "";
+    try { const url = new URL(location.href); url.searchParams.delete("order"); history.replaceState(null, "", `${url.pathname}${url.search}${url.hash}`); } catch (_) {}
+    const order = (customerData.orders || []).find(item => item.request_id === requestId);
+    if (!order) return toast(`Order ${requestId} wasn't found. If it just came in, press Refresh in a minute.`);
+    openCustomerRecord(order);
+  }
+
+  function orderLineEditBlock(record){
+    if (String(record.badger_invoice_number || "").trim()) return "This order has a Badger invoice, so its products can't change here.";
+    if (["Completed", "Cancelled"].includes(record.workflow_status)) return `This order is ${String(record.workflow_status).toLowerCase()}.`;
+    return "";
+  }
+
+  function orderNextStepHint(record){
+    if (String(record.badger_invoice_number || "").trim()) return `Badger invoice ${escapeHtml(record.badger_invoice_number)}.`;
+    const steps = [];
+    if (!record.account_id) steps.push("link it to an account (Account ID below)");
+    if (record.workflow_status !== "Confirmed") steps.push("set Order status to Confirmed and Save order");
+    steps.push("press Create Badger invoice");
+    return `To invoice: ${steps.join(", then ")}.`;
+  }
+
+  function orderLinesSectionHtml(record){
+    const lines = record.lines || [];
+    const blocked = orderLineEditBlock(record);
+    const money = cents => Number(cents) > 0 ? badgerMoney(cents) : "Not set";
+    const ordered = line => { const quantity = Number(line.quantity || 0); const unit = String(line.unit || "").toLowerCase(); return `${quantity} ${quantity === 1 ? unit.replace(/s$/, "") : unit}`; };
+    const totalCents = lines.reduce((sum, line) => sum + Number(line.line_total_cents || 0), 0);
+    const totalBottles = lines.reduce((sum, line) => sum + Number(line.bottles ?? line.bottle_equivalent ?? 0), 0);
+    const unpriced = lines.filter(line => !(Number(line.unit_price_cents) > 0)).length;
+    const rows = lines.map(line => `<tr>
+      <td>${escapeHtml(line.sku_name || line.sku_id)}<span class="skuId">${escapeHtml(line.sku_id || "")}</span></td>
+      <td>${escapeHtml(ordered(line))}</td>
+      <td class="colBottles">${escapeHtml(line.bottles ?? line.bottle_equivalent ?? "")}</td>
+      <td>${escapeHtml(money(line.unit_price_cents))}</td>
+      <td>${Number(line.line_total_cents) > 0 ? escapeHtml(badgerMoney(line.line_total_cents)) : "—"}</td>
+      ${blocked ? "" : `<td><button class="actionBtn removeLineBtn" type="button" data-order-line-remove="${escapeHtml(line.line_number)}" aria-label="Remove ${escapeHtml(line.sku_name || line.sku_id)}" title="Remove from order">✕</button></td>`}
+    </tr>`).join("");
+    const catalog = customerData.orderCatalog || [];
+    const addForm = blocked ? `<p class="smallMuted">${escapeHtml(blocked)}</p>` : `
+      <div class="orderAddLine">
+        <select id="orderAddSku" aria-label="Product to add"><option value="">Add a product…</option>${catalog.map(item => `<option value="${escapeHtml(item.sku_id)}">${escapeHtml(item.sku_name)}${item.volume && !/^750\s*ml$/i.test(item.volume) ? ` (${escapeHtml(item.volume)})` : ""} — ${escapeHtml(badgerMoney(item.unit_price_cents))}</option>`).join("")}</select>
+        <input id="orderAddQty" type="number" min="1" max="999" step="1" value="1" inputmode="numeric" aria-label="Quantity to add" />
+        <select id="orderAddUnit" aria-label="Unit"><option>Bottles</option><option>Cases</option></select>
+        <button id="orderAddLineBtn" type="button">Add to order</button>
+      </div>
+      <p class="smallMuted">Lists active products on the SKUs tab (Distribution Hub - Inventory Backend). A product marked inactive there won't appear.</p>`;
+    return `<section class="detailSection full" id="orderLinesSection"><h4>Products</h4>
+      ${lines.length ? `<table class="orderLinesTable"><thead><tr><th>Product</th><th>Ordered</th><th class="colBottles">Bottles</th><th>Price</th><th>Total</th>${blocked ? "" : "<th></th>"}</tr></thead><tbody>${rows}</tbody>
+        <tfoot><tr><td>Total</td><td>${escapeHtml(totalBottles)} bottle${totalBottles === 1 ? "" : "s"}</td><td class="colBottles"></td><td></td><td>${totalCents ? escapeHtml(badgerMoney(totalCents)) : "—"}</td>${blocked ? "" : "<td></td>"}</tr></tfoot></table>` : `<div class="smallMuted">No product lines found.</div>`}
+      ${unpriced ? `<p class="smallMuted">${unpriced} product${unpriced === 1 ? " has" : "s have"} no wholesale price on the SKUs tab.</p>` : ""}
+      ${record.customer_notes ? `<div class="orderNotesBox"><strong>Customer notes (may change the order)</strong>\n${escapeHtml(record.customer_notes)}</div>` : ""}
+      ${addForm}
+      <div class="status" id="orderLinesStatus" role="status"></div>
+      <p class="smallMuted"><strong>${orderNextStepHint(record)}</strong></p>
+    </section>`;
+  }
+
+  async function updateOrderLines(change){
+    const record = selectedCustomerRecord;
+    if (!record?.request_id) return;
+    const staffName = $("customerStaffName").value.trim();
+    const status = $("orderLinesStatus");
+    if (!staffName) { status.textContent = "Enter your staff name first."; return; }
+    const section = $("orderLinesSection");
+    section.querySelectorAll("button, select, input").forEach(control => control.disabled = true);
+    status.textContent = change.op === "add" ? "Adding…" : "Removing…";
+    try {
+      const result = await staffApiPost(Object.assign({ action:"updateOnlineOrderLines", request_id:record.request_id, staff_name:staffName }, change));
+      if (!result.ok) throw new Error(result.error || "The order could not be changed.");
+      const update = { lines:result.lines || [], line_count:(result.lines || []).length, order_total_cents:result.order_total_cents, order_total_bottles:result.order_total_bottles, unpriced_lines:result.unpriced_lines };
+      Object.assign(record, update);
+      const listed = (customerData.orders || []).find(item => item.request_id === record.request_id);
+      if (listed && listed !== record) Object.assign(listed, update);
+      clearScreenCache("customer-work");
+      section.outerHTML = orderLinesSectionHtml(record);
+      $("orderLinesStatus").textContent = result.message || "Order updated.";
+      renderCustomerWorkflow();
+    } catch (error) {
+      section.querySelectorAll("button, select, input").forEach(control => control.disabled = false);
+      status.textContent = error?.message || String(error);
+    }
   }
 
   function customerAccountLabel(account){
@@ -3736,7 +3849,7 @@
       { label:"Customer ID", value:record.customer_id }, { label:"PO number", value:record.po_number }, { label:"Verification", value:record.verification_status },
       { label:"Integration", value:record.integration_status }, { label:"Badger match", value:record.badger_match_status },
       { label:"Requested delivery", value:formatOutreachDate(record.requested_delivery_date) }, { label:"Delivery window", value:record.delivery_window },
-      { label:"Delivery instructions", value:record.delivery_instructions }, { label:"Customer notes", value:record.customer_notes },
+      { label:"Delivery instructions", value:record.delivery_instructions },
     ] : [
       { label:"Legal business", value:record.legal_business_name }, { label:"Business type", value:record.business_type }, { label:"Website", value:record.website },
       { label:"Account ID", value:record.account_id }, { label:"Account link", value:record.account_link_status }, { label:"Data sync", value:record.data_sync_status },
@@ -3751,10 +3864,7 @@
       { label:"Referral source", value:record.referral_source }, { label:"Customer notes", value:record.customer_notes },
       { label:"Newsletter", value:record.newsletter_opt_in ? "Yes" : "No" },
     ];
-    const orderLines = isOrder ? `
-      <section class="detailSection full"><h4>Products</h4>
-        <div class="workflowLineList">${(record.lines || []).map(line => `<div class="workflowLine"><span>${escapeHtml(line.sku_name || line.sku_id)}</span><strong>${escapeHtml(line.quantity)} ${escapeHtml(String(line.unit || "").toLowerCase())}</strong></div>`).join("") || `<div class="smallMuted">No product lines found.</div>`}</div>
-      </section>` : "";
+    const orderLines = isOrder ? orderLinesSectionHtml(record) : "";
     const editor = isOrder ? `
       <div class="workflowEditGrid">
         <div><label for="customerRecordStatus">Order status</label><select id="customerRecordStatus">${selectOptionsHtml(ORDER_STATUSES, record.workflow_status || "New")}</select></div>
@@ -3784,9 +3894,9 @@
 
     $("customerRecordBody").innerHTML = `
       <div class="businessDetailGrid">
-        <section class="detailSection"><h4>${isOrder ? "Customer and delivery" : "Business and contact"}</h4>${detailRowsHtml(contactRows)}</section>
-        ${detailRows.length ? `<section class="detailSection"><h4>Delivery and preferences</h4>${detailRowsHtml(detailRows)}</section>` : ""}
         ${orderLines}
+        <section class="detailSection${isOrder ? " full" : ""}"><h4>${isOrder ? "Customer and delivery" : "Business and contact"}</h4>${detailRowsHtml(contactRows)}</section>
+        ${detailRows.length ? `<section class="detailSection"><h4>Delivery and preferences</h4>${detailRowsHtml(detailRows)}</section>` : ""}
       </div>${editor}`;
     $("customerRecordDialog").showModal();
     refreshIcons();
@@ -8595,6 +8705,12 @@
       }).catch(error => toast(error?.message || String(error))).finally(() => { button.disabled = false; });
     }
     if (event.target.closest("#saveCustomerRecordBtn")) saveCustomerRecord();
+    if (event.target.closest("#orderAddLineBtn")) {
+      const skuId = $("orderAddSku").value;
+      if (!skuId) $("orderLinesStatus").textContent = "Choose a product to add.";
+      else updateOrderLines({ op:"add", sku_id:skuId, quantity:Number($("orderAddQty").value), unit:$("orderAddUnit").value });
+    }
+    if (event.target.closest("[data-order-line-remove]")) updateOrderLines({ op:"remove", line_number:Number(event.target.closest("[data-order-line-remove]").dataset.orderLineRemove) });
     if (event.target.closest("#previewBadgerInvoiceBtn")) previewBadgerInvoice().catch(error => toast(error?.message || String(error)));
     if (event.target.closest("#recalculateBadgerInvoiceBtn")) previewBadgerInvoice(true).catch(error => toast(error?.message || String(error)));
     if (event.target.closest("#createBadgerInvoiceBtn")) createBadgerInvoice();

@@ -1,21 +1,20 @@
 /*********************************
  * Inventory API (JSON) for Netlify
- * App version: 2026.11.05.62-APP
+ * App version: 2026.11.17.65-APP
  *
  * CHANGES IN THIS VERSION
- * Fixes from chat's Phase 3 review (claude/chat-review-findings-sequences-phase-3-2026-11-05.md):
- * - Shared addresses: the Directory pass of writeSequencePlan_() matches a leftover Sequence ID by Account ID, or
- *   by address only when one Directory row has it. When two rows share an address it leaves the cell alone and
- *   returns a warning (audited as SEQUENCE_SYNC_WARNING, shown in the migration log).
- * - A longer gap is refused while a step draft of that sequence is in Review (it was frozen under the shorter
- *   gap); delete or send the draft first. A shorter gap saves any time.
- * - Speed: writeSequencePlan_() writes only Sequences rows that changed (Updated At moves only then), and the
- *   campaign and Directory columns only when a cell changed, so an idle sync writes nothing. "Build next step"
- *   on a stored sequence skips the sync (one full read instead of two plus writes).
- * - The daily check never drafts Initial again for businesses the first Initial campaign left unsent; "Build
- *   next step" pressed on the card still can ("<sequence> — Initial (more)").
- * - Deleting the last live campaign of a sequence (an unsent Initial draft) clears that Sequence ID from the
- *   Directory at once, so those businesses get their normal follow-up reminders back without waiting a day.
+ * New orders are readable without opening the spreadsheet (Karl, 2026-11-17: the email's "Review this order in
+ * the staging sheet" link showed a header row with no bottles; the products live on Online Order Lines):
+ * - The new-order email lists every product with quantity, bottles, wholesale price and line total, the order
+ *   total, the customer's notes in a highlighted box ("may change the order"), delivery date/window/instructions
+ *   and PO. Its main link opens the order in the Hub (<public site>/?order=ORD-...); the spreadsheet row is a
+ *   small link at the bottom. Subject shows bottles, total and "see customer notes" when there are notes.
+ * - customerWorkQueue prices each order line (pricedOrderLines_: same SKU tier / override / account-deal prices
+ *   the Badger invoice uses) and returns order_catalog (active, priced SKUs) for the Hub's "Add a product".
+ * - New staff action updateOnlineOrderLines (add or remove a product on an order with no Badger invoice that is
+ *   not Completed or Cancelled; only active SKUs; same SKU and unit adds to the existing line; the last line
+ *   can't be removed). Recomputes Line Count / Requested Cases / Requested Bottles / Bottle Equivalent and logs
+ *   to the Customer Workflow Log and Hub Audit Log (UPDATE_ORDER_LINES).
  *
  * DEPLOY
  * - Apps Script project: Inventory API
@@ -25,7 +24,7 @@
  * Earlier version notes: docs/history/inventory-api-changes.md (move this version's notes there when the version changes).
  *********************************/
 
-const APP_VERSION = "2026.11.05.62-APP";
+const APP_VERSION = "2026.11.17.65-APP";
 
 const SHEET_NAMES = {
   STORES: "Stores",
@@ -1006,7 +1005,7 @@ function handle_(e, body, isGet) {
   try {
     assertAuthorized_(e, body);
     if (!action) {
-      return json_({ ok:true, service:"sturgeon-distribution-hub", version:APP_VERSION, actions:["initData","listSkus","sellSheet","addSkuToStore","upsertProduct","submitCounts","createReorder","managerGrid","salesSinceCount","updateStoreContacts","outreachDashboard","outreachRecord","outreachSendStatus","outreachNewsletterContacts","outreachCampaigns","outreachCampaign","outreachSequences","previewOutreachCampaign","createOutreachCampaign","updateOutreachCampaignRecipient","setOutreachCampaignRecipientExclusion","setOutreachCampaignRecipientExclusions","approveOutreachCampaign","reopenOutreachCampaign","deleteOutreachCampaign","renameOutreachCampaign","updateOutreachSequence","buildOutreachSequenceStep","reconcileCampaignSends","rebuildCampaignRecipients","sendOutreachCampaignBatch","scheduleOutreachCampaign","cancelOutreachCampaignSchedule","saveOutreachDraft","sendOutreachEmail","sendOutreachTestEmail","updateOutreachOutcome","logOutreachContact","updateOutreachBusiness","updateOutreachPrograms","createOutreachBusiness","importOutreachBusinesses","recalculateOutreachMiles","backfillEngagementDetails","upsertNewsletterContact","submitCustomerApplication","submitOnlineOrderRequest","customerWorkQueue","customerAccountIndex","linkBadgerInvoice","syncBadgerStatus","markBadgerInvoicePayment","recordBadgerCheck","resolvePaymentReminder","badgerReconcilePreview","applyBadgerReconcile","previewBadgerPaymentReminder","sendBadgerPaymentReminder","previewBadgerInvoice","createBadgerInvoice","adoptBadgerInvoice","failBadgerInvoiceCreation","updateCustomerApplication","previewApplicationWelcome","sendApplicationWelcome","updateOnlineOrderRequest","hubSystemStatus","salesReport","inboundReplies","resolveInboundReply","checkInboundReplies","initializeHardenedHub","repairHubStructure","reconcileIntegrations"] });
+      return json_({ ok:true, service:"sturgeon-distribution-hub", version:APP_VERSION, actions:["initData","listSkus","sellSheet","addSkuToStore","upsertProduct","submitCounts","createReorder","managerGrid","salesSinceCount","updateStoreContacts","outreachDashboard","outreachRecord","outreachSendStatus","outreachNewsletterContacts","outreachCampaigns","outreachCampaign","outreachSequences","previewOutreachCampaign","createOutreachCampaign","updateOutreachCampaignRecipient","setOutreachCampaignRecipientExclusion","setOutreachCampaignRecipientExclusions","approveOutreachCampaign","reopenOutreachCampaign","deleteOutreachCampaign","renameOutreachCampaign","updateOutreachSequence","buildOutreachSequenceStep","reconcileCampaignSends","rebuildCampaignRecipients","sendOutreachCampaignBatch","scheduleOutreachCampaign","cancelOutreachCampaignSchedule","saveOutreachDraft","sendOutreachEmail","sendOutreachTestEmail","updateOutreachOutcome","logOutreachContact","updateOutreachBusiness","updateOutreachPrograms","createOutreachBusiness","importOutreachBusinesses","recalculateOutreachMiles","backfillEngagementDetails","upsertNewsletterContact","submitCustomerApplication","submitOnlineOrderRequest","customerWorkQueue","customerAccountIndex","linkBadgerInvoice","syncBadgerStatus","markBadgerInvoicePayment","recordBadgerCheck","resolvePaymentReminder","badgerReconcilePreview","applyBadgerReconcile","previewBadgerPaymentReminder","sendBadgerPaymentReminder","previewBadgerInvoice","createBadgerInvoice","adoptBadgerInvoice","failBadgerInvoiceCreation","updateCustomerApplication","previewApplicationWelcome","sendApplicationWelcome","updateOnlineOrderRequest","updateOnlineOrderLines","hubSystemStatus","salesReport","inboundReplies","resolveInboundReply","checkInboundReplies","initializeHardenedHub","repairHubStructure","reconcileIntegrations"] });
     }
 
     // A link or image tag can trigger a GET, so only read actions are accepted that way.
@@ -1081,6 +1080,7 @@ function handle_(e, body, isGet) {
       case "previewApplicationWelcome": res = apiPreviewApplicationWelcome_(body); invalidateReadCache = false; break;
       case "sendApplicationWelcome": res = apiSendApplicationWelcome_(body); break;
       case "updateOnlineOrderRequest": res = apiUpdateOnlineOrderRequest_(body); break;
+      case "updateOnlineOrderLines": res = apiUpdateOnlineOrderLines_(body); break;
       case "hubSystemStatus": res = apiGetHubSystemStatus_(); break;
       case "salesReport": res = apiGetSalesReport_(); break;
       case "inboundReplies": res = apiGetInboundReplies_(); break;
@@ -10563,6 +10563,19 @@ function apiGetCustomerWorkQueue_(p) {
     .sort((a, b) => recordTimestamp_(b.submitted_at) - recordTimestamp_(a.submitted_at));
   mark("application_order_read_ms");
   orders.forEach(order => order.operational_statuses = orderOperationalStatuses_(order));
+  // Prices for the order window and the list of products staff can add to an order (2026.11.17.65-APP).
+  // A catalog read failure leaves prices blank instead of failing the whole queue.
+  let orderPrices = [];
+  try { orderPrices = badgerCurrentPrices_(false); } catch (error) { console.warn("Order prices unavailable: " + String(error?.message || error)); }
+  orders.forEach(order => {
+    order.lines = pricedOrderLines_(order.lines, order.account_id, orderPrices);
+    const totals = orderTotalsFromLines_(order.lines);
+    order.order_total_cents = totals.total_cents; order.order_total_bottles = totals.bottles; order.unpriced_lines = totals.unpriced;
+  });
+  const orderCatalog = orderPrices.filter(price => !price.account_id)
+    .map(price => ({ sku_id:price.sku_id, sku_name:price.description, volume:price.volume, unit_price_cents:price.unit_price_cents }))
+    .sort((a, b) => a.sku_name.localeCompare(b.sku_name) || a.volume.localeCompare(b.volume));
+  mark("order_prices_ms");
   applications.forEach(application => application.operational_statuses = application.workflow_status === "New" ? ["New"] : (application.inventory_tracking ? ["Inventory-counted"] : []));
   const ledger = buildCustomerAccounts_(applications, orders, !!p?._refresh_sources || String(p?.refresh || "") === "1");
   const accounts = ledger.accounts;
@@ -10599,6 +10612,7 @@ function apiGetCustomerWorkQueue_(p) {
     unmatched_badger_invoices:ledger.unmatched_badger_invoices,
     ignored_badger_invoices:ledger.ignored_badger_invoices,
     voided_badger_invoices:ledger.voided_badger_invoices,
+    order_catalog:orderCatalog,
     summary:{
       new_applications:applications.filter(record => record.workflow_status === "New").length,
       active_applications:applications.filter(record => activeApplicationStatuses.includes(record.workflow_status)).length,
@@ -11369,6 +11383,90 @@ function apiUpdateOnlineOrderRequest_(p) {
   }
 }
 
+// Staff add or remove products on an order before it is invoiced (2026.11.17.65-APP). Customers ask for extra
+// bottles in the order notes ("please add one of each"); this puts them on the order so the Badger invoice
+// preview, which is built from the order lines, includes them. Only active SKUs (the SKUs tab) can be added.
+// p: { request_id, staff_name, op:"add"|"remove", sku_id, quantity, unit } or { ..., op:"remove", line_number }.
+function orderLineEditBlock_(order) {
+  if (String(order.badger_invoice_number || "").trim()) return "This order already has a Badger invoice, so its products can't change here.";
+  if (["Completed", "Cancelled"].includes(String(order.workflow_status || ""))) return `A ${String(order.workflow_status).toLowerCase()} order's products can't change.`;
+  return "";
+}
+
+function apiUpdateOnlineOrderLines_(p) {
+  if (!p) throw new Error("Missing order change.");
+  requireFields_(p, ["request_id", "staff_name", "op"]);
+  const requestId = publicText_(p.request_id, 80, "Request ID");
+  const staffName = publicText_(p.staff_name, 120, "Staff name");
+  const op = String(p.op || "");
+  if (!["add", "remove"].includes(op)) throw new Error("Choose add or remove.");
+
+  const lock = LockService.getScriptLock();
+  if (!lock.tryLock(5000)) throw new Error("Another order update is in progress. Try again in a moment.");
+  try {
+    const source = badgerOrderForInvoice_(requestId); const order = source.order;
+    const blocked = orderLineEditBlock_(order);
+    if (blocked) throw new Error(blocked);
+    const lineSheet = getOnlineOrderLinesSheet_(false);
+    if (!lineSheet) throw new Error("Online Order Lines sheet is missing.");
+    const lh = getHeaderMap_(lineSheet);
+    const existing = rowsWithSource_(lineSheet).filter(line => String(line.request_id || "") === requestId);
+    let detail = "";
+
+    if (op === "add") {
+      const skuId = publicText_(p.sku_id, 120, "Product");
+      const sku = apiListSkus_().skus.find(item => String(item.sku_id) === skuId);
+      if (!sku) throw new Error("That product isn't active on the SKUs tab (Distribution Hub - Inventory Backend).");
+      const quantity = Number(p.quantity);
+      if (!Number.isInteger(quantity) || quantity < 1 || quantity > 999) throw new Error("Enter a whole-number quantity from 1 to 999.");
+      const unit = String(p.unit || "Bottles");
+      if (!["Cases", "Bottles"].includes(unit)) throw new Error("Choose bottles or cases.");
+      const unitsPerCase = Number(sku.units_per_case || 12);
+      const same = existing.find(line => String(line.sku_id || "") === skuId && String(line.unit || "") === unit);
+      if (same) {
+        const newQuantity = Number(same.quantity || 0) + quantity;
+        if (newQuantity > 999) throw new Error("That would put more than 999 on one line.");
+        if (lh.quantity !== undefined) lineSheet.getRange(same.source_row, lh.quantity + 1).setValue(newQuantity);
+        if (lh.bottle_equivalent !== undefined) lineSheet.getRange(same.source_row, lh.bottle_equivalent + 1).setValue(unit === "Cases" ? newQuantity * unitsPerCase : newQuantity);
+      } else {
+        const values = Array(lineSheet.getLastColumn()).fill("");
+        const setLine = (key, value) => { if (lh[key] !== undefined) values[lh[key]] = value; };
+        setLine("request_id", requestId); setLine("account_id", order.account_id); setLine("line_number", existing.reduce((max, line) => Math.max(max, Number(line.line_number || 0)), 0) + 1);
+        setLine("sku_id", skuId); setLine("sku_name", String(sku.sku_name || skuId)); setLine("quantity", quantity); setLine("unit", unit);
+        setLine("units_per_case", unitsPerCase); setLine("bottle_equivalent", unit === "Cases" ? quantity * unitsPerCase : quantity);
+        setLine("catalog_source", String(sku.catalog_source || ORDER_CATALOG_SOURCE)); setLine("external_item_id", String(sku.external_item_id || "")); setLine("app_version", APP_VERSION);
+        lineSheet.getRange(lineSheet.getLastRow() + 1, 1, 1, values.length).setValues([values]);
+      }
+      detail = `Added ${orderQuantityLabel_(quantity, unit)} of ${String(sku.sku_name || skuId)}.`;
+    } else {
+      const lineNumber = Number(p.line_number);
+      const target = existing.find(line => Number(line.line_number || 0) === lineNumber);
+      if (!target) throw new Error("That product line is no longer on this order. Reload the order.");
+      if (existing.length <= 1) throw new Error("An order needs at least one product. Cancel the order instead.");
+      lineSheet.deleteRow(target.source_row);
+      detail = `Removed ${orderQuantityLabel_(target.quantity, target.unit)} of ${String(target.sku_name || target.sku_id || "")}.`;
+    }
+
+    const lines = rowsWithSource_(lineSheet).filter(line => String(line.request_id || "") === requestId)
+      .sort((a, b) => Number(a.line_number || 0) - Number(b.line_number || 0))
+      .map(line => ({ line_number:Number(line.line_number || 0), account_id:String(line.account_id || ""), sku_id:String(line.sku_id || ""), sku_name:String(line.sku_name || ""), quantity:Number(line.quantity || 0), unit:String(line.unit || ""), units_per_case:Number(line.units_per_case || 0), bottle_equivalent:Number(line.bottle_equivalent || 0), catalog_source:String(line.catalog_source || ORDER_CATALOG_SOURCE), external_item_id:String(line.external_item_id || "") }));
+    const h = source.headers; const rowNumber = source.row_number;
+    const set = (key, value) => { if (h[key] !== undefined) source.sheet.getRange(rowNumber, h[key] + 1).setValue(value); };
+    set("line_count", lines.length);
+    set("requested_cases", lines.filter(line => line.unit === "Cases").reduce((sum, line) => sum + line.quantity, 0));
+    set("requested_bottles", lines.filter(line => line.unit === "Bottles").reduce((sum, line) => sum + line.quantity, 0));
+    set("bottle_equivalent", lines.reduce((sum, line) => sum + line.bottle_equivalent, 0));
+    set("review_updated_at", new Date()); set("review_updated_by", staffName);
+    appendCustomerWorkflowLog_("Order", requestId, order.account_id, order.business_name, order.workflow_status, order.workflow_status, staffName, detail);
+    appendAudit_("UPDATE_ORDER_LINES", "Order", requestId, order.account_id, staffName, ONLINE_ORDER_REQUESTS_SHEET_NAME, ONLINE_ORDER_LINES_SHEET_NAME, "Completed", detail);
+    const priced = pricedOrderLines_(lines, order.account_id, badgerCurrentPrices_(false));
+    const totals = orderTotalsFromLines_(priced);
+    return { message:detail, request_id:requestId, lines:priced, order_total_cents:totals.total_cents, order_total_bottles:totals.bottles, unpriced_lines:totals.unpriced };
+  } finally {
+    lock.releaseLock();
+  }
+}
+
 function onlineOrderVerification_(businessName, customerId, email, claimedAccountId, lockHeld) {
   const directoryMatch = resolvePublicAccount_(claimedAccountId, businessName, email, "", !!lockHeld);
   const matchedAccountId = directoryMatch.record ? directoryMatch.record.account_id : "";
@@ -11398,49 +11496,117 @@ function onlineOrderVerification_(businessName, customerId, email, claimedAccoun
   return { status:"Needs review", account_id:matchedAccountId, account_link_status:directoryMatch.status };
 }
 
-function sendOnlineOrderNotification_(request, lines, sheet, rowNumber) {
-  const reviewUrl = `https://docs.google.com/spreadsheets/d/${OUTREACH_SPREADSHEET_ID}/edit#gid=${sheet.getSheetId()}&range=A${rowNumber}`;
-  const subject = `New order request: ${request.business_name}`;
-  const productLines = lines.map(line => `${line.quantity} ${line.unit.toLowerCase()} - ${line.sku_name}`);
-  const plainText = [
-    "A new customer order request is ready for review.",
-    "",
-    `Request ID: ${request.request_id}`,
-    `Business: ${request.business_name}`,
-    `Contact: ${request.contact_name}`,
-    `Email: ${request.email}`,
-    `Phone: ${request.phone || "Not provided"}`,
-    `Requested delivery date: ${request.requested_delivery_date || "Not specified"}`,
-    `Verification: ${request.verification_status}`,
-    "",
-    "Products:",
-  ].concat(productLines, ["", `Review the order: ${reviewUrl}`]);
-  const htmlProducts = lines.map(line =>
-    `<li>${escapeOutreachHtml_(line.quantity)} ${escapeOutreachHtml_(line.unit.toLowerCase())} - ${escapeOutreachHtml_(line.sku_name)}</li>`
-  ).join("");
-  const html = [
-    "<p>A new customer order request is ready for review.</p>",
-    "<ul>",
-    `<li><strong>Request ID:</strong> ${escapeOutreachHtml_(request.request_id)}</li>`,
-    `<li><strong>Business:</strong> ${escapeOutreachHtml_(request.business_name)}</li>`,
-    `<li><strong>Contact:</strong> ${escapeOutreachHtml_(request.contact_name)}</li>`,
-    `<li><strong>Email:</strong> ${escapeOutreachHtml_(request.email)}</li>`,
-    `<li><strong>Phone:</strong> ${escapeOutreachHtml_(request.phone || "Not provided")}</li>`,
-    `<li><strong>Requested delivery date:</strong> ${escapeOutreachHtml_(request.requested_delivery_date || "Not specified")}</li>`,
-    `<li><strong>Verification:</strong> ${escapeOutreachHtml_(request.verification_status)}</li>`,
-    "</ul>",
-    `<p><strong>Products</strong></p><ul>${htmlProducts}</ul>`,
-    `<p><a href="${escapeOutreachHtml_(reviewUrl)}">Review this order in the staging sheet</a></p>`,
-  ].join("");
+// Priced order lines (2026.11.17.65-APP), for the new-order email and the Hub's order window. Prices come from the
+// same catalog the Badger invoice uses (SKU tier or override, then an account deal); a line with no price gets
+// unit_price_cents 0 so the email and the Hub can say "price not set" instead of guessing.
+function pricedOrderLines_(lines, accountId, prices) {
+  return (lines || []).map(line => {
+    const quantity = Number(line.quantity || 0);
+    const bottles = /case/i.test(String(line.unit || "")) ? quantity * Number(line.units_per_case || 0) : quantity;
+    const price = badgerPriceForOrderLine_(prices || [], accountId, line);
+    const cents = price ? Number(price.unit_price_cents || 0) : 0;
+    return Object.assign({}, line, { bottles:bottles, unit_price_cents:cents, line_total_cents:cents > 0 ? Math.round(bottles * cents) : 0 });
+  });
+}
 
+function orderTotalsFromLines_(pricedLines) {
+  return (pricedLines || []).reduce((totals, line) => {
+    totals.bottles += Number(line.bottles || 0);
+    totals.total_cents += Number(line.line_total_cents || 0);
+    if (!(Number(line.unit_price_cents) > 0)) totals.unpriced += 1;
+    return totals;
+  }, { bottles:0, total_cents:0, unpriced:0 });
+}
+
+function orderQuantityLabel_(quantity, unit) {
+  const count = Number(quantity || 0); const word = String(unit || "").toLowerCase();
+  return `${count} ${count === 1 ? word.replace(/s$/, "") : word}`;
+}
+
+// Link that opens one order in the Hub's Orders & Accounts window (index.html reads ?order=).
+function hubOrderUrl_(requestId) {
+  let base = PUBLIC_SITE_URL_FALLBACK;
+  try { base = publicSiteUrl_(getOutreachCampaignSettings_()); } catch (error) { console.warn("Public site URL unavailable: " + String(error?.message || error)); }
+  return `${base}/?order=${encodeURIComponent(String(requestId || ""))}`;
+}
+
+function orderEmailDateLabel_(value) {
+  const text = String(value || "").trim();
+  if (!text) return "Not specified";
+  const date = /^\d{4}-\d{2}-\d{2}$/.test(text) ? new Date(`${text}T12:00:00`) : new Date(text);
+  if (isNaN(date.getTime())) return text;
+  try { return Utilities.formatDate(date, Session.getScriptTimeZone(), "EEE, MMM d, yyyy"); } catch (_) { return text; }
+}
+
+// Builds the new-order email (2026.11.17.65-APP; Karl, 2026-11-17: "it should take me to something clear so that
+// i can create a badger invoice"). The bottles, prices and the customer's notes are in the email itself, and the
+// main link opens the order in the Hub. The raw spreadsheet row stays as a small link at the bottom.
+function onlineOrderNotificationContent_(request, pricedLines, hubUrl, sheetUrl) {
+  const esc = escapeOutreachHtml_;
+  const totals = orderTotalsFromLines_(pricedLines);
+  const money = cents => Number(cents) > 0 ? badgerMoneyLabel_(cents) : "Price not set";
+  const qtyLabel = line => orderQuantityLabel_(line.quantity, line.unit);
+  const notes = String(request.notes || "").trim();
+  const accountNote = request.account_id ? "Linked to an account" : "Not linked to an account yet: link it in the Hub before creating the Badger invoice";
+  const delivery = [
+    ["Requested delivery", orderEmailDateLabel_(request.requested_delivery_date)],
+    ["Delivery window", request.delivery_window || "Not specified"],
+    ["Delivery instructions", request.delivery_instructions || "None"],
+    ["PO number", request.po_number || "None"],
+  ];
+  const contact = [
+    ["Contact", request.contact_name], ["Email", request.email], ["Phone", request.phone || "Not provided"],
+    ["Account", accountNote], ["Order ID", request.request_id],
+  ];
+  const subject = `New order: ${request.business_name} (${totals.bottles} bottle${totals.bottles === 1 ? "" : "s"}${totals.total_cents ? `, ${badgerMoneyLabel_(totals.total_cents)}` : ""})${notes ? " - see customer notes" : ""}`;
+
+  const plain = [`New order from ${request.business_name}`, "", `Open this order in the Hub: ${hubUrl}`, ""];
+  if (notes) plain.push("CUSTOMER NOTES (may change the order):", notes, "");
+  plain.push("PRODUCTS");
+  pricedLines.forEach(line => plain.push(`  ${qtyLabel(line)} - ${line.sku_name}${line.sku_id ? ` (${line.sku_id})` : ""} - ${money(line.unit_price_cents)}${line.line_total_cents ? ` each, ${badgerMoneyLabel_(line.line_total_cents)}` : ""}`));
+  plain.push(`  Total: ${totals.bottles} bottles${totals.total_cents ? `, ${badgerMoneyLabel_(totals.total_cents)}` : ""}${totals.unpriced ? ` (${totals.unpriced} product${totals.unpriced === 1 ? "" : "s"} without a price)` : ""}`, "");
+  delivery.concat(contact).forEach(([label, value]) => plain.push(`${label}: ${value || ""}`));
+  plain.push("", `Spreadsheet row (raw data): ${sheetUrl}`);
+
+  const cell = "padding:8px 10px;border-bottom:1px solid #e3e3e3;";
+  const rowsHtml = pricedLines.map(line => `<tr>
+    <td style="${cell}"><strong>${esc(line.sku_name)}</strong><br><span style="color:#777;font-size:12px">${esc(line.sku_id || "")}</span></td>
+    <td style="${cell}text-align:right;white-space:nowrap">${esc(qtyLabel(line))}</td>
+    <td style="${cell}text-align:right">${esc(line.bottles)}</td>
+    <td style="${cell}text-align:right;white-space:nowrap">${esc(money(line.unit_price_cents))}</td>
+    <td style="${cell}text-align:right;white-space:nowrap">${line.line_total_cents ? esc(badgerMoneyLabel_(line.line_total_cents)) : "&mdash;"}</td></tr>`).join("");
+  const detailHtml = pairs => `<table style="border-collapse:collapse;font-size:14px">${pairs.map(([label, value]) => `<tr><td style="padding:3px 12px 3px 0;color:#666;vertical-align:top;white-space:nowrap">${esc(label)}</td><td style="padding:3px 0">${esc(value || "")}</td></tr>`).join("")}</table>`;
+  const html = `<div style="font-family:Arial,Helvetica,sans-serif;color:#222;max-width:640px">
+  <h2 style="margin:0 0 4px">New order from ${esc(request.business_name)}</h2>
+  <p style="margin:0 0 16px;color:#666">${esc(orderEmailDateLabel_(request.requested_delivery_date))}${request.delivery_window ? ` &middot; ${esc(request.delivery_window)}` : ""}</p>
+  <p style="margin:0 0 18px"><a href="${esc(hubUrl)}" style="background:#44656b;color:#fff;text-decoration:none;padding:10px 16px;border-radius:6px;display:inline-block;font-weight:bold">Open this order in the Hub</a></p>
+  ${notes ? `<div style="background:#fff4cc;border:1px solid #e6c34d;border-radius:6px;padding:10px 12px;margin:0 0 18px"><strong>Customer notes (may change the order)</strong><br>${esc(notes).replace(/\n/g, "<br>")}</div>` : ""}
+  <table style="border-collapse:collapse;width:100%;font-size:14px;margin:0 0 6px">
+    <thead><tr style="background:#f3f3f3;text-align:left"><th style="${cell}">Product</th><th style="${cell}text-align:right">Ordered</th><th style="${cell}text-align:right">Bottles</th><th style="${cell}text-align:right">Price</th><th style="${cell}text-align:right">Total</th></tr></thead>
+    <tbody>${rowsHtml}</tbody>
+    <tfoot><tr><td style="padding:8px 10px"><strong>Total</strong></td><td></td><td style="padding:8px 10px;text-align:right"><strong>${esc(totals.bottles)}</strong></td><td></td><td style="padding:8px 10px;text-align:right"><strong>${totals.total_cents ? esc(badgerMoneyLabel_(totals.total_cents)) : "&mdash;"}</strong></td></tr></tfoot>
+  </table>
+  ${totals.unpriced ? `<p style="color:#9a3b00;font-size:13px;margin:0 0 12px">${totals.unpriced} product${totals.unpriced === 1 ? " has" : "s have"} no wholesale price on the SKUs tab.</p>` : ""}
+  <h3 style="margin:18px 0 6px;font-size:15px">Delivery</h3>${detailHtml(delivery)}
+  <h3 style="margin:18px 0 6px;font-size:15px">Customer</h3>${detailHtml(contact)}
+  <p style="margin:22px 0 0;font-size:12px;color:#888"><a href="${esc(sheetUrl)}" style="color:#888">Spreadsheet row (raw data)</a></p>
+</div>`;
+  return { subject:subject, body:plain.join("\n"), html:html, totals:totals };
+}
+
+function sendOnlineOrderNotification_(request, lines, sheet, rowNumber) {
+  const sheetUrl = `https://docs.google.com/spreadsheets/d/${OUTREACH_SPREADSHEET_ID}/edit#gid=${sheet.getSheetId()}&range=A${rowNumber}`;
+  let prices = [];
+  try { prices = badgerCurrentPrices_(false); } catch (error) { console.warn("Order email prices unavailable: " + String(error?.message || error)); }
+  const content = onlineOrderNotificationContent_(request, pricedOrderLines_(lines, request.account_id, prices), hubOrderUrl_(request.request_id), sheetUrl);
   try {
     MailApp.sendEmail({
       to: CUSTOMER_APPLICATION_NOTIFICATION_EMAIL,
       replyTo: request.email,
       name: "Sturgeon Distribution Hub",
-      subject: subject,
-      body: plainText.join("\n"),
-      htmlBody: html,
+      subject: content.subject,
+      body: content.body,
+      htmlBody: content.html,
     });
     return { status:"Sent", sent_at:new Date(), error:"" };
   } catch (error) {
@@ -11567,6 +11733,11 @@ function apiSubmitOnlineOrderRequest_(p) {
       email:email,
       phone:phone,
       requested_delivery_date:deliveryDate,
+      delivery_window:deliveryWindow,
+      delivery_instructions:deliveryInstructions,
+      po_number:poNumber,
+      notes:notes,
+      account_id:verification.account_id,
       verification_status:verification.status,
     }, lines, requestSheet, requestRow);
     requestSheet.getRange(requestRow, h.notification_status + 1, 1, 3).setValues([[

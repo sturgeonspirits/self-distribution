@@ -3,6 +3,21 @@
 Moved out of the `apps-script/Code.gs` header on 2026-10-17 so the deployed file stays short. Newest first, copied word for word. The header keeps only the current version (`CHANGES IN THIS VERSION`); when a new version is made, move that section to the top of this file.
 
 ```
+CHANGES IN 2026.11.05.62-APP
+Fixes from chat's Phase 3 review (claude/chat-review-findings-sequences-phase-3-2026-11-05.md):
+- Shared addresses: the Directory pass of writeSequencePlan_() matches a leftover Sequence ID by Account ID, or
+  by address only when one Directory row has it. When two rows share an address it leaves the cell alone and
+  returns a warning (audited as SEQUENCE_SYNC_WARNING, shown in the migration log).
+- A longer gap is refused while a step draft of that sequence is in Review (it was frozen under the shorter
+  gap); delete or send the draft first. A shorter gap saves any time.
+- Speed: writeSequencePlan_() writes only Sequences rows that changed (Updated At moves only then), and the
+  campaign and Directory columns only when a cell changed, so an idle sync writes nothing. "Build next step"
+  on a stored sequence skips the sync (one full read instead of two plus writes).
+- The daily check never drafts Initial again for businesses the first Initial campaign left unsent; "Build
+  next step" pressed on the card still can ("<sequence> — Initial (more)").
+- Deleting the last live campaign of a sequence (an unsent Initial draft) clears that Sequence ID from the
+  Directory at once, so those businesses get their normal follow-up reminders back without waiting a day.
+
 CHANGES IN 2026.11.05.61-APP
 - Sequences Phase 3 (server). New Initial campaigns become sequences on their own: syncSequences_() (no
   deletions) runs before every step check and writes the same three things the migration wrote, through the new
