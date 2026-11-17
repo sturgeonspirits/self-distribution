@@ -1,9 +1,17 @@
 /**
  * STURGEON SPIRITS — BADGER INVOICE PARSER
  *
- * VERSION: 2026.10.08.3
+ * VERSION: 2026.11.17.1
  *
- * CHANGES IN THIS VERSION (2026.10.08.3, from 2026.10.08.2)
+ * CHANGES IN THIS VERSION (2026.11.17.1, from 2026.10.08.3)
+ * - Invoice numbers above 170 are kept exactly as Badger has them. Invoices ran SS0163-SS0170,
+ *   then SS171-SS173 were entered without the leading zero, and on 2026-11-17 the Hub created
+ *   SS0171 (Acorn Ridge) as a separate Badger invoice beside SS171 (Fox and Crow). Badger can't
+ *   renumber an invoice, so both stay. Padding SS171 to SS0171 made them one number, and the
+ *   import held both out as DUPLICATE_NUMBER. Numbers up to 170 are still padded, because
+ *   early invoices appear in Badger as "SS53" and in the tracker as "SS0053".
+ *
+ * CHANGES IN 2026.10.08.3 (from 2026.10.08.2)
  * - Badger lists some early invoices without leading zeros ("SS53") while the tracker
  *   has "SS0053". Invoice numbers with fewer than four digits are now padded, so they
  *   match instead of showing as "Missing in tracker" + "Not in Badger" and being
@@ -119,7 +127,7 @@
  *   (Project Settings > Script Properties). Never put them in this file.
  */
 
-const BADGER_PARSER_VERSION = "2026.10.08.3";
+const BADGER_PARSER_VERSION = "2026.11.17.1";
 
 const PARSER_PRODUCTION_FOLDER_ID = "1ccOfQpk69SLyMYskD2srlNqHCGm1VBJ5";
 
@@ -2738,10 +2746,13 @@ function appendRows_(sheet, rows) {
  * Invoice # key. Badger lists a few early invoices without leading zeros ("SS53") while the
  * PDFs and the tracker say "SS0053"; both become "SS0053" so they are one invoice.
  */
+// Pads only the old numbers (2026.11.17.1): SS53 -> SS0053 as before, but SS171 and SS0171 stay two invoices.
+const LAST_PADDED_INVOICE_SERIAL = 170;
+
 function normalizeInvoiceNo_(v) {
   const key = String(v || "").toUpperCase().replace(/\s+/g, "").replace(/[^A-Z0-9]/g, "");
   const short = key.match(/^SS(\d{1,3})$/);
-  return short ? `SS${short[1].padStart(4, "0")}` : key;
+  return short && Number(short[1]) <= LAST_PADDED_INVOICE_SERIAL ? `SS${short[1].padStart(4, "0")}` : key;
 }
 
 function parseMmDdYyyy_(s) {

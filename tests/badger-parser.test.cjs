@@ -479,7 +479,7 @@ t("menu offers the Badger import, Compare, Apply, PDF fallback and daily source 
     .forEach(fn => assert.ok(e.ctx.__menu.items.includes(fn), fn));
   assert.strictEqual(e.ctx.__menu.items[0], "importFromBadger");
   const s = makeEnv({ ssId: STAGE_ID }); s.ctx.onOpen(); assert.ok(!s.ctx.__menu.items.includes("useBadgerForDailyImport"));
-  assert.match(SRC, /const BADGER_PARSER_VERSION = "2026\.10\.08\.3";/);
+  assert.match(SRC, /const BADGER_PARSER_VERSION = "2026\.11\.17\.1";/);
 });
 
 /* -------------------- 2026.10.08.1 review fixes -------------------- */
@@ -902,5 +902,8 @@ t("live compare 2026-10-08: Badger 'SS53' is the tracker's 'SS0053' (no duplicat
   const r = e.ctx.importFromBadger(); assert.strictEqual(r.imported, 0); assert.strictEqual(r.linked, 1);
   assert.strictEqual(e.tabs["Invoices"].rows.length, 2, "no second SS0053 row");
   assert.strictEqual(e.ctx.normalizeInvoiceNo_("SS53"), "SS0053"); assert.strictEqual(e.ctx.normalizeInvoiceNo_("SS0165"), "SS0165"); assert.strictEqual(e.ctx.normalizeInvoiceNo_("ss 1234"), "SS1234");
+  // 2026.11.17.1: SS171 (Fox and Crow) and SS0171 (Acorn Ridge) are two Badger invoices.
+  assert.strictEqual(e.ctx.normalizeInvoiceNo_("SS170"), "SS0170"); assert.strictEqual(e.ctx.normalizeInvoiceNo_("SS171"), "SS171");
+  assert.strictEqual(e.ctx.normalizeInvoiceNo_("SS0171"), "SS0171"); assert.strictEqual(e.ctx.normalizeInvoiceNo_("SS174"), "SS174");
 });
 console.log(`\n${passed} tests passed`);
