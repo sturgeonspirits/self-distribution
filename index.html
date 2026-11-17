@@ -1,10 +1,10 @@
 <!doctype html>
-<!-- App version: 2026.11.17.68-WEB -->
+<!-- App version: 2026.11.17.70-WEB -->
 <html>
 <head>
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover"/>
-  <meta name="app-version" content="2026.11.17.68-WEB" />
+  <meta name="app-version" content="2026.11.17.70-WEB" />
   <meta name="theme-color" content="#536f77" />
   <link rel="icon" href="/assets/distribution-hub-icon.svg" type="image/svg+xml" />
   <link rel="manifest" href="/site.webmanifest" />
@@ -413,6 +413,7 @@
     .replyActions .actionBtn.primary.danger{background:var(--red);border-color:var(--red);color:#fff}
     .replyLink{all:unset;cursor:pointer;color:var(--blue);font-size:13px;font-weight:700;align-self:center;justify-self:start}
     .replyDoneRow{display:flex;justify-content:space-between;gap:10px;align-items:center;margin-top:6px;padding:8px 12px;border:1px solid var(--line);border-radius:8px;background:#fff}
+    .replyDoneRow .outreachActions{margin:0;flex-shrink:0}
     .replyDoneRow > div{overflow-wrap:anywhere}
     .replyDoneRow .actionBtn{min-height:34px;padding:4px 10px}
     @media (max-width:640px){.replyTiles{grid-template-columns:1fr 1fr}}
@@ -2796,7 +2797,7 @@
 
   <footer style="max-width:1200px;margin:18px auto 120px;padding:0 12px;text-align:center;color:#6b7280;font-size:12px;">
     Designed by <a href="https://scriptspirit.dev" target="_blank" rel="noopener noreferrer" style="color:#1d4ed8;text-decoration:none;font-weight:700;">Script Spirit</a>
-<span id="appVersionFooter"> • Version 2026.11.17.68-WEB</span>
+<span id="appVersionFooter"> • Version 2026.11.17.70-WEB</span>
   </footer>
 
 
@@ -2819,7 +2820,7 @@
   window.addEventListener("unhandledrejection", e => console.error("Unhandled promise rejection:", e.reason));
   window.addEventListener("error", e => console.error("Unhandled error:", e.error || e.message));
   const $ = (id) => document.getElementById(id);
-  const APP_VERSION = "2026.11.17.68-WEB";
+  const APP_VERSION = "2026.11.17.70-WEB";
   $("appVersionFooter").textContent = ` • Version ${APP_VERSION}`;
   function screenCacheKey(screen){ return `distribution_hub:${APP_VERSION}:${staffSession?.email || "unknown"}:${screen}`; }
   function readScreenCache(screen){
@@ -4409,8 +4410,9 @@
   }
 
   function updateRepliesTabCount(){
-    // Open replies plus answered ones still waiting for an outcome.
-    const open = (outreachData.replies || []).filter(reply => reply.status === "New" || reply.needs_outcome).length;
+    // Only replies that still need something from you (2026.11.17.70-WEB). Answered ones waiting for a result no
+    // longer count: Karl, 2026-11-17, "i sent all these people emails and they still are showing".
+    const open = (outreachData.replies || []).filter(reply => reply.status === "New").length;
     $("outreachRepliesCount").hidden = !open;
     $("outreachRepliesCount").textContent = open;
   }
@@ -4455,9 +4457,9 @@
       { key:"soon", title:"Answer by tomorrow", note:"Questions, cocktail list requests, wrong contact, unclear. Due 5 PM the next business day.", items:soon.sort(byDue) },
       { key:"stop", title:"Asked to stop emails", note:"A reply that seems to ask us to stop. A plain \"stop\" is handled automatically. The law gives 10 business days to honour it.", items:replies.filter(replyIsStopRequest).sort(byReceived) },
       { key:"address", title:"Address problems", note:"Our email didn't arrive. No deadline and never late.", items:replies.filter(reply => reply.status === "New" && replyIsBounce(reply)).sort(byReceived) },
-      { key:"results", title:"Results to record", note:"You answered these from sales@. Record how it went so the business card and follow-ups are right. No deadline.", items:replies.filter(reply => reply.needs_outcome).sort(byReceived) },
       { key:"optional", title:"Answer if you want", note:"\"Not now\" or \"no thanks\". No deadline and never late.", items:person.filter(reply => !today.includes(reply) && !soon.includes(reply)).sort(byReceived) },
-      { key:"done", title:"Done (last 30 days)", note:"Undo reopens a card.", items:replies.filter(reply => reply.status !== "New" && !reply.needs_outcome).sort(byReceived) },
+      // Answered replies land here too; "Record result" stays on the row for when you hear how it went.
+      { key:"done", title:"Done (last 30 days)", note:"Answered and closed replies. Record result whenever you know how it went; Undo reopens a card.", items:replies.filter(reply => reply.status !== "New" && (!reply.needs_outcome || (Date.parse(reply.received_at) || 0) >= Date.now() - 30 * 24 * 60 * 60 * 1000)).sort(byReceived) },
     ];
   }
 
@@ -4562,6 +4564,7 @@
     const when = reply.handled_at ? ` · ${formatOutreachDate(reply.handled_at)}` : "";
     const by = reply.handled_by && !/^(reply checker|claude skill)$/i.test(reply.handled_by) ? ` by ${reply.handled_by}` : "";
     if (reply.outcome_logged) return `Result recorded: ${reply.outcome_logged}`;
+    if (reply.needs_outcome) return `You ${String(reply.handled_note || "answered").replace(/^Answered/, "answered")}`;
     if (/^Outcome: /.test(reply.handled_note || "")) return `Result recorded: ${reply.handled_note.replace(/^Outcome: /, "")}${when}${by}`;
     if (/marked bad address/i.test(reply.auto_action || "")) return `Address didn't exist, so the Hub marked it bad automatically${when}`;
     if (/unsubscribed/i.test(reply.auto_action || "")) return `They asked to stop, so the Hub unsubscribed them automatically${when}`;
@@ -4580,7 +4583,10 @@
     return `
       <div class="replyDoneRow" data-reply-id="${escapeHtml(reply.reply_id)}">
         <div><strong>${escapeHtml(reply.business || reply.from_name || reply.from)}</strong><div class="smallMuted">${escapeHtml(replyDoneText(reply))}</div></div>
-        <button class="actionBtn" type="button" data-reply-action="undo"><i data-lucide="rotate-ccw"></i><span>Undo</span></button>
+        <div class="outreachActions">
+          ${reply.needs_outcome ? `<button class="actionBtn" type="button" data-reply-action="result"><i data-lucide="clipboard-check"></i><span>Record result</span></button>` : ""}
+          <button class="actionBtn" type="button" data-reply-action="undo"><i data-lucide="rotate-ccw"></i><span>Undo</span></button>
+        </div>
       </div>`;
   }
 
@@ -4686,7 +4692,6 @@
     const toAnswer = all.filter(replyIsPerson).length;
     const late = all.filter(replyIsLate).length;
     const addressProblems = all.filter(reply => reply.status === "New" && replyIsBounce(reply)).length;
-    const resultsToRecord = all.filter(reply => reply.needs_outcome).length;
     $("outreachAudienceCount").textContent = `${toAnswer} to answer`;
     const lastRun = meta?.last_run;
     const lastRunText = !lastRun?.at
@@ -4705,7 +4710,6 @@
           ${tile(toAnswer, "To answer", "People waiting on your reply", toAnswer ? "" : "zero")}
           ${tile(late, "Late", "You missed the answer-by time", late ? "red" : "zero")}
           ${addressProblems ? tile(addressProblems, "Address problems", "Emails that didn't arrive", "") : ""}
-          ${resultsToRecord ? tile(resultsToRecord, "Results to record", "You answered; say how it went", "") : ""}
         </div>
         <div class="replyCheckRow"><span class="smallMuted">${escapeHtml(lastRunText)}</span><button class="actionBtn" type="button" data-reply-action="check"><i data-lucide="inbox"></i><span>Check for new replies</span></button></div>
         ${warnings.map(text => `<div class="smallMuted" style="color:var(--amber)">${escapeHtml(text)}</div>`).join("")}

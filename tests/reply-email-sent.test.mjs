@@ -37,3 +37,16 @@ test("the reply checker skips a second copy of the same email (2026.11.17.69-APP
   assert.match(loop, /if \(inboundReplyIsDuplicateCopy_\(copies, copyKey, receivedAt\.getTime\(\)\)\) \{ summary\.duplicates \+= 1; stored\.add\(messageId\); advance\(receivedMs\); continue; \}/);
   assert.match(loop, /copies\.set\(copyKey,/, "a copy stored this run also blocks its twin later in the same run");
 });
+
+test("answered replies leave the Replies count and sit in Done with Record result (2026.11.17.70-WEB)", async () => {
+  const index = await readFile(new URL("../index.html", import.meta.url), "utf8");
+  const count = index.slice(index.indexOf("function updateRepliesTabCount"), index.indexOf("function repliesAwaitingOutcomeFor"));
+  assert.match(count, /filter\(reply => reply\.status === "New"\)\.length/);
+  assert.doesNotMatch(count, /needs_outcome/);
+  const groups = index.slice(index.indexOf("function replyGroups"), index.indexOf("function replyWhen"));
+  assert.doesNotMatch(groups, /key:"results"/);
+  assert.match(groups, /key:"done"[^\n]*reply\.status !== "New" && \(!reply\.needs_outcome \|\|/);
+  const doneRow = index.slice(index.indexOf("function replyDoneRowHtml"), index.indexOf("function replyCardHtml"));
+  assert.match(doneRow, /reply\.needs_outcome \? `<button class="actionBtn" type="button" data-reply-action="result">/);
+  assert.doesNotMatch(index, /tile\(resultsToRecord/);
+});

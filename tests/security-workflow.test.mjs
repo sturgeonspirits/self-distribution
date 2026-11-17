@@ -1043,7 +1043,8 @@ test("Inbound reply checker: matching, quoted-text removal, stop rules, respond-
   assert.match(fn("apiLogOutreachContact_"), /recordInboundReplyOutcome_\(accountId, outcome, String\(p\.staff_name \|\| "Staff"\), ""\)/);
   assert.match(fn("apiResolveInboundReply_"), /if \(p\.no_outcome\) \{/);
   assert.match(backend, /"Zoho Folder ID", "Thread ID", "App Version", "Outcome Logged",/);
-  assert.match(html, /\{ key:"results", title:"Results to record", [^\n]*items:replies\.filter\(reply => reply\.needs_outcome\)/);
+  // 2026.11.17.70-WEB: answered replies awaiting a result sit in Done (with Record result), not their own group.
+  assert.doesNotMatch(html, /key:"results"/);
   // Replies view (2026.10.10.44-WEB): Late only for a person's reply past its answer-by time; never bounces, stop requests or results.
   const webFn = name => { const start = html.indexOf(`\n  function ${name}(`) + 1; assert.ok(start > 0, name); const end = html.slice(start + 1).search(/\n  (async )?function |\n  \/\/ /); return html.slice(start, start + 1 + end); };
   const repliesWeb = new Function(`const REPLY_GUESS_MATCHES = [];\n${webFn("replyIsBounce")}\n${webFn("replyIsStopRequest")}\n${webFn("replyIsPerson")}\n${webFn("replyIsLate")}\n${webFn("replyGroups")}\nreturn { late:replyIsLate, groups:replyGroups };`)();
@@ -1060,7 +1061,7 @@ test("Inbound reply checker: matching, quoted-text removal, stop rules, respond-
   ];
   assert.deepEqual(replyFixtures.filter(repliesWeb.late).map(reply => reply.reply_id), ["late"], "only an unanswered person reply goes late");
   const grouped = Object.fromEntries(repliesWeb.groups(replyFixtures).map(group => [group.key, group.items.map(reply => reply.reply_id)]));
-  assert.deepEqual(grouped, { today:["late", "unsorted"], soon:["soon"], stop:["stop"], address:["bounce"], results:["answered"], optional:["later"], done:["done"] });
+  assert.deepEqual(grouped, { today:["late", "unsorted"], soon:["soon"], stop:["stop"], address:["bounce"], optional:["later"], done:["answered", "done"] });
   assert.doesNotMatch(html, /data-reply-action="(handled|reopen)"|Reply by email|Not a reply<|Mark handled/, "the old buttons are gone");
   assert.match(html, /window\.open\("", "zohomail"\)/, "Answer in Zoho reuses one Zoho window");
   assert.match(html, /if \(repliesAwaitingOutcomeFor\(record\.account_id, res\.reply\?\.reply_id\)\) loadOutreachReplies\(\)/, "other answered replies of the business refresh using the saved record snapshot");

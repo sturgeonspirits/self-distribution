@@ -15,7 +15,7 @@ History, kept word for word:
 
 | Component | Source version | Deployment state |
 | --- | --- | --- |
-| Netlify web app and staff proxy | `2026.11.17.68-WEB` (page) / `2026.11.17.67-WEB` (staff proxy) on `codex/work` | **Live page `.68` and proxy `.67`** (promoted `d49d30d`, 2026-11-17; checked distribution.sturgeonspirits.com shows `.68`): sequence cards, order window with prices/notes/Add a product, `?order=` links, Email sent on reply cards. Sign-up `.55`; order and sell sheet `.58`. |
+| Netlify web app and staff proxy | `2026.11.17.70-WEB` (page) / `2026.11.17.67-WEB` (staff proxy) on `codex/work` | **Live page `.68` and proxy `.67`** (promoted `d49d30d`, 2026-11-17; checked distribution.sturgeonspirits.com shows `.68`): sequence cards, order window with prices/notes/Add a product, `?order=` links, Email sent on reply cards. **Page `.70` pending promotion:** answered replies leave the Replies count. Sign-up `.55`; order and sell sheet `.58`. |
 | Inventory API Apps Script | `2026.11.17.69-APP` on `codex/work` | **`.69` pending deploy:** reply checker skips a second copy of the same email. **Live `.65`** (Karl deployed 2026-11-17; includes `.60`–`.62` sequences Phase 3 and review fixes, and the readable new-order email). Hub Configuration `outreach_hourly_send_limit` = 30. |
 | Distribution Outreach Apps Script | `2026.11.05.35-APP` in `docs/reference/distribution-outreach/Code.gs` | **Deployed 2026-11-05** (project **distribution outreach**, attached to **Distribution Hub**). |
 | Public customer Netlify proxy | `2026.10.08.5-WEB` | Deployed 2026-10-08. |
@@ -58,6 +58,7 @@ Setup steps recorded in the history whose completion was **not re-verified** on 
 
 ## Recent changes (one line each; details in `docs/history/` and git)
 
+- 2026-11-17 page `.70-WEB` (Claude; not promoted): Karl: answered replies still showed (Replies 8 = 1 to answer, 1 address problem, 6 "Results to record"). Replies the checker saw answered (`needs_outcome`) now go to Done with a **Record result** button instead of their own group and tile, and the Replies tab count is only cards still needing something (status New). Server unchanged.
 - 2026-11-17 `.69-APP` (Claude; not deployed): Mark Wilton's order email reached the Inbox twice with two Zoho message IDs, so it showed as two cards and "Email sent" on one left the other (Karl: "nothing changed"). The checker now skips a message matching a stored reply's sender, subject and text within 2 minutes. Claude closed the leftover copy with Email sent. Tests: `tests/reply-email-sent.test.mjs`.
 - 2026-11-17 page `.68-WEB` (Claude; promoted same day): reply cards waiting on an answer get **Email sent** (Karl answers from his own mailbox, which the reply checker can't see). It closes the card as Handled with "Email sent directly" (existing `resolveInboundReply`; Undo reopens). No Apps Script change. Tests: `tests/reply-email-sent.test.mjs`.
 - 2026-11-17 Deploy 2 done: Karl deployed Inventory API `.65`; Claude promoted `4d3a3f4` (page `.66`, proxy `.67`) to production.
