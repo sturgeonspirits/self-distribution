@@ -1,20 +1,12 @@
 /*********************************
  * Inventory API (JSON) for Netlify
- * App version: 2026.11.17.65-APP
+ * App version: 2026.11.17.69-APP
  *
  * CHANGES IN THIS VERSION
- * New orders are readable without opening the spreadsheet (Karl, 2026-11-17: the email's "Review this order in
- * the staging sheet" link showed a header row with no bottles; the products live on Online Order Lines):
- * - The new-order email lists every product with quantity, bottles, wholesale price and line total, the order
- *   total, the customer's notes in a highlighted box ("may change the order"), delivery date/window/instructions
- *   and PO. Its main link opens the order in the Hub (<public site>/?order=ORD-...); the spreadsheet row is a
- *   small link at the bottom. Subject shows bottles, total and "see customer notes" when there are notes.
- * - customerWorkQueue prices each order line (pricedOrderLines_: same SKU tier / override / account-deal prices
- *   the Badger invoice uses) and returns order_catalog (active, priced SKUs) for the Hub's "Add a product".
- * - New staff action updateOnlineOrderLines (add or remove a product on an order with no Badger invoice that is
- *   not Completed or Cancelled; only active SKUs; same SKU and unit adds to the existing line; the last line
- *   can't be removed). Recomputes Line Count / Requested Cases / Requested Bottles / Bottle Equivalent and logs
- *   to the Customer Workflow Log and Hub Audit Log (UPDATE_ORDER_LINES).
+ * Duplicate replies (Karl, 2026-11-17: "i clicked email sent and nothing changed"): one email from Mark Wilton
+ * reached the sales@ Inbox twice with two Zoho message IDs, so the reply checker listed it twice and closing one
+ * card left its twin. checkInboundReplies_ now skips a message whose sender, subject and first 300 characters of
+ * new text match a reply stored within two minutes of it (counted as summary.duplicates). Existing rows unchanged.
  *
  * DEPLOY
  * - Apps Script project: Inventory API
@@ -24,7 +16,7 @@
  * Earlier version notes: docs/history/inventory-api-changes.md (move this version's notes there when the version changes).
  *********************************/
 
-const APP_VERSION = "2026.11.17.65-APP";
+const APP_VERSION = "2026.11.17.69-APP";
 
 const SHEET_NAMES = {
   STORES: "Stores",
@@ -6851,6 +6843,34 @@ function inboundReplyLastRun_() {
   catch (error) { return null; }
 }
 
+// One email can land in the sales@ Inbox twice with two Zoho message IDs (seen 2026-11-17: Mark Wilton's
+// "New Order - Nov 17" at 11:41:28, message IDs ...756... and ...757...), so the message-ID check alone listed it
+// twice and "Email sent" on one card left the other. A second copy is the same sender, subject and text arriving
+// within two minutes of one already stored. (2026.11.17.69-APP)
+const INBOUND_REPLY_DUPLICATE_WINDOW_MS = 2 * 60 * 1000;
+
+function inboundReplyDuplicateKey_(from, subject, text) {
+  const squash = value => String(value || "").replace(/\s+/g, " ").trim().toLowerCase();
+  return [squash(from), squash(subject), squash(text).slice(0, 300)].join("|");
+}
+
+/** Recent stored replies by duplicate key, each with its received time in ms. */
+function inboundReplyRecentCopies_(sheet, sinceMs) {
+  const copies = new Map();
+  if (!sheet || sheet.getLastRow() < 2) return copies;
+  rowsWithSource_(sheet).forEach(row => {
+    const receivedMs = row.received_at instanceof Date ? row.received_at.getTime() : Date.parse(row.received_at);
+    if (!(receivedMs >= sinceMs)) return;
+    const key = inboundReplyDuplicateKey_(row.from, row.subject, row.reply_text);
+    copies.set(key, (copies.get(key) || []).concat(receivedMs));
+  });
+  return copies;
+}
+
+function inboundReplyIsDuplicateCopy_(copies, key, receivedMs) {
+  return (copies.get(key) || []).some(ms => Math.abs(ms - Number(receivedMs || 0)) <= INBOUND_REPLY_DUPLICATE_WINDOW_MS);
+}
+
 /** Reads new Inbox messages through the mailer and catalogues the replies. Safe to run repeatedly. */
 function checkInboundReplies_(trigger) {
   const cache = CacheService.getScriptCache();
@@ -6859,7 +6879,7 @@ function checkInboundReplies_(trigger) {
   const started = Date.now();
   const properties = PropertiesService.getScriptProperties();
   const sinceMs = Number(properties.getProperty(INBOUND_REPLY_SINCE_PROPERTY) || 0) || (started - INBOUND_REPLY_LOOKBACK_DAYS * 24 * 60 * 60 * 1000);
-  const summary = { at:new Date().toISOString(), trigger:trigger, checked:0, added:0, auto_actions:0, skipped:0, answered:0, scan_capped:false, error:"", more_available:false };
+  const summary = { at:new Date().toISOString(), trigger:trigger, checked:0, added:0, auto_actions:0, skipped:0, duplicates:0, answered:0, scan_capped:false, error:"", more_available:false };
   try {
     const listing = callOutreachMailer_({ action:"listInboxMessages", since_ms:sinceMs });
     const messages = (listing.messages || []).filter(message => message && message.message_id).sort((a, b) => Number(a.received_ms || 0) - Number(b.received_ms || 0));
@@ -6867,6 +6887,7 @@ function checkInboundReplies_(trigger) {
     summary.more_available = !!listing.more_available;
     const sheet = getInboundRepliesSheet_(true);
     const stored = inboundReplyStoredIds_(sheet);
+    const copies = inboundReplyRecentCopies_(sheet, sinceMs - 24 * 60 * 60 * 1000);
     const index = inboundReplyIndex_();
     let checkpoint = sinceMs;
     const advance = receivedMs => {
@@ -6895,6 +6916,9 @@ function checkInboundReplies_(trigger) {
       if (detail.bulk && !match.bounce) { summary.skipped += 1; advance(receivedMs); continue; }
       const receivedAt = new Date(receivedMs || Date.now());
       const replyText = stripQuotedReply_(detail.text || message.summary || "");
+      const storedText = replyText || "(No new text above the quoted message.)";
+      const copyKey = inboundReplyDuplicateKey_(match.email, message.subject, storedText);
+      if (inboundReplyIsDuplicateCopy_(copies, copyKey, receivedAt.getTime())) { summary.duplicates += 1; stored.add(messageId); advance(receivedMs); continue; }
       let classification;
       if (match.bounce) {
         const kind = inboundReplyBounceKind_(detail.text);
@@ -6954,6 +6978,7 @@ function checkInboundReplies_(trigger) {
         lock.releaseLock();
       }
       stored.add(messageId);
+      copies.set(copyKey, (copies.get(copyKey) || []).concat(receivedAt.getTime()));
       summary.added += 1;
       // 2) Side effects, then the row's final status. If this part fails the row stays New with
       //    "Pending automatic changes", which staff see; the message is never processed twice.

@@ -3,6 +3,20 @@
 Moved out of the `apps-script/Code.gs` header on 2026-10-17 so the deployed file stays short. Newest first, copied word for word. The header keeps only the current version (`CHANGES IN THIS VERSION`); when a new version is made, move that section to the top of this file.
 
 ```
+CHANGES IN 2026.11.17.65-APP
+New orders are readable without opening the spreadsheet (Karl, 2026-11-17: the email's "Review this order in
+the staging sheet" link showed a header row with no bottles; the products live on Online Order Lines):
+- The new-order email lists every product with quantity, bottles, wholesale price and line total, the order
+  total, the customer's notes in a highlighted box ("may change the order"), delivery date/window/instructions
+  and PO. Its main link opens the order in the Hub (<public site>/?order=ORD-...); the spreadsheet row is a
+  small link at the bottom. Subject shows bottles, total and "see customer notes" when there are notes.
+- customerWorkQueue prices each order line (pricedOrderLines_: same SKU tier / override / account-deal prices
+  the Badger invoice uses) and returns order_catalog (active, priced SKUs) for the Hub's "Add a product".
+- New staff action updateOnlineOrderLines (add or remove a product on an order with no Badger invoice that is
+  not Completed or Cancelled; only active SKUs; same SKU and unit adds to the existing line; the last line
+  can't be removed). Recomputes Line Count / Requested Cases / Requested Bottles / Bottle Equivalent and logs
+  to the Customer Workflow Log and Hub Audit Log (UPDATE_ORDER_LINES).
+
 CHANGES IN 2026.11.05.62-APP
 Fixes from chat's Phase 3 review (claude/chat-review-findings-sequences-phase-3-2026-11-05.md):
 - Shared addresses: the Directory pass of writeSequencePlan_() matches a leftover Sequence ID by Account ID, or
