@@ -4,10 +4,11 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 import { readFile } from "node:fs/promises";
+import { readBackend } from "./helpers/backend-source.mjs";
 
 const read = path => readFile(new URL(`../${path}`, import.meta.url), "utf8");
 const [signup, index, backend, staffProxy, publicProxy] = await Promise.all([
-  read("customer-signup.html"), read("index.html"), read("apps-script/Code.gs"), read("netlify/functions/inventory.js"), read("netlify/functions/customer.js"),
+  read("customer-signup.html"), read("index.html"), readBackend(), read("netlify/functions/inventory.js"), read("netlify/functions/customer.js"),
 ]);
 
 test("paper mode saves through the signed-in staff proxy, never the public form", () => {

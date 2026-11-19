@@ -5,6 +5,7 @@ import test from "node:test";
 import assert from "node:assert/strict";
 import vm from "node:vm";
 import { readFile } from "node:fs/promises";
+import { readBackend } from "./helpers/backend-source.mjs";
 
 const root = new URL("../", import.meta.url);
 const HUB_ID = "1tWJ2ZnFT15cjuk7qvCWbJUJX1pAQYYsbSy5owWa8Uzo";
@@ -109,7 +110,7 @@ function fixture() {
 }
 
 async function harness(state = fixture()) {
-  const code = await readFile(new URL("apps-script/Code.gs", root), "utf8");
+  const code = await readBackend();
   const properties = new Map();
   const cache = new Map();
   const workbook = (id, sheets) => ({ getId: () => id, getSheetByName: name => sheets[name] || null, getSheets: () => Object.values(sheets) });

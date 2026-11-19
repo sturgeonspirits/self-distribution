@@ -4,12 +4,13 @@ import test from "node:test";
 import assert from "node:assert/strict";
 import vm from "node:vm";
 import { readFile } from "node:fs/promises";
+import { readBackend } from "./helpers/backend-source.mjs";
 
 const root = new URL("../", import.meta.url);
 const MIN = 60 * 1000;
 
 async function backend({ config = {}, mailerResult } = {}) {
-  const code = await readFile(new URL("apps-script/Code.gs", root), "utf8");
+  const code = await readBackend();
   const properties = new Map();
   const fetches = [];
   const context = {
@@ -109,7 +110,7 @@ test("real sends are recorded; tests, replays and reads are not", async () => {
 });
 
 test("the campaign batch sends only what the budget allows and stops on a hold", async () => {
-  const source = await readFile(new URL("apps-script/Code.gs", root), "utf8");
+  const source = await readBackend();
   const batch = source.slice(source.indexOf("function apiSendOutreachCampaignBatch_"), source.indexOf("// ---------- Inbound reply checker"));
   // Budget is read inside the script lock, before any recipient is touched.
   assert.ok(batch.indexOf("lock.tryLock") < batch.indexOf("outreachSendAllowance_(Date.now())"));
@@ -127,7 +128,7 @@ test("the campaign batch sends only what the budget allows and stops on a hold",
 });
 
 test("Send remaining can start the paced schedule now", async () => {
-  const source = await readFile(new URL("apps-script/Code.gs", root), "utf8");
+  const source = await readBackend();
   const schedule = source.slice(source.indexOf("function apiScheduleOutreachCampaign_"), source.indexOf("function apiCancelOutreachCampaignSchedule_"));
   assert.match(schedule, /const check = startNow \? \{ send_at:new Date\(\) \} : campaignScheduleValidation_\(p\.send_at, new Date\(\)\);/);
   assert.match(schedule, /"Sending started\."/);

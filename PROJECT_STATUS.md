@@ -16,7 +16,7 @@ History, kept word for word:
 | Component | Source version | Deployment state |
 | --- | --- | --- |
 | Netlify web app and staff proxy | `2026.11.19.85-WEB` (page, staff proxy) / `2026.11.19.81-WEB` (signup page) on `codex/work` | **`.85` pending promotion:** opening a section shows a stale saved copy at once and swaps in the rebuilt one; loads after a save ask for a rebuild; `?order=`/`?application=` links wait for current data; the proxy sends refresh/rebuild reads once with a 24.5 s window. **Live `.82`** (promoted `22838d6`, 2026-11-19): Applications list starts on open applications; failed first Orders & Accounts load retries once and says it didn't load; plus `.81` paper forms, `?application=` links, Done grouped by business, visit results, Print invoice. Sign-up `.81`; order and sell sheet `.58`. |
-| Inventory API Apps Script | `2026.11.19.84-APP` on `codex/work` | **`.84` pending deploy:** speed fixes 1-3 from `claude/load-speed-and-code-split-plan-2026-11-19.md` (per-screen cache groups, stale copy served while one guarded rebuild runs, jobs rebuild what they changed, refresh reuses Badger data). **Live `.83`** (deployed 2026-11-19): account matching reads "&" as "and", ignores a leading "The", accepts an email only one Directory business uses; includes `.80`/`.78`/`.76`. |
+| Inventory API Apps Script | `2026.11.19.86-APP` on `codex/work` | **`.86` pending deploy (`apps-script/deploy.sh`):** Code.gs split into 12 parts (`01-core.gs` to `12-task-manager.gs`), continuous pieces of the old file in the same order; no behavior change. **Live `.84`** (deployed 2026-11-19; clasp test deploy made version 88): speed fixes 1-3 (per-screen cache groups, stale copy served while one guarded rebuild runs, jobs rebuild what they changed, refresh reuses Badger data); includes `.83`/`.80`/`.78`/`.76`. |
 | Distribution Outreach Apps Script | `2026.11.05.35-APP` in `docs/reference/distribution-outreach/Code.gs` | **Deployed 2026-11-05** (project **distribution outreach**, attached to **Distribution Hub**). |
 | Public customer Netlify proxy | `2026.10.08.5-WEB` | Deployed 2026-10-08. |
 | Badger invoice parser | `2026.11.17.1` in `docs/reference/badger-parser/Code.gs` | **`2026.11.17.1` pending deploy:** numbers above 170 kept as Badger has them (SS171 and SS0171 are two invoices). `2026.10.08.3` live in the Badger Invoice Tracker since 2026-10-08; daily 5:45 am import reads Badger directly (no PDFs). Watch: a new Badger product spelling may need a row in the Sales Data product table (N–O). |
@@ -54,10 +54,10 @@ Setup steps recorded in the history whose completion was **not re-verified** on 
 ## Future-push backlog
 
 - Outreach Campaigns UI: give **Create campaign** a visually distinct draft/primary color from the adjacent **Review campaign** buttons, so starting a new campaign cannot be mistaken for opening an existing one.
-- Possible: split the Inventory API `Code.gs` into subject files (constants, core, inventory, orders and accounts, outreach, campaigns, Badger). Only after deploys use `clasp`; as its own release (analysis 2026-10-17).
 
 ## Recent changes (one line each; details in `docs/history/` and git)
 
+- 2026-11-19 `.86-APP` (Claude): Inventory API Code.gs (12,458 lines) split into 12 parts by area, each a continuous piece of the old file in its old order (joined, they equal the old file byte for byte apart from the part banners and header), so load order and behavior are unchanged. Tests read the parts joined (`tests/helpers/backend-source.mjs`); `tests/clasp-deploy.test.mjs` checks each part parses alone and no name is declared twice.
 - 2026-11-19 (Claude): Inventory API deploys with clasp. `apps-script/` now holds every file of the Apps Script project (added profiler.gs, campaignrunner.gs, Index.html and appsscript.json from a `clasp clone`; deployed Code.gs matched the repo), `.clasp.json` (script ID) and `deploy.sh` (push + update the live deployment). Page `.85` and Inventory API `.84` are live (promoted `17f202a`).
 - 2026-11-19 `.84-APP` / web `.85-WEB` (Claude): speed fixes 1-3. Measured: Orders & Accounts rebuild 18 s (account build 12 s), Outreach 6 s, ~4 s fixed per request; every save and several 5-15-minute jobs cleared all three screen caches. Now per-group caches, stale-while-rebuilding, job rebuilds, refresh without the Badger re-read, single-attempt rebuild reads. Tests: `tests/read-cache.test.mjs`. Not done yet: steps 4-5 (faster account build, fixed per-request cost) and the Code.gs split.
 - 2026-11-19: Karl deployed Inventory API `.83`; Claude promoted `22838d6` (page `.82`). 1890 Pub duplicate Directory row (ACC-ECE16…) removed; its application now points at ACC-B6F78….
@@ -122,7 +122,7 @@ Every deploy handoff must name the Apps Script project as it appears in Apps Scr
 
 | Repo source | Apps Script project | Attached to (container) | Editor |
 | --- | --- | --- | --- |
-| `apps-script/` (Code.gs, profiler.gs, campaignrunner.gs, Index.html, appsscript.json; deploy with `apps-script/deploy.sh`) | **Inventory API** | **Distribution Hub - Inventory Backend** | https://script.google.com/u/0/home/projects/1mUm3iOIJYpXkd36PsTqvi7uBGlPL7NokZwJLgdtZ3oSJTdCAuN3l9p-b/edit |
+| `apps-script/` (01-core.gs to 12-task-manager.gs, profiler.gs, campaignrunner.gs, Index.html, appsscript.json; deploy with `apps-script/deploy.sh`) | **Inventory API** | **Distribution Hub - Inventory Backend** | https://script.google.com/u/0/home/projects/1mUm3iOIJYpXkd36PsTqvi7uBGlPL7NokZwJLgdtZ3oSJTdCAuN3l9p-b/edit |
 | `docs/reference/distribution-outreach/Code.gs` | **distribution outreach** | **Distribution Hub** | https://script.google.com/u/0/home/projects/1T7vAcnmNjZsI8Ym9udfbsi4DDuoDB82SNeoQmjtKTiR0PHer6g_XuFan/edit |
 | `docs/reference/badger-parser/Code.gs` | tracker's script (file `Invoice Parser.gs`) | **Badger Invoice Tracker** | Extensions > Apps Script in the tracker |
 
@@ -141,7 +141,7 @@ Every deploy handoff must name the Apps Script project as it appears in Apps Scr
 | Customer order request | `order.html` |
 | Staff Netlify proxy | `netlify/functions/inventory.js` |
 | Public Netlify proxy | `netlify/functions/customer.js` |
-| Inventory API Apps Script (project **Inventory API**) | `apps-script/Code.gs` |
+| Inventory API Apps Script (project **Inventory API**) | `apps-script/01-core.gs` to `12-task-manager.gs` (version header in 01-core.gs) |
 | Distribution Outreach Apps Script (project **distribution outreach**) | `docs/reference/distribution-outreach/Code.gs` |
 | Badger invoice parser (Badger Invoice Tracker) | `docs/reference/badger-parser/Code.gs` |
 | Regression tests | `tests/security-workflow.test.mjs` |
@@ -230,7 +230,7 @@ Production web deploys are Netlify Git builds from `codex/distribution-system-fo
 ### Inventory API Apps Script change (project **Inventory API**, attached to **Distribution Hub - Inventory Backend**)
 
 1. Push to `codex/work` and fast-forward Karl's Mac checkout (`~/self-distribution-app`).
-2. Karl runs `~/self-distribution-app/apps-script/deploy.sh` (clasp, set up 2026-11-19; signed in as sturgeonspirits@gmail.com). It checks the Code.gs header matches `APP_VERSION`, uploads every file in `apps-script/` (the upload replaces the project's files), creates a version and moves web app deployment `AKfycbx81…` to it (same URL). Fallback: paste the complete Code.gs, then Deploy > Manage deployments > edit > New version.
+2. Karl runs `~/self-distribution-app/apps-script/deploy.sh` (clasp, set up 2026-11-19; signed in as sturgeonspirits@gmail.com). It checks the 01-core.gs header matches `APP_VERSION` and that every part is present, uploads every file in `apps-script/` (the upload replaces the project's files), creates a version and moves web app deployment `AKfycbx81…` to it (same URL). (Pasting is no longer practical: 12 files.)
 3. Verify the live API reports the new `APP_VERSION` (Hub > Orders & Accounts > System status, or `hubSystemStatus`).
 4. If a web release depends on it, deploy the Apps Script first, then promote Netlify.
 

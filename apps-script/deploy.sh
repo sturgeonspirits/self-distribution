@@ -6,17 +6,27 @@
 # script.google.com/home/usersettings, then clasp login (as the account that owns the project).
 #
 # Run from anywhere:  ~/self-distribution-app/apps-script/deploy.sh
-# The push replaces every file in the Apps Script project with the files in this folder (Code.gs, profiler.gs,
-# campaignrunner.gs, Index.html, appsscript.json). Add a file here, not only in the editor, or the next deploy removes it.
+# The push replaces every file in the Apps Script project with the files in this folder (01-core.gs to
+# 12-task-manager.gs, profiler.gs, campaignrunner.gs, Index.html, appsscript.json). Add a file here, not only in the
+# editor, or the next deploy removes it. The numbered parts load in the order listed in .clasp.json (filePushOrder).
 set -euo pipefail
 cd "$(dirname "$0")"
 
 DEPLOYMENT_ID="AKfycbx81PgDh7ZdlNbqXvi9ieL3YkD3kKBFdA-bhY6bxZYdL2TUcTT93U4NtsrmSahTbb2E9A"
 
-VERSION="$(sed -n 's/^const APP_VERSION = "\(.*\)";$/\1/p' Code.gs | head -1)"
-HEADER="$(sed -n 's/^ \* App version: //p' Code.gs | head -1)"
+VERSION="$(sed -n 's/^const APP_VERSION = "\(.*\)";$/\1/p' 01-core.gs | head -1)"
+HEADER="$(sed -n 's/^ \* App version: //p' 01-core.gs | head -1)"
 if [ -z "$VERSION" ] || [ "$VERSION" != "$HEADER" ]; then
-  echo "Stopped: Code.gs header says '$HEADER' but APP_VERSION is '$VERSION'. Fix the header first." >&2
+  echo "Stopped: 01-core.gs header says '$HEADER' but APP_VERSION is '$VERSION'. Fix the header first." >&2
+  exit 1
+fi
+if [ -e Code.gs ]; then
+  echo "Stopped: an old Code.gs is in this folder. The code now lives in 01-core.gs to 12-task-manager.gs; remove Code.gs." >&2
+  exit 1
+fi
+MISSING="$(sed -n 's/^ *"\([0-9][0-9]-[a-z-]*\.gs\)",\{0,1\}$/\1/p' .clasp.json | while read -r part; do [ -e "$part" ] || echo "$part"; done)"
+if [ -n "$MISSING" ]; then
+  echo "Stopped: parts listed in .clasp.json are missing: $MISSING" >&2
   exit 1
 fi
 

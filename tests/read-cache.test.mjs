@@ -4,8 +4,9 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 import { readFile } from "node:fs/promises";
+import { readBackend } from "./helpers/backend-source.mjs";
 
-const backend = await readFile(new URL("../apps-script/Code.gs", import.meta.url), "utf8");
+const backend = await readBackend();
 const index = await readFile(new URL("../index.html", import.meta.url), "utf8");
 const proxy = await readFile(new URL("../netlify/functions/inventory.js", import.meta.url), "utf8");
 

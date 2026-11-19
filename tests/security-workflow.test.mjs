@@ -4,6 +4,7 @@ import assert from "node:assert/strict";
 import { readFile } from "node:fs/promises";
 import { randomUUID, createHmac } from "node:crypto";
 import vm from "node:vm";
+import { readBackend } from "./helpers/backend-source.mjs";
 
 const root = new URL("../", import.meta.url);
 
@@ -245,7 +246,7 @@ test("campaign snapshots use one controlled upstream attempt", async () => {
 });
 
 test("Drive relay slot hashing matches between Apps Script and Netlify", async () => {
-  const script = await readFile(new URL("apps-script/Code.gs", root), "utf8");
+  const script = await readBackend();
   const gsSource = script.slice(script.indexOf("function relaySlotIndex_"), script.indexOf("function relaySlotIds_"));
   const gsIndex = new Function("RELAY_SLOT_COUNT", `${gsSource}; return relaySlotIndex_;`)(32);
   const relay = await readFile(new URL("netlify/lib/drive-relay.js", root), "utf8");
@@ -405,7 +406,7 @@ test("roles and workspace areas are enforced server-side and revoked users lose 
 
 test("campaign bulk exclusion and external contact logging remain staff-scoped", async () => {
   const source = await readFile(new URL("netlify/functions/inventory.js", root), "utf8");
-  const script = await readFile(new URL("apps-script/Code.gs", root), "utf8");
+  const script = await readBackend();
   assert.match(source, /"setOutreachCampaignRecipientExclusions"/);
   assert.match(source, /"logOutreachContact"/);
   assert.match(script, /function apiSetOutreachCampaignRecipientExclusions_/);
@@ -415,7 +416,7 @@ test("campaign bulk exclusion and external contact logging remain staff-scoped",
 
 test("Badger invoice links are staff-scoped and ledger matching stays account-based", async () => {
   const source = await readFile(new URL("netlify/functions/inventory.js", root), "utf8");
-  const script = await readFile(new URL("apps-script/Code.gs", root), "utf8");
+  const script = await readBackend();
   const page = await readFile(new URL("index.html", root), "utf8");
   assert.match(source, /"linkBadgerInvoice"/);
   assert.match(source, /\["linkBadgerInvoice", "orders"\]/);
@@ -465,7 +466,7 @@ test("Badger invoice links are staff-scoped and ledger matching stays account-ba
 });
 
 test("staff invoice links teach customer-name matching, but ignores do not", async () => {
-  const script = await readFile(new URL("apps-script/Code.gs", root), "utf8");
+  const script = await readBackend();
   const link = script.slice(script.indexOf("function apiLinkBadgerInvoice_"), script.indexOf("function buildCustomerAccounts_"));
   assert.match(link, /const learned = !ignored && upsertBadgerCustomerAlias_\(/);
   assert.match(script, /const BADGER_CUSTOMER_ALIASES_SHEET_NAME = "Badger Customer Aliases"/);
@@ -485,7 +486,7 @@ test("staff invoice links teach customer-name matching, but ignores do not", asy
 });
 
 test("large read responses are compressed and reads retry within the proxy limit", async () => {
-  const script = await readFile(new URL("apps-script/Code.gs", root), "utf8");
+  const script = await readBackend();
   const proxy = await readFile(new URL("netlify/functions/inventory.js", root), "utf8");
   assert.match(script, /READ_ACTIONS\.has\(action\) && String\(e\?\.parameter\?\.gz \|\| ""\) === "1" \? compressedText_\(payload\)/);
   assert.match(script, /Utilities\.gzip\(/);
@@ -501,7 +502,7 @@ test("large read responses are compressed and reads retry within the proxy limit
 });
 
 test("campaign freeze timeouts wait for the snapshot instead of re-creating it", async () => {
-  const script = await readFile(new URL("apps-script/Code.gs", root), "utf8");
+  const script = await readBackend();
   const page = await readFile(new URL("index.html", root), "utf8");
   const rows = script.slice(script.indexOf("function campaignRecipientRows_"), script.indexOf("function campaignRecipientSummaryRows_"));
   assert.doesNotMatch(rows, /matches\.map\(match => \(\{ row:match\.getRow\(\), values:sheet\.getRange/);
@@ -515,7 +516,7 @@ test("campaign freeze timeouts wait for the snapshot instead of re-creating it",
 });
 
 test("SKUs Out of Stock checkbox blocks ordering without adding sheet columns", async () => {
-  const script = await readFile(new URL("apps-script/Code.gs", root), "utf8");
+  const script = await readBackend();
   const order = await readFile(new URL("order.html", root), "utf8");
   assert.match(order, /href="\/sell-sheet\.html" target="_blank" rel="noopener noreferrer">View sell sheet/, "order form keeps the sell sheet available without replacing an in-progress order");
   const catalog = script.slice(script.indexOf("function apiListSkus_"), script.indexOf("function apiAddSkuToStoreUnlocked_"));
@@ -525,7 +526,7 @@ test("SKUs Out of Stock checkbox blocks ordering without adding sheet columns", 
 });
 
 test("learned aliases prefer the exact customer name and always learn staff links", async () => {
-  const script = await readFile(new URL("apps-script/Code.gs", root), "utf8");
+  const script = await readBackend();
   assert.match(script, /const aliases = \{ by_name:new Map\(\), by_key:new Map\(\) \}/);
   assert.match(script, /customerAliases\.by_name\.get\(canonicalBadgerAliasName_\(invoice\.customer_name\)\)/);
   assert.match(script, /looseAliasAccounts\.length === 1/);
@@ -535,7 +536,7 @@ test("learned aliases prefer the exact customer name and always learn staff link
 });
 
 test("forced refreshes save their rebuild to the read cache", async () => {
-  const script = await readFile(new URL("apps-script/Code.gs", root), "utf8");
+  const script = await readBackend();
   // 2026.11.19.84-APP: a refresh no longer re-reads the Badger tracker unless sources=1; rebuild=1 is the page's follow-up.
   assert.match(script, /cachedReadPayload_\("customer_work_queue", \(\) => apiGetCustomerWorkQueue_\(\{ _cache_bypass:true, _refresh_sources:String\(p\?\.sources \|\| ""\) === "1" \}\), forceRefresh, String\(p\?\.rebuild \|\| ""\) === "1" \? "rebuild" : ""\)/);
   assert.match(script, /cachedReadPayload_\("outreach_slim", [^\n]+, forceRefresh, String\(p\?\.rebuild \|\| ""\) === "1" \? "rebuild" : ""\)/);
@@ -555,7 +556,7 @@ test("browser sends CSV imports in small parts", async () => {
 });
 
 test("business import writes directory and log rows in batches", async () => {
-  const script = await readFile(new URL("apps-script/Code.gs", root), "utf8");
+  const script = await readBackend();
   const importer = script.slice(script.indexOf("function apiImportOutreachBusinesses_"), script.indexOf("function apiRecalculateOutreachMiles_"));
   assert.match(importer, /directory\.getRange\(directoryStartRow, 1, pendingDirectoryRows\.length, directoryWidth\)\.setValues/);
   assert.match(importer, /importRows\.getRange\(importRows\.getLastRow\(\) \+ 1, 1, importLogRows\.length/);
@@ -564,7 +565,7 @@ test("business import writes directory and log rows in batches", async () => {
 });
 
 test("account ID repair writes only identity columns and isolates tab failures", async () => {
-  const script = await readFile(new URL("apps-script/Code.gs", root), "utf8");
+  const script = await readBackend();
   const backfill = script.slice(script.indexOf("function backfillAccountIdsInSheet_"), script.indexOf("function ensureAccountIdentityModel_"));
   assert.match(backfill, /sheet\.getRange\(2, h\.account_id \+ 1, rowCount, 1\)\.setValues\(accountIdValues\)/);
   assert.doesNotMatch(backfill, /setValues\(rows\)/);
@@ -576,7 +577,7 @@ test("account ID repair writes only identity columns and isolates tab failures",
 });
 
 test("contact logging schedules external email follow-up and repair normalizes legacy priority", async () => {
-  const script = await readFile(new URL("apps-script/Code.gs", root), "utf8");
+  const script = await readBackend();
   assert.match(script, /if \(!outcome\) \{\s+const settings = getOutreachCampaignSettings_\(\)/);
   assert.match(script, /set\(\["status"\], "Sent"\)/);
   assert.match(script, /set\(\["next_follow-up", "next_follow_up"\], automaticFollowUp\)/);
@@ -586,7 +587,7 @@ test("contact logging schedules external email follow-up and repair normalizes l
 });
 
 test("bulk exclusions only write selected status and detail cells", async () => {
-  const script = await readFile(new URL("apps-script/Code.gs", root), "utf8");
+  const script = await readBackend();
   const start = script.indexOf("function apiSetOutreachCampaignRecipientExclusions_");
   const end = script.indexOf("function apiUpdateOutreachCampaignRecipient_", start);
   const bulk = script.slice(start, end);
@@ -596,7 +597,7 @@ test("bulk exclusions only write selected status and detail cells", async () => 
 });
 
 test("engagement clicks retain identity and scanner protection", async () => {
-  const script = await readFile(new URL("apps-script/Code.gs", root), "utf8");
+  const script = await readBackend();
   assert.match(script, /ensureHeaderColumns_\(engagement, \["Account ID", "Target", "Stage"\]\)/);
   assert.match(script, /permanentId_\("ENG"\)/);
   assert.match(script, /Possible link scanner/);
@@ -605,7 +606,7 @@ test("engagement clicks retain identity and scanner protection", async () => {
 });
 
 test("core Hub read paths use versioned cache fallbacks and timing metadata", async () => {
-  const script = await readFile(new URL("apps-script/Code.gs", root), "utf8");
+  const script = await readBackend();
   const page = await readFile(new URL("index.html", root), "utf8");
   assert.match(script, /function cachedReadPayload_/);
   assert.match(script, /hub_read:.*scope.*version/);
@@ -679,7 +680,7 @@ test("Hub review: the public proxy forwards only the action on GET and strips se
 });
 
 test("Hub review: a public application cannot re-subscribe an opted-out address or replace its details", async () => {
-  const backend = await readFile(new URL("apps-script/Code.gs", root), "utf8");
+  const backend = await readBackend();
   const start = backend.indexOf("function upsertNewsletterFromApplication_(");
   const source = backend.slice(start, backend.indexOf("\n}\n", start) + 3);
   const headers = ["contact_id", "account_id", "name", "email", "organization", "relationship_type", "status", "consent_source", "consent_date", "topics", "notes", "updated_at", "updated_by", "app_version"];
@@ -710,7 +711,7 @@ test("Hub review: a public application cannot re-subscribe an opted-out address 
 });
 
 test("Review fixes: public errors and order reply trimmed, writes refused over GET, mailer menu paths honour text Do Not Email", async () => {
-  const backend = await readFile(new URL("apps-script/Code.gs", root), "utf8");
+  const backend = await readBackend();
   const proxy = await readFile(new URL("netlify/functions/inventory.js", root), "utf8");
   const mailer = await readFile(new URL("docs/reference/distribution-outreach/Code.gs", root), "utf8");
   const fn = name => { const start = backend.indexOf(`\nfunction ${name}(`) + 1; assert.ok(start > 0, name); return backend.slice(start, backend.indexOf("\n}\n", start) + 2); };
@@ -744,7 +745,7 @@ test("Review fixes: public errors and order reply trimmed, writes refused over G
 });
 
 test("Inbound reply checker: matching, quoted-text removal, stop rules, respond-by times, safe stops, no AI calls", async () => {
-  const backend = await readFile(new URL("apps-script/Code.gs", root), "utf8");
+  const backend = await readBackend();
   const mailer = await readFile(new URL("docs/reference/distribution-outreach/Code.gs", root), "utf8");
   const proxy = await readFile(new URL("netlify/functions/inventory.js", root), "utf8");
   const html = await readFile(new URL("index.html", root), "utf8");
@@ -1127,7 +1128,7 @@ test("Inbound reply checker: matching, quoted-text removal, stop rules, respond-
 });
 
 test("Order online invite: current and lapsed customers, opt-outs, once per account, and the message carries their own ordering link and footer", async () => {
-  const backend = await readFile(new URL("apps-script/Code.gs", root), "utf8");
+  const backend = await readBackend();
   // Each function runs to the next top-level declaration (brace counting would trip on regex braces).
   const fn = name => { const start = backend.indexOf(`\nfunction ${name}(`) + 1; assert.ok(start > 0, name); const end = backend.slice(start + 1).search(/\n(function |const |let |\/\/ ----)/); return backend.slice(start, start + 1 + end); };
   const sentEmails = new Set(["invited@example.test"]);
@@ -1229,7 +1230,7 @@ test("Order online invite: current and lapsed customers, opt-outs, once per acco
 });
 
 test("welcome email: the send is recorded before the status change, and a refused status never reports a sent email as failed", async () => {
-  const backend = await readFile(new URL("apps-script/Code.gs", root), "utf8");
+  const backend = await readBackend();
   const send = backend.slice(backend.indexOf("function apiSendApplicationWelcome_"), backend.indexOf("function apiUpdateOnlineOrderRequest_"));
   // 2026-10-12: Zoho accepted the first real welcome, then the sheet's status dropdown refused "Account active".
   assert.ok(send.indexOf('set("welcome_email_message_id"') < send.indexOf('set("workflow_status"'), "the send is recorded before the status change");
@@ -1241,7 +1242,7 @@ test("welcome email: the send is recorded before the status change, and a refuse
 });
 
 test("Added to Badger: a checkbox on the application, saved to the Directory row", async () => {
-  const backend = await readFile(new URL("apps-script/Code.gs", root), "utf8");
+  const backend = await readBackend();
   const index = await readFile(new URL("index.html", root), "utf8");
   const update = backend.slice(backend.indexOf("function apiUpdateCustomerApplication_"), backend.indexOf("function apiUpdateOnlineOrderRequest_"));
   assert.match(update, /"Added to Badger", "Badger Customer ID"\]/);
@@ -1358,7 +1359,7 @@ test("tracking redirect allowlists destinations and ignores invalid signatures",
 test("the canonical-host redirect is first and public-site URL migration is safe and idempotent", async () => {
   const [toml, backend] = await Promise.all([
     readFile(new URL("netlify.toml", root), "utf8"),
-    readFile(new URL("apps-script/Code.gs", root), "utf8"),
+    readBackend(),
   ]);
   const redirects = toml.slice(toml.indexOf("[[redirects]]"));
   assert.match(redirects, /\[\[redirects\]\]\n  from = "https:\/\/distribution-hub\.netlify\.app\/\*"\n  to = "https:\/\/distribution\.sturgeonspirits\.com\/:splat"\n  status = 301\n  force = true/);
@@ -1474,7 +1475,7 @@ test("sell-sheet accepts only unexpired signed access tokens and sends the accou
 
 test("sell-sheet implementation keeps public catalog prices separate and installs editable structure", async () => {
   const [backend, page, functionSource, config] = await Promise.all([
-    readFile(new URL("apps-script/Code.gs", root), "utf8"), readFile(new URL("sell-sheet.html", root), "utf8"),
+    readBackend(), readFile(new URL("sell-sheet.html", root), "utf8"),
     readFile(new URL("netlify/functions/sell-sheet.js", root), "utf8"), readFile(new URL("netlify.toml", root), "utf8"),
   ]);
   const listSkus = backend.slice(backend.indexOf("function apiListSkus_"), backend.indexOf("function sellSheetSectionForSku_"));
@@ -1573,7 +1574,7 @@ test("sell-sheet render keeps public output price-free and renders authorized pr
 });
 
 test("Karl-only test rendering supplies non-empty HTML with an unsigned x=test marker", async () => {
-  const backend = await readFile(new URL("apps-script/Code.gs", root), "utf8");
+  const backend = await readBackend();
   const rendererSource = backend.slice(backend.indexOf("function outreachPlainTextToHtml_"), backend.indexOf("function outreachFieldLabel_"));
   const renderMessage = new Function(
     "Utilities", "PropertiesService", "outreachValue_", "outreachSegmentTemplateKey_", "outreachDisplayBusinessName_", "escapeOutreachHtml_", "outreachTemplateParts_", "renderOutreachTemplate_", "outreachMonthlyContentValues_", "outreachHasRecentBadgerInvoice_", "OUTREACH_CUSTOMER_HISTORY_RELATIONSHIPS", "applicationOrderingUrl_",
@@ -1609,7 +1610,7 @@ test("Karl-only test rendering supplies non-empty HTML with an unsigned x=test m
 });
 
 test("monthly outreach content escapes merge fields and gates the tasting offer per recipient", async () => {
-  const backend = await readFile(new URL("apps-script/Code.gs", root), "utf8");
+  const backend = await readBackend();
   const monthlySource = backend.slice(backend.indexOf("function outreachMonthlyContentValues_"), backend.indexOf("function outreachRecentBadgerInvoiceAccountIds_"));
   const rendererSource = backend.slice(backend.indexOf("function escapeOutreachHtml_"), backend.indexOf("function outreachTemplateParts_"));
   const monthlyValues = new Function("outreachValue_", `${monthlySource}\nreturn outreachMonthlyContentValues_;`)(
@@ -1638,7 +1639,7 @@ test("monthly outreach content escapes merge fields and gates the tasting offer 
 });
 
 test("monthly tasting lookup matches recent Badger invoices conservatively and fails closed", async () => {
-  const backend = await readFile(new URL("apps-script/Code.gs", root), "utf8");
+  const backend = await readBackend();
   const lookupSource = backend.slice(backend.indexOf("function outreachRecentBadgerInvoiceAccountIds_"), backend.indexOf("function outreachRowsMatchingCell_"));
   const monthsAgo = count => {
     const date = new Date();
@@ -1709,7 +1710,7 @@ test("monthly tasting lookup matches recent Badger invoices conservatively and f
 
 test("Cocktail list campaigns keep newsletter eligibility, cross-send guards, and the non-sales template", async () => {
   const [backend, index, proxy] = await Promise.all([
-    readFile(new URL("apps-script/Code.gs", root), "utf8"),
+    readBackend(),
     readFile(new URL("index.html", root), "utf8"),
     readFile(new URL("netlify/functions/inventory.js", root), "utf8"),
   ]);
@@ -1764,7 +1765,7 @@ test("Cocktail list campaigns keep newsletter eligibility, cross-send guards, an
 
 test("Cocktail list review fixes memoize cooldowns, suppress opt-outs, validate mailer contacts, and unsubscribe duplicates", async () => {
   const [backend, mailer] = await Promise.all([
-    readFile(new URL("apps-script/Code.gs", root), "utf8"),
+    readBackend(),
     readFile(new URL("docs/reference/distribution-outreach/Code.gs", root), "utf8"),
   ]);
   const recentSource = backend.slice(backend.indexOf("function outreachRecentSendIndex_"), backend.indexOf("function cocktailListMessage_"));
@@ -1848,7 +1849,7 @@ test("Cocktail list review fixes memoize cooldowns, suppress opt-outs, validate 
 
 test("source contains formula protection, global error listeners, and recoverable action state", async () => {
   const [backend, index, signup, order, mailer] = await Promise.all([
-    readFile(new URL("apps-script/Code.gs", root), "utf8"),
+    readBackend(),
     readFile(new URL("index.html", root), "utf8"),
     readFile(new URL("customer-signup.html", root), "utf8"),
     readFile(new URL("order.html", root), "utf8"),
@@ -2031,7 +2032,7 @@ test("narrow Outreach reply panels allow grid and flex children to shrink", asyn
 });
 
 test("formula-like staff text is stored with a literal-text prefix", async () => {
-  const backend = await readFile(new URL("apps-script/Code.gs", root), "utf8");
+  const backend = await readBackend();
   const publicTextSource = backend.match(/function publicText_\([\s\S]*?\n\}/)?.[0];
   const sheetSafeSource = backend.match(/function sheetSafeText_\([\s\S]*?\n\}/)?.[0];
   assert.ok(publicTextSource && sheetSafeSource);
@@ -2041,7 +2042,7 @@ test("formula-like staff text is stored with a literal-text prefix", async () =>
 });
 
 test("outreach details retain the latest tracked link target without changing the clicked badge", async () => {
-  const backend = await readFile(new URL("apps-script/Code.gs", root), "utf8");
+  const backend = await readBackend();
   const index = await readFile(new URL("index.html", root), "utf8");
   assert.match(backend, /last_click_target/);
   assert.match(backend, /if \(latestClick !== summary\.last_clicked && row\.target\) summary\.last_click_target/);
@@ -2052,7 +2053,7 @@ test("outreach details retain the latest tracked link target without changing th
 
 test("campaign reconciliation uses targeted accepted Activity Log records without resending", async () => {
   const [backend, proxy] = await Promise.all([
-    readFile(new URL("apps-script/Code.gs", root), "utf8"),
+    readBackend(),
     readFile(new URL("netlify/functions/inventory.js", root), "utf8"),
   ]);
   const reconciliationSource = backend.slice(backend.indexOf("function campaignAcceptedActivity_"), backend.indexOf("function campaignRecipientFooterHtml_"));
@@ -2070,7 +2071,7 @@ test("campaign reconciliation uses targeted accepted Activity Log records withou
 
 test("campaign rebuilding reconciles first and changes only review-ready snapshots", async () => {
   const [backend, proxy, index] = await Promise.all([
-    readFile(new URL("apps-script/Code.gs", root), "utf8"),
+    readBackend(),
     readFile(new URL("netlify/functions/inventory.js", root), "utf8"),
     readFile(new URL("index.html", root), "utf8"),
   ]);
@@ -2105,7 +2106,7 @@ test("campaign rebuilding reconciles first and changes only review-ready snapsho
 
 test("campaign criteria preview uses centroid distances, JSON rules, and distinct send-time exclusions", async () => {
   const [backend, index, proxy] = await Promise.all([
-    readFile(new URL("apps-script/Code.gs", root), "utf8"),
+    readBackend(),
     readFile(new URL("index.html", root), "utf8"),
     readFile(new URL("netlify/functions/inventory.js", root), "utf8"),
   ]);
@@ -2154,7 +2155,7 @@ test("campaign criteria preview uses centroid distances, JSON rules, and distinc
 
 test("campaign review exclusions are inline and previews use directory fields without rendered email", async () => {
   const [backend, index] = await Promise.all([
-    readFile(new URL("apps-script/Code.gs", root), "utf8"),
+    readBackend(),
     readFile(new URL("index.html", root), "utf8"),
   ]);
   const previewSource = backend.slice(backend.indexOf("function apiPreviewOutreachCampaign_"), backend.indexOf("function apiCreateOutreachCampaign_"));
@@ -2181,7 +2182,7 @@ test("campaign review exclusions are inline and previews use directory fields wi
 
 test("campaign freeze fully rechecks duplicate sends while preview and send stay targeted", async () => {
   const [backend, index] = await Promise.all([
-    readFile(new URL("apps-script/Code.gs", root), "utf8"),
+    readBackend(),
     readFile(new URL("index.html", root), "utf8"),
   ]);
   const freezeSource = backend.slice(backend.indexOf("function campaignEligibleInitialRecords_"), backend.indexOf("function campaignRecipientSnapshotValues_"));
@@ -2205,7 +2206,7 @@ test("campaign freeze fully rechecks duplicate sends while preview and send stay
 
 test("campaign send timeouts retry lock-bound reconciliation before continuing and never resend an unknown result", async () => {
   const [backend, index] = await Promise.all([
-    readFile(new URL("apps-script/Code.gs", root), "utf8"),
+    readBackend(),
     readFile(new URL("index.html", root), "utf8"),
   ]);
   const sendSource = backend.slice(backend.indexOf("function apiSendOutreachCampaignBatch_"), backend.indexOf("function outreachStatusForOutcome_"));
@@ -2231,7 +2232,7 @@ test("campaign send timeouts retry lock-bound reconciliation before continuing a
 });
 
 test("outreach nurture lifecycle handles cocktail replies, tasting visits, and due check-ins", async () => {
-  const backend = await readFile(new URL("apps-script/Code.gs", root), "utf8");
+  const backend = await readBackend();
   const functionSource = (name, nextName) => backend.slice(backend.indexOf(`function ${name}`), backend.indexOf(`function ${nextName}`));
   const statusForOutcome = new Function(`${functionSource("outreachStatusForOutcome_", "appendOutreachActivity_")}; return outreachStatusForOutcome_;`)();
   const nextStage = new Function(`${functionSource("outreachNextStage_", "outreachAddDays_")}; return outreachNextStage_;`)();
@@ -2294,7 +2295,7 @@ test("outreach nurture lifecycle handles cocktail replies, tasting visits, and d
 
 test("campaign builder freezes and delivers the requested outreach stage", async () => {
   const [backend, index] = await Promise.all([
-    readFile(new URL("apps-script/Code.gs", root), "utf8"),
+    readBackend(),
     readFile(new URL("index.html", root), "utf8"),
   ]);
   const criteriaSource = backend.slice(backend.indexOf("function campaignCriteriaFromRequest_"), backend.indexOf("function campaignAudienceLabel_"));
@@ -2317,7 +2318,7 @@ test("campaign builder freezes and delivers the requested outreach stage", async
 
 test("sales campaign criteria restrict Follow-up recipients as well as Initial recipients", async () => {
   const [backend, index] = await Promise.all([
-    readFile(new URL("apps-script/Code.gs", root), "utf8"),
+    readBackend(),
     readFile(new URL("index.html", root), "utf8"),
   ]);
   const source = backend.slice(backend.indexOf("function campaignCriteriaFailures_"), backend.indexOf("function campaignDirectoryRecord_"));
@@ -2333,7 +2334,7 @@ test("sales campaign criteria restrict Follow-up recipients as well as Initial r
 
 test("Deploy A review corrections repair validations and retain a campaign's stage", async () => {
   const [backend, mailer, status] = await Promise.all([
-    readFile(new URL("apps-script/Code.gs", root), "utf8"),
+    readBackend(),
     readFile(new URL("docs/reference/distribution-outreach/Code.gs", root), "utf8"),
     readFile(new URL("PROJECT_STATUS.md", root), "utf8"),
   ]);
@@ -2365,7 +2366,7 @@ test("Deploy A review corrections repair validations and retain a campaign's sta
 
 test("Phase 1 Closed result, campaign display, and duplicate-header guard stay wired", async () => {
   const [backend, index, mailer] = await Promise.all([
-    readFile(new URL("apps-script/Code.gs", root), "utf8"),
+    readBackend(),
     readFile(new URL("index.html", root), "utf8"),
     readFile(new URL("docs/reference/distribution-outreach/Code.gs", root), "utf8"),
   ]);
@@ -2403,7 +2404,7 @@ test("campaign rebuild UI and first-draft save gate preserve review-before-send"
 
 test("Badger Phase 4 keeps payment states, reminder guards, batching, and review controls", async () => {
   const [backend, index, proxy] = await Promise.all([
-    readFile(new URL("apps-script/Code.gs", root), "utf8"),
+    readBackend(),
     readFile(new URL("index.html", root), "utf8"),
     readFile(new URL("netlify/functions/inventory.js", root), "utf8"),
   ]);
@@ -2444,7 +2445,7 @@ test("Badger Phase 4 keeps payment states, reminder guards, batching, and review
 
 test("Badger Phase 5 invoice creation is review-gated and uses a narrow API boundary", async () => {
   const [backend, index, proxy] = await Promise.all([
-    readFile(new URL("apps-script/Code.gs", root), "utf8"),
+    readBackend(),
     readFile(new URL("index.html", root), "utf8"),
     readFile(new URL("netlify/functions/inventory.js", root), "utf8"),
   ]);
@@ -2529,7 +2530,7 @@ test("Badger Phase 5 invoice creation is review-gated and uses a narrow API boun
 
 test("customer billing workflow keeps real Badger invoices distinct from Online requests", async () => {
   const [backend, index, proxy] = await Promise.all([
-    readFile(new URL("apps-script/Code.gs", root), "utf8"),
+    readBackend(),
     readFile(new URL("index.html", root), "utf8"),
     readFile(new URL("netlify/functions/inventory.js", root), "utf8"),
   ]);
@@ -2607,7 +2608,7 @@ test("customer billing workflow keeps real Badger invoices distinct from Online 
 
 test("campaign loading backfills legacy cities once and does not label absent legacy miles", async () => {
   const [backend, index] = await Promise.all([
-    readFile(new URL("apps-script/Code.gs", root), "utf8"),
+    readBackend(),
     readFile(new URL("index.html", root), "utf8"),
   ]);
   const campaignObjectSource = backend.slice(backend.indexOf("function campaignRecipientCityFallbacks_"), backend.indexOf("function apiGetOutreachCampaigns_"));
@@ -2788,7 +2789,7 @@ test("roster errors are retryable server errors, not browser sign-outs", async (
 });
 
 test("scheduled campaign sends validate times, run due campaigns, skip guarded recipients, and pause on mailer failures", async () => {
-  const backend = await readFile(new URL("apps-script/Code.gs", root), "utf8");
+  const backend = await readBackend();
   const functionSource = (name, nextName) => backend.slice(backend.indexOf(`function ${name}`), backend.indexOf(`function ${nextName}`));
   const ACTIVE = ["Scheduled", "Sending"];
   const validate = new Function("CAMPAIGN_SCHEDULE_MAX_DAYS_AHEAD", `${functionSource("campaignScheduleValidation_", "campaignScheduleIsDue_")}; return campaignScheduleValidation_;`)(30);
@@ -2923,7 +2924,7 @@ test("scheduled campaign sends validate times, run due campaigns, skip guarded r
 });
 
 test("Code.gs header names the current APP_VERSION and keeps the prior version's changes", async () => {
-  const backend = await readFile(new URL("apps-script/Code.gs", root), "utf8");
+  const backend = await readBackend();
   const version = backend.match(/const APP_VERSION = "([^"]+)";/)[1];
   assert.match(backend.slice(0, 400), new RegExp(`App version: ${version.replace(/\./g, "\\.")}\\n`));
   assert.doesNotMatch(backend.slice(0, 4000), new RegExp(`CHANGES IN ${version.replace(/\./g, "\\.")}\\n`), "the current version's changes sit under CHANGES IN THIS VERSION");
@@ -2938,7 +2939,7 @@ test("Code.gs header names the current APP_VERSION and keeps the prior version's
 });
 
 test("wholesale prices come from SKU tiers or overrides, customer deals, and Toast stock sets availability", async () => {
-  const backend = await readFile(new URL("apps-script/Code.gs", root), "utf8");
+  const backend = await readBackend();
   const functionSource = (name, nextName) => backend.slice(backend.indexOf(`function ${name}`), backend.indexOf(`function ${nextName}`));
   const toBool = value => value === true || /^(true|yes|1|y)$/i.test(String(value || "").trim());
   const money = new Function(`${functionSource("badgerMoneyToCents_", "badgerMoneyLabel_")}; return badgerMoneyToCents_;`)();
@@ -3004,7 +3005,7 @@ test("wholesale prices come from SKU tiers or overrides, customer deals, and Toa
 });
 
 test("Toast 86 Report import maps stock by exact Toast item name and reports gaps; catalog check finds unpriced products", async () => {
-  const backend = await readFile(new URL("apps-script/Code.gs", root), "utf8");
+  const backend = await readBackend();
   const functionSource = (name, nextName) => backend.slice(backend.indexOf(`function ${name}`), backend.indexOf(`function ${nextName}`));
   const parseCsv = text => text.trim().split(/\r?\n/).map(line => {
     const cells = []; let cell = "", quoted = false;
@@ -3142,7 +3143,7 @@ test("Zoho callback without the matching state cookie recovers instead of showin
 });
 
 test("only a campaign that never sent or attempted email can be deleted", async () => {
-  const backend = await readFile(new URL("apps-script/Code.gs", root), "utf8");
+  const backend = await readBackend();
   const start = backend.indexOf("function campaignDeleteBlocker_");
   const blocker = new Function("CAMPAIGN_DELETABLE_RECIPIENT_STATUSES", `${backend.slice(start, backend.indexOf("\n}\n", start) + 2)}; return campaignDeleteBlocker_;`)(["Ready for review", "Ready to send", "Excluded"]);
   const ch = { status:0, schedule_status:1, sent_count:2 };
@@ -3166,7 +3167,7 @@ test("only a campaign that never sent or attempted email can be deleted", async 
 });
 
 test("campaign deletion is wired, confirmed, audited and hidden from the list", async () => {
-  const [backend, proxy, index] = await Promise.all(["apps-script/Code.gs", "netlify/functions/inventory.js", "index.html"].map(path => readFile(new URL(path, root), "utf8")));
+  const [backend, proxy, index] = await Promise.all(["apps-script/Code.gs", "netlify/functions/inventory.js", "index.html"].map(path => path === "apps-script/Code.gs" ? readBackend() : readFile(new URL(path, root), "utf8")));
   assert.match(backend, /case "deleteOutreachCampaign": res = apiDeleteOutreachCampaign_\(body\); break;/);
   assert.match(backend, /"reopenOutreachCampaign","deleteOutreachCampaign"/);
   const fn = backend.slice(backend.indexOf("function apiDeleteOutreachCampaign_"), backend.indexOf("function apiSendOutreachCampaignBatch_"));
@@ -3184,7 +3185,7 @@ test("campaign deletion is wired, confirmed, audited and hidden from the list", 
 });
 
 test("campaigns can be renamed at any stage except after deletion, writing only the name", async () => {
-  const [backend, proxy, index] = await Promise.all(["apps-script/Code.gs", "netlify/functions/inventory.js", "index.html"].map(path => readFile(new URL(path, root), "utf8")));
+  const [backend, proxy, index] = await Promise.all(["apps-script/Code.gs", "netlify/functions/inventory.js", "index.html"].map(path => path === "apps-script/Code.gs" ? readBackend() : readFile(new URL(path, root), "utf8")));
   assert.match(backend, /case "renameOutreachCampaign": res = apiRenameOutreachCampaign_\(body\); break;/);
   const fn = backend.slice(backend.indexOf("function apiRenameOutreachCampaign_"), backend.indexOf("function apiSendOutreachCampaignBatch_"));
   assert.match(fn, /publicText_\(p\.campaign_name, 120, "Campaign name"\)/, "names are length-limited and formula-safe");
@@ -3196,7 +3197,7 @@ test("campaigns can be renamed at any stage except after deletion, writing only 
 });
 
 test("source-campaign follow-ups find businesses by identity, skip filters in same-businesses mode, and explain who was left out", async () => {
-  const backend = await readFile(new URL("apps-script/Code.gs", root), "utf8");
+  const backend = await readBackend();
   const fn = name => { const start = backend.indexOf(`function ${name}(`); const end = backend.indexOf("\nfunction ", start + 10); return backend.slice(start, end); };
   // The Directory today: rows were sorted since the campaign, so stored source_row values point at other businesses.
   const directory = [
@@ -3269,7 +3270,7 @@ test("source-campaign follow-ups find businesses by identity, skip filters in sa
 });
 
 test("the create window defaults a source campaign to the same businesses and the next email", async () => {
-  const [backend, index] = await Promise.all(["apps-script/Code.gs", "index.html"].map(path => readFile(new URL(path, root), "utf8")));
+  const [backend, index] = await Promise.all(["apps-script/Code.gs", "index.html"].map(path => path === "apps-script/Code.gs" ? readBackend() : readFile(new URL(path, root), "utf8")));
   assert.match(backend, /source\.use_source_audience === true/);
   assert.match(backend, /audience_mode:"source"/);
   assert.match(backend, /if \(criteria\.audience_mode === "source" \|\| criteria\.audience_mode === "sequence"\) return \[\];/);

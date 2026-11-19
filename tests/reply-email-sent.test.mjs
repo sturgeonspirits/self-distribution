@@ -3,6 +3,7 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 import { readFile } from "node:fs/promises";
+import { readBackend } from "./helpers/backend-source.mjs";
 
 test("reply cards waiting on an answer offer Email sent, which closes them as Handled", async () => {
   const index = await readFile(new URL("../index.html", import.meta.url), "utf8");
@@ -16,7 +17,7 @@ test("reply cards waiting on an answer offer Email sent, which closes them as Ha
 });
 
 test("the reply checker skips a second copy of the same email (2026.11.17.69-APP)", async () => {
-  const backend = await readFile(new URL("../apps-script/Code.gs", import.meta.url), "utf8");
+  const backend = await readBackend();
   const start = backend.indexOf("const INBOUND_REPLY_DUPLICATE_WINDOW_MS");
   const end = backend.indexOf("/** Reads new Inbox messages through the mailer");
   const rowsWithSource_ = sheet => sheet.rows;

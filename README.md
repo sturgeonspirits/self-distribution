@@ -19,7 +19,7 @@ This repo contains:
 - `assets/customer-portal.css` — shared customer-page styling
 - `netlify/functions/inventory.js` — proxy to Apps Script
 - `netlify/functions/customer.js` — allowlisted public proxy for signup and order requests
-- `apps-script/Code.gs` — JSON API backend for Google Apps Script
+- `apps-script/` — JSON API backend for Google Apps Script (Inventory API, parts `01-core.gs` to `12-task-manager.gs`; deploy with `apps-script/deploy.sh`)
 - `netlify.toml` — Netlify configuration
 
 The staging outreach review screen saves a personalized subject and message body in `Outreach Drafts`, then supports a final-confirmed, one-recipient-at-a-time send through the separately deployed Distribution Outreach Apps Script. Zoho credentials stay only in that mailer project's Script Properties; the Inventory Backend receives only the mailer web-app URL and a shared service secret. The send path locks server-side, uses an idempotency token, rechecks recipient eligibility and prior sends, records Zoho acceptance/message ID, updates the next stage and follow-up date, and never marks a message sent unless Zoho accepted it.
@@ -68,7 +68,7 @@ The Staff Access tab must include Email, Role, and Active. It may also include S
 
 ## Versioning
 
-Each deployable surface is stamped with its own release version. When updating Apps Script, confirm the leading `App version` and `APP_VERSION` in `apps-script/Code.gs` match. Before a Netlify release, keep the web app footer, `index.html` metadata, staff proxy, and tracking redirect on the same `-WEB` version. The public customer proxy has its own version series.
+Each deployable surface is stamped with its own release version. When updating Apps Script, confirm the leading `App version` and `APP_VERSION` in `apps-script/01-core.gs` match. Before a Netlify release, keep the web app footer, `index.html` metadata, staff proxy, and tracking redirect on the same `-WEB` version. The public customer proxy has its own version series.
 
 ## Deploy flow
 
@@ -77,7 +77,7 @@ Each deployable surface is stamped with its own release version. When updating A
 3. Add Script Properties `OUTREACH_MAILER_SHARED_SECRET` (a new random value at least 24 characters) and, after a Karl-only test succeeds, `OUTREACH_APP_SENDS_ENABLED=true`. Keep the existing `ZOHO_CLIENT_ID`, `ZOHO_CLIENT_SECRET`, and `ZOHO_REFRESH_TOKEN` only in this project.
 4. Deploy Distribution Outreach as a Web App and copy its `/exec` URL.
 5. Open the **staging Inventory Backend** Apps Script project.
-6. Replace its complete `Code.gs` with `apps-script/Code.gs`; do not append snippets.
+6. Run `apps-script/deploy.sh` (clasp) to upload every file in `apps-script/`.
 7. Add Inventory Backend Script Properties `OUTREACH_MAILER_URL` (the Distribution Outreach `/exec` URL) and the same `OUTREACH_MAILER_SHARED_SECRET`. Do not copy Zoho credentials here.
 8. Deploy the Inventory Backend as a Web App and verify its root JSON reports the source `APP_VERSION`.
 9. Keep the existing GitHub-to-Netlify connection and environment variables:
@@ -89,7 +89,7 @@ Each deployable surface is stamped with its own release version. When updating A
 
 ## API auth
 
-- In `apps-script/Code.gs`, keep `REQUIRE_API_KEY = true`
+- In `apps-script/01-core.gs`, keep `REQUIRE_API_KEY = true`
 - Add Script Property `API_KEY` in Apps Script
 - Add Netlify env var `API_KEY`
 - Never use the API key, outreach secret, or Zoho Mail refresh token as a staff-login secret

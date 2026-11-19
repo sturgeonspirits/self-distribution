@@ -1,9 +1,29 @@
 {
   "scriptId": "1mUm3iOIJYpXkd36PsTqvi7uBGlPL7NokZwJLgdtZ3oSJTdCAuN3l9p-b",
   "rootDir": "",
-  "scriptExtensions": [".js", ".gs"],
-  "htmlExtensions": [".html"],
-  "jsonExtensions": [".json"],
-  "filePushOrder": [],
+  "scriptExtensions": [
+    ".js",
+    ".gs"
+  ],
+  "htmlExtensions": [
+    ".html"
+  ],
+  "jsonExtensions": [
+    ".json"
+  ],
+  "filePushOrder": [
+    "01-core.gs",
+    "02-inventory.gs",
+    "03-outreach-directory.gs",
+    "04-campaigns.gs",
+    "05-sequences.gs",
+    "06-replies.gs",
+    "07-sending.gs",
+    "08-applications.gs",
+    "09-badger-and-pricing.gs",
+    "10-accounts.gs",
+    "11-orders.gs",
+    "12-task-manager.gs"
+  ],
   "skipSubdirectories": true
 }

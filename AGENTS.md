@@ -1,6 +1,8 @@
 # Release documentation rule
 
-For every `apps-script/Code.gs` change, update both parts of its leading header before handing off the file or deploying it:
+The Inventory API lives in `apps-script/01-core.gs` to `apps-script/12-task-manager.gs` (split from the old Code.gs on 2026-11-19; parts load in the `filePushOrder` of `apps-script/.clasp.json`). Put new code in the part for its area, keep each part valid JavaScript on its own, and add a new part to `filePushOrder` and to the header's PARTS list. The version header lives in `01-core.gs`.
+
+For every Inventory API change (any part), update both parts of the header in `apps-script/01-core.gs` before handing off or deploying:
 
 1. Set `App version` to the same version as `APP_VERSION`.
 2. Add a concise, accurate entry under `CHANGES IN THIS VERSION` describing the change.
@@ -10,11 +12,11 @@ Verify the header version, `APP_VERSION`, and the deployment version agree befor
 
 # Deploy handoff rule
 
-**Inventory API deploys with clasp (2026-11-19).** After the change is pushed to `codex/work` and Karl's Mac checkout is fast-forwarded, Karl runs one command in Terminal: `~/self-distribution-app/apps-script/deploy.sh`. It uploads every file in `apps-script/` (Code.gs, profiler.gs, campaignrunner.gs, Index.html, appsscript.json) to the project **Inventory API** and moves the live web app deployment to the new version (same URL). The upload replaces the project's files, so any file added in the Apps Script editor must also be added to `apps-script/`. Pasting Code.gs still works as a fallback.
+**Inventory API deploys with clasp (2026-11-19).** After the change is pushed to `codex/work` and Karl's Mac checkout is fast-forwarded, Karl runs one command in Terminal: `~/self-distribution-app/apps-script/deploy.sh`. It uploads every file in `apps-script/` (the numbered parts, profiler.gs, campaignrunner.gs, Index.html, appsscript.json) to the project **Inventory API** and moves the live web app deployment to the new version (same URL). The upload replaces the project's files, so any file added in the Apps Script editor must also be added to `apps-script/`. Pasting is no longer practical for the Inventory API (12 files); use deploy.sh.
 
 Whenever you ask Karl to paste and deploy a `Code.gs`, name the Apps Script project exactly as it appears in Apps Script **and** the spreadsheet it is attached to. See the "Apps Script projects" table in `PROJECT_STATUS.md`:
 
-- `apps-script/Code.gs` → project **Inventory API**, attached to **Distribution Hub - Inventory Backend**
+- `apps-script/` (deploy.sh) → project **Inventory API**, attached to **Distribution Hub - Inventory Backend**
 - `docs/reference/distribution-outreach/Code.gs` → project **distribution outreach**, attached to **Distribution Hub**
 - `docs/reference/badger-parser/Code.gs` → the script in the **Badger Invoice Tracker** (file `Invoice Parser.gs`)
 

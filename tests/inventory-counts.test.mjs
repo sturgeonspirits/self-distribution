@@ -4,6 +4,7 @@ import test from "node:test";
 import assert from "node:assert/strict";
 import vm from "node:vm";
 import { readFile } from "node:fs/promises";
+import { readBackend } from "./helpers/backend-source.mjs";
 
 const root = new URL("../", import.meta.url);
 
@@ -33,7 +34,7 @@ class FakeSheet {
 }
 
 async function harness() {
-  const code = await readFile(new URL("apps-script/Code.gs", root), "utf8");
+  const code = await readBackend();
   const inventory = new FakeSheet(1, [
     ["store_id", "sku_id", "on_hand_units", "par_level_units", "reorder_point_units", "last_count_date", "last_count_units"],
     ["S1", "A", 5, 6, 2, "", ""],
@@ -102,7 +103,7 @@ test("the Hub submits counted bottles with a stable retry token", async () => {
 });
 
 test("managerGrid reports each store's most recent count date", async () => {
-  const code = await readFile(new URL("apps-script/Code.gs", root), "utf8");
+  const code = await readBackend();
   const sheets = {
     Stores: new FakeSheet(11, [["store_id", "store_name", "route"], ["S1", "Store One", ""], ["S2", "Store Two", ""]]),
     SKUs: new FakeSheet(12, [["sku_id", "sku_name", "size", "units_per_case", "active"], ["A", "Alpha", "750 mL", 12, true], ["B", "Beta", "750 mL", 12, true]]),
@@ -140,7 +141,7 @@ test("phone count mode hides extra tools behind More tools and lists uncounted b
 });
 
 test("salesReport returns the sales tabs as displayed, trimmed to their data", async () => {
-  const code = await readFile(new URL("apps-script/Code.gs", root), "utf8");
+  const code = await readBackend();
   class DisplaySheet extends FakeSheet {
     getRange(row, column, rows = 1, columns = 1) {
       if (typeof row === "string") return { getDisplayValue: () => "90" };

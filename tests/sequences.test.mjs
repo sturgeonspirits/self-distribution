@@ -5,12 +5,13 @@ import test from "node:test";
 import assert from "node:assert/strict";
 import vm from "node:vm";
 import { readFile } from "node:fs/promises";
+import { readBackend } from "./helpers/backend-source.mjs";
 
 const root = new URL("../", import.meta.url);
 const DAY = 86400000;
 
 async function backend() {
-  const code = await readFile(new URL("apps-script/Code.gs", root), "utf8");
+  const code = await readBackend();
   const context = {
     console: { log() {}, warn() {}, error() {} },
     Utilities: { formatDate: date => new Date(date).toISOString().slice(5, 10) },
@@ -151,7 +152,7 @@ test("stored sequences keep their name and mark pre-sequence campaigns as separa
 });
 
 test("the read action and the sequence structure are wired into the API, repair and proxy", async () => {
-  const code = await readFile(new URL("apps-script/Code.gs", root), "utf8");
+  const code = await readBackend();
   const proxy = await readFile(new URL("netlify/functions/inventory.js", root), "utf8");
   assert.match(code, /case "outreachSequences": res = apiGetOutreachSequences_\(/);
   assert.match(code, /const READ_ACTIONS = new Set\(\[[^\]]*"outreachSequences"/);
@@ -238,7 +239,7 @@ test("a sequence step's criteria, label and audience: its Directory members at t
 });
 
 test("drafted steps are tied to their sequence and get a Review and approve task; sequence members get no separate Send reminder", async () => {
-  const code = await readFile(new URL("apps-script/Code.gs", root), "utf8");
+  const code = await readBackend();
   const create = code.slice(code.indexOf("function apiCreateOutreachCampaign_"), code.indexOf("function apiApproveOutreachCampaign_"));
   assert.match(create, /if \(criteria\.audience_mode === "sequence"\) \{ setCampaign\("sequence_id", criteria\.sequence_id\); setCampaign\("step", sequenceStepNumber_\(criteria\.stage\)\); \}/);
   assert.match(code, /if \(campaign\.status === "Review" && campaign\.sequence_id\) \{\s*\/\/[^\n]*\n\s*state = "review";\s*title = `Review and approve '\$\{campaign\.name\}'/);
@@ -305,7 +306,7 @@ test("an address shared by two businesses never advances either from an address-
 });
 
 test("the migration plans and deletes under one lock, and a sequence step needs its columns", async () => {
-  const code = await readFile(new URL("apps-script/Code.gs", root), "utf8");
+  const code = await readBackend();
   const migrate = code.slice(code.indexOf("function migrateCampaignsToSequences()"), code.indexOf("// ---------- Sequence step check"));
   const lockAt = migrate.indexOf("lock.tryLock(30000)");
   assert.ok(lockAt > 0 && lockAt < migrate.indexOf("const first = buildSequencePlan_"), "the lock is taken before the plan");
@@ -331,7 +332,7 @@ test("a failing step check is retried (at most three times a day) and raises a t
   context.__fail = false;
   assert.equal(vm.runInContext(`maybeRunSequenceStepCheck_(new Date("2026-11-07T06:10:00Z")).ran`, context), true);
   assert.equal(vm.runInContext(`sequenceStepCheckFailure_(new Date("2026-11-07T06:10:00Z"))`, context), null);
-  const code = await readFile(new URL("apps-script/Code.gs", root), "utf8");
+  const code = await readBackend();
   assert.match(code, /title:"Sequence step check failed: due follow-ups were not drafted today"/);
 });
 
@@ -455,7 +456,7 @@ test("writing a plan stores a new Initial campaign as a sequence and keeps the D
 });
 
 test("the sequence actions are wired: API routes, proxy allow-lists, and the step check syncs first", async () => {
-  const code = await readFile(new URL("apps-script/Code.gs", root), "utf8");
+  const code = await readBackend();
   const proxy = await readFile(new URL("netlify/functions/inventory.js", root), "utf8");
   assert.match(code, /case "updateOutreachSequence": res = apiUpdateOutreachSequence_\(body\)/);
   assert.match(code, /case "buildOutreachSequenceStep": res = apiBuildOutreachSequenceStep_\(body\)/);
@@ -584,7 +585,7 @@ test("deleting the last live campaign of a sequence puts its businesses back on 
   assert.equal(vm.runInContext("releaseSequenceAfterDelete_(__fakeSs.getSheetByName('Outreach Campaigns'), __ch, 'SEQ-X')", context), 2);
   assert.deepEqual(directory.data.slice(1).map(row => row[8]), ["", "", "SEQ-Y"]);
   assert.equal(vm.runInContext("releaseSequenceAfterDelete_(__fakeSs.getSheetByName('Outreach Campaigns'), __ch, 'SEQ-Y')", context), 0, "a sequence with a live campaign keeps its businesses");
-  const code = await readFile(new URL("apps-script/Code.gs", root), "utf8");
+  const code = await readBackend();
   assert.match(code, /function deleteOutreachCampaignUnderLock_[\s\S]{0,3500}releaseSequenceAfterDelete_\(sheets\.campaigns, ch,/);
 });
 

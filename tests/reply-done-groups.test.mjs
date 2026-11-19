@@ -4,9 +4,10 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 import { readFile } from "node:fs/promises";
+import { readBackend } from "./helpers/backend-source.mjs";
 
 const index = await readFile(new URL("../index.html", import.meta.url), "utf8");
-const backend = await readFile(new URL("../apps-script/Code.gs", import.meta.url), "utf8");
+const backend = await readBackend();
 
 function doneLib(){
   const start = index.indexOf("function replyDoneKey");

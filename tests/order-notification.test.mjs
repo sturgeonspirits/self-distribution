@@ -4,13 +4,14 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 import { readFile } from "node:fs/promises";
+import { readBackend } from "./helpers/backend-source.mjs";
 
 const root = new URL("../", import.meta.url);
 const read = path => readFile(new URL(path, root), "utf8");
 const functionSource = (backend, name, nextName) => backend.slice(backend.indexOf(`function ${name}`), backend.indexOf(`function ${nextName}`));
 
 async function loadEmailBuilder() {
-  const backend = await read("apps-script/Code.gs");
+  const backend = await readBackend();
   const escape = new Function(`${functionSource(backend, "escapeOutreachHtml_", backend.slice(backend.indexOf("function escapeOutreachHtml_") + 30).match(/function (\w+)/)[1])}; return escapeOutreachHtml_;`)();
   const money = new Function(`${functionSource(backend, "badgerMoneyLabel_", "badgerInvoicePaymentState_")}; return badgerMoneyLabel_;`)();
   const priceFor = new Function(`${functionSource(backend, "badgerPriceForOrderLine_", "getBadgerInvoiceCreationsSheet_")}; return badgerPriceForOrderLine_;`)();
@@ -71,7 +72,7 @@ test("the new-order email shows products, prices, totals and the notes, and link
 });
 
 test("staff can add or remove order products before invoicing, and the Hub opens ?order= links", async () => {
-  const [backend, index, proxy] = await Promise.all([read("apps-script/Code.gs"), read("index.html"), read("netlify/functions/inventory.js")]);
+  const [backend, index, proxy] = await Promise.all([readBackend(), read("index.html"), read("netlify/functions/inventory.js")]);
   assert.match(backend, /case "updateOnlineOrderLines": res = apiUpdateOnlineOrderLines_\(body\); break;/);
   assert.match(backend, /"updateOnlineOrderRequest","updateOnlineOrderLines"/);
   assert.match(proxy, /"updateOnlineOrderLines",\n/);
@@ -110,7 +111,7 @@ test("order and application windows pick the account by business name (2026.11.1
 });
 
 test("invoice preview reads the account from the read cache, not a full rebuild (2026.11.17.72-APP)", async () => {
-  const backend = await read("apps-script/Code.gs");
+  const backend = await readBackend();
   const draft = functionSource(backend, "badgerInvoiceDraft_", "apiPreviewBadgerInvoice_");
   assert.match(draft, /const account = accountSnapshot \|\| badgerInvoiceAccount_\(order\.account_id\);/);
   assert.doesNotMatch(draft, /currentBadgerPaymentAccount_\(/);
@@ -139,7 +140,7 @@ test("timeouts name what they waited on, and a timed-out Create invoice rechecks
 });
 
 test("orders and account invoices link to Badger's print page (2026.11.17.76-APP / .77-WEB)", async () => {
-  const [backend, index] = await Promise.all([read("apps-script/Code.gs"), read("index.html")]);
+  const [backend, index] = await Promise.all([readBackend(), read("index.html")]);
   assert.match(backend, /orders\.forEach\(order => order\.operational_statuses = orderOperationalStatuses_\(order\)\);\n  badgerInvoiceIdsForOrders_\(orders\);/);
   const helper = functionSource(backend, "badgerInvoiceIdsForOrders_", "badgerInvoiceAccount_");
   const sheet = { getLastRow:() => 2 };

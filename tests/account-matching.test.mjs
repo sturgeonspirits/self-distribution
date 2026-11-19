@@ -4,8 +4,9 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 import { readFile } from "node:fs/promises";
+import { readBackend } from "./helpers/backend-source.mjs";
 
-const backend = await readFile(new URL("../apps-script/Code.gs", import.meta.url), "utf8");
+const backend = await readBackend();
 const pick = name => { const start = backend.indexOf(`function ${name}(`); return backend.slice(start, backend.indexOf("\n}\n", start) + 2); };
 const lib = new Function(`${pick("normalizeBusinessKey_")}\n${pick("findIdentityMatch_")}\nreturn { normalizeBusinessKey_, findIdentityMatch_ };`)();
 

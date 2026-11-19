@@ -1,8 +1,16 @@
 # Inventory API — earlier version notes
 
-Moved out of the `apps-script/Code.gs` header on 2026-10-17 so the deployed file stays short. Newest first, copied word for word. The header keeps only the current version (`CHANGES IN THIS VERSION`); when a new version is made, move that section to the top of this file.
+Moved out of the Inventory API header (`apps-script/Code.gs`, now `apps-script/01-core.gs`) on 2026-10-17 so the deployed file stays short. Newest first, copied word for word. The header keeps only the current version (`CHANGES IN THIS VERSION`); when a new version is made, move that section to the top of this file.
 
 ```
+CHANGES IN 2026.11.19.84-APP (deployed 2026-11-19)
+Speed fixes (Karl, 2026-11-19): (1) screen caches are grouped (outreach, customers, inventory) and each save or
+background job clears only the groups it affects (READ_CACHE_ACTION_GROUPS; anything unlisted clears all). (2) An
+out-of-date copy is still served at once with cache_stale:true while the page asks for a rebuild (rebuild=1, guarded
+so only one runs); copies are kept 6 hours, current for 15 minutes; reads use one getAll; the campaign runner, the
+scheduled reply check and the Toast import rebuild the screen they changed; the warmer rebuilds the changed or
+missing cache that has waited longest. (3) refresh=1 no longer re-reads the Badger tracker (sources=1 does).
+
 CHANGES IN 2026.11.19.83-APP (deployed 2026-11-19)
 Duplicate account on approval (Karl, 2026-11-19): approving the 1890 Pub's application made a new Directory row
 instead of using "THE 1890 PUB & BISTRO", because matching needed the email AND the exact name. Business names now
