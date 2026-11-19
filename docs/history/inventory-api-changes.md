@@ -3,6 +3,11 @@
 Moved out of the `apps-script/Code.gs` header on 2026-10-17 so the deployed file stays short. Newest first, copied word for word. The header keeps only the current version (`CHANGES IN THIS VERSION`); when a new version is made, move that section to the top of this file.
 
 ```
+CHANGES IN 2026.11.19.83-APP (deployed 2026-11-19)
+Duplicate account on approval (Karl, 2026-11-19): approving the 1890 Pub's application made a new Directory row
+instead of using "THE 1890 PUB & BISTRO", because matching needed the email AND the exact name. Business names now
+read "&" as "and" and ignore a leading "The", and an email used by only one Directory business matches it alone.
+
 CHANGES IN 2026.11.19.80-APP (deployed 2026-11-19)
 Paper forms (Karl, 2026-11-19, .80): new staff action submitPaperCustomerApplication — a paper customer form typed in
 from the signup page's paper mode. Staff confirm the customer signed instead of signing the authorization; the

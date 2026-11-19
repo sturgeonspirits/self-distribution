@@ -10,10 +10,10 @@ const load = index.slice(index.indexOf("async function loadCustomerWorkQueue("),
 const render = index.slice(index.indexOf("function renderCustomerWorkflow(){"), index.indexOf("function renderCustomerWorkflow(){") + 12000);
 
 test("a failed first load tries once more on its own, then says it didn't load", () => {
-  assert.match(load, /async function loadCustomerWorkQueue\(forceRefresh = false, clearAccountIndex = false, retried = false\)/);
-  assert.match(load, /if \(!retried && !error\?\.staffAuth\) \{[\s\S]*setTimeout\(resolve, CUSTOMER_LOAD_RETRY_MS\)[\s\S]*return loadCustomerWorkQueue\(forceRefresh, false, true\);/);
+  assert.match(load, /async function loadCustomerWorkQueue\(forceRefresh = false, clearAccountIndex = false, retried = false, allowStale = false\)/);
+  assert.match(load, /if \(!retried && !error\?\.staffAuth\) \{[\s\S]*setTimeout\(resolve, CUSTOMER_LOAD_RETRY_MS\)[\s\S]*return loadCustomerWorkQueue\(forceRefresh, false, true, allowStale\);/);
   assert.match(load, /if \(!customerLoaded\) \{ customerLoadError = error\?\.message \|\| String\(error\); renderCustomerWorkflow\(\); \}/);
-  assert.match(load, /customerLoaded = true;\s*customerLoadError = "";/);
+  assert.match(index, /customerLoaded = true;\s*customerLoadError = "";/);
   assert.ok(index.indexOf('let customerLoadError = "";') < index.indexOf("function renderCustomerWorkflow(){"), "declared before any render can run");
 });
 

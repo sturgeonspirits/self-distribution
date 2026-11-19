@@ -1,10 +1,10 @@
 <!doctype html>
-<!-- App version: 2026.11.19.82-WEB -->
+<!-- App version: 2026.11.19.85-WEB -->
 <html>
 <head>
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover"/>
-  <meta name="app-version" content="2026.11.19.82-WEB" />
+  <meta name="app-version" content="2026.11.19.85-WEB" />
   <meta name="theme-color" content="#536f77" />
   <link rel="icon" href="/assets/distribution-hub-icon.svg" type="image/svg+xml" />
   <link rel="manifest" href="/site.webmanifest" />
@@ -2804,7 +2804,7 @@
 
   <footer style="max-width:1200px;margin:18px auto 120px;padding:0 12px;text-align:center;color:#6b7280;font-size:12px;">
     Designed by <a href="https://scriptspirit.dev" target="_blank" rel="noopener noreferrer" style="color:#1d4ed8;text-decoration:none;font-weight:700;">Script Spirit</a>
-<span id="appVersionFooter"> • Version 2026.11.19.82-WEB</span>
+<span id="appVersionFooter"> • Version 2026.11.19.85-WEB</span>
   </footer>
 
 
@@ -2827,7 +2827,7 @@
   window.addEventListener("unhandledrejection", e => console.error("Unhandled promise rejection:", e.reason));
   window.addEventListener("error", e => console.error("Unhandled error:", e.error || e.message));
   const $ = (id) => document.getElementById(id);
-  const APP_VERSION = "2026.11.19.82-WEB";
+  const APP_VERSION = "2026.11.19.85-WEB";
   $("appVersionFooter").textContent = ` • Version ${APP_VERSION}`;
   function screenCacheKey(screen){ return `distribution_hub:${APP_VERSION}:${staffSession?.email || "unknown"}:${screen}`; }
   function readScreenCache(screen){
@@ -2920,7 +2920,8 @@
   // Every list starts on All (Karl, 2026-10-12); narrower filters are a choice, never the default.
   let customerStatusFilter = "all";
   let customerLoaded = false;
-  let customerLoadError = ""; // set when the first Orders & Accounts load failed (2026.11.19.82-WEB)
+  let customerLoadError = "";
+  let customerDataStale = false; // the data on screen is an out-of-date saved copy that is being updated (2026.11.19.85-WEB) // set when the first Orders & Accounts load failed (2026.11.19.82-WEB)
   const CUSTOMER_LOAD_RETRY_MS = 3000;
   let customerWorkQueueLoadRequest = 0;
   let selectedCustomerRecord = null;
@@ -3028,6 +3029,28 @@
     });
   }
 
+  // Speed fixes (Karl, 2026-11-19, 2026.11.19.85-WEB). The server can answer with a saved copy that is out of date
+  // (cache_stale) instead of making you wait for a rebuild. The page shows it, then asks for the rebuilt copy in the
+  // background and shows that when it arrives. If another rebuild is already running, or the request runs out of time
+  // (the server still finishes and saves it), it reads the saved copy again a little later.
+  const STALE_FOLLOW_UP_WAIT_MS = 12000;
+  async function followUpStaleRead(params, isCurrent, apply){
+    for (let attempt = 0; attempt < 3; attempt += 1) {
+      let result = null;
+      try { result = await staffApiGet(attempt === 0 ? { ...params, rebuild:1 } : params); }
+      catch (error) { if (error?.staffAuth) return; }
+      if (!isCurrent()) return;
+      if (result?.ok && !result.cache_stale) { apply(result); return; }
+      await new Promise(resolve => setTimeout(resolve, STALE_FOLLOW_UP_WAIT_MS));
+      if (!isCurrent()) return;
+    }
+  }
+
+  function staleCopyLabel(result){
+    const built = Date.parse(result?.cache_built_at || "");
+    return Number.isFinite(built) ? new Date(built).toLocaleTimeString([], { hour:"numeric", minute:"2-digit" }) : "earlier";
+  }
+
   async function createSellSheetLink(accountId){
     const response = await fetch("/api/sell-sheet?action=createLink", {
       method:"POST", headers:{ "Content-Type":"application/json" }, credentials:"same-origin", body:JSON.stringify({ account_id:accountId }),
@@ -3117,11 +3140,11 @@
       $("hdrChanged").textContent = `${Number(summary.waiting || 0)} waiting`;
       $("bottomBar").hidden = true;
       showOutreachAccessState();
-      if (staffAccessCode && !outreachLoaded) loadOutreach().catch(handleOutreachLoadError);
+      if (staffAccessCode && !outreachLoaded) loadOutreach(false, true).catch(handleOutreachLoadError);
     } else if (isCustomers) {
       $("bottomBar").hidden = true;
       showCustomerAccessState();
-      if (staffAccessCode && !customerLoaded) loadCustomerWorkQueue().catch(handleCustomerError);
+      if (staffAccessCode && !customerLoaded) loadCustomerWorkQueue(false, false, false, true).catch(handleCustomerError);
     } else {
       showInventoryAccessState();
       if (staffAccessCode && !inventoryLoaded) startInventory();
@@ -3530,7 +3553,9 @@
   // Karl, 2026-11-19 (2026.11.19.82-WEB): a load that timed out left the counts at 0 and said "No matching
   // applications", so a new application looked missing. A failed first load now tries once more on its own, and if
   // nothing has loaded the screen says so instead of looking empty.
-  async function loadCustomerWorkQueue(forceRefresh = false, clearAccountIndex = false, retried = false){
+  // allowStale: opening the section may show an out-of-date saved copy while it updates. Loads after a save leave it
+  // false, so they ask the server to rebuild and show your change (2026.11.19.85-WEB).
+  async function loadCustomerWorkQueue(forceRefresh = false, clearAccountIndex = false, retried = false, allowStale = false){
     rememberBadgerAccountDrafts();
     if (clearAccountIndex) {
       customerAccountIndex = [];
@@ -3540,6 +3565,8 @@
       clearScreenCache("customer-account-index");
     }
     const requestId = ++customerWorkQueueLoadRequest;
+    // A link from an email (?order= / ?application=) needs current data: it may be about something that just came in.
+    if (pendingOrderLink || pendingApplicationLink) allowStale = false;
     const cached = !customerLoaded && readScreenCache("customer-work");
     if (cached) {
       customerData = { accounts:cached.payload.accounts || [], applications:cached.payload.applications || [], orders:cached.payload.orders || [], unmatchedBadgerInvoices:cached.payload.unmatched_badger_invoices || [], ignoredBadgerInvoices:cached.payload.ignored_badger_invoices || [], voidedBadgerInvoices:cached.payload.voided_badger_invoices || [], summary:cached.payload.summary || {}, orderCatalog:cached.payload.order_catalog || [] };
@@ -3548,7 +3575,7 @@
     } else $("customerWorkflowStatus").textContent = "Loading customer work...";
     let result;
     try {
-      result = await staffApiGet({ action:"customerWorkQueue", ...(forceRefresh ? { refresh:1 } : {}) });
+      result = await staffApiGet({ action:"customerWorkQueue", ...(forceRefresh ? { refresh:1 } : allowStale ? {} : { rebuild:1 }) });
     } catch (error) {
       if (requestId !== customerWorkQueueLoadRequest) return;
       if (cached) { $("customerWorkflowStatus").textContent = `Couldn't refresh (${error?.message || "connection problem"}); showing data from ${cachedTimeLabel(cached)}. Reload the page in a minute to try again.`; return; }
@@ -3556,13 +3583,22 @@
         $("customerWorkflowStatus").textContent = "Orders & Accounts is slow to load. Trying again…";
         await new Promise(resolve => setTimeout(resolve, CUSTOMER_LOAD_RETRY_MS));
         if (requestId !== customerWorkQueueLoadRequest) return;
-        return loadCustomerWorkQueue(forceRefresh, false, true);
+        return loadCustomerWorkQueue(forceRefresh, false, true, allowStale);
       }
       if (!customerLoaded) { customerLoadError = error?.message || String(error); renderCustomerWorkflow(); }
       throw error;
     }
     if (requestId !== customerWorkQueueLoadRequest) return;
     if (!result.ok) throw new Error(result.error || "Customer work could not be loaded.");
+    applyCustomerWorkResult(result);
+    if (result.cache_stale) {
+      $("customerWorkflowStatus").textContent = `Showing Orders & Accounts from ${staleCopyLabel(result)}; updating…`;
+      followUpStaleRead({ action:"customerWorkQueue" }, () => requestId === customerWorkQueueLoadRequest, applyCustomerWorkResult);
+    }
+  }
+
+  function applyCustomerWorkResult(result){
+    rememberBadgerAccountDrafts();
     customerData = {
       accounts:result.accounts || [],
       applications:result.applications || [],
@@ -3575,6 +3611,7 @@
     };
     customerLoaded = true;
     customerLoadError = "";
+    customerDataStale = !!result.cache_stale;
     writeScreenCache("customer-work", result);
     showCustomerAccessState();
     renderCustomerWorkflow();
@@ -3588,6 +3625,8 @@
   function openPendingOrderLink(){
     if (!pendingOrderLink) return;
     const requestId = pendingOrderLink;
+    // On an out-of-date copy, wait for the updated one before saying the order wasn't found.
+    if (customerDataStale && !(customerData.orders || []).some(item => item.request_id === requestId)) return;
     pendingOrderLink = "";
     try { const url = new URL(location.href); url.searchParams.delete("order"); history.replaceState(null, "", `${url.pathname}${url.search}${url.hash}`); } catch (_) {}
     const order = (customerData.orders || []).find(item => item.request_id === requestId);
@@ -3598,6 +3637,7 @@
   function openPendingApplicationLink(){
     if (!pendingApplicationLink) return;
     const applicationId = pendingApplicationLink;
+    if (customerDataStale && !(customerData.applications || []).some(item => item.application_id === applicationId)) return;
     pendingApplicationLink = "";
     try { const url = new URL(location.href); url.searchParams.delete("application"); history.replaceState(null, "", `${url.pathname}${url.search}${url.hash}`); } catch (_) {}
     const application = (customerData.applications || []).find(item => item.application_id === applicationId);
@@ -6162,14 +6202,15 @@
     renderOutreach();
   }
 
-  async function loadOutreach(forceRefresh = false){
+  // allowStale: see loadCustomerWorkQueue (2026.11.19.85-WEB).
+  async function loadOutreach(forceRefresh = false, allowStale = false){
     const requestId = ++outreachLoadRequest;
     const cached = !outreachLoaded && readScreenCache("outreach");
     if (cached) { applyOutreachPayload(cached.payload); setOutreachStatus(`Updating… showing data from ${cachedTimeLabel(cached)}.`); }
     else setOutreachStatus("Loading outreach...");
     let res;
     try {
-      res = await staffApiGet({ action:"outreachDashboard", slim:1, ...(forceRefresh ? { refresh:1 } : {}) });
+      res = await staffApiGet({ action:"outreachDashboard", slim:1, ...(forceRefresh ? { refresh:1 } : allowStale ? {} : { rebuild:1 }) });
     } catch (error) {
       if (requestId !== outreachLoadRequest) return;
       if (cached) { setOutreachStatus(`Couldn't refresh (${error?.message || "connection problem"}); showing data from ${cachedTimeLabel(cached)}. Reload the page in a minute to try again.`); return; }
@@ -6181,6 +6222,14 @@
     writeScreenCache("outreach", res);
     const elapsed = Number(res.performance?.total_ms || 0);
     setOutreachStatus(`Updated ${new Date().toLocaleTimeString([], { hour:"numeric", minute:"2-digit" })}${elapsed ? ` in ${(elapsed / 1000).toFixed(1)}s` : ""}${res.performance?.cache_hit ? " (server cache)" : ""}.`);
+    if (res.cache_stale) {
+      setOutreachStatus(`Showing Outreach from ${staleCopyLabel(res)}; updating…`);
+      followUpStaleRead({ action:"outreachDashboard", slim:1 }, () => requestId === outreachLoadRequest, fresh => {
+        applyOutreachPayload(fresh);
+        writeScreenCache("outreach", fresh);
+        setOutreachStatus(`Updated ${new Date().toLocaleTimeString([], { hour:"numeric", minute:"2-digit" })}.`);
+      });
+    }
     if (!res.is_mock) loadOutreachSendStatus().catch(error => {
       setOutreachStatus(`Outreach loaded. Sending-status check failed: ${error.message || String(error)}`);
     });
@@ -8296,6 +8345,7 @@
     return inventoryStartupPromise;
   }
 
+  let inventoryStoreListRequest = 0;
   async function loadStartup(forceRefresh = false, preferredStoreId = ""){
     loadPrefs();
     const cached = readScreenCache("inventory-stores");
@@ -8313,6 +8363,17 @@
     cache.stores = res.stores || [];
     writeScreenCache("inventory-stores", res);
     renderStores(cache.stores);
+    // An out-of-date saved store list is used now and quietly replaced when the rebuilt one arrives (2026.11.19.85-WEB).
+    if (res.cache_stale) {
+      const startupRequest = ++inventoryStoreListRequest;
+      followUpStaleRead({ action:"initData" }, () => startupRequest === inventoryStoreListRequest, fresh => {
+        const selected = $("storeSelect").value;
+        cache.stores = fresh.stores || [];
+        writeScreenCache("inventory-stores", fresh);
+        renderStores(cache.stores);
+        if (cache.stores.some(store => String(store.store_id) === String(selected))) $("storeSelect").value = selected;
+      });
+    }
 
     const requestedStore = preferredStoreId || $("storeSelect").value || "";
     const first = cache.stores.some(store => String(store.store_id) === String(requestedStore)) ? requestedStore : (cache.stores[0]?.store_id || "");

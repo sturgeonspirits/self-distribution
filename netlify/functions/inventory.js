@@ -1,9 +1,9 @@
-// App version: 2026.11.19.81-WEB
+// App version: 2026.11.19.85-WEB
 import { gunzipSync } from "node:zlib";
 import { requireStaffSession } from "./auth.js";
 import { fetchWithDriveRelay, relayConfig } from "../lib/drive-relay.js";
 
-const APP_VERSION = "2026.11.19.81-WEB";
+const APP_VERSION = "2026.11.19.85-WEB";
 const STAFF_ACTIONS = new Set([
   "outreachDashboard",
   "outreachRecord",
@@ -85,6 +85,9 @@ const UPSTREAM_TIMEOUT_MS = 25000;
 const SEND_UPSTREAM_ATTEMPTS = 1;
 const READ_UPSTREAM_ATTEMPTS = 2;
 const READ_UPSTREAM_TIMEOUT_MS = 11500;
+// A read that rebuilds a screen (refresh=1 or rebuild=1) runs once with the full window: a retry would start a second
+// rebuild beside the first. If it times out, Apps Script still finishes and saves it; the page then reads the saved copy.
+const REBUILD_UPSTREAM_TIMEOUT_MS = 24500;
 // Sends use the established 24-second single-attempt window; never retry an
 // uncertain send because the original request may still be holding the lock.
 const SEND_UPSTREAM_TIMEOUT_MS = 24000;
@@ -327,9 +330,10 @@ export async function handler(event) {
 
       // Reads are safe to repeat. The server usually answers in 2-8 s, but Google's response
       // handoff sometimes stalls; give each attempt 11.5 s and try twice inside the ~26 s limit.
+      const rebuilds = request.params.get("refresh") === "1" || request.params.get("rebuild") === "1";
       const resp = await fetchUpstream(url.toString(), { method:"GET", headers:{ "Accept":"application/json" } }, {
-        attempts:READ_UPSTREAM_ATTEMPTS,
-        timeoutMs:READ_UPSTREAM_TIMEOUT_MS,
+        attempts:rebuilds ? 1 : READ_UPSTREAM_ATTEMPTS,
+        timeoutMs:rebuilds ? REBUILD_UPSTREAM_TIMEOUT_MS : READ_UPSTREAM_TIMEOUT_MS,
         campaignRead:CAMPAIGN_READ_ACTIONS.has(action),
       });
       return proxyResult(resp, cors);

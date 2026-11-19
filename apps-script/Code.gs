@@ -1,11 +1,14 @@
 /*********************************
  * Inventory API (JSON) for Netlify
- * App version: 2026.11.19.83-APP
+ * App version: 2026.11.19.84-APP
  *
  * CHANGES IN THIS VERSION
- * Duplicate account on approval (Karl, 2026-11-19): approving the 1890 Pub's application made a new Directory row
- * instead of using "THE 1890 PUB & BISTRO", because matching needed the email AND the exact name. Business names now
- * read "&" as "and" and ignore a leading "The", and an email used by only one Directory business matches it alone.
+ * Speed fixes (Karl, 2026-11-19): (1) screen caches are grouped (outreach, customers, inventory) and each save or
+ * background job clears only the groups it affects (READ_CACHE_ACTION_GROUPS; anything unlisted clears all). (2) An
+ * out-of-date copy is still served at once with cache_stale:true while the page asks for a rebuild (rebuild=1, guarded
+ * so only one runs); copies are kept 6 hours, current for 15 minutes; reads use one getAll; the campaign runner, the
+ * scheduled reply check and the Toast import rebuild the screen they changed; the warmer rebuilds the changed or
+ * missing cache that has waited longest. (3) refresh=1 no longer re-reads the Badger tracker (sources=1 does).
  *
  * DEPLOY
  * - Apps Script project: Inventory API
@@ -15,7 +18,7 @@
  * Earlier version notes: docs/history/inventory-api-changes.md (move this version's notes there when the version changes).
  *********************************/
 
-const APP_VERSION = "2026.11.19.83-APP";
+const APP_VERSION = "2026.11.19.84-APP";
 
 const SHEET_NAMES = {
   STORES: "Stores",
@@ -81,9 +84,38 @@ const OUTREACH_COCKTAIL_LIST_GAP_DAYS = 14;
 const PUBLIC_SITE_URL_SETTING_KEY = "Public site URL";
 const PUBLIC_SITE_URL_FALLBACK = "https://distribution-hub.netlify.app";
 const READ_CACHE_VERSION_KEY = "hub_read_cache_version";
-const READ_CACHE_TTL_SECONDS = 900;
 const READ_CACHE_CHUNK_SIZE = 45000;
+// Speed fixes (Karl, 2026-11-19, .84). Each screen's cache belongs to one group, and a change clears only the groups it
+// affects (it used to clear all three screens). A copy is "fresh" while its group is unchanged and it is under 15 minutes
+// old; an older copy is still served at once, marked stale, while a rebuild runs. Copies are kept for 6 hours.
+const READ_CACHE_GROUPS = { outreach_slim:"outreach", customer_work_queue:"customers", customer_account_index:"customers", inventory_stores:"inventory" };
+const READ_CACHE_ALL_GROUPS = ["outreach", "customers", "inventory"];
+const READ_CACHE_FRESH_SECONDS = 900;
+const READ_CACHE_KEEP_SECONDS = 21600; // CacheService maximum
+const READ_CACHE_REBUILD_GUARD_SECONDS = 90;
+const READ_CACHE_WARM_MAX_AGE_SECONDS = 3600; // the 10-minute warmer also rebuilds an unchanged copy past an hour old
 const READ_ACTIONS = new Set(["initData", "listSkus", "sellSheet", "managerGrid", "salesSinceCount", "outreachDashboard", "outreachRecord", "outreachSendStatus", "outreachNewsletterContacts", "outreachCampaigns", "outreachCampaign", "outreachSequences", "previewOutreachCampaign", "customerWorkQueue", "customerAccountIndex", "hubSystemStatus", "salesReport", "inboundReplies"]);
+
+// Which screens each saving action can change (.84). Anything not listed clears all three.
+const READ_CACHE_ACTION_GROUPS = (() => {
+  const map = {};
+  const add = (groups, actions) => actions.forEach(action => { map[action] = groups; });
+  add([], ["badgerReconcilePreview", "previewBadgerPaymentReminder", "previewBadgerInvoice", "previewApplicationWelcome", "sendOutreachTestEmail", "syncBadgerStatus"]);
+  add(["inventory", "customers"], ["addSkuToStore", "upsertProduct", "submitCounts", "createReorder", "updateStoreContacts"]);
+  add(["outreach"], ["recordEmailEngagement", "createOutreachCampaign", "updateOutreachCampaignRecipient", "setOutreachCampaignRecipientExclusion",
+    "setOutreachCampaignRecipientExclusions", "approveOutreachCampaign", "reopenOutreachCampaign", "deleteOutreachCampaign", "renameOutreachCampaign",
+    "updateOutreachSequence", "buildOutreachSequenceStep", "reconcileCampaignSends", "rebuildCampaignRecipients", "sendOutreachCampaignBatch",
+    "scheduleOutreachCampaign", "cancelOutreachCampaignSchedule", "saveOutreachDraft", "sendOutreachEmail", "updateOutreachOutcome", "logOutreachContact",
+    "backfillEngagementDetails", "recalculateOutreachMiles", "upsertNewsletterContact", "resolveInboundReply", "checkInboundReplies"]);
+  // Directory edits and account activation show in both Outreach and Orders & Accounts; Outreach also marks recently
+  // invoiced businesses, so invoice links count for both.
+  add(["outreach", "customers"], ["updateOutreachBusiness", "updateOutreachPrograms", "createOutreachBusiness", "importOutreachBusinesses",
+    "submitCustomerApplication", "submitPaperCustomerApplication", "updateCustomerApplication", "sendApplicationWelcome", "linkBadgerInvoice",
+    "applyBadgerReconcile", "createBadgerInvoice", "adoptBadgerInvoice"]);
+  add(["customers"], ["submitOnlineOrderRequest", "markBadgerInvoicePayment", "recordBadgerCheck", "resolvePaymentReminder", "sendBadgerPaymentReminder",
+    "failBadgerInvoiceCreation", "updateOnlineOrderRequest", "updateOnlineOrderLines"]);
+  return map;
+})();
 
 let __OPERATIONAL_SS = null;
 let __OUTREACH_SS = null;
@@ -97,75 +129,141 @@ let __LEGACY_PILOT_SENT_BY_EMAIL = null;
 let __OUTREACH_RECENT_SEND_INDEX = null;
 let __OUTREACH_COCKTAIL_LIST_CONTACT_INDEX = null;
 
-function readCacheVersion_() {
-  return PropertiesService.getScriptProperties().getProperty(READ_CACHE_VERSION_KEY) || "1";
+function readCacheGroupKey_(group) {
+  return `${READ_CACHE_VERSION_KEY}:${group}`;
 }
 
-function bumpReadCacheVersion_() {
-  const properties = PropertiesService.getScriptProperties();
-  const next = Number(properties.getProperty(READ_CACHE_VERSION_KEY) || "1") + 1;
-  properties.setProperty(READ_CACHE_VERSION_KEY, String(next));
-  return String(next);
+/** Version of the group a cache scope belongs to; it changes whenever something that scope shows changes. */
+function readCacheVersion_(scope) {
+  const group = READ_CACHE_GROUPS[scope];
+  return PropertiesService.getScriptProperties().getProperty(group ? readCacheGroupKey_(group) : READ_CACHE_VERSION_KEY) || "1";
+}
+
+/**
+ * Marks the given screen groups changed ("outreach", "customers", "inventory"; none given = all). Each group is its own
+ * property set to a new unique value, so two changes at once can't undo each other.
+ */
+function bumpReadCacheVersion_(groups) {
+  const list = (Array.isArray(groups) ? groups : READ_CACHE_ALL_GROUPS).filter(group => READ_CACHE_ALL_GROUPS.includes(group));
+  if (!list.length) return "";
+  const stamp = `${Date.now()}-${Math.floor(Math.random() * 1e6)}`;
+  const values = {};
+  list.forEach(group => { values[readCacheGroupKey_(group)] = stamp; });
+  PropertiesService.getScriptProperties().setProperties(values);
+  return stamp;
+}
+
+function readCacheMeta_(cache, scope) {
+  try { return JSON.parse(cache.get(`hub_read:${scope}:meta`) || "null"); } catch (error) { return null; }
+}
+
+function readCacheIsFresh_(meta, version, maxAgeSeconds) {
+  return !!meta && meta.version === version && Date.now() - Number(meta.built_at || 0) < (maxAgeSeconds || READ_CACHE_FRESH_SECONDS) * 1000;
+}
+
+/** The saved copy a meta entry points to, read in one call; null if any part has gone. */
+function readCachePayload_(cache, scope, meta) {
+  if (!meta || !meta.build || !Number.isInteger(meta.parts) || meta.parts < 1 || meta.parts > 20) return null;
+  const keys = Array.from({ length:meta.parts }, (_, index) => `hub_read:${scope}:${meta.build}:${index}`);
+  const found = cache.getAll(keys);
+  if (keys.some(key => typeof found[key] !== "string")) return null;
+  return JSON.parse(keys.map(key => found[key]).join(""));
 }
 
 function readCachePresent_(scope) {
-  try {
-    return !!CacheService.getScriptCache().get(`hub_read:${scope}:${readCacheVersion_()}:meta`);
-  } catch (error) {
-    return false;
-  }
+  try { return !!readCacheMeta_(CacheService.getScriptCache(), scope); } catch (error) { return false; }
 }
 
-function cachedReadPayload_(scope, build, bypass) {
+/**
+ * Screen cache. bypass = rebuild now (refresh button). mode "rebuild" = the page's follow-up to a stale copy: rebuild
+ * unless another rebuild of this scope is already running, in which case the stale copy comes back marked rebuilding.
+ * A normal read returns a fresh copy, else a stale copy (cache_stale:true), else builds.
+ */
+function cachedReadPayload_(scope, build, bypass, mode) {
   const startedAt = Date.now();
-  const version = readCacheVersion_();
+  const version = readCacheVersion_(scope);
   const cache = CacheService.getScriptCache();
-  const key = `hub_read:${scope}:${version}`;
+  const guardKey = `hub_read:${scope}:rebuilding`;
   if (!bypass) {
     try {
-      const meta = JSON.parse(cache.get(`${key}:meta`) || "null");
-      if (meta && Number.isInteger(meta.parts) && meta.parts > 0 && meta.parts <= 20) {
-        const text = Array.from({ length:meta.parts }, (_, index) => cache.get(`${key}:${index}`)).join("");
-        if (text) {
-          const payload = JSON.parse(text);
-          payload.performance = Object.assign({}, payload.performance || {}, { total_ms:Date.now() - startedAt, cache_hit:true, stages:{ cache_read_ms:Date.now() - startedAt } });
+      const meta = readCacheMeta_(cache, scope);
+      const fresh = readCacheIsFresh_(meta, version);
+      const rebuilding = !fresh && !!cache.get(guardKey);
+      if (fresh || mode !== "rebuild" || rebuilding) {
+        const payload = readCachePayload_(cache, scope, meta);
+        if (payload) {
+          payload.cache_stale = !fresh;
+          payload.cache_rebuilding = rebuilding;
+          payload.cache_built_at = new Date(Number(meta.built_at || 0)).toISOString();
+          payload.performance = Object.assign({}, payload.performance || {}, { total_ms:Date.now() - startedAt, cache_hit:true, cache_stale:!fresh, stages:{ cache_read_ms:Date.now() - startedAt } });
           return payload;
         }
       }
     } catch (error) { console.warn("Read cache miss: " + String(error && error.message || error)); }
   }
-  const payload = build();
-  const totalMs = Date.now() - startedAt;
-  payload.performance = Object.assign({}, payload.performance || {}, { total_ms:totalMs, cache_hit:false, stages:Object.assign({}, payload.performance?.stages || {}, { cache_build_ms:totalMs }) });
+  try { cache.put(guardKey, String(Date.now()), READ_CACHE_REBUILD_GUARD_SECONDS); } catch (error) {}
   try {
-    const text = JSON.stringify(payload);
-    const parts = Math.ceil(text.length / READ_CACHE_CHUNK_SIZE);
-    if (scope === "customer_account_index") {
-      console.log(JSON.stringify({ event:"customer_account_index_cache_rebuild", payload_chars:text.length, parts:parts, max_parts:20 }));
-      if (parts > 20) console.warn(`Customer account index is ${parts} cache parts; it exceeds the 20-part cache limit.`);
-    }
-    if (parts > 0 && parts <= 20) {
-      for (let index = 0; index < parts; index += 1) cache.put(`${key}:${index}`, text.slice(index * READ_CACHE_CHUNK_SIZE, (index + 1) * READ_CACHE_CHUNK_SIZE), READ_CACHE_TTL_SECONDS);
-      cache.put(`${key}:meta`, JSON.stringify({ parts:parts }), READ_CACHE_TTL_SECONDS);
-    }
-  } catch (error) { console.warn("Read cache write skipped: " + String(error && error.message || error)); }
-  return payload;
+    const payload = build();
+    const totalMs = Date.now() - startedAt;
+    payload.performance = Object.assign({}, payload.performance || {}, { total_ms:totalMs, cache_hit:false, stages:Object.assign({}, payload.performance?.stages || {}, { cache_build_ms:totalMs }) });
+    try {
+      const text = JSON.stringify(payload);
+      const parts = Math.ceil(text.length / READ_CACHE_CHUNK_SIZE);
+      if (scope === "customer_account_index") {
+        console.log(JSON.stringify({ event:"customer_account_index_cache_rebuild", payload_chars:text.length, parts:parts, max_parts:20 }));
+        if (parts > 20) console.warn(`Customer account index is ${parts} cache parts; it exceeds the 20-part cache limit.`);
+      }
+      if (parts > 0 && parts <= 20) {
+        // Parts go under a new build ID first, then the meta entry points at them, so a reader never mixes two builds.
+        const buildId = Utilities.getUuid().slice(0, 8);
+        const values = {};
+        for (let index = 0; index < parts; index += 1) values[`hub_read:${scope}:${buildId}:${index}`] = text.slice(index * READ_CACHE_CHUNK_SIZE, (index + 1) * READ_CACHE_CHUNK_SIZE);
+        const previous = readCacheMeta_(cache, scope);
+        cache.putAll(values, READ_CACHE_KEEP_SECONDS);
+        cache.put(`hub_read:${scope}:meta`, JSON.stringify({ version:version, build:buildId, parts:parts, built_at:startedAt }), READ_CACHE_KEEP_SECONDS);
+        // Drop the replaced copy so kept copies don't pile up (Outreach can rebuild every few minutes while sending).
+        if (previous?.build && previous.build !== buildId && Number.isInteger(previous.parts) && previous.parts > 0 && previous.parts <= 20) {
+          cache.removeAll(Array.from({ length:previous.parts }, (_, index) => `hub_read:${scope}:${previous.build}:${index}`));
+        }
+      }
+    } catch (error) { console.warn("Read cache write skipped: " + String(error && error.message || error)); }
+    payload.cache_stale = false;
+    payload.cache_rebuilding = false;
+    payload.cache_built_at = new Date(startedAt).toISOString();
+    return payload;
+  } finally {
+    try { cache.remove(guardKey); } catch (error) {}
+  }
+}
+
+const READ_CACHE_BUILDERS = {
+  outreach_slim:() => apiGetOutreachDashboard_({ slim:"1", _cache_bypass:true }),
+  customer_work_queue:() => apiGetCustomerWorkQueue_({ _cache_bypass:true }),
+  inventory_stores:() => apiGetInitData_("", true),
+};
+
+/** Rebuilds the screen caches of the given groups now (used by background jobs right after they change something). */
+function rebuildReadCaches_(groups) {
+  Object.keys(READ_CACHE_BUILDERS).filter(scope => groups.includes(READ_CACHE_GROUPS[scope])).forEach(scope => {
+    try { cachedReadPayload_(scope, READ_CACHE_BUILDERS[scope], true); }
+    catch (error) { console.warn(`Rebuilding ${scope} failed: ${String(error && error.message || error)}`); }
+  });
 }
 
 function warmHubReadCaches() {
   const hour = Number(Utilities.formatDate(new Date(), Session.getScriptTimeZone(), "H"));
   if (hour < 7 || hour >= 21) return { message:"Skipped outside 7am–9pm." };
-  // Rebuild at most ONE missing cache per run. Rebuilding all three at once took 30+ seconds
-  // and slowed staff requests (campaign preview/freeze) running at the same moment.
-  const scopes = [
-    ["outreach_slim", () => apiGetOutreachDashboard_({ slim:"1", _cache_bypass:true })],
-    ["customer_work_queue", () => apiGetCustomerWorkQueue_({ _cache_bypass:true })],
-    ["inventory_stores", () => apiGetInitData_("", true)],
-  ];
-  const missing = scopes.find(([scope]) => !readCachePresent_(scope));
-  if (!missing) return { message:"Hub read caches already warm.", version:readCacheVersion_() };
-  cachedReadPayload_(missing[0], missing[1]);
-  return { message:`Hub read cache warmed: ${missing[0]}.`, version:readCacheVersion_() };
+  // Rebuild at most ONE cache per run: the one that changed (or is missing) and has gone longest without a rebuild.
+  // Rebuilding all three at once took 30+ seconds and slowed staff requests running at the same moment.
+  const cache = CacheService.getScriptCache();
+  const due = Object.keys(READ_CACHE_BUILDERS)
+    .map(scope => ({ scope:scope, meta:readCacheMeta_(cache, scope) }))
+    .filter(item => !readCacheIsFresh_(item.meta, readCacheVersion_(item.scope), READ_CACHE_WARM_MAX_AGE_SECONDS))
+    .sort((a, b) => Number(a.meta?.built_at || 0) - Number(b.meta?.built_at || 0));
+  if (!due.length) return { message:"Hub read caches already current." };
+  if (cache.get(`hub_read:${due[0].scope}:rebuilding`)) return { message:`Hub read cache ${due[0].scope} is already rebuilding.` };
+  cachedReadPayload_(due[0].scope, READ_CACHE_BUILDERS[due[0].scope], true);
+  return { message:`Hub read cache warmed: ${due[0].scope}.` };
 }
 
 function onHubReadCacheSpreadsheetChange(e) {
@@ -1002,9 +1100,11 @@ function handle_(e, body, isGet) {
     // A link or image tag can trigger a GET, so only read actions are accepted that way.
     if (isGet && !READ_ACTIONS.has(action)) throw new Error("This action must be sent as POST.");
     invalidateReadCache = !READ_ACTIONS.has(action);
+    // Read follow-ups ask for a rebuild of a stale copy (.84).
+    const readMode = String((e?.parameter?.rebuild) || (body?.rebuild) || "") === "1" ? "rebuild" : "";
     let res;
     switch (action) {
-      case "initData": res = apiGetInitData_((e?.parameter?.store_id) || (body?.store_id) || "", false, String((e?.parameter?.refresh) || (body?.refresh) || "") === "1"); break;
+      case "initData": res = apiGetInitData_((e?.parameter?.store_id) || (body?.store_id) || "", false, String((e?.parameter?.refresh) || (body?.refresh) || "") === "1", readMode); break;
       case "listSkus": res = apiListSkus_(); break;
       case "sellSheet": res = apiSellSheet_(body || {}); break;
       case "addSkuToStore": res = apiAddSkuToStore_(body); break;
@@ -1056,7 +1156,7 @@ function handle_(e, body, isGet) {
       case "customerWorkQueue": res = apiGetCustomerWorkQueue_(Object.assign({}, e?.parameter || {}, body || {})); break;
       case "customerAccountIndex": res = apiGetCustomerAccountIndex_(Object.assign({}, e?.parameter || {}, body || {})); break;
       case "linkBadgerInvoice": res = apiLinkBadgerInvoice_(body); break;
-      case "syncBadgerStatus": res = apiSyncBadgerStatus_(body); invalidateReadCache = false; break;
+      case "syncBadgerStatus": res = apiSyncBadgerStatus_(body); break;
       case "markBadgerInvoicePayment": res = apiMarkBadgerInvoicePayment_(body); break;
       case "recordBadgerCheck": res = apiRecordBadgerCheck_(body); break;
       case "resolvePaymentReminder": res = apiResolvePaymentReminder_(body); break;
@@ -1069,7 +1169,7 @@ function handle_(e, body, isGet) {
       case "adoptBadgerInvoice": res = apiAdoptBadgerInvoice_(body); break;
       case "failBadgerInvoiceCreation": res = apiFailBadgerInvoiceCreation_(body); break;
       case "updateCustomerApplication": res = apiUpdateCustomerApplication_(body); break;
-      case "previewApplicationWelcome": res = apiPreviewApplicationWelcome_(body); invalidateReadCache = false; break;
+      case "previewApplicationWelcome": res = apiPreviewApplicationWelcome_(body); break;
       case "sendApplicationWelcome": res = apiSendApplicationWelcome_(body); break;
       case "updateOnlineOrderRequest": res = apiUpdateOnlineOrderRequest_(body); break;
       case "updateOnlineOrderLines": res = apiUpdateOnlineOrderLines_(body); break;
@@ -1100,14 +1200,14 @@ function handle_(e, body, isGet) {
     return relayedOutput_(e, JSON.stringify({ ok:false, version:APP_VERSION, error:detail }));
   } finally {
     if (invalidateReadCache) {
-      try { bumpReadCacheVersion_(); }
+      try { bumpReadCacheVersion_(Object.prototype.hasOwnProperty.call(READ_CACHE_ACTION_GROUPS, action) ? READ_CACHE_ACTION_GROUPS[action] : READ_CACHE_ALL_GROUPS); }
       catch (error) { console.warn("Read cache invalidation failed: " + String(error && error.message || error)); }
     }
   }
 }
 
-function apiGetInitData_(store_id, _cache_bypass, forceRefresh) {
-  if (!store_id && !_cache_bypass) return cachedReadPayload_("inventory_stores", () => apiGetInitData_("", true), !!forceRefresh);
+function apiGetInitData_(store_id, _cache_bypass, forceRefresh, readMode) {
+  if (!store_id && !_cache_bypass) return cachedReadPayload_("inventory_stores", () => apiGetInitData_("", true), !!forceRefresh, readMode);
   const startedAt = Date.now();
   const trackedAccountIds = inventoryTrackedAccountIds_();
   const stores = getAllRowsAsObjects_(getSheet_(SHEET_NAMES.STORES))
@@ -2152,7 +2252,7 @@ function recalculateOutreachMiles() {
     Logger.log(JSON.stringify(result));
     return result;
   } finally {
-    bumpReadCacheVersion_();
+    bumpReadCacheVersion_(["outreach"]);
   }
 }
 
@@ -2654,7 +2754,7 @@ function backfillEngagementDetails() {
     Logger.log(JSON.stringify(result));
     return result;
   } finally {
-    bumpReadCacheVersion_();
+    bumpReadCacheVersion_(["outreach"]);
   }
 }
 
@@ -3411,7 +3511,7 @@ function apiGetOutreachDashboard_(p) {
   if (String(p?.slim || "") === "1" && !p?._cache_bypass) {
     // A forced refresh still goes through the cache helper so the fresh build is saved even if
     // the browser request times out; the next normal load then shows current data.
-    return cachedReadPayload_("outreach_slim", () => apiGetOutreachDashboard_(Object.assign({}, p, { _cache_bypass:true })), forceRefresh);
+    return cachedReadPayload_("outreach_slim", () => apiGetOutreachDashboard_(Object.assign({}, p, { _cache_bypass:true })), forceRefresh, String(p?.rebuild || "") === "1" ? "rebuild" : "");
   }
   const slim = String(p?.slim || "") === "1";
   const startedAt = Date.now();
@@ -4553,7 +4653,7 @@ function reconcileBlockedCampaignSends() {
     Logger.log(JSON.stringify(result));
     return result;
   } finally {
-    bumpReadCacheVersion_();
+    bumpReadCacheVersion_(["outreach"]);
   }
 }
 
@@ -4776,7 +4876,7 @@ function rebuildUnsentCampaignEmails() {
     }
     return results;
   } finally {
-    bumpReadCacheVersion_();
+    bumpReadCacheVersion_(["outreach"]);
   }
 }
 
@@ -5705,7 +5805,7 @@ function migrateCampaignsToSequences() {
     __HEADER_CACHE.clear();
     const plan = deleted.length ? buildSequencePlan_(sequenceSourceData_(), { now:new Date(), gap_days:sequenceGapDays_() }) : first;
     const counts = writeSequencePlan_(plan, SEQUENCE_MIGRATION_ACTOR);
-    bumpReadCacheVersion_();
+    bumpReadCacheVersion_(["outreach"]);
     appendAudit_("MIGRATE_OUTREACH_SEQUENCES", "Sequence", "", "", SEQUENCE_MIGRATION_ACTOR, OUTREACH_SEQUENCES_SHEET_NAME, OUTREACH_CAMPAIGNS_SHEET_NAME, "Migrated",
       `${plan.sequences.length} sequences (${counts.appended} new); ${counts.campaign_cells} campaign cells; ${counts.directory_cells} Directory cells; deleted ${deleted.length}.`.slice(0, 500));
     const summary = `Migrated ${plan.sequences.length} sequences (${counts.appended} new). Deleted ${deleted.length} duplicate campaign${deleted.length === 1 ? "" : "s"}${deleted.length ? `: ${deleted.join(", ")}` : ""}. Updated ${counts.campaign_cells} campaign cells and ${counts.directory_cells} Directory cells.`;
@@ -5730,7 +5830,7 @@ function syncSequences_(actor) {
     const plan = buildSequencePlan_(sequenceSourceData_(), { now:new Date(), gap_days:sequenceGapDays_() });
     const counts = writeSequencePlan_(plan, actor || SEQUENCE_STEP_CHECK_ACTOR);
     const changed = !!(counts.appended || counts.sequence_cells || counts.campaign_cells || counts.directory_cells);
-    if (changed) bumpReadCacheVersion_();
+    if (changed) bumpReadCacheVersion_(["outreach"]);
     // The plan is current unless this sync just stored a new sequence (its "stored" flag is now out of date).
     return Object.assign({ changed:changed, plan:counts.appended ? null : plan }, counts);
   } finally {
@@ -5930,7 +6030,7 @@ function runSequenceStepCheck(options) {
   });
   const created = results.filter(item => item.result === "created");
   if (created.length) {
-    bumpReadCacheVersion_();
+    bumpReadCacheVersion_(["outreach"]);
     appendAudit_("SEQUENCE_STEP_CHECK", "Sequence", only, "", actor, OUTREACH_SEQUENCES_SHEET_NAME, OUTREACH_CAMPAIGNS_SHEET_NAME, "Drafted",
       created.map(item => `${item.campaign_name} (${item.recipient_count})`).join("; ").slice(0, 500));
   }
@@ -6012,7 +6112,7 @@ function apiUpdateOutreachSequence_(p) {
     }
     if (!changes.length) return { message:"Nothing changed.", sequence_id:sequenceId };
     if (h.updated_at !== undefined) sheet.getRange(row, h.updated_at + 1).setValue(new Date());
-    bumpReadCacheVersion_();
+    bumpReadCacheVersion_(["outreach"]);
     appendAudit_("UPDATE_OUTREACH_SEQUENCE", "Sequence", sequenceId, "", authenticatedActor_(p, "Sturgeon Distribution Hub"), OUTREACH_SEQUENCES_SHEET_NAME, OUTREACH_SEQUENCES_SHEET_NAME, "Updated", changes.join("; ").slice(0, 500));
     return { message:"Sequence saved.", sequence_id:sequenceId, sequence_name:hasName ? name : undefined, gap_days:hasGap ? gap : undefined };
   } finally { lock.releaseLock(); }
@@ -7015,7 +7115,12 @@ function checkInboundReplies_(trigger) {
         console.error(`Closing answered replies failed: ${String(error && error.message || error)}`);
       }
     }
-    if (summary.added || summary.auto_actions || summary.answered) bumpReadCacheVersion_();
+    if (summary.added || summary.auto_actions || summary.answered) {
+      bumpReadCacheVersion_(["outreach"]);
+      // On the schedule, rebuild Outreach now so the next page load doesn't wait for it (.84). A staff press of
+      // Check for new replies skips this to answer quickly; the page refreshes the stale copy itself.
+      if (trigger === "Schedule") rebuildReadCaches_(["outreach"]);
+    }
   } catch (error) {
     summary.error = String(error && error.message || error).slice(0, 500);
     throw error;
@@ -7415,7 +7520,10 @@ function runScheduledOutreachCampaigns() {
     if (Date.now() > deadlineAt) break;
     runs.push(runScheduledCampaign_(state.campaign_id, deadlineAt, holdCheck));
   }
-  if (runs.some(run => run.sent || run.skipped || run.state !== "Sending")) bumpReadCacheVersion_();
+  if (runs.some(run => run.sent || run.skipped || run.state !== "Sending")) {
+    bumpReadCacheVersion_(["outreach"]);
+    rebuildReadCaches_(["outreach"]); // so the next Outreach load doesn't wait for a rebuild (.84)
+  }
   console.log(JSON.stringify({ event:"outreach_campaign_schedule_run", due:due.length, runs:runs, total_ms:Date.now() - startedAt }));
   return { runs:runs };
 }
@@ -9351,7 +9459,7 @@ function apiMarkBadgerInvoicePayment_(p) {
     }
     else throw new Error("Choose a supported payment action.");
   } finally { lock.releaseLock(); }
-  bumpReadCacheVersion_(); clearBadgerInvoiceCache_();
+  bumpReadCacheVersion_(["customers"]); clearBadgerInvoiceCache_();
   return { message:"Badger payment mark updated." };
 }
 
@@ -9367,7 +9475,7 @@ function apiRecordBadgerCheck_(p) {
     writeBadgerPaymentMarksBatch_(invoices.map(invoiceNumber => ({ invoice_number:invoiceNumber, paid_to_me:true, submitted:"Yes", require_owed:true })), "RECORD_BADGER_CHECK", actor, checkNumber, checkDate);
   }
   finally { lock.releaseLock(); }
-  bumpReadCacheVersion_(); clearBadgerInvoiceCache_();
+  bumpReadCacheVersion_(["customers"]); clearBadgerInvoiceCache_();
   return { message:`Recorded Badger check for ${invoices.length} invoice(s).` };
 }
 
@@ -9398,7 +9506,7 @@ function apiApplyBadgerReconcile_(p) {
     writeBadgerPaymentMarksBatch_(invoices.map(invoice => ({ invoice_number:invoice.invoice_number, paid_to_me:true, submitted:group === "paid_not_marked" ? "N/A" : "Yes" })), "RECONCILE_BADGER_PAYMENT", actor);
   }
   finally { lock.releaseLock(); }
-  bumpReadCacheVersion_(); clearBadgerInvoiceCache_(); return { message:`Applied ${invoices.length} reconciliation update(s).`, count:invoices.length };
+  bumpReadCacheVersion_(["outreach", "customers"]); clearBadgerInvoiceCache_(); return { message:`Applied ${invoices.length} reconciliation update(s).`, count:invoices.length };
 }
 
 function badgerResponseNeedsSessionRefresh_(method, path, status, responseText) {
@@ -9472,7 +9580,7 @@ function syncBadgerStatus_(actor) {
     if (extraRows > 0) sheet.getRange(invoices.length + 2, 1, extraRows, headers.length).clearContent();
     appendBadgerSyncLog_("Succeeded", invoices.length, `Synced by ${String(actor || "staff")}.`);
   } finally { lock.releaseLock(); }
-  bumpReadCacheVersion_();
+  bumpReadCacheVersion_(["outreach", "customers"]);
   clearBadgerInvoiceCache_();
   return { message:`Badger status synchronized: ${invoices.length} invoices.`, invoice_count:invoices.length, synced_at:syncedAt.toISOString() };
 }
@@ -9660,7 +9768,8 @@ function importLatestToastStockReport() {
       dateRange.setValues(dateValues);
     }
     props.setProperty(TOAST_STOCK_LAST_FILE_PROPERTY, marker);
-    bumpReadCacheVersion_();
+    bumpReadCacheVersion_(["inventory", "customers"]);
+    rebuildReadCaches_(["inventory"]); // Orders & Accounts is left to the warmer: its rebuild is the slow one (.84)
     const detail = `${latest.getName()}: ${result.updates.length} SKUs updated; ${result.missing_in_report.length} mapped SKUs not in the report, stock cleared (${result.missing_in_report.slice(0, 20).join(", ")}); ${result.unmapped_toast_items.length} Toast bottles with no SKU (${result.unmapped_toast_items.slice(0, 20).join(", ")}).`;
     appendAudit_("IMPORT_TOAST_STOCK", "SKUs", latest.getId(), "", "Toast stock import", "Toast 86 Report", SHEET_NAMES.SKUS, "Completed", detail);
     console.log(JSON.stringify({ event:"toast_stock_import", file:latest.getName(), updated:result.updates.length, missing:result.missing_in_report, unmapped:result.unmapped_toast_items }));
@@ -10037,7 +10146,7 @@ function apiCreateBadgerInvoice_(p) {
       if (!badgerInvoiceMatchesDraft_(confirmed, draft)) throw new Error("Badger did not confirm the created invoice total and customer.");
       updateBadgerInvoiceCreation_(creationSheet, pendingRow, "CREATED", actor, badgerInvoiceId, "");
       linkCreatedBadgerInvoiceToOrder_(draft, confirmed, actor);
-      bumpReadCacheVersion_(); clearBadgerInvoiceCache_();
+      bumpReadCacheVersion_(["outreach", "customers"]); clearBadgerInvoiceCache_();
       return { message:`Created Badger invoice ${draft.invoice_number}.`, invoice_number:draft.invoice_number, badger_invoice_id:badgerInvoiceId };
     } catch (error) {
       updateBadgerInvoiceCreation_(creationSheet, pendingRow, "PENDING", actor, "", String(error?.message || error).slice(0, 1000));
@@ -10056,7 +10165,7 @@ function apiAdoptBadgerInvoice_(p) {
     if (!badgerInvoiceMatchesDraft_(remote, draft)) throw new Error("Badger does not have a matching invoice to adopt.");
     const id = String(remote.id || remote.invoiceId || ""); const confirmed = id ? badgerRemoteInvoiceDetails_(id) : remote;
     if (!badgerInvoiceMatchesDraft_(confirmed, draft)) throw new Error("Badger does not have a matching invoice to adopt.");
-    updateBadgerInvoiceCreation_(getBadgerInvoiceCreationsSheet_(), pending.row_number, "CREATED", actor, id, "Adopted after pending create."); linkCreatedBadgerInvoiceToOrder_(draft, confirmed, actor); bumpReadCacheVersion_(); clearBadgerInvoiceCache_();
+    updateBadgerInvoiceCreation_(getBadgerInvoiceCreationsSheet_(), pending.row_number, "CREATED", actor, id, "Adopted after pending create."); linkCreatedBadgerInvoiceToOrder_(draft, confirmed, actor); bumpReadCacheVersion_(["outreach", "customers"]); clearBadgerInvoiceCache_();
     return { message:`Adopted Badger invoice ${draft.invoice_number}.`, invoice_number:draft.invoice_number };
   } finally { lock.releaseLock(); }
 }
@@ -10069,7 +10178,7 @@ function apiFailBadgerInvoiceCreation_(p) {
     const pending = badgerInvoiceCreationRows_(requestId).filter(item => item.status === "PENDING").sort((a, b) => b.row_number - a.row_number)[0];
     if (!pending || Date.now() - recordTimestamp_(pending.at) < 24 * 60 * 60 * 1000) throw new Error("Only a pending creation older than 24 hours can be marked failed.");
     if (badgerRemoteInvoiceByNumber_(pending.invoice_number)) throw new Error("Badger has this invoice; adopt it instead of marking the creation failed.");
-    updateBadgerInvoiceCreation_(getBadgerInvoiceCreationsSheet_(), pending.row_number, "FAILED", actor, "", reason); bumpReadCacheVersion_(); return { message:"Pending Badger invoice creation marked failed." };
+    updateBadgerInvoiceCreation_(getBadgerInvoiceCreationsSheet_(), pending.row_number, "FAILED", actor, "", reason); bumpReadCacheVersion_(["customers"]); return { message:"Pending Badger invoice creation marked failed." };
   } finally { lock.releaseLock(); }
 }
 
@@ -10278,13 +10387,13 @@ function apiLinkBadgerInvoice_(p) {
           restore("app_version", APP_VERSION);
           sheet.getRange(existingIndex + 2, 1, 1, values.length).setValues([values]);
           appendAudit_("RESTORE_BADGER_INVOICE", "Invoice", String(invoice.invoice_number || invoiceNumber), String(values[h.account_id] || ""), authenticatedActor_(p, "Sturgeon Distribution Hub"), BADGER_TRACKER_SPREADSHEET_ID, BADGER_INVOICE_LINKS_SHEET_NAME, "Restored prior link", priorMethod);
-          bumpReadCacheVersion_();
+          bumpReadCacheVersion_(["outreach", "customers"]);
           return { message:`Invoice ${invoice.invoice_number || invoiceNumber} restored to its prior ${priorMethod} link.`, invoice_number:String(invoice.invoice_number || invoiceNumber) };
         }
       }
       sheet.deleteRow(existingIndex + 2);
       appendAudit_("RESTORE_BADGER_INVOICE", "Invoice", String(invoice.invoice_number || invoiceNumber), "", authenticatedActor_(p, "Sturgeon Distribution Hub"), BADGER_TRACKER_SPREADSHEET_ID, BADGER_INVOICE_LINKS_SHEET_NAME, "Restored", invoice.customer_name || "Badger customer");
-      bumpReadCacheVersion_();
+      bumpReadCacheVersion_(["outreach", "customers"]);
       return { message:`Invoice ${invoice.invoice_number || invoiceNumber} restored to matching review.`, invoice_number:String(invoice.invoice_number || invoiceNumber) };
     }
     let account = null;
@@ -10315,7 +10424,7 @@ function apiLinkBadgerInvoice_(p) {
     set("notes", mode === "void" ? voidReason : publicText_(p.notes || "", 1000, "Invoice-link notes"));
     set("app_version", APP_VERSION);
     sheet.getRange(existingIndex >= 0 ? existingIndex + 2 : sheet.getLastRow() + 1, 1, 1, values.length).setValues([values]);
-    bumpReadCacheVersion_();
+    bumpReadCacheVersion_(["outreach", "customers"]);
     if (mode === "void") {
       appendAudit_("VOID_BADGER_INVOICE", "Invoice", String(invoice.invoice_number || invoiceNumber), "", authenticatedActor_(p, "Sturgeon Distribution Hub"), BADGER_TRACKER_SPREADSHEET_ID, BADGER_INVOICE_LINKS_SHEET_NAME, "Voided", voidReason);
       return { message:`Invoice ${invoice.invoice_number || invoiceNumber} marked void in the Hub. It no longer counts toward balances, reminders, or pass-through checks.`, invoice_number:String(invoice.invoice_number || invoiceNumber) };
@@ -10628,8 +10737,10 @@ function buildCustomerAccounts_(applications, orders, bypassBadgerCache) {
 
 function apiGetCustomerWorkQueue_(p) {
   const forceRefresh = String(p?.refresh || "") === "1";
-  // A forced refresh rebuilds and saves to the cache even if the browser stops waiting.
-  if (!p?._cache_bypass) return cachedReadPayload_("customer_work_queue", () => apiGetCustomerWorkQueue_({ _cache_bypass:true, _refresh_sources:forceRefresh }), forceRefresh);
+  // A forced refresh rebuilds and saves to the cache even if the browser stops waiting. It reuses the cached Badger
+  // invoices and Locations (.84): those change only on a Badger sync or a Badger action, which clear that cache
+  // themselves. sources=1 still forces a fresh read of the Badger Invoice Tracker.
+  if (!p?._cache_bypass) return cachedReadPayload_("customer_work_queue", () => apiGetCustomerWorkQueue_({ _cache_bypass:true, _refresh_sources:String(p?.sources || "") === "1" }), forceRefresh, String(p?.rebuild || "") === "1" ? "rebuild" : "");
   const startedAt = Date.now();
   const timings = {};
   let stageStartedAt = startedAt;
@@ -10686,7 +10797,7 @@ function apiGetCustomerWorkQueue_(p) {
     .sort((a, b) => a.sku_name.localeCompare(b.sku_name) || a.volume.localeCompare(b.volume));
   mark("order_prices_ms");
   applications.forEach(application => application.operational_statuses = application.workflow_status === "New" ? ["New"] : (application.inventory_tracking ? ["Inventory-counted"] : []));
-  const ledger = buildCustomerAccounts_(applications, orders, !!p?._refresh_sources || String(p?.refresh || "") === "1");
+  const ledger = buildCustomerAccounts_(applications, orders, !!p?._refresh_sources);
   const accounts = ledger.accounts;
   const invoicesByNumber = new Map();
   accounts.forEach(account => (account.invoices || []).forEach(invoice => {
@@ -10924,7 +11035,7 @@ function apiSendBadgerPaymentReminder_(p) {
     }
     sheet.getRange(pendingRow, h.status + 1).setValue("SENT"); sheet.getRange(pendingRow, h.sent_at + 1).setValue(new Date()); sheet.getRange(pendingRow, h.sent_by + 1).setValue(actor); sheet.getRange(pendingRow, h.zoho_message_id + 1).setValue(String(result.message_id)); sheet.getRange(pendingRow, h.error + 1).setValue("Zoho accepted delivery."); sheet.getRange(pendingRow, h.app_version + 1).setValue(APP_VERSION);
     appendAudit_("SEND_BADGER_PAYMENT_REMINDER", "Account", account.account_id, account.account_id, actor, BADGER_TRACKER_SPREADSHEET_ID, BADGER_PAYMENT_REMINDERS_SHEET_NAME, "Completed", `${content.invoice_numbers.join(", ")}; ${content.outstanding_amount}; Zoho ${String(result.message_id)}`);
-    bumpReadCacheVersion_();
+    bumpReadCacheVersion_(["customers"]);
     return { accepted:true, idempotent:!!result.idempotent, message_id:String(result.message_id), sent_at:new Date().toISOString(), outstanding_amount:content.outstanding_amount };
   } finally {
     lock.releaseLock();
@@ -10945,7 +11056,7 @@ function apiResolvePaymentReminder_(p) {
   const rowNumber = index + 2;
   if (resolution === "failed") {
     if (!reason) throw new Error("A failure reason is required.");
-    sheet.getRange(rowNumber, h.status + 1).setValue("FAILED"); sheet.getRange(rowNumber, h.error + 1).setValue(reason); sheet.getRange(rowNumber, h.sent_by + 1).setValue(actor); bumpReadCacheVersion_(); return { message:"Pending reminder marked failed." };
+    sheet.getRange(rowNumber, h.status + 1).setValue("FAILED"); sheet.getRange(rowNumber, h.error + 1).setValue(reason); sheet.getRange(rowNumber, h.sent_by + 1).setValue(actor); bumpReadCacheVersion_(["customers"]); return { message:"Pending reminder marked failed." };
   }
   if (resolution !== "retry") throw new Error("Choose retry or failed.");
   if (Date.now() - recordTimestamp_(rows[index][h.sent_at]) > 24 * 60 * 60 * 1000) throw new Error("A pending reminder may be retried only within 24 hours; mark it failed with a reason instead.");
@@ -10954,7 +11065,7 @@ function apiResolvePaymentReminder_(p) {
   if (String(rows[index][h.invoice_numbers] || "").split(/,\s*/).some(invoice => !stillOwed.has(invoice))) throw new Error("This reminder is no longer current; mark it failed with a reason instead.");
   const result = callOutreachMailer_({ action:"sendPaymentReminder", idempotency_token:String(rows[index][h.idempotency_token] || ""), account_id:String(rows[index][h.account_id] || ""), business:String(rows[index][h.business_name] || ""), recipient:String(rows[index][h.recipient] || ""), invoice_numbers:String(rows[index][h.invoice_numbers] || "").split(/,\s*/).filter(Boolean), outstanding_amount_cents:Number(rows[index][h.outstanding_amount] || 0), subject:String(rows[index][h.subject] || ""), html:String(rows[index][h.html] || ""), requested_by:actor });
   if (!result.accepted || !String(result.message_id || "")) throw new Error("Mailer did not confirm this reminder; it remains pending.");
-  sheet.getRange(rowNumber, h.status + 1).setValue("SENT"); sheet.getRange(rowNumber, h.sent_at + 1).setValue(new Date()); sheet.getRange(rowNumber, h.sent_by + 1).setValue(actor); sheet.getRange(rowNumber, h.zoho_message_id + 1).setValue(String(result.message_id)); sheet.getRange(rowNumber, h.error + 1).setValue("Zoho accepted delivery."); bumpReadCacheVersion_(); return { accepted:true, message:"Pending reminder resolved as sent." };
+  sheet.getRange(rowNumber, h.status + 1).setValue("SENT"); sheet.getRange(rowNumber, h.sent_at + 1).setValue(new Date()); sheet.getRange(rowNumber, h.sent_by + 1).setValue(actor); sheet.getRange(rowNumber, h.zoho_message_id + 1).setValue(String(result.message_id)); sheet.getRange(rowNumber, h.error + 1).setValue("Zoho accepted delivery."); bumpReadCacheVersion_(["customers"]); return { accepted:true, message:"Pending reminder resolved as sent." };
   } finally { lock.releaseLock(); }
 }
 

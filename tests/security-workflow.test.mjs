@@ -507,7 +507,8 @@ test("campaign freeze timeouts wait for the snapshot instead of re-creating it",
   assert.doesNotMatch(rows, /matches\.map\(match => \(\{ row:match\.getRow\(\), values:sheet\.getRange/);
   assert.match(rows, /getRange\(first, 1, last - first \+ 1/);
   const warmer = script.slice(script.indexOf("function warmHubReadCaches"), script.indexOf("function onHubReadCacheSpreadsheetChange"));
-  assert.match(warmer, /readCachePresent_\(scope\)/);
+  // 2026.11.19.84-APP: the warmer rebuilds the one changed or missing cache that has waited longest.
+  assert.match(warmer, /readCacheIsFresh_\(item\.meta, readCacheVersion_\(item\.scope\), READ_CACHE_WARM_MAX_AGE_SECONDS\)/);
   const waiter = page.slice(page.indexOf("async function waitForFrozenCampaign"), page.indexOf("async function recalculateOutreachMiles"));
   assert.match(waiter, /action:"outreachCampaigns"/);
   assert.doesNotMatch(waiter, /createOutreachCampaign/);
@@ -535,9 +536,10 @@ test("learned aliases prefer the exact customer name and always learn staff link
 
 test("forced refreshes save their rebuild to the read cache", async () => {
   const script = await readFile(new URL("apps-script/Code.gs", root), "utf8");
-  assert.match(script, /cachedReadPayload_\("customer_work_queue", \(\) => apiGetCustomerWorkQueue_\(\{ _cache_bypass:true, _refresh_sources:forceRefresh \}\), forceRefresh\)/);
-  assert.match(script, /cachedReadPayload_\("outreach_slim", [^\n]+, forceRefresh\)/);
-  assert.match(script, /cachedReadPayload_\("inventory_stores", \(\) => apiGetInitData_\("", true\), !!forceRefresh\)/);
+  // 2026.11.19.84-APP: a refresh no longer re-reads the Badger tracker unless sources=1; rebuild=1 is the page's follow-up.
+  assert.match(script, /cachedReadPayload_\("customer_work_queue", \(\) => apiGetCustomerWorkQueue_\(\{ _cache_bypass:true, _refresh_sources:String\(p\?\.sources \|\| ""\) === "1" \}\), forceRefresh, String\(p\?\.rebuild \|\| ""\) === "1" \? "rebuild" : ""\)/);
+  assert.match(script, /cachedReadPayload_\("outreach_slim", [^\n]+, forceRefresh, String\(p\?\.rebuild \|\| ""\) === "1" \? "rebuild" : ""\)/);
+  assert.match(script, /cachedReadPayload_\("inventory_stores", \(\) => apiGetInitData_\("", true\), !!forceRefresh, readMode\)/);
   const page = await readFile(new URL("index.html", root), "utf8");
   assert.equal((page.match(/Couldn't refresh \(\$\{error\?\.message/g) || []).length, 3);
 });
@@ -609,7 +611,7 @@ test("core Hub read paths use versioned cache fallbacks and timing metadata", as
   assert.match(script, /hub_read:.*scope.*version/);
   assert.match(script, /function warmHubReadCaches/);
   assert.match(script, /everyMinutes\(10\)/);
-  assert.match(script, /const READ_CACHE_TTL_SECONDS = 900/);
+  assert.match(script, /const READ_CACHE_FRESH_SECONDS = 900/);
   assert.match(script, /const READ_CACHE_CHUNK_SIZE = 45000/);
   assert.match(script, /function onHubReadCacheSpreadsheetChange/);
   assert.match(script, /\[getOutreachSs_\(\), SpreadsheetApp\.openById\(BADGER_TRACKER_SPREADSHEET_ID\), getSs_\(\)\]/);
