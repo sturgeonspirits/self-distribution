@@ -3,6 +3,11 @@
 Moved out of the Inventory API header (`apps-script/Code.gs`, now `apps-script/01-core.gs`) on 2026-10-17 so the deployed file stays short. Newest first, copied word for word. The header keeps only the current version (`CHANGES IN THIS VERSION`); when a new version is made, move that section to the top of this file.
 
 ```
+CHANGES IN 2026.11.19.86-APP (deployed 2026-11-19)
+Split into files (Karl, 2026-11-19): the old 12,458-line Code.gs is now 12 files, 01-core.gs to
+12-task-manager.gs, each a continuous piece of the old file in the same order, so the code runs exactly as before.
+No behavior change. Deploy with apps-script/deploy.sh (uploads every file in apps-script/).
+
 CHANGES IN 2026.11.19.84-APP (deployed 2026-11-19)
 Speed fixes (Karl, 2026-11-19): (1) screen caches are grouped (outreach, customers, inventory) and each save or
 background job clears only the groups it affects (READ_CACHE_ACTION_GROUPS; anything unlisted clears all). (2) An

@@ -28,6 +28,46 @@ function outreachCampaignRow_(sheet, campaignId) {
   return index < 0 ? null : { row:index + 2, values:values[index], headers:h };
 }
 
+// Karl, 2026-11-19 (.87): businesses in a campaign that still has an email waiting for them. The Outreach screen labels
+// them, and Today leaves out the ones whose next email is already scheduled (an approved campaign that isn't paused).
+// Keyed by Account ID, else "row:<Directory row>". Reads only five recipient columns, not the email bodies.
+const OPEN_CAMPAIGN_STATE_RANK = { scheduled:3, review:2, paused:1 };
+function openCampaignMembership_() {
+  const membership = new Map();
+  const sheets = outreachCampaignSheets_();
+  const ch = getHeaderMap_(sheets.campaigns);
+  const campaignRows = sheets.campaigns.getLastRow() - 1;
+  if (campaignRows < 1) return membership;
+  const open = new Map();
+  sheets.campaigns.getRange(2, 1, campaignRows, sheets.campaigns.getLastColumn()).getValues().forEach(values => {
+    const status = String(values[ch.status] || "").trim();
+    if (!["Review", "Approved"].includes(status)) return;
+    const schedule = ch.schedule_status === undefined ? "" : String(values[ch.schedule_status] || "").trim();
+    open.set(String(values[ch.campaign_id] || "").trim(), {
+      name:String(values[ch.campaign_name] || "").trim(),
+      state:status === "Review" ? "review" : schedule === "Paused" ? "paused" : "scheduled",
+    });
+  });
+  if (!open.size) return membership;
+  const rh = getHeaderMap_(sheets.recipients);
+  const recipientRows = sheets.recipients.getLastRow() - 1;
+  if (recipientRows < 1 || rh.campaign_id === undefined || rh.status === undefined) return membership;
+  const column = key => rh[key] === undefined ? [] : sheets.recipients.getRange(2, rh[key] + 1, recipientRows, 1).getValues().map(row => row[0]);
+  const ids = column("campaign_id"), accounts = column("account_id"), rows = column("source_row"), statuses = column("status"), stages = column("message_stage");
+  ids.forEach((id, index) => {
+    const campaign = open.get(String(id || "").trim());
+    if (!campaign) return;
+    const status = String(statuses[index] || "").trim();
+    if (status !== (campaign.state === "review" ? "Ready for review" : "Ready to send")) return;
+    const key = String(accounts[index] || "").trim() || (rows[index] ? `row:${Number(rows[index])}` : "");
+    if (!key) return;
+    const current = membership.get(key);
+    if (current && OPEN_CAMPAIGN_STATE_RANK[current.state] >= OPEN_CAMPAIGN_STATE_RANK[campaign.state]) return;
+    membership.set(key, { name:campaign.name, state:campaign.state, stage:String(stages[index] || "").trim() });
+  });
+  return membership;
+}
+
 function campaignRecipientRows_(sheet, campaignId) {
   const h = getHeaderMap_(sheet);
   if (sheet.getLastRow() < 2) return [];

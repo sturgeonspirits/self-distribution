@@ -1,10 +1,10 @@
 <!doctype html>
-<!-- App version: 2026.11.19.85-WEB -->
+<!-- App version: 2026.11.19.88-WEB -->
 <html>
 <head>
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover"/>
-  <meta name="app-version" content="2026.11.19.85-WEB" />
+  <meta name="app-version" content="2026.11.19.88-WEB" />
   <meta name="theme-color" content="#536f77" />
   <link rel="icon" href="/assets/distribution-hub-icon.svg" type="image/svg+xml" />
   <link rel="manifest" href="/site.webmanifest" />
@@ -2804,7 +2804,7 @@
 
   <footer style="max-width:1200px;margin:18px auto 120px;padding:0 12px;text-align:center;color:#6b7280;font-size:12px;">
     Designed by <a href="https://scriptspirit.dev" target="_blank" rel="noopener noreferrer" style="color:#1d4ed8;text-decoration:none;font-weight:700;">Script Spirit</a>
-<span id="appVersionFooter"> • Version 2026.11.19.85-WEB</span>
+<span id="appVersionFooter"> • Version 2026.11.19.88-WEB</span>
   </footer>
 
 
@@ -2827,7 +2827,7 @@
   window.addEventListener("unhandledrejection", e => console.error("Unhandled promise rejection:", e.reason));
   window.addEventListener("error", e => console.error("Unhandled error:", e.error || e.message));
   const $ = (id) => document.getElementById(id);
-  const APP_VERSION = "2026.11.19.85-WEB";
+  const APP_VERSION = "2026.11.19.88-WEB";
   $("appVersionFooter").textContent = ` • Version ${APP_VERSION}`;
   function screenCacheKey(screen){ return `distribution_hub:${APP_VERSION}:${staffSession?.email || "unknown"}:${screen}`; }
   function readScreenCache(screen){
@@ -2920,8 +2920,8 @@
   // Every list starts on All (Karl, 2026-10-12); narrower filters are a choice, never the default.
   let customerStatusFilter = "all";
   let customerLoaded = false;
-  let customerLoadError = "";
-  let customerDataStale = false; // the data on screen is an out-of-date saved copy that is being updated (2026.11.19.85-WEB) // set when the first Orders & Accounts load failed (2026.11.19.82-WEB)
+  let customerLoadError = ""; // set when the first Orders & Accounts load failed (2026.11.19.82-WEB)
+  let customerDataStale = false; // the data on screen is an out-of-date saved copy that is being updated (2026.11.19.85-WEB)
   const CUSTOMER_LOAD_RETRY_MS = 3000;
   let customerWorkQueueLoadRequest = 0;
   let selectedCustomerRecord = null;
@@ -6132,6 +6132,7 @@
           </div>
           <div class="outreachMeta">
             <span class="badge">${escapeHtml(dateLabel)}</span>
+            ${outreachCampaignBadge(record)}
             ${Number(record.craft_spirit_fit || 0) ? `<span class="badge green">Fit ${escapeHtml(record.craft_spirit_fit)}</span>` : ""}
             ${record.miles !== null && record.miles !== undefined && record.miles !== "" ? `<span class="badge blue">${escapeHtml(record.miles)} mi</span>` : (Number(record.craft_spirit_fit || 0) === 5 ? `<span class="badge amber">Distance needed</span>` : "")}
             ${priority ? `<span class="badge amber">${escapeHtml(priority)} priority</span>` : ""}
@@ -6236,6 +6237,15 @@
     if (outreachView === "newsletter") loadOutreachNewsletterContacts().catch(handleOutreachLoadError);
     if (outreachView === "campaigns") loadOutreachCampaigns().catch(handleOutreachLoadError);
     if (!res.is_mock) loadOutreachReplies().catch(error => { if (outreachView === "replies") handleOutreachLoadError(error); });
+  }
+
+  // Karl, 2026-11-19 (2026.11.19.88-WEB): which campaign still has an email waiting for this business. Businesses whose
+  // next email is scheduled are left off Today by the server; the others show here so you don't email them by hand.
+  function outreachCampaignBadge(record){
+    const campaign = record.campaign;
+    if (!campaign || !campaign.name) return "";
+    const when = campaign.state === "scheduled" ? "next email scheduled" : campaign.state === "paused" ? "paused" : "waiting for your review";
+    return `<span class="badge ${campaign.state === "scheduled" ? "blue" : "amber"}" title="This business has an email waiting in this campaign.">${escapeHtml(`In campaign: ${campaign.name} · ${when}`)}</span>`;
   }
 
   function patchOutreachRecordLocally(sourceRow, patch){

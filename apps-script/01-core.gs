@@ -1,11 +1,12 @@
 /*********************************
  * Inventory API (JSON) for Netlify. Part 1 of 12: core.
- * App version: 2026.11.19.86-APP
+ * App version: 2026.11.19.87-APP
  *
  * CHANGES IN THIS VERSION
- * Split into files (Karl, 2026-11-19): the old 12,458-line Code.gs is now 12 files, 01-core.gs to
- * 12-task-manager.gs, each a continuous piece of the old file in the same order, so the code runs exactly as before.
- * No behavior change. Deploy with apps-script/deploy.sh (uploads every file in apps-script/).
+ * Today and campaigns (Karl, 2026-11-19): the Outreach screen now knows which businesses are in a campaign that still has
+ * an email waiting for them (openCampaignMembership_ in 04-campaigns.gs; each record gets campaign:{name, state, stage},
+ * state scheduled / review / paused). Today and the due count leave out businesses whose next email is scheduled in
+ * an approved, unpaused campaign; the cards show the campaign label.
  *
  * PARTS (load in this order; filePushOrder in .clasp.json): 01-core (config, cache, sheets, setup, relay, request router),
  * 02-inventory, 03-outreach-directory, 04-campaigns, 05-sequences, 06-replies, 07-sending, 08-applications,
@@ -20,7 +21,7 @@
  * Earlier version notes: docs/history/inventory-api-changes.md (move this version's notes there when the version changes).
  *********************************/
 
-const APP_VERSION = "2026.11.19.86-APP";
+const APP_VERSION = "2026.11.19.87-APP";
 
 const SHEET_NAMES = {
   STORES: "Stores",

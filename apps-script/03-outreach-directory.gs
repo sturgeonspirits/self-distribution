@@ -1663,7 +1663,7 @@ function outreachSlimPayload_(record) {
     "status", "next_email", "priority", "next_follow_up", "last_emailed", "outcome", "do_not_email", "segment",
     "wave", "top_50", "craft_spirit_fit", "miles", "county", "email_confidence", "relationship", "newsletter_status",
     "ordering_status", "opened", "clicked", "search_text", "weekly_eligible",
-    "weekly_exclusion_reasons", "has_saved_draft",
+    "weekly_exclusion_reasons", "has_saved_draft", "campaign",
   ];
   return fields.reduce((payload, field) => {
     payload[field] = record[field];
@@ -1712,11 +1712,23 @@ function apiGetOutreachDashboard_(p) {
   }
   mark("record_build_ms");
 
+  // Open campaign for each business (.87): labels the card; a scheduled next email keeps it off Today and out of the
+  // due count, since the campaign will send it. A failure here only drops the labels.
+  try {
+    const membership = openCampaignMembership_();
+    records.forEach(record => {
+      const campaign = membership.get(String(record.account_id || "").trim()) || membership.get(`row:${Number(record.source_row)}`);
+      record.campaign = campaign || null;
+    });
+  } catch (error) { console.warn("Campaign membership unavailable: " + String(error && error.message || error)); }
+  mark("campaign_membership_ms");
+  const campaignWillSend = record => record.campaign?.state === "scheduled";
+
   const endOfToday = new Date();
   endOfToday.setHours(23, 59, 59, 999);
 
-  const due = records.filter(record => isDueOutreach_(record, endOfToday));
-  const ready = records.filter(isReadyOutreach_)
+  const due = records.filter(record => isDueOutreach_(record, endOfToday) && !campaignWillSend(record));
+  const ready = records.filter(record => isReadyOutreach_(record) && !campaignWillSend(record))
     .sort((a, b) => outreachPriorityScore_(b) - outreachPriorityScore_(a));
   const sent = records.filter(isSentOutreach_)
     .sort((a, b) => {
