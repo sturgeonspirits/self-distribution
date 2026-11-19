@@ -1,10 +1,10 @@
 <!doctype html>
-<!-- App version: 2026.11.19.88-WEB -->
+<!-- App version: 2026.11.19.89-WEB -->
 <html>
 <head>
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover"/>
-  <meta name="app-version" content="2026.11.19.88-WEB" />
+  <meta name="app-version" content="2026.11.19.89-WEB" />
   <meta name="theme-color" content="#536f77" />
   <link rel="icon" href="/assets/distribution-hub-icon.svg" type="image/svg+xml" />
   <link rel="manifest" href="/site.webmanifest" />
@@ -2278,6 +2278,7 @@
           <option value="contact_issues">Bad address or wrong contact</option>
           <option value="weekly">Weekly: Fit 5, 0–15 mi</option>
           <option value="distance_needed">Fit 5 needing distance</option>
+          <option value="closed">Closed businesses</option>
         </select>
       </div>
       <div>
@@ -2804,7 +2805,7 @@
 
   <footer style="max-width:1200px;margin:18px auto 120px;padding:0 12px;text-align:center;color:#6b7280;font-size:12px;">
     Designed by <a href="https://scriptspirit.dev" target="_blank" rel="noopener noreferrer" style="color:#1d4ed8;text-decoration:none;font-weight:700;">Script Spirit</a>
-<span id="appVersionFooter"> • Version 2026.11.19.88-WEB</span>
+<span id="appVersionFooter"> • Version 2026.11.19.89-WEB</span>
   </footer>
 
 
@@ -2827,7 +2828,7 @@
   window.addEventListener("unhandledrejection", e => console.error("Unhandled promise rejection:", e.reason));
   window.addEventListener("error", e => console.error("Unhandled error:", e.error || e.message));
   const $ = (id) => document.getElementById(id);
-  const APP_VERSION = "2026.11.19.88-WEB";
+  const APP_VERSION = "2026.11.19.89-WEB";
   $("appVersionFooter").textContent = ` • Version ${APP_VERSION}`;
   function screenCacheKey(screen){ return `distribution_hub:${APP_VERSION}:${staffSession?.email || "unknown"}:${screen}`; }
   function readScreenCache(screen){
@@ -2861,7 +2862,7 @@
   let outreachData = { today: [], directory: [], sent: [], newsletter: [], campaigns: [], replies: [], summary: { due_today: 0, total_businesses: 0, waiting: 0, weekly_ready: 0 } };
   let outreachView = localStorage.getItem("outreach_view") || "today";
   if (outreachView === "leads") outreachView = "directory";
-  const OUTREACH_AUDIENCE_PRESETS = ["weekly", "distance_needed", "follow_up_due", "interested", "contact_issues"];
+  const OUTREACH_AUDIENCE_PRESETS = ["weekly", "distance_needed", "follow_up_due", "interested", "contact_issues", "closed"];
   // "Visit scheduled" (2026.11.19.79-WEB) asks for the visit date as its next follow-up; "Visited" records a visit made.
   const OUTREACH_FOLLOW_UP_OUTCOMES = ["Interested", "Schedule tasting", "Follow up later", "Visit in person", "Visit scheduled"];
   const OUTREACH_INTERESTED_OUTCOMES = [...OUTREACH_FOLLOW_UP_OUTCOMES, "Tasting visit", "Visited"];
@@ -4478,18 +4479,16 @@
     return ["wrong contact", "bad address"].includes(outcome) || status === "needs email";
   }
 
+  // Karl, 2026-11-19: closed businesses are hidden everywhere on Outreach; "Closed businesses" under Who to show lists them.
+  function outreachIsClosed(record){
+    return [record.status, record.outcome].some(value => String(value || "").trim().toLowerCase() === "closed");
+  }
+
+  let outreachClosedHiddenCount = 0;
   function outreachRecordsForView(){
     let rows = [...(outreachData[outreachView] || [])];
-    if (outreachAudiencePreset === "weekly") rows = rows.filter(record => record.weekly_eligible === true);
-    if (outreachAudiencePreset === "distance_needed") {
-      rows = rows.filter(record => Number(record.craft_spirit_fit) === 5 && (record.miles === null || record.miles === undefined || record.miles === ""));
-    }
-    if (outreachAudiencePreset === "follow_up_due") rows = rows.filter(outreachFollowUpIsDue);
-    if (outreachAudiencePreset === "interested") rows = rows.filter(outreachOutcomeIsInterested);
-    if (outreachAudiencePreset === "contact_issues") rows = rows.filter(outreachHasContactIssue);
     const query = outreachFilterText.trim().toLowerCase();
-    if (query) {
-      rows = rows.filter(record => [
+    const matchesQuery = record => !query || [
         record.business,
         record.contact,
         record.email,
@@ -4503,8 +4502,19 @@
       ]
         .map(value => String(value || "").toLowerCase())
         .join(" | ")
-        .includes(query));
+        .includes(query);
+    const showClosed = outreachAudiencePreset === "closed";
+    // Count the closed businesses this view would otherwise show, so the list can say they are hidden.
+    outreachClosedHiddenCount = showClosed ? 0 : rows.filter(record => outreachIsClosed(record) && matchesQuery(record)).length;
+    rows = rows.filter(record => outreachIsClosed(record) === showClosed);
+    if (outreachAudiencePreset === "weekly") rows = rows.filter(record => record.weekly_eligible === true);
+    if (outreachAudiencePreset === "distance_needed") {
+      rows = rows.filter(record => Number(record.craft_spirit_fit) === 5 && (record.miles === null || record.miles === undefined || record.miles === ""));
     }
+    if (outreachAudiencePreset === "follow_up_due") rows = rows.filter(outreachFollowUpIsDue);
+    if (outreachAudiencePreset === "interested") rows = rows.filter(outreachOutcomeIsInterested);
+    if (outreachAudiencePreset === "contact_issues") rows = rows.filter(outreachHasContactIssue);
+    rows = rows.filter(matchesQuery);
 
     const businessSort = (a, b) => String(a.business || "").localeCompare(String(b.business || ""));
     const distanceValue = record => record.miles === null || record.miles === undefined || record.miles === ""
@@ -6042,7 +6052,9 @@
   function renderOutreach(){
     const summary = outreachData.summary || {};
     $("outreachDueCount").textContent = Number(summary.due_today || 0);
-    $("outreachBusinessCount").textContent = Number(summary.total_businesses || 0);
+    $("outreachBusinessCount").textContent = Array.isArray(outreachData.directory)
+      ? outreachData.directory.filter(record => !outreachIsClosed(record)).length
+      : Number(summary.total_businesses || 0);
     $("outreachWaitingCount").textContent = Number(summary.waiting || 0);
     if (activeAppSection === "outreach") {
       $("hdrStore").textContent = `${Number(summary.due_today || 0)} due`;
@@ -6080,7 +6092,9 @@
             ? `${records.length} interested`
             : outreachAudiencePreset === "contact_issues"
               ? `${records.length} contact issues`
-              : `${records.length} shown`;
+              : outreachAudiencePreset === "closed"
+                ? `${records.length} closed`
+                : `${records.length} shown${outreachClosedHiddenCount ? ` · ${outreachClosedHiddenCount} closed hidden` : ""}`;
     if (!records.length) {
       const emptyDetail = outreachAudiencePreset === "weekly"
         ? "No businesses in this work stage meet every weekly audience rule."
@@ -6092,7 +6106,11 @@
               ? "No businesses are currently marked interested."
               : outreachAudiencePreset === "contact_issues"
                 ? "No businesses need a corrected contact or email."
-                : "Try another work stage or clear the search.";
+                : outreachAudiencePreset === "closed"
+                  ? "No businesses in this view are marked closed."
+                  : outreachClosedHiddenCount
+                    ? `${outreachClosedHiddenCount} closed ${outreachClosedHiddenCount === 1 ? "business matches" : "businesses match"}; choose Closed businesses under Who to show to see ${outreachClosedHiddenCount === 1 ? "it" : "them"}.`
+                    : "Try another work stage or clear the search.";
       list.innerHTML = `<div class="outreachEmpty"><strong>Nothing in this view</strong><span>${emptyDetail}</span></div>`;
       refreshIcons();
       return;
