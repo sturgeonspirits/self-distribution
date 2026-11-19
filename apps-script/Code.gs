@@ -1,13 +1,12 @@
 /*********************************
  * Inventory API (JSON) for Netlify
- * App version: 2026.11.19.78-APP
+ * App version: 2026.11.19.80-APP
  *
  * CHANGES IN THIS VERSION
- * Visit results (Karl, 2026-11-19): two new outcomes, "Visit scheduled" (needs a date: the visit, saved as the next
- * follow-up) and "Visited". Both set status Interested. Includes .76 below, which was not deployed on its own.
- * Print invoice (Karl, 2026-11-17, .76): customerWorkQueue gives each order with a Badger invoice its Badger invoice ID
- * (badger_invoice_id), from Badger Invoice Creations for invoices the Hub created, otherwise from the synced Badger
- * Invoice Status tab by number. The Hub links it to Badger's print page, /BSWCSite/member/invoice/print/<ID>.
+ * Paper forms (Karl, 2026-11-19, .80): new staff action submitPaperCustomerApplication — a paper customer form typed in
+ * from the signup page's paper mode. Staff confirm the customer signed instead of signing the authorization; the
+ * signer defaults to the primary contact. Saved with Submission Source "Paper form" and Entered By; no new-application
+ * email. The new-application email's link now opens the application in the Hub (?application=), not the sheet.
  *
  * DEPLOY
  * - Apps Script project: Inventory API
@@ -17,7 +16,7 @@
  * Earlier version notes: docs/history/inventory-api-changes.md (move this version's notes there when the version changes).
  *********************************/
 
-const APP_VERSION = "2026.11.19.78-APP";
+const APP_VERSION = "2026.11.19.80-APP";
 
 const SHEET_NAMES = {
   STORES: "Stores",
@@ -998,7 +997,7 @@ function handle_(e, body, isGet) {
   try {
     assertAuthorized_(e, body);
     if (!action) {
-      return json_({ ok:true, service:"sturgeon-distribution-hub", version:APP_VERSION, actions:["initData","listSkus","sellSheet","addSkuToStore","upsertProduct","submitCounts","createReorder","managerGrid","salesSinceCount","updateStoreContacts","outreachDashboard","outreachRecord","outreachSendStatus","outreachNewsletterContacts","outreachCampaigns","outreachCampaign","outreachSequences","previewOutreachCampaign","createOutreachCampaign","updateOutreachCampaignRecipient","setOutreachCampaignRecipientExclusion","setOutreachCampaignRecipientExclusions","approveOutreachCampaign","reopenOutreachCampaign","deleteOutreachCampaign","renameOutreachCampaign","updateOutreachSequence","buildOutreachSequenceStep","reconcileCampaignSends","rebuildCampaignRecipients","sendOutreachCampaignBatch","scheduleOutreachCampaign","cancelOutreachCampaignSchedule","saveOutreachDraft","sendOutreachEmail","sendOutreachTestEmail","updateOutreachOutcome","logOutreachContact","updateOutreachBusiness","updateOutreachPrograms","createOutreachBusiness","importOutreachBusinesses","recalculateOutreachMiles","backfillEngagementDetails","upsertNewsletterContact","submitCustomerApplication","submitOnlineOrderRequest","customerWorkQueue","customerAccountIndex","linkBadgerInvoice","syncBadgerStatus","markBadgerInvoicePayment","recordBadgerCheck","resolvePaymentReminder","badgerReconcilePreview","applyBadgerReconcile","previewBadgerPaymentReminder","sendBadgerPaymentReminder","previewBadgerInvoice","createBadgerInvoice","adoptBadgerInvoice","failBadgerInvoiceCreation","updateCustomerApplication","previewApplicationWelcome","sendApplicationWelcome","updateOnlineOrderRequest","updateOnlineOrderLines","hubSystemStatus","salesReport","inboundReplies","resolveInboundReply","checkInboundReplies","initializeHardenedHub","repairHubStructure","reconcileIntegrations"] });
+      return json_({ ok:true, service:"sturgeon-distribution-hub", version:APP_VERSION, actions:["initData","listSkus","sellSheet","addSkuToStore","upsertProduct","submitCounts","createReorder","managerGrid","salesSinceCount","updateStoreContacts","outreachDashboard","outreachRecord","outreachSendStatus","outreachNewsletterContacts","outreachCampaigns","outreachCampaign","outreachSequences","previewOutreachCampaign","createOutreachCampaign","updateOutreachCampaignRecipient","setOutreachCampaignRecipientExclusion","setOutreachCampaignRecipientExclusions","approveOutreachCampaign","reopenOutreachCampaign","deleteOutreachCampaign","renameOutreachCampaign","updateOutreachSequence","buildOutreachSequenceStep","reconcileCampaignSends","rebuildCampaignRecipients","sendOutreachCampaignBatch","scheduleOutreachCampaign","cancelOutreachCampaignSchedule","saveOutreachDraft","sendOutreachEmail","sendOutreachTestEmail","updateOutreachOutcome","logOutreachContact","updateOutreachBusiness","updateOutreachPrograms","createOutreachBusiness","importOutreachBusinesses","recalculateOutreachMiles","backfillEngagementDetails","upsertNewsletterContact","submitCustomerApplication","submitPaperCustomerApplication","submitOnlineOrderRequest","customerWorkQueue","customerAccountIndex","linkBadgerInvoice","syncBadgerStatus","markBadgerInvoicePayment","recordBadgerCheck","resolvePaymentReminder","badgerReconcilePreview","applyBadgerReconcile","previewBadgerPaymentReminder","sendBadgerPaymentReminder","previewBadgerInvoice","createBadgerInvoice","adoptBadgerInvoice","failBadgerInvoiceCreation","updateCustomerApplication","previewApplicationWelcome","sendApplicationWelcome","updateOnlineOrderRequest","updateOnlineOrderLines","hubSystemStatus","salesReport","inboundReplies","resolveInboundReply","checkInboundReplies","initializeHardenedHub","repairHubStructure","reconcileIntegrations"] });
     }
 
     // A link or image tag can trigger a GET, so only read actions are accepted that way.
@@ -1053,6 +1052,7 @@ function handle_(e, body, isGet) {
       case "recalculateOutreachMiles": res = apiRecalculateOutreachMiles_(body); break;
       case "upsertNewsletterContact": res = apiUpsertNewsletterContact_(body); break;
       case "submitCustomerApplication": res = apiSubmitCustomerApplication_(body); break;
+      case "submitPaperCustomerApplication": res = apiSubmitPaperCustomerApplication_(body); break;
       case "submitOnlineOrderRequest": res = apiSubmitOnlineOrderRequest_(body); break;
       case "customerWorkQueue": res = apiGetCustomerWorkQueue_(Object.assign({}, e?.parameter || {}, body || {})); break;
       case "customerAccountIndex": res = apiGetCustomerAccountIndex_(Object.assign({}, e?.parameter || {}, body || {})); break;
@@ -8721,7 +8721,8 @@ function resolvePublicAccount_(claimedAccountId, business, email, city, lockHeld
 
 function sendCustomerApplicationNotification_(application, sheet, rowNumber) {
   const business = application.business_name || application.legal_business_name;
-  const reviewUrl = `https://docs.google.com/spreadsheets/d/${OUTREACH_SPREADSHEET_ID}/edit#gid=${sheet.getSheetId()}&range=A${rowNumber}`;
+  // Karl, 2026-11-19 (.80): the link opens the application in the Hub, not the staging sheet.
+  const reviewUrl = hubApplicationUrl_(application.application_id);
   const subject = `New wholesale application: ${business}`;
   const lines = [
     "A new wholesale customer application is ready for review.",
@@ -8747,7 +8748,7 @@ function sendCustomerApplicationNotification_(application, sheet, rowNumber) {
     `<li><strong>Phone:</strong> ${escapeOutreachHtml_(application.primary_phone)}</li>`,
     `<li><strong>Newsletter:</strong> ${application.newsletter_opt_in ? "Yes" : "No"}</li>`,
     "</ul>",
-    `<p><a href="${escapeOutreachHtml_(reviewUrl)}">Review this application in the staging sheet</a></p>`,
+    `<p><a href="${escapeOutreachHtml_(reviewUrl)}">Review this application in the Hub</a></p>`,
   ].join("");
 
   try {
@@ -8765,9 +8766,27 @@ function sendCustomerApplicationNotification_(application, sheet, rowNumber) {
   }
 }
 
-function apiSubmitCustomerApplication_(p) {
+// Karl, 2026-11-19 (.80): a paper form a customer filled out, typed in by staff from the Hub's signup page
+// (?paper=1). Reaches here only through the signed-in staff proxy. Staff don't sign the authorization: they confirm
+// the customer signed the paper form, and the signer defaults to the form's primary contact.
+function apiSubmitPaperCustomerApplication_(p) {
+  if (!p) throw new Error("Missing form data.");
+  const staffName = String(p.authenticated_staff_name || p.staff_name || "").trim();
+  if (!staffName) throw new Error("Sign in to the Hub to enter a paper form.");
+  if (!toBool_(p.paper_signed)) throw new Error("Confirm the customer signed the paper form.");
+  const form = Object.assign({}, p, {
+    attested:true,
+    form_trap:"",
+    authorized_name:String(p.authorized_name || "").trim() || String(p.primary_contact_name || "").trim(),
+    authorized_title:String(p.authorized_title || "").trim() || String(p.primary_contact_title || "").trim() || "Signed paper form",
+  });
+  return apiSubmitCustomerApplication_(form, { source:"Paper form", entered_by:staffName });
+}
+
+function apiSubmitCustomerApplication_(p, entry) {
   if (!p) throw publicError_("Missing form data.");
-  if (String(p.form_trap || "").trim()) return { message:"Application received.", application_id:"RECEIVED" };
+  const paper = !!(entry && entry.source === "Paper form");
+  if (!paper && String(p.form_trap || "").trim()) return { message:"Application received.", application_id:"RECEIVED" };
   requireFields_(p, ["legal_business_name", "business_type", "seller_permit_number", "primary_contact_name", "primary_email", "primary_phone", "delivery_address_1", "delivery_city", "delivery_state", "delivery_zip", "authorized_name", "authorized_title", "submission_token"]);
   if (!toBool_(p.attested)) throw publicError_("Authorization is required.");
 
@@ -8816,7 +8835,7 @@ function apiSubmitCustomerApplication_(p) {
   let journal = null;
   try {
     const sheet = getCustomerApplicationsSheet_(true);
-    ensureHeaderColumns_(sheet, ["Notification Status", "Notification Sent At", "Notification Error", ACCOUNT_ID_HEADER, "Account Link Status", "Data Sync Status"]);
+    ensureHeaderColumns_(sheet, ["Notification Status", "Notification Sent At", "Notification Error", ACCOUNT_ID_HEADER, "Account Link Status", "Data Sync Status", "Submission Source", "Entered By"]);
     const priorId = existingSubmissionByToken_(sheet, application.submission_token, "Application ID");
     if (priorId) return { message:"Application already received.", application_id:priorId };
     const link = resolvePublicAccount_(application.claimed_account_id, application.business_name || application.legal_business_name, application.primary_email, application.delivery_city, true);
@@ -8839,23 +8858,30 @@ function apiSubmitCustomerApplication_(p) {
     set("attested", true);
     set("newsletter_consent_at", application.newsletter_opt_in ? now : "");
     set("app_version", APP_VERSION);
+    set("submission_source", paper ? "Paper form" : "Online form");
+    set("entered_by", paper ? entry.entered_by : "");
     sheet.appendRow(row);
     upsertNewsletterFromApplication_(application);
     const applicationRow = sheet.getLastRow();
-    const notificationJob = enqueueIntegrationJob_("APPLICATION_NOTIFICATION", "Application", application.application_id, application.account_id, {
-      application_id:application.application_id,
-      business:application.business_name || application.legal_business_name,
-      email:application.primary_email,
-    });
-    const notification = sendCustomerApplicationNotification_(application, sheet, applicationRow);
-    sheet.getRange(applicationRow, h.notification_status + 1, 1, 3).setValues([[
-      notification.status,
-      notification.sent_at,
-      notification.error,
-    ]]);
-    updateIntegrationJob_(notificationJob, notification.status === "Sent" ? "Completed" : "Retry", notification.error);
+    if (paper) {
+      // Staff typed it in, so there is no one to tell: no new-application email.
+      sheet.getRange(applicationRow, h.notification_status + 1, 1, 3).setValues([["Not needed (paper form)", "", ""]]);
+    } else {
+      const notificationJob = enqueueIntegrationJob_("APPLICATION_NOTIFICATION", "Application", application.application_id, application.account_id, {
+        application_id:application.application_id,
+        business:application.business_name || application.legal_business_name,
+        email:application.primary_email,
+      });
+      const notification = sendCustomerApplicationNotification_(application, sheet, applicationRow);
+      sheet.getRange(applicationRow, h.notification_status + 1, 1, 3).setValues([[
+        notification.status,
+        notification.sent_at,
+        notification.error,
+      ]]);
+      updateIntegrationJob_(notificationJob, notification.status === "Sent" ? "Completed" : "Retry", notification.error);
+    }
     completeSubmissionJournal_(journal, "Completed", application.application_id, "");
-    appendAudit_("SUBMIT_APPLICATION", "Application", application.application_id, application.account_id, "Public customer form", "Customer application", CUSTOMER_APPLICATIONS_SHEET_NAME, "Completed", application.account_link_status);
+    appendAudit_("SUBMIT_APPLICATION", "Application", application.application_id, application.account_id, paper ? entry.entered_by : "Public customer form", paper ? "Paper customer form" : "Customer application", CUSTOMER_APPLICATIONS_SHEET_NAME, "Completed", application.account_link_status);
     return { message:"Application received for review.", application_id:application.application_id, account_link_status:application.account_link_status };
   } catch (error) {
     if (journal) completeSubmissionJournal_(journal, "Needs recovery", "", error.message || error);
@@ -8916,6 +8942,8 @@ function customerApplicationRecord_(row) {
     customer_notes:String(row.notes || ""),
     authorized_name:String(row.authorized_name || ""),
     authorized_title:String(row.authorized_title || ""),
+    submission_source:String(row.submission_source || "Online form"),
+    entered_by:String(row.entered_by || ""),
     newsletter_opt_in:toBool_(row.newsletter_opt_in),
     notification_status:String(row.notification_status || ""),
     customer_id:String(row.customer_id || ""),
@@ -11598,6 +11626,11 @@ function orderTotalsFromLines_(pricedLines) {
 function orderQuantityLabel_(quantity, unit) {
   const count = Number(quantity || 0); const word = String(unit || "").toLowerCase();
   return `${count} ${count === 1 ? word.replace(/s$/, "") : word}`;
+}
+
+// Link that opens one application in the Hub's Orders & Accounts window (index.html reads ?application=).
+function hubApplicationUrl_(applicationId) {
+  return hubOrderUrl_("").replace(/\?order=$/, `?application=${encodeURIComponent(String(applicationId || ""))}`);
 }
 
 // Link that opens one order in the Hub's Orders & Accounts window (index.html reads ?order=).

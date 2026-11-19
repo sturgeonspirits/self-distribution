@@ -1,10 +1,10 @@
 <!doctype html>
-<!-- App version: 2026.10.17.55-WEB -->
+<!-- App version: 2026.11.19.81-WEB -->
 <html lang="en">
 <head>
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
-  <meta name="app-version" content="2026.10.17.55-WEB" />
+  <meta name="app-version" content="2026.11.19.81-WEB" />
   <title>Wholesale application | Sturgeon Distribution Hub</title>
   <link rel="stylesheet" href="/assets/customer-portal.css?v=2026.10.17.55" />
 </head>
@@ -221,7 +221,7 @@
     "use strict";
     window.addEventListener("unhandledrejection", e => console.error("Unhandled promise rejection:", e.reason));
     window.addEventListener("error", e => console.error("Unhandled error:", e.error || e.message));
-    const APP_VERSION = "2026.10.17.55-WEB";
+    const APP_VERSION = "2026.11.19.81-WEB";
     const form = document.getElementById("customerForm");
     const status = document.getElementById("customerStatus");
     const submit = document.getElementById("submitCustomerBtn");
@@ -257,10 +257,36 @@
 
     billingSame.addEventListener("change", () => { billingFields.hidden = billingSame.checked; });
 
+    // Paper mode (?paper=1, Karl 2026-11-19): staff type in a form the customer filled out on paper. Staff don't sign
+    // the authorization; they confirm the customer signed the paper form. Saved through the signed-in Hub, not the
+    // public form, so no new-application email goes out.
+    const paperMode = link.get("paper") === "1";
+    function setLabelText(control, text){
+      const label = control.closest("label");
+      const textNode = label && [...label.childNodes].find(n => n.nodeType === Node.TEXT_NODE && n.textContent.trim());
+      if (textNode) textNode.textContent = `${text}\n`;
+    }
+    if (paperMode) {
+      document.title = "Enter a paper form | Sturgeon Distribution Hub";
+      document.querySelector(".pageIntro h1").textContent = "Enter a paper customer form";
+      document.querySelector(".pageIntro p").textContent = "Type in what the customer wrote on their paper form. You don't sign anything here: the customer signed the paper form. It saves straight to Orders & Accounts > Applications.";
+      const notice = document.querySelector(".processNotice");
+      if (notice) notice.hidden = true;
+      form.elements.authorized_name.required = false;
+      form.elements.authorized_title.required = false;
+      setLabelText(form.elements.authorized_name, "Signed by (leave blank if it was the primary contact)");
+      setLabelText(form.elements.authorized_title, "Signer's title (optional)");
+      form.elements.attested.closest("label").querySelector("span").textContent = "The customer signed the paper form.";
+      form.elements.newsletter_opt_in.checked = false;
+      form.elements.newsletter_opt_in.defaultChecked = false;
+      form.elements.newsletter_opt_in.closest("label").querySelector("span").textContent = "The customer checked the box asking for product, cocktail, and distillery emails.";
+      submit.textContent = "Save paper form";
+    }
+
     // Show a visible message instead of relying on the browser's validation bubble,
     // which iPhone Safari often does not display (the customer only saw the page jump).
     function fieldLabel(control){
-      if (control.name === "attested") return "the authorization checkbox";
+      if (control.name === "attested") return paperMode ? "the signed paper form checkbox" : "the authorization checkbox";
       const label = control.closest("label");
       if (!label) return "a required field";
       const text = [...label.childNodes].filter(n => n.nodeType === Node.TEXT_NODE).map(n => n.textContent).join(" ").trim();
@@ -312,26 +338,47 @@
       payload.attested = data.has("attested");
       payload.newsletter_opt_in = data.has("newsletter_opt_in");
       payload.product_interests = data.getAll("product_interests");
+      if (paperMode) {
+        payload.action = "submitPaperCustomerApplication";
+        payload.paper_signed = data.has("attested");
+        delete payload.attested;
+        delete payload.form_trap;
+      }
       submit.disabled = true;
-      submit.textContent = "Submitting...";
+      submit.textContent = paperMode ? "Saving..." : "Submitting...";
       try {
-        const response = await fetch("/api/customer", {
+        const response = await fetch(paperMode ? "/api/inventory" : "/api/customer", {
           method:"POST",
           headers:{"Content-Type":"application/json"},
+          credentials:"same-origin",
           body:JSON.stringify(payload),
         });
-        const result = await response.json();
+        const result = await response.json().catch(() => ({}));
+        if (paperMode && (response.status === 401 || response.status === 403)) {
+          throw new Error("Sign in to the Hub in another tab first, then press Save paper form again. What you typed stays here.");
+        }
         if (!result.ok) throw new Error(result.error || "We could not submit the form.");
         form.hidden = true;
+        if (paperMode) {
+          const success = document.getElementById("customerSuccess");
+          success.querySelector("h2").textContent = "Saved. The paper form is in the Hub.";
+          success.querySelectorAll("p:not(.reference)").forEach(el => el.remove());
+          const open = document.createElement("p");
+          const openLink = document.createElement("a");
+          openLink.href = `/?application=${encodeURIComponent(result.application_id)}`;
+          openLink.textContent = "Open it in Orders & Accounts";
+          open.append(openLink);
+          success.append(open);
+        }
         document.getElementById("customerReference").textContent = `Application reference: ${result.application_id}`;
         const success = document.getElementById("customerSuccess");
         success.hidden = false;
         success.focus();
       } catch (error) {
         status.className = "status error";
-        status.textContent = `${error.message} Please try again or email sales@sturgeonspirits.com.`;
+        status.textContent = paperMode ? error.message : `${error.message} Please try again or email sales@sturgeonspirits.com.`;
         submit.disabled = false;
-        submit.textContent = "Submit for review";
+        submit.textContent = paperMode ? "Save paper form" : "Submit for review";
       }
     });
   })();

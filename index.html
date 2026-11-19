@@ -1,10 +1,10 @@
 <!doctype html>
-<!-- App version: 2026.11.19.79-WEB -->
+<!-- App version: 2026.11.19.81-WEB -->
 <html>
 <head>
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover"/>
-  <meta name="app-version" content="2026.11.19.79-WEB" />
+  <meta name="app-version" content="2026.11.19.81-WEB" />
   <meta name="theme-color" content="#536f77" />
   <link rel="icon" href="/assets/distribution-hub-icon.svg" type="image/svg+xml" />
   <link rel="manifest" href="/site.webmanifest" />
@@ -2263,6 +2263,7 @@
 
     <div class="customerLinks" aria-label="Customer links">
       <a class="customerLink" href="/customer-signup.html" target="_blank" rel="noopener noreferrer"><i data-lucide="clipboard-list"></i><span>Customer signup</span></a>
+      <a class="customerLink" href="/customer-signup.html?paper=1" target="_blank" rel="noopener noreferrer"><i data-lucide="file-pen-line"></i><span>Enter a paper form</span></a>
       <a class="customerLink" href="/order.html" target="_blank" rel="noopener noreferrer"><i data-lucide="shopping-cart"></i><span>Order request</span></a>
       <a class="customerLink" href="/sell-sheet.html" target="_blank" rel="noopener noreferrer"><i data-lucide="book-open"></i><span>Sell sheet</span></a>
     </div>
@@ -2353,6 +2354,7 @@
           <button class="workflowTab" id="ordersViewBtn" type="button">Online requests</button>
           <button class="workflowTab" id="applicationsViewBtn" type="button">Applications</button>
         </div>
+        <a class="customerLink" id="paperApplicationLink" href="/customer-signup.html?paper=1" target="_blank" rel="noopener noreferrer" hidden><i data-lucide="file-pen-line"></i><span>Enter a paper form</span></a>
         <div>
           <label for="customerStatusFilter">Status</label>
           <select id="customerStatusFilter"></select>
@@ -2802,7 +2804,7 @@
 
   <footer style="max-width:1200px;margin:18px auto 120px;padding:0 12px;text-align:center;color:#6b7280;font-size:12px;">
     Designed by <a href="https://scriptspirit.dev" target="_blank" rel="noopener noreferrer" style="color:#1d4ed8;text-decoration:none;font-weight:700;">Script Spirit</a>
-<span id="appVersionFooter"> • Version 2026.11.19.79-WEB</span>
+<span id="appVersionFooter"> • Version 2026.11.19.81-WEB</span>
   </footer>
 
 
@@ -2825,7 +2827,7 @@
   window.addEventListener("unhandledrejection", e => console.error("Unhandled promise rejection:", e.reason));
   window.addEventListener("error", e => console.error("Unhandled error:", e.error || e.message));
   const $ = (id) => document.getElementById(id);
-  const APP_VERSION = "2026.11.19.79-WEB";
+  const APP_VERSION = "2026.11.19.81-WEB";
   $("appVersionFooter").textContent = ` • Version ${APP_VERSION}`;
   function screenCacheKey(screen){ return `distribution_hub:${APP_VERSION}:${staffSession?.email || "unknown"}:${screen}`; }
   function readScreenCache(screen){
@@ -2852,7 +2854,7 @@
   let activeAppSection = ["inventory", "outreach", "customers"].includes(localStorage.getItem("distribution_section"))
     ? localStorage.getItem("distribution_section")
     : "inventory";
-  if (new URLSearchParams(location.search).has("order")) activeAppSection = "customers";
+  if (new URLSearchParams(location.search).has("order") || new URLSearchParams(location.search).has("application")) activeAppSection = "customers";
   let salesData = { lines: [], summary: { total_sold_units: 0, counted_skus: 0, total_skus: 0 } };
   let salesLoadedStoreId = "";
 
@@ -2927,6 +2929,12 @@
     return /^ORD-[A-Za-z0-9-]{4,60}$/.test(id) ? id : "";
   })();
   if (pendingOrderLink) customerView = "online_requests";
+  // ?application=APP-... (the link in the new-application email, 2026.11.19.81-WEB) opens that application the same way.
+  let pendingApplicationLink = (() => {
+    const id = String(new URLSearchParams(location.search).get("application") || "").trim();
+    return /^APP-[A-Za-z0-9-]{4,60}$/.test(id) ? id : "";
+  })();
+  if (pendingApplicationLink) customerView = "applications";
   let staffAccessCode = "";
   let staffSession = null;
   let inventoryLoaded = false;
@@ -3416,6 +3424,7 @@
     }
     $("accountsViewBtn").classList.toggle("active", customerView === "accounts");
     $("applicationsViewBtn").classList.toggle("active", customerView === "applications");
+    $("paperApplicationLink").hidden = customerView !== "applications";
     $("invoicesViewBtn").classList.toggle("active", customerView === "invoices");
     $("ordersViewBtn").classList.toggle("active", customerView === "online_requests");
     updateCustomerStatusOptions();
@@ -3542,6 +3551,7 @@
     showCustomerAccessState();
     renderCustomerWorkflow();
     openPendingOrderLink();
+    openPendingApplicationLink();
     const elapsed = Number(result.performance?.total_ms || 0);
     $("customerWorkflowStatus").textContent = `Updated ${new Date().toLocaleTimeString([], { hour:"numeric", minute:"2-digit" })}${elapsed ? ` in ${(elapsed / 1000).toFixed(1)}s` : ""}${result.performance?.cache_hit ? " (server cache)" : ""}.`;
   }
@@ -3555,6 +3565,16 @@
     const order = (customerData.orders || []).find(item => item.request_id === requestId);
     if (!order) return toast(`Order ${requestId} wasn't found. If it just came in, press Refresh in a minute.`);
     openCustomerRecord(order);
+  }
+
+  function openPendingApplicationLink(){
+    if (!pendingApplicationLink) return;
+    const applicationId = pendingApplicationLink;
+    pendingApplicationLink = "";
+    try { const url = new URL(location.href); url.searchParams.delete("application"); history.replaceState(null, "", `${url.pathname}${url.search}${url.hash}`); } catch (_) {}
+    const application = (customerData.applications || []).find(item => item.application_id === applicationId);
+    if (!application) return toast(`Application ${applicationId} wasn't found. If it just came in, press Refresh in a minute.`);
+    openCustomerRecord(application);
   }
 
   function orderLineEditBlock(record){
@@ -3867,6 +3887,7 @@
       { label:"Delivery instructions", value:record.delivery_instructions },
     ] : [
       { label:"Legal business", value:record.legal_business_name }, { label:"Business type", value:record.business_type }, { label:"Website", value:record.website },
+      { label:"Received as", value:record.submission_source === "Paper form" ? `Paper form${record.entered_by ? `, entered by ${record.entered_by}` : ""}` : record.submission_source },
       { label:"Account ID", value:record.account_id }, { label:"Account link", value:record.account_link_status }, { label:"Data sync", value:record.data_sync_status },
       { label:"Seller permit", value:record.seller_permit_number }, { label:"Contact", value:record.primary_contact_name }, { label:"Title", value:record.primary_contact_title },
       { label:"Email", value:record.primary_email }, { label:"Phone", value:record.primary_phone }, { label:"Ordering email", value:record.ordering_email },

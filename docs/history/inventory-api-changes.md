@@ -3,6 +3,13 @@
 Moved out of the `apps-script/Code.gs` header on 2026-10-17 so the deployed file stays short. Newest first, copied word for word. The header keeps only the current version (`CHANGES IN THIS VERSION`); when a new version is made, move that section to the top of this file.
 
 ```
+CHANGES IN 2026.11.19.78-APP (deployed 2026-11-19)
+Visit results (Karl, 2026-11-19): two new outcomes, "Visit scheduled" (needs a date: the visit, saved as the next
+follow-up) and "Visited". Both set status Interested. Includes .76 below, which was not deployed on its own.
+Print invoice (Karl, 2026-11-17, .76): customerWorkQueue gives each order with a Badger invoice its Badger invoice ID
+(badger_invoice_id), from Badger Invoice Creations for invoices the Hub created, otherwise from the synced Badger
+Invoice Status tab by number. The Hub links it to Badger's print page, /BSWCSite/member/invoice/print/<ID>.
+
 CHANGES IN 2026.11.17.74-APP
 Badger invoice numbers (Karl, 2026-11-17: "we now have 0171 and 171 as separate invoices"): invoices ran
 SS0163-SS0170, then SS171-SS173 were entered without the leading zero. The Hub read only four-digit numbers, so
