@@ -2287,7 +2287,7 @@ test("outreach nurture lifecycle handles cocktail replies, tasting visits, and d
   const index = await readFile(new URL("index.html", root), "utf8");
   assert.match(index, /data-outcome="Wants cocktail list"/);
   assert.match(index, /data-outcome="Tasting visit"/);
-  assert.match(index, /OUTREACH_INTERESTED_OUTCOMES = \[\.\.\.OUTREACH_FOLLOW_UP_OUTCOMES, "Tasting visit"\]/);
+  assert.match(index, /OUTREACH_INTERESTED_OUTCOMES = \[\.\.\.OUTREACH_FOLLOW_UP_OUTCOMES, "Tasting visit", "Visited"\]/);
 });
 
 test("campaign builder freezes and delivers the requested outreach stage", async () => {

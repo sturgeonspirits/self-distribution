@@ -1,10 +1,10 @@
 <!doctype html>
-<!-- App version: 2026.11.17.77-WEB -->
+<!-- App version: 2026.11.19.79-WEB -->
 <html>
 <head>
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover"/>
-  <meta name="app-version" content="2026.11.17.77-WEB" />
+  <meta name="app-version" content="2026.11.19.79-WEB" />
   <meta name="theme-color" content="#536f77" />
   <link rel="icon" href="/assets/distribution-hub-icon.svg" type="image/svg+xml" />
   <link rel="manifest" href="/site.webmanifest" />
@@ -416,6 +416,9 @@
     .replyDoneRow .outreachActions{margin:0;flex-shrink:0}
     .replyDoneRow > div{overflow-wrap:anywhere}
     .replyDoneRow .actionBtn{min-height:34px;padding:4px 10px}
+    .replyDoneEarlier{margin-top:4px}
+    .replyDoneEarlier summary{cursor:pointer}
+    .replyDoneEarlierRow{display:flex;justify-content:space-between;gap:8px;align-items:center;margin-top:4px}
     @media (max-width:640px){.replyTiles{grid-template-columns:1fr 1fr}}
     .outreachEmpty{
       padding:26px 18px;
@@ -2645,7 +2648,9 @@
         <button class="outcomeOption" type="button" data-outcome="Tasting visit">Tasting visit</button>
         <button class="outcomeOption" type="button" data-outcome="Wants cocktail list">Wants cocktail list</button>
         <button class="outcomeOption" type="button" data-outcome="Follow up later">Follow up later</button>
-        <button class="outcomeOption" type="button" data-outcome="Visit in person">Visit in person</button>
+        <button class="outcomeOption" type="button" data-outcome="Visit scheduled">Visit scheduled</button>
+        <button class="outcomeOption" type="button" data-outcome="Visited">Visited</button>
+        <button class="outcomeOption" type="button" data-outcome="Visit in person">Visit in person (to do)</button>
         <button class="outcomeOption" type="button" data-outcome="Wrong contact">Wrong contact</button>
         <button class="outcomeOption" type="button" data-outcome="Bad address">Bad address</button>
         <button class="outcomeOption" type="button" data-outcome="Closed">Closed</button>
@@ -2666,7 +2671,7 @@
 
   <dialog id="contactLogDialog">
     <div class="dlgHeader"><div><div class="dlgTitle">Log contact</div><div class="smallMuted" id="contactLogBusiness"></div></div><button id="closeContactLogBtn" type="button">Close</button></div>
-    <div class="dlgBody"><div class="workflowEditGrid"><div><label for="contactLogDate">Date</label><input id="contactLogDate" type="date" /></div><div><label for="contactLogChannel">Channel</label><select id="contactLogChannel"><option>In person</option><option>Phone</option><option>Email outside app</option><option>Event/tasting</option><option>Other</option></select></div><div><label for="contactLogStaff">Staff member</label><input id="contactLogStaff" /></div><div><label for="contactLogPerson">Contact person</label><input id="contactLogPerson" /></div><div><label for="contactLogOutcome">Outcome (optional)</label><select id="contactLogOutcome"><option value="">No outcome yet</option><option>Interested</option><option>Schedule tasting</option><option>Tasting visit</option><option>Wants cocktail list</option><option>Follow up later</option><option>Visit in person</option><option>Wrong contact</option><option>Bad address</option><option>Closed</option><option>Not interested</option><option>Unsubscribed</option></select></div><div><label for="contactLogFollowUp">Next follow-up</label><input id="contactLogFollowUp" type="date" /></div><div class="full"><label for="contactLogNotes">Notes</label><textarea id="contactLogNotes" placeholder="What happened? For a tasting, include the cocktail and who poured it."></textarea></div></div><div class="status" id="contactLogStatus"></div><div class="dlgActions"><button class="primary" id="saveContactLogBtn" type="button">Save contact</button></div></div>
+    <div class="dlgBody"><div class="workflowEditGrid"><div><label for="contactLogDate">Date</label><input id="contactLogDate" type="date" /></div><div><label for="contactLogChannel">Channel</label><select id="contactLogChannel"><option>In person</option><option>Phone</option><option>Email outside app</option><option>Event/tasting</option><option>Other</option></select></div><div><label for="contactLogStaff">Staff member</label><input id="contactLogStaff" /></div><div><label for="contactLogPerson">Contact person</label><input id="contactLogPerson" /></div><div><label for="contactLogOutcome">Outcome (optional)</label><select id="contactLogOutcome"><option value="">No outcome yet</option><option>Interested</option><option>Schedule tasting</option><option>Tasting visit</option><option>Wants cocktail list</option><option>Follow up later</option><option>Visit scheduled</option><option>Visited</option><option value="Visit in person">Visit in person (to do)</option><option>Wrong contact</option><option>Bad address</option><option>Closed</option><option>Not interested</option><option>Unsubscribed</option></select></div><div><label for="contactLogFollowUp">Next follow-up</label><input id="contactLogFollowUp" type="date" /></div><div class="full"><label for="contactLogNotes">Notes</label><textarea id="contactLogNotes" placeholder="What happened? For a tasting, include the cocktail and who poured it."></textarea></div></div><div class="status" id="contactLogStatus"></div><div class="dlgActions"><button class="primary" id="saveContactLogBtn" type="button">Save contact</button></div></div>
   </dialog>
 
   <dialog id="businessDetailDialog">
@@ -2797,7 +2802,7 @@
 
   <footer style="max-width:1200px;margin:18px auto 120px;padding:0 12px;text-align:center;color:#6b7280;font-size:12px;">
     Designed by <a href="https://scriptspirit.dev" target="_blank" rel="noopener noreferrer" style="color:#1d4ed8;text-decoration:none;font-weight:700;">Script Spirit</a>
-<span id="appVersionFooter"> • Version 2026.11.17.77-WEB</span>
+<span id="appVersionFooter"> • Version 2026.11.19.79-WEB</span>
   </footer>
 
 
@@ -2820,7 +2825,7 @@
   window.addEventListener("unhandledrejection", e => console.error("Unhandled promise rejection:", e.reason));
   window.addEventListener("error", e => console.error("Unhandled error:", e.error || e.message));
   const $ = (id) => document.getElementById(id);
-  const APP_VERSION = "2026.11.17.77-WEB";
+  const APP_VERSION = "2026.11.19.79-WEB";
   $("appVersionFooter").textContent = ` • Version ${APP_VERSION}`;
   function screenCacheKey(screen){ return `distribution_hub:${APP_VERSION}:${staffSession?.email || "unknown"}:${screen}`; }
   function readScreenCache(screen){
@@ -2855,8 +2860,9 @@
   let outreachView = localStorage.getItem("outreach_view") || "today";
   if (outreachView === "leads") outreachView = "directory";
   const OUTREACH_AUDIENCE_PRESETS = ["weekly", "distance_needed", "follow_up_due", "interested", "contact_issues"];
-  const OUTREACH_FOLLOW_UP_OUTCOMES = ["Interested", "Schedule tasting", "Follow up later", "Visit in person"];
-  const OUTREACH_INTERESTED_OUTCOMES = [...OUTREACH_FOLLOW_UP_OUTCOMES, "Tasting visit"];
+  // "Visit scheduled" (2026.11.19.79-WEB) asks for the visit date as its next follow-up; "Visited" records a visit made.
+  const OUTREACH_FOLLOW_UP_OUTCOMES = ["Interested", "Schedule tasting", "Follow up later", "Visit in person", "Visit scheduled"];
+  const OUTREACH_INTERESTED_OUTCOMES = [...OUTREACH_FOLLOW_UP_OUTCOMES, "Tasting visit", "Visited"];
   // "Who to show" always starts on All businesses; the last choice is not restored.
   let outreachAudiencePreset = "all";
   let outreachSort = ["recommended", "distance", "fit", "business"].includes(localStorage.getItem("outreach_sort"))
@@ -4649,12 +4655,43 @@
     return !!reply.outcome_logged || /^Outcome: /.test(reply.handled_note || "") || /marked bad address|unsubscribed/i.test(reply.auto_action || "");
   }
 
-  function replyDoneRowHtml(reply){
+  // Karl, 2026-11-19 (2026.11.19.79-WEB): Done listed every email of a back-and-forth as its own row, so one bar showed
+  // up two or three times. Done now shows one row per business (newest email first); the earlier emails fold under it.
+  function replyDoneKey(reply){
+    return reply.account_id || String(reply.from || "").trim().toLowerCase() || reply.reply_id;
+  }
+
+  /** Done replies grouped by business, newest group first; each group keeps the replies newest first. */
+  function replyDoneGroups(replies){
+    const groups = [];
+    const byKey = new Map();
+    replies.forEach(reply => {
+      const key = replyDoneKey(reply);
+      if (!byKey.has(key)) { byKey.set(key, []); groups.push(byKey.get(key)); }
+      byKey.get(key).push(reply);
+    });
+    return groups;
+  }
+
+  // Recording a result records it on every answered reply of that business (server), so one button covers the group.
+  function replyDoneRowHtml(group){
+    const latest = group[0];
+    const needing = group.find(reply => reply.needs_outcome);
+    const earlier = group.slice(1);
+    const earlierHtml = earlier.length ? `
+          <details class="replyDoneEarlier">
+            <summary class="smallMuted">${escapeHtml(`${earlier.length} earlier email${earlier.length === 1 ? "" : "s"} from them`)}</summary>
+            ${earlier.map(reply => `
+              <div class="replyDoneEarlierRow">
+                <span class="smallMuted">${escapeHtml(`Received ${replyWhen(reply.received_at)} · ${replyDoneText(reply)}`)}</span>
+                <button class="actionBtn" type="button" data-reply-action="undo" data-reply-id="${escapeHtml(reply.reply_id)}"><i data-lucide="rotate-ccw"></i><span>Undo</span></button>
+              </div>`).join("")}
+          </details>` : "";
     return `
-      <div class="replyDoneRow" data-reply-id="${escapeHtml(reply.reply_id)}">
-        <div><strong>${escapeHtml(reply.business || reply.from_name || reply.from)}</strong><div class="smallMuted">${escapeHtml(replyDoneText(reply))}</div></div>
+      <div class="replyDoneRow" data-reply-id="${escapeHtml(latest.reply_id)}">
+        <div><strong>${escapeHtml(latest.business || latest.from_name || latest.from)}</strong><div class="smallMuted">${escapeHtml(replyDoneText(latest))}</div>${earlierHtml}</div>
         <div class="outreachActions">
-          ${reply.needs_outcome ? `<button class="actionBtn" type="button" data-reply-action="result"><i data-lucide="clipboard-check"></i><span>Record result</span></button>` : ""}
+          ${needing ? `<button class="actionBtn" type="button" data-reply-action="result" data-reply-id="${escapeHtml(needing.reply_id)}"><i data-lucide="clipboard-check"></i><span>Record result</span></button>` : ""}
           <button class="actionBtn" type="button" data-reply-action="undo"><i data-lucide="rotate-ccw"></i><span>Undo</span></button>
         </div>
       </div>`;
@@ -4792,11 +4829,14 @@
       : "";
     const body = !meta
       ? `<div class="outreachEmpty"><strong>Loading replies…</strong><span>Replies to sales@ appear here with an answer-by time.</span></div>`
-      : groups.filter(group => group.items.length).map(group => `
-          <div class="replyGroupTitle">${escapeHtml(group.title)} <span>${group.items.length}</span></div>
+      : groups.filter(group => group.items.length).map(group => {
+          const doneGroups = group.key === "done" ? replyDoneGroups(group.items) : null;
+          return `
+          <div class="replyGroupTitle">${escapeHtml(group.title)} <span>${doneGroups ? doneGroups.length : group.items.length}</span></div>
           <div class="replyGroupNote">${escapeHtml(group.note)}</div>
           ${group.key === "address" ? banner : ""}
-          ${group.items.map(group.key === "done" ? replyDoneRowHtml : replyCardHtml).join("")}`).join("")
+          ${doneGroups ? doneGroups.map(replyDoneRowHtml).join("") : group.items.map(replyCardHtml).join("")}`;
+        }).join("")
         || `<div class="outreachEmpty"><strong>No replies yet</strong><span>Replies from businesses and contacts you email appear here, sorted by how soon to answer.</span></div>`;
     $("outreachList").innerHTML = panel + body;
     refreshIcons();
@@ -6397,6 +6437,7 @@
     }
     setOutcomeDialogEditing(true);
     document.querySelectorAll(".outcomeOption").forEach(button => button.classList.toggle("active", button.dataset.outcome === selectedOutcome));
+    updateOutcomeDateLabel();
     if (!$("outcomeDialog").open) $("outcomeDialog").showModal();
   }
 
@@ -6786,14 +6827,28 @@
     }
   }
 
+  let outcomeAutoFollowUpDate = "";
+  // For "Visit scheduled" the date box is the visit date (saved as the next follow-up); it is never guessed.
+  function updateOutcomeDateLabel(){
+    const label = document.querySelector('label[for="outcomeFollowUpDate"]');
+    if (label) label.textContent = selectedOutcome === "Visit scheduled" ? "Visit date (saved as the next follow-up)" : "Next follow-up";
+  }
+
   function selectOutcome(button){
     selectedOutcome = button.dataset.outcome || "";
     document.querySelectorAll(".outcomeOption").forEach(option => option.classList.toggle("active", option === button));
     $("saveOutcomeBtn").disabled = !selectedOutcome;
+    updateOutcomeDateLabel();
+    if (selectedOutcome === "Visit scheduled") {
+      // A date filled in automatically for another result isn't the visit date.
+      if ($("outcomeFollowUpDate").value === outcomeAutoFollowUpDate) $("outcomeFollowUpDate").value = "";
+      return;
+    }
     if (OUTREACH_FOLLOW_UP_OUTCOMES.includes(selectedOutcome) && !$("outcomeFollowUpDate").value) {
       const date = new Date();
       date.setDate(date.getDate() + 7);
-      $("outcomeFollowUpDate").value = date.toISOString().slice(0, 10);
+      outcomeAutoFollowUpDate = date.toISOString().slice(0, 10);
+      $("outcomeFollowUpDate").value = outcomeAutoFollowUpDate;
     }
   }
 
@@ -6808,6 +6863,7 @@
   }
 
   async function saveOutreachOutcome(){
+    if (!outcomeSaveInProgress && selectedOutcome === "Visit scheduled" && !$("outcomeFollowUpDate").value) { $("outcomeStatus").textContent = "Pick the visit date."; return; }
     if (outcomeSaveInProgress || !selectedOutreachRecord || !selectedOutcome) return;
     outcomeSaveInProgress = true;
     const record = selectedOutreachRecord;

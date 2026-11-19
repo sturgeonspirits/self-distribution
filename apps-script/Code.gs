@@ -1,9 +1,11 @@
 /*********************************
  * Inventory API (JSON) for Netlify
- * App version: 2026.11.17.76-APP
+ * App version: 2026.11.19.78-APP
  *
  * CHANGES IN THIS VERSION
- * Print invoice (Karl, 2026-11-17): customerWorkQueue gives each order with a Badger invoice its Badger invoice ID
+ * Visit results (Karl, 2026-11-19): two new outcomes, "Visit scheduled" (needs a date: the visit, saved as the next
+ * follow-up) and "Visited". Both set status Interested. Includes .76 below, which was not deployed on its own.
+ * Print invoice (Karl, 2026-11-17, .76): customerWorkQueue gives each order with a Badger invoice its Badger invoice ID
  * (badger_invoice_id), from Badger Invoice Creations for invoices the Hub created, otherwise from the synced Badger
  * Invoice Status tab by number. The Hub links it to Badger's print page, /BSWCSite/member/invoice/print/<ID>.
  *
@@ -15,7 +17,7 @@
  * Earlier version notes: docs/history/inventory-api-changes.md (move this version's notes there when the version changes).
  *********************************/
 
-const APP_VERSION = "2026.11.17.76-APP";
+const APP_VERSION = "2026.11.19.78-APP";
 
 const SHEET_NAMES = {
   STORES: "Stores",
@@ -7521,6 +7523,8 @@ function outreachStatusForOutcome_(outcome) {
     "Wants cocktail list": "Nurture",
     "Follow up later": "Follow-up due",
     "Visit in person": "Interested",
+    "Visit scheduled": "Interested",
+    "Visited": "Interested",
     "Wrong contact": "Needs email",
     "Bad address": "Needs email",
     "Closed": "Closed",
@@ -7532,6 +7536,8 @@ function outreachStatusForOutcome_(outcome) {
 
 const OUTREACH_OUTCOME_VALUES = [
   "Interested", "Schedule tasting", "Tasting visit", "Wants cocktail list", "Follow up later", "Visit in person",
+  // 2026.11.19.78-APP (Karl): a visit set up with the business, and a visit made.
+  "Visit scheduled", "Visited",
   "Wrong contact", "Bad address", "Closed", "Not interested", "Unsubscribed",
 ];
 const OUTREACH_DIRECTORY_STAGE_VALUES = ["Initial", "Follow-up 1", "Follow-up 2", "Nurture check-in", "Reactivation", "Complete"];
@@ -7540,7 +7546,7 @@ const OUTREACH_DIRECTORY_STATUS_VALUES = [
   "Do not contact", "Needs email", "Verify email", "Send error", "Existing customer", "Reactivation due", "Reactivation sent",
   "Use reactivation", "Nurture",
 ];
-const OUTREACH_FOLLOW_UP_OUTCOMES = new Set(["Interested", "Schedule tasting", "Follow up later", "Visit in person"]);
+const OUTREACH_FOLLOW_UP_OUTCOMES = new Set(["Interested", "Schedule tasting", "Follow up later", "Visit in person", "Visit scheduled"]);
 const NURTURE_CHECK_IN_DUPLICATE_COOLDOWN_DAYS = 60;
 
 function outreachIsCocktailListOutcome_(outcome) {

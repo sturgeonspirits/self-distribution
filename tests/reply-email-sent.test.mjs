@@ -47,6 +47,6 @@ test("answered replies leave the Replies count and sit in Done with Record resul
   assert.doesNotMatch(groups, /key:"results"/);
   assert.match(groups, /key:"done"[^\n]*reply\.status !== "New" && \(!reply\.needs_outcome \|\|/);
   const doneRow = index.slice(index.indexOf("function replyDoneRowHtml"), index.indexOf("function replyCardHtml"));
-  assert.match(doneRow, /reply\.needs_outcome \? `<button class="actionBtn" type="button" data-reply-action="result">/);
+  assert.match(doneRow, /needing \? `<button class="actionBtn" type="button" data-reply-action="result" data-reply-id=/); // grouped per business in 2026.11.19.79-WEB
   assert.doesNotMatch(index, /tile\(resultsToRecord/);
 });
