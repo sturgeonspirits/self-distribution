@@ -3,6 +3,12 @@
 Moved out of the `apps-script/Code.gs` header on 2026-10-17 so the deployed file stays short. Newest first, copied word for word. The header keeps only the current version (`CHANGES IN THIS VERSION`); when a new version is made, move that section to the top of this file.
 
 ```
+CHANGES IN 2026.11.19.80-APP (deployed 2026-11-19)
+Paper forms (Karl, 2026-11-19, .80): new staff action submitPaperCustomerApplication — a paper customer form typed in
+from the signup page's paper mode. Staff confirm the customer signed instead of signing the authorization; the
+signer defaults to the primary contact. Saved with Submission Source "Paper form" and Entered By; no new-application
+email. The new-application email's link now opens the application in the Hub (?application=), not the sheet.
+
 CHANGES IN 2026.11.19.78-APP (deployed 2026-11-19)
 Visit results (Karl, 2026-11-19): two new outcomes, "Visit scheduled" (needs a date: the visit, saved as the next
 follow-up) and "Visited". Both set status Interested. Includes .76 below, which was not deployed on its own.

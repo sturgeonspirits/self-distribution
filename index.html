@@ -3135,6 +3135,9 @@
   }
 
   const APPLICATION_STATUSES = ["New", "Reviewing", "Needs information", "Approved", "Account active", "Declined"];
+  // Finished applications leave the default Applications list (approved ones are customers in Accounts now).
+  const APPLICATION_FINISHED_STATUSES = ["Approved", "Account active", "Declined"];
+  const APPLICATION_OPEN_STATUSES = APPLICATION_STATUSES.filter(status => !APPLICATION_FINISHED_STATUSES.includes(status));
   const ORDER_STATUSES = ["New", "Reviewing", "Confirmed", "Invoicing", "Ready for delivery", "Completed", "Cancelled"];
   const INVOICE_STATUSES = ["Not started", "Ready for Badger", "Invoice requested", "Invoice received", "Invoice delivered", "Paid", "Cancelled"];
   const DELIVERY_STATUSES = ["Not scheduled", "Scheduled", "Delivered", "Issue"];
@@ -3313,7 +3316,13 @@
       { value:"reminder_eligible", label:"Reminder eligible" }, { value:"Needs account match", label:"Needs account match" }, { value:"Ignored", label:"Ignored" }, { value:"Void", label:"Voided" },
       ].map(option => Object.assign(option, { label:`${option.label} (${countFor(option.value)})` }));
     }
-    const statuses = customerView === "online_requests" ? ORDER_STATUSES : customerView === "applications" ? APPLICATION_STATUSES : [];
+    // Karl, 2026-11-19 (2026.11.19.82-WEB): an approved application becomes an active customer (Accounts), so the
+    // Applications list starts on open applications only. Finished ones stay one pick away.
+    if (customerView === "applications") {
+      return [{ value:"all", label:"Open applications" }, { value:"everything", label:"All applications, including finished" }]
+        .concat(APPLICATION_STATUSES.map(status => ({ value:status, label:status })));
+    }
+    const statuses = customerView === "online_requests" ? ORDER_STATUSES : [];
     const operational = (customerView === "accounts" ? ["Payment due", "New"] : []).concat(["Awaiting invoice", "Ready", "Delivered", "Reorder due", "Inventory-counted"]);
     return [{ value:"active", label:"Active work" }, { value:"all", label:"All statuses" }]
       .concat(operational.map(status => ({ value:`operational:${status}`, label:status })))
@@ -3332,12 +3341,14 @@
     const records = customerView === "invoices" ? customerInvoiceRecords() : [...(customerData[CUSTOMER_VIEW_DATA[customerView]] || [])];
     const activeStatuses = customerView === "online_requests"
       ? ["New", "Reviewing", "Confirmed", "Invoicing", "Ready for delivery"]
-      : customerView === "applications" ? ["New", "Reviewing", "Needs information"] : [];
+      : customerView === "applications" ? APPLICATION_OPEN_STATUSES : [];
     const query = customerFilterText.trim().toLowerCase();
     const filtered = records.filter(record => {
       const operational = Array.isArray(record.operational_statuses) ? record.operational_statuses : [];
       const invoiceStatus = ["Needs account match", "Ignored", "Void"].includes(record.badger_match_status) ? record.badger_match_status : String(record.payment_status || record.invoice_status || "Unknown");
-      const statusMatch = customerView === "invoices"
+      const statusMatch = customerView === "applications"
+        ? (customerStatusFilter === "everything" || (customerStatusFilter === "all" ? !APPLICATION_FINISHED_STATUSES.includes(record.workflow_status) : record.workflow_status === customerStatusFilter))
+        : customerView === "invoices"
         ? (customerStatusFilter === "all" ? !["Ignored", "Void"].includes(invoiceStatus) : customerStatusFilter === "reminder_eligible" ? record.reminder_eligible === true : customerStatusFilter === invoiceStatus)
         : customerStatusFilter === "all"
         || (customerStatusFilter === "active"

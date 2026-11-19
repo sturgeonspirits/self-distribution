@@ -1,12 +1,11 @@
 /*********************************
  * Inventory API (JSON) for Netlify
- * App version: 2026.11.19.80-APP
+ * App version: 2026.11.19.83-APP
  *
  * CHANGES IN THIS VERSION
- * Paper forms (Karl, 2026-11-19, .80): new staff action submitPaperCustomerApplication — a paper customer form typed in
- * from the signup page's paper mode. Staff confirm the customer signed instead of signing the authorization; the
- * signer defaults to the primary contact. Saved with Submission Source "Paper form" and Entered By; no new-application
- * email. The new-application email's link now opens the application in the Hub (?application=), not the sheet.
+ * Duplicate account on approval (Karl, 2026-11-19): approving the 1890 Pub's application made a new Directory row
+ * instead of using "THE 1890 PUB & BISTRO", because matching needed the email AND the exact name. Business names now
+ * read "&" as "and" and ignore a leading "The", and an email used by only one Directory business matches it alone.
  *
  * DEPLOY
  * - Apps Script project: Inventory API
@@ -16,7 +15,7 @@
  * Earlier version notes: docs/history/inventory-api-changes.md (move this version's notes there when the version changes).
  *********************************/
 
-const APP_VERSION = "2026.11.19.80-APP";
+const APP_VERSION = "2026.11.19.83-APP";
 
 const SHEET_NAMES = {
   STORES: "Stores",
@@ -1737,8 +1736,10 @@ function apiGetSalesSinceCount_(store_id) {
   };
 }
 
+// "&" reads as "and" and a leading "The" is dropped, so "THE 1890 PUB & BISTRO" and "1890 Pub and Bistro" are the
+// same business (Karl, 2026-11-19, .83: approving the 1890's application made a second Directory row).
 function normalizeBusinessKey_(value) {
-  return String(value || "").trim().toLowerCase().replace(/[^a-z0-9]+/g, " ").trim();
+  return String(value || "").trim().toLowerCase().replace(/&/g, " and ").replace(/[^a-z0-9]+/g, " ").trim().replace(/^the /, "");
 }
 
 function accountIdentityFromRows_(rows) {
@@ -1780,8 +1781,11 @@ function findIdentityMatch_(identity, accountId, business, email, city) {
     return { record:null, status:"Account ID needs staff review" };
   }
   if (normalizedEmail && identity.by_email.has(normalizedEmail)) {
-    const matches = identity.by_email.get(normalizedEmail).filter(record => !normalizedBusiness || normalizeBusinessKey_(record.business) === normalizedBusiness);
+    const sameEmail = identity.by_email.get(normalizedEmail);
+    const matches = sameEmail.filter(record => !normalizedBusiness || normalizeBusinessKey_(record.business) === normalizedBusiness);
     if (matches.length === 1) return { record:matches[0], status:"Email and business matched" };
+    // Only one business uses this email: it's that business, even if the name is written differently.
+    if (sameEmail.length === 1) return { record:sameEmail[0], status:"Email matched" };
   }
   const businessCity = `${normalizedBusiness}::${normalizedCity}`;
   if (normalizedBusiness && normalizedCity && identity.by_business_city.has(businessCity)) {

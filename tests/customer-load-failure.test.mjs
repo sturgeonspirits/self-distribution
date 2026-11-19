@@ -23,3 +23,19 @@ test("until something loads, counts show a dash and the list says it didn't load
   assert.match(render, /const emptyState = !customerLoaded\s*\? [\s\S]*Orders &amp; Accounts didn't load[\s\S]*: !records\.length \?/);
   assert.match(index, /<strong id="newApplicationsCount">–<\/strong>/);
 });
+
+// Karl, 2026-11-19: "once an application is approved, it shouldn't be on the application page any more. they become
+// an active customer"
+test("Applications starts on open applications; finished ones stay one pick away", () => {
+  assert.match(index, /const APPLICATION_FINISHED_STATUSES = \["Approved", "Account active", "Declined"\];/);
+  const options = index.slice(index.indexOf("function customerStatusOptions(){"), index.indexOf("function updateCustomerStatusOptions(){"));
+  assert.match(options, /if \(customerView === "applications"\) \{\s*return \[\{ value:"all", label:"Open applications" \}, \{ value:"everything", label:"All applications, including finished" \}\]\s*\.concat\(APPLICATION_STATUSES/);
+  const view = index.slice(index.indexOf("function customerRecordsForView(){"), index.indexOf("function customerStatusBadge("));
+  const statusMatch = new Function("APPLICATION_FINISHED_STATUSES", "customerStatusFilter", "record",
+    `return ${view.match(/const statusMatch = (customerView === "applications"\s*\? \([^\n]+\))/)[1].replace('customerView === "applications"', "true")} : null;`);
+  const finished = ["Approved", "Account active", "Declined"];
+  assert.equal(statusMatch(finished, "all", { workflow_status:"Approved" }), false);
+  assert.equal(statusMatch(finished, "all", { workflow_status:"New" }), true);
+  assert.equal(statusMatch(finished, "everything", { workflow_status:"Account active" }), true);
+  assert.equal(statusMatch(finished, "Approved", { workflow_status:"Approved" }), true);
+});
