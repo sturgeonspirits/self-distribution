@@ -10,6 +10,8 @@ Verify the header version, `APP_VERSION`, and the deployment version agree befor
 
 # Deploy handoff rule
 
+**Inventory API deploys with clasp (2026-11-19).** After the change is pushed to `codex/work` and Karl's Mac checkout is fast-forwarded, Karl runs one command in Terminal: `~/self-distribution-app/apps-script/deploy.sh`. It uploads every file in `apps-script/` (Code.gs, profiler.gs, campaignrunner.gs, Index.html, appsscript.json) to the project **Inventory API** and moves the live web app deployment to the new version (same URL). The upload replaces the project's files, so any file added in the Apps Script editor must also be added to `apps-script/`. Pasting Code.gs still works as a fallback.
+
 Whenever you ask Karl to paste and deploy a `Code.gs`, name the Apps Script project exactly as it appears in Apps Script **and** the spreadsheet it is attached to. See the "Apps Script projects" table in `PROJECT_STATUS.md`:
 
 - `apps-script/Code.gs` → project **Inventory API**, attached to **Distribution Hub - Inventory Backend**

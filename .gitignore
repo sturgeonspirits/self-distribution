@@ -15,3 +15,6 @@ docs/*.docx
 docs/*.pdf
 # Unused design placeholder
 assets/sell-sheet/*-LOWRES-placeholder.png
+# clasp scratch download and sign-in (the sign-in lives in ~/.clasprc.json, never in the repo)
+.clasp-pull/
+.clasprc.json

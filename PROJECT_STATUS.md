@@ -58,6 +58,7 @@ Setup steps recorded in the history whose completion was **not re-verified** on 
 
 ## Recent changes (one line each; details in `docs/history/` and git)
 
+- 2026-11-19 (Claude): Inventory API deploys with clasp. `apps-script/` now holds every file of the Apps Script project (added profiler.gs, campaignrunner.gs, Index.html and appsscript.json from a `clasp clone`; deployed Code.gs matched the repo), `.clasp.json` (script ID) and `deploy.sh` (push + update the live deployment). Page `.85` and Inventory API `.84` are live (promoted `17f202a`).
 - 2026-11-19 `.84-APP` / web `.85-WEB` (Claude): speed fixes 1-3. Measured: Orders & Accounts rebuild 18 s (account build 12 s), Outreach 6 s, ~4 s fixed per request; every save and several 5-15-minute jobs cleared all three screen caches. Now per-group caches, stale-while-rebuilding, job rebuilds, refresh without the Badger re-read, single-attempt rebuild reads. Tests: `tests/read-cache.test.mjs`. Not done yet: steps 4-5 (faster account build, fixed per-request cost) and the Code.gs split.
 - 2026-11-19: Karl deployed Inventory API `.83`; Claude promoted `22838d6` (page `.82`). 1890 Pub duplicate Directory row (ACC-ECE16…) removed; its application now points at ACC-B6F78….
 - 2026-11-19 `.83-APP` + page `.82` (Claude): Karl approved the 1890 Pub application (APP-20261119-ADCA711C); the Hub made a new Directory row ACC-ECE16CD8… instead of using ACC-B6F78FF7… "THE 1890 PUB & BISTRO" (same email; names differed). Matching fixed (tests `tests/account-matching.test.mjs`); the existing duplicate still needs cleaning up. Karl: approved applications are customers, so the Applications list hides finished ones by default.
@@ -121,7 +122,7 @@ Every deploy handoff must name the Apps Script project as it appears in Apps Scr
 
 | Repo source | Apps Script project | Attached to (container) | Editor |
 | --- | --- | --- | --- |
-| `apps-script/Code.gs` | **Inventory API** | **Distribution Hub - Inventory Backend** | https://script.google.com/u/0/home/projects/1mUm3iOIJYpXkd36PsTqvi7uBGlPL7NokZwJLgdtZ3oSJTdCAuN3l9p-b/edit |
+| `apps-script/` (Code.gs, profiler.gs, campaignrunner.gs, Index.html, appsscript.json; deploy with `apps-script/deploy.sh`) | **Inventory API** | **Distribution Hub - Inventory Backend** | https://script.google.com/u/0/home/projects/1mUm3iOIJYpXkd36PsTqvi7uBGlPL7NokZwJLgdtZ3oSJTdCAuN3l9p-b/edit |
 | `docs/reference/distribution-outreach/Code.gs` | **distribution outreach** | **Distribution Hub** | https://script.google.com/u/0/home/projects/1T7vAcnmNjZsI8Ym9udfbsi4DDuoDB82SNeoQmjtKTiR0PHer6g_XuFan/edit |
 | `docs/reference/badger-parser/Code.gs` | tracker's script (file `Invoice Parser.gs`) | **Badger Invoice Tracker** | Extensions > Apps Script in the tracker |
 
@@ -228,8 +229,8 @@ Production web deploys are Netlify Git builds from `codex/distribution-system-fo
 
 ### Inventory API Apps Script change (project **Inventory API**, attached to **Distribution Hub - Inventory Backend**)
 
-1. Replace the complete `Code.gs` with `apps-script/Code.gs`; never append a snippet.
-2. Save, then Deploy > Manage deployments > edit the existing deployment > New version (keeps the URL).
+1. Push to `codex/work` and fast-forward Karl's Mac checkout (`~/self-distribution-app`).
+2. Karl runs `~/self-distribution-app/apps-script/deploy.sh` (clasp, set up 2026-11-19; signed in as sturgeonspirits@gmail.com). It checks the Code.gs header matches `APP_VERSION`, uploads every file in `apps-script/` (the upload replaces the project's files), creates a version and moves web app deployment `AKfycbx81…` to it (same URL). Fallback: paste the complete Code.gs, then Deploy > Manage deployments > edit > New version.
 3. Verify the live API reports the new `APP_VERSION` (Hub > Orders & Accounts > System status, or `hubSystemStatus`).
 4. If a web release depends on it, deploy the Apps Script first, then promote Netlify.
 
