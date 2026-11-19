@@ -1,10 +1,10 @@
 <!doctype html>
-<!-- App version: 2026.11.19.81-WEB -->
+<!-- App version: 2026.11.19.82-WEB -->
 <html>
 <head>
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover"/>
-  <meta name="app-version" content="2026.11.19.81-WEB" />
+  <meta name="app-version" content="2026.11.19.82-WEB" />
   <meta name="theme-color" content="#536f77" />
   <link rel="icon" href="/assets/distribution-hub-icon.svg" type="image/svg+xml" />
   <link rel="manifest" href="/site.webmanifest" />
@@ -2339,12 +2339,12 @@
 
     <div id="customerWorkspace" hidden>
       <div class="outreachSummary" aria-label="Customer workflow summary">
-        <div class="outreachMetric"><strong id="newApplicationsCount">0</strong><span>New applications</span></div>
-        <div class="outreachMetric"><strong id="newOrdersCount">0</strong><span>New orders</span></div>
-        <div class="outreachMetric"><strong id="invoiceNeededCount">0</strong><span>Need invoice work</span></div>
-        <div class="outreachMetric"><strong id="paymentDueCount">0</strong><span>Payment due</span></div>
-        <div class="outreachMetric"><strong id="owedToBadgerCount">$0.00</strong><span>To run through Badger</span></div>
-        <div class="outreachMetric"><strong id="unmatchedBadgerInvoicesCount">0</strong><span>Badger invoices to match</span></div>
+        <div class="outreachMetric"><strong id="newApplicationsCount">–</strong><span>New applications</span></div>
+        <div class="outreachMetric"><strong id="newOrdersCount">–</strong><span>New orders</span></div>
+        <div class="outreachMetric"><strong id="invoiceNeededCount">–</strong><span>Need invoice work</span></div>
+        <div class="outreachMetric"><strong id="paymentDueCount">–</strong><span>Payment due</span></div>
+        <div class="outreachMetric"><strong id="owedToBadgerCount">–</strong><span>To run through Badger</span></div>
+        <div class="outreachMetric"><strong id="unmatchedBadgerInvoicesCount">–</strong><span>Badger invoices to match</span></div>
       </div>
 
       <div class="workflowControls">
@@ -2804,7 +2804,7 @@
 
   <footer style="max-width:1200px;margin:18px auto 120px;padding:0 12px;text-align:center;color:#6b7280;font-size:12px;">
     Designed by <a href="https://scriptspirit.dev" target="_blank" rel="noopener noreferrer" style="color:#1d4ed8;text-decoration:none;font-weight:700;">Script Spirit</a>
-<span id="appVersionFooter"> • Version 2026.11.19.81-WEB</span>
+<span id="appVersionFooter"> • Version 2026.11.19.82-WEB</span>
   </footer>
 
 
@@ -2827,7 +2827,7 @@
   window.addEventListener("unhandledrejection", e => console.error("Unhandled promise rejection:", e.reason));
   window.addEventListener("error", e => console.error("Unhandled error:", e.error || e.message));
   const $ = (id) => document.getElementById(id);
-  const APP_VERSION = "2026.11.19.81-WEB";
+  const APP_VERSION = "2026.11.19.82-WEB";
   $("appVersionFooter").textContent = ` • Version ${APP_VERSION}`;
   function screenCacheKey(screen){ return `distribution_hub:${APP_VERSION}:${staffSession?.email || "unknown"}:${screen}`; }
   function readScreenCache(screen){
@@ -2920,6 +2920,8 @@
   // Every list starts on All (Karl, 2026-10-12); narrower filters are a choice, never the default.
   let customerStatusFilter = "all";
   let customerLoaded = false;
+  let customerLoadError = ""; // set when the first Orders & Accounts load failed (2026.11.19.82-WEB)
+  const CUSTOMER_LOAD_RETRY_MS = 3000;
   let customerWorkQueueLoadRequest = 0;
   let selectedCustomerRecord = null;
   let selectedBadgerInvoice = null;
@@ -3211,7 +3213,7 @@
     }
     if (staffAccessCode) {
       $("customerWorkflowStatus").textContent = message.includes("took too long")
-        ? "Google Sheets took too long to load Orders & Accounts. Your staff access remains unlocked; click Refresh in a moment."
+        ? "Google Sheets took too long to load Orders & Accounts, even after trying again. Nothing is missing: press the refresh button (circular arrow) in a moment."
         : message;
       showCustomerAccessState();
       return;
@@ -3411,16 +3413,18 @@
 
   function renderCustomerWorkflow(){
     const summary = customerData.summary || {};
-    $("newApplicationsCount").textContent = Number(summary.new_applications || 0);
-    $("newOrdersCount").textContent = Number(summary.new_orders || 0);
-    $("invoiceNeededCount").textContent = Number(summary.invoice_needed || 0);
-    $("paymentDueCount").textContent = Number(summary.payment_due_accounts || 0);
-    $("owedToBadgerCount").textContent = badgerMoney(summary.owed_to_badger_cents);
+    // Until something has loaded, counts show "–", not 0 (0 reads as "nothing new").
+    const count = value => customerLoaded ? Number(value || 0) : "–";
+    $("newApplicationsCount").textContent = count(summary.new_applications);
+    $("newOrdersCount").textContent = count(summary.new_orders);
+    $("invoiceNeededCount").textContent = count(summary.invoice_needed);
+    $("paymentDueCount").textContent = count(summary.payment_due_accounts);
+    $("owedToBadgerCount").textContent = customerLoaded ? badgerMoney(summary.owed_to_badger_cents) : "–";
     renderBadgerOperations(summary);
-    $("unmatchedBadgerInvoicesCount").textContent = Number(summary.unmatched_badger_invoices || 0);
+    $("unmatchedBadgerInvoicesCount").textContent = count(summary.unmatched_badger_invoices);
     if (activeAppSection === "customers") {
-      $("hdrStore").textContent = `${Number(summary.new_applications || 0)} applications`;
-      $("hdrChanged").textContent = `${Number(summary.new_orders || 0)} orders`;
+      $("hdrStore").textContent = customerLoaded ? `${Number(summary.new_applications || 0)} applications` : "Loading";
+      $("hdrChanged").textContent = customerLoaded ? `${Number(summary.new_orders || 0)} orders` : "Orders & Accounts";
     }
     $("accountsViewBtn").classList.toggle("active", customerView === "accounts");
     $("applicationsViewBtn").classList.toggle("active", customerView === "applications");
@@ -3498,7 +3502,9 @@
           </div>
         </article>`;
     }).join("");
-    const emptyState = !records.length ? `<div class="outreachEmpty"><strong>No matching ${customerView}</strong><span>Change the status filter or clear the search.</span></div>` : "";
+    const emptyState = !customerLoaded
+      ? `<div class="outreachEmpty"><strong>${customerLoadError ? "Orders &amp; Accounts didn't load" : "Loading Orders &amp; Accounts…"}</strong><span>${customerLoadError ? "Nothing is missing; the Hub couldn't read the sheets in time. Press the refresh button (circular arrow) above to try again." : "This can take a few seconds."}</span></div>`
+      : !records.length ? `<div class="outreachEmpty"><strong>No matching ${customerView}</strong><span>Change the status filter or clear the search.</span></div>` : "";
     list.innerHTML = invoiceReview + ignoredInvoiceReview + recordCards + emptyState;
     refreshIcons();
   }
@@ -3510,7 +3516,10 @@
     });
   }
 
-  async function loadCustomerWorkQueue(forceRefresh = false, clearAccountIndex = false){
+  // Karl, 2026-11-19 (2026.11.19.82-WEB): a load that timed out left the counts at 0 and said "No matching
+  // applications", so a new application looked missing. A failed first load now tries once more on its own, and if
+  // nothing has loaded the screen says so instead of looking empty.
+  async function loadCustomerWorkQueue(forceRefresh = false, clearAccountIndex = false, retried = false){
     rememberBadgerAccountDrafts();
     if (clearAccountIndex) {
       customerAccountIndex = [];
@@ -3532,6 +3541,13 @@
     } catch (error) {
       if (requestId !== customerWorkQueueLoadRequest) return;
       if (cached) { $("customerWorkflowStatus").textContent = `Couldn't refresh (${error?.message || "connection problem"}); showing data from ${cachedTimeLabel(cached)}. Reload the page in a minute to try again.`; return; }
+      if (!retried && !error?.staffAuth) {
+        $("customerWorkflowStatus").textContent = "Orders & Accounts is slow to load. Trying again…";
+        await new Promise(resolve => setTimeout(resolve, CUSTOMER_LOAD_RETRY_MS));
+        if (requestId !== customerWorkQueueLoadRequest) return;
+        return loadCustomerWorkQueue(forceRefresh, false, true);
+      }
+      if (!customerLoaded) { customerLoadError = error?.message || String(error); renderCustomerWorkflow(); }
       throw error;
     }
     if (requestId !== customerWorkQueueLoadRequest) return;
@@ -3547,6 +3563,7 @@
       orderCatalog:result.order_catalog || [],
     };
     customerLoaded = true;
+    customerLoadError = "";
     writeScreenCache("customer-work", result);
     showCustomerAccessState();
     renderCustomerWorkflow();
