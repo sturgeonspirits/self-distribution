@@ -195,6 +195,12 @@ function directoryApplyContactFillForRecord_(record, source, now) {
 
 const DOR_LIQUOR_URL = "https://ww2.revenue.wi.gov/WebServicesPublicWeb/rest/liquor/all";
 const DOR_LICENSE_LEADS_HEADERS = ["DOR RN", "Business Name", "Agent", "Street", "City", "ZIP", "License Types", "Last Updated", "Result", "Processed At"];
+const DOR_LAST_UPDATED_PROPERTY = "DIRECTORY_DOR_LAST_UPDATED";
+function dorPageRows_(payload) {
+  if (!payload || String(payload.result || "").toLowerCase() !== "ok") throw new Error("DOR liquor list did not return Ok.");
+  if (!Array.isArray(payload.subject) || !Number.isFinite(Number(payload.count))) throw new Error("DOR liquor list returned an unexpected page.");
+  return { rows:payload.subject, count:Number(payload.count) };
+}
 function dorLiquorRecords_(records) {
   const seen = new Map();
   (records || []).forEach(row => { if (row && String(row.rn || "").trim() && (String(row.AL) === "1" || String(row.BL) === "1")) seen.set(String(row.rn), row); });
@@ -206,24 +212,32 @@ function fetchDorLiquorRecords_() {
     let low = 0, count = null;
     while (count === null || low < count) {
       const url = `${DOR_LIQUOR_URL}?search=&city=&sort=0&AB=0&AC=0&AL=${flag === "AL" ? 1 : 0}&BB=0&BL=${flag === "BL" ? 1 : 0}&CW=0&rn_low=${low}`;
-      const payload = JSON.parse(UrlFetchApp.fetch(url, { muteHttpExceptions:true }).getContentText());
-      const rows = Array.isArray(payload.result) ? payload.result : (Array.isArray(payload.data) ? payload.data : []); count = Number(payload.count);
-      if (!Number.isFinite(count)) throw new Error("DOR liquor list returned no count."); all.push.apply(all, rows); low += 250;
+      const page = dorPageRows_(JSON.parse(UrlFetchApp.fetch(url, { muteHttpExceptions:true }).getContentText()));
+      const rows = page.rows; count = page.count; all.push.apply(all, rows); low += 250;
       if (!rows.length && low < count) throw new Error("DOR liquor list paging stopped early.");
     }
   }); return dorLiquorRecords_(all);
 }
 function processDorLiquorLicenses_(options) {
-  const dryRun = !!options?.dryRun; const records = options?.records || fetchDorLiquorRecords_(); const ss = getOutreachSs_();
-  const sheet = ensureSheet_(ss, LICENSE_LEADS_SHEET_NAME, DOR_LICENSE_LEADS_HEADERS); const identity = accountIdentityLookup_(); let added = 0, filled = 0, outside = 0;
-  dorLiquorRecords_(records).forEach(item => {
+  const dryRun = !!options?.dryRun; const records = dorLiquorRecords_(options?.records || fetchDorLiquorRecords_()); const ss = getOutreachSs_();
+  const sheet = ensureSheet_(ss, LICENSE_LEADS_SHEET_NAME, DOR_LICENSE_LEADS_HEADERS); const identity = accountIdentityLookup_(); const props = PropertiesService.getScriptProperties();
+  const lastUpdated = String(props.getProperty(DOR_LAST_UPDATED_PROPERTY) || ""); const h = getHeaderMap_(sheet); const seen = new Set(sheet.getLastRow() < 2 ? [] : sheet.getRange(2, 1, sheet.getLastRow() - 1, sheet.getLastColumn()).getValues().map(row => `${row[h.dor_rn]}::${row[h.last_updated]}`));
+  const logRows = []; let added = 0, filled = 0, differences = 0, outside = 0, skipped = 0, newest = lastUpdated;
+  records.forEach(item => {
+    const updated = String(item.lastUpdated || ""); const key = `${item.rn}::${updated}`;
+    if (!dryRun && (seen.has(key) || (lastUpdated && updated <= lastUpdated))) { skipped++; return; }
     const miles = milesForZip_(String(item.zip || "")); if (!Number.isFinite(miles) || miles > outreachServiceAreaMiles_()) { outside++; return; }
-    const match = findIdentityMatch_(identity, "", item.businessName || item.entityName, "", item.city).record;
+    const match = findIdentityMatch_(identity, "", item.businessName, "", item.city).record || findIdentityMatch_(identity, "", item.entityName, "", item.city).record || (identity.rows || []).find(row => String(row.address || row.street || "").trim().toLowerCase() === String(item.address || "").trim().toLowerCase() && String(row.zip || row.postal_code || "").trim() === String(item.zip || "").trim());
     const types = [String(item.AL) === "1" && "Class A liquor", String(item.BL) === "1" && "Class B liquor"].filter(Boolean).join(", ");
-    if (match) { if (!dryRun) { const fill = directoryApplyContactFillForRecord_(match, { contact:item.agentName, label:"WI DOR license list", fields:{ street:item.address, city:item.city, zip:item.zip } }, new Date()); if (fill.changed) filled++; } }
-    else { added++; }
-    if (!dryRun) sheet.appendRow([String(item.rn), item.businessName || item.entityName || "", item.agentName || "", item.address || "", item.city || "", item.zip || "", types, item.lastUpdated || "", match ? "Matched" : "Would add", new Date()]);
-  }); return { records:dorLiquorRecords_(records).length, filled, added, outside };
+    let result = "Matched, nothing to fill";
+    if (match) { const fill = dryRun ? { changed:!!item.agentName } : directoryApplyContactFillForRecord_(match, { contact:item.agentName, label:"WI DOR license list", fields:{ street:item.address, city:item.city, zip:item.zip } }, new Date()); if (fill.changed) { filled++; result = "Filled contact"; } differences += fill.conflicts?.length || 0; }
+    else { added++; result = "Added"; if (!dryRun) { const accountId = permanentId_("ACC"); getOutreachSheet_(OUTREACH_SHEET_NAME).appendRow(directoryRowFromBusiness_(getOutreachSheet_(OUTREACH_SHEET_NAME), { business_name:item.businessName || item.entityName, city:item.city, address:item.address, zip:item.zip, lead_source:"WI DOR license list", relationship:"Prospect", status:"Needs email", notes:`${Utilities.formatDate(new Date(), Session.getScriptTimeZone(), "yyyy-MM-dd")} - WI DOR license: ${types}.` }, accountId, new Date())); } }
+    if (updated > newest) newest = updated;
+    if (!dryRun) logRows.push([String(item.rn), item.businessName || item.entityName || "", item.agentName || "", item.address || "", item.city || "", item.zip || "", types, updated, result, new Date()]);
+  });
+  if (!dryRun && logRows.length) sheet.getRange(sheet.getLastRow() + 1, 1, logRows.length, logRows[0].length).setValues(logRows);
+  if (!dryRun && newest) props.setProperty(DOR_LAST_UPDATED_PROPERTY, newest);
+  return { records:records.length, filled, added, differences, outside, skipped, examples:records.slice(0, 25).map(item => ({ rn:item.rn, business:item.businessName, last_updated:item.lastUpdated })) };
 }
 
 /** Builds the quality report from rows already read from the Directory. It never writes. */

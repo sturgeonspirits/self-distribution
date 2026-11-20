@@ -3,6 +3,13 @@
 Moved out of the Inventory API header (`apps-script/Code.gs`, now `apps-script/01-core.gs`) on 2026-10-17 so the deployed file stays short. Newest first, copied word for word. The header keeps only the current version (`CHANGES IN THIS VERSION`); when a new version is made, move that section to the top of this file.
 
 ```
+CHANGES IN 2026.11.20.97-APP
+Directory cleanup D review fixes (Karl, 2026-11-20): Badger customer pulls run after daily invoices without blocking
+them, log unknown list fields safely, and preview actual fill/difference results on copied rows.
+
+```
+
+```
 CHANGES IN 2026.11.20.96-APP
 Directory cleanup, Part F (Karl, 2026-11-20): weekly quality runs process Badger and DOR sources before reporting.
 

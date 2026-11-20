@@ -160,3 +160,12 @@ test("Not a buyer maps to Do not contact and is blocked by every Hub email gate"
   assert.equal(call(context, "outreachServiceAreaMiles_({ 'Service area miles':42 })"), 42);
   assert.equal(call(context, "outreachServiceAreaMiles_({})"), 60);
 });
+
+test("DOR pages use subject, keep liquor-only records once, and reject a non-OK response", async () => {
+  const { context } = await contextFor();
+  const page = call(context, `dorPageRows_({ result:'Ok', count:'2', subject:[{ rn:1, AL:1 }, { rn:2, BL:1 }] })`);
+  assert.equal(page.count, 2);
+  const records = call(context, `dorLiquorRecords_([{ rn:1, AL:1 }, { rn:1, BL:1 }, { rn:2, AB:1 }, { rn:3, CW:1 }])`);
+  assert.deepEqual(records.map(row => row.rn), [1], "a dual liquor license is one record and beer/wine-only records are excluded");
+  assert.throws(() => vm.runInContext(`dorPageRows_({ result:'Error', count:'0', subject:[] })`, context), /did not return Ok/);
+});
