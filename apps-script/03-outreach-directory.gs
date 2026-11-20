@@ -7,6 +7,161 @@ function normalizeBusinessKey_(value) {
   return String(value || "").trim().toLowerCase().replace(/&/g, " and ").replace(/[^a-z0-9]+/g, " ").trim().replace(/^the /, "");
 }
 
+// Directory quality (Karl, 2026-11-19). Keep this list in one place: it is deliberately
+// conservative, and a single ordinary word is only a prompt for staff to check the name.
+const DIRECTORY_QUALITY_PLACEHOLDER_CONTACT_PATTERNS = [
+  /\(likely\)/i, /\bnofirstname\b/i, /\bnolastname\b/i, /\bclub manager\b/i,
+  /\bpay master\b/i, /\bna na\b/i, /\btbd\b/i, /\bunknown\b/i,
+];
+const DIRECTORY_QUALITY_LAST_RUN_PROPERTY = "DIRECTORY_QUALITY_LAST_RUN";
+
+function directoryQualityBusinessKey_(value) {
+  return normalizeBusinessKey_(value).replace(/\b(llc|inc|incorporated|ltd|limited|corp|corporation)\b/g, "").replace(/\s+/g, " ").trim();
+}
+
+function directoryQualityPhoneKey_(value) {
+  const digits = String(value || "").replace(/\D/g, "");
+  return digits.length >= 7 ? digits : "";
+}
+
+function directoryQualityIssueRecord_(row, sourceRow) {
+  const record = {
+    source_row:Number(sourceRow || row.source_row || 0),
+    account_id:String(row.account_id || "").trim(),
+    business:String(outreachValue_(row, ["business", "business_name"]) || "").trim(),
+    contact:String(outreachValue_(row, ["contact", "contact_name", "contact_person", "first_name"]) || "").trim(),
+    email:String(outreachValue_(row, ["email", "email_address"]) || "").trim(),
+    phone:String(outreachValue_(row, ["phone", "phone_number", "telephone"]) || "").trim(),
+    city:String(outreachValue_(row, ["city", "town"]) || "").trim(),
+    status:String(outreachValue_(row, ["status"]) || "").trim(),
+    outcome:String(outreachValue_(row, ["outcome"]) || "").trim(),
+    notes:String(outreachValue_(row, ["notes"]) || "").trim(),
+    relationship:String(outreachValue_(row, ["relationship"]) || "").trim(),
+    customer_source:String(outreachValue_(row, ["customer_source"]) || "").trim(),
+    do_not_email:toBool_(outreachValue_(row, ["do_not_email", "do_not_contact"])),
+    miles:outreachValue_(row, ["miles", "distance", "distance_miles"]),
+  };
+  record.customer = /customer/i.test(record.relationship) || String(record.status).toLowerCase() === "existing customer";
+  record.excluded = ["closed", "do not contact"].includes(record.status.toLowerCase())
+    || (record.do_not_email && !customerDoNotEmailIsAutomatic_(record));
+  return record;
+}
+
+function directoryQualityPlaceholderContact_(record) {
+  const contact = String(record.contact || "").trim();
+  if (!contact) return false;
+  if (DIRECTORY_QUALITY_PLACEHOLDER_CONTACT_PATTERNS.some(pattern => pattern.test(contact))) return true;
+  if (directoryQualityBusinessKey_(contact) && directoryQualityBusinessKey_(contact) === directoryQualityBusinessKey_(record.business)) return true;
+  return contact.split(/\s+/).filter(Boolean).length === 1;
+}
+
+/** Builds the quality report from rows already read from the Directory. It never writes. */
+function directoryQualityReportFromRows_(rows) {
+  const categories = {
+    no_email:{ label:"No email", rows:[] },
+    bad_email:{ label:"Bad email still on file", rows:[] },
+    no_contact:{ label:"No contact name", rows:[] },
+    placeholder_contact:{ label:"Placeholder contact name", rows:[] },
+    duplicates:{ label:"Possible duplicates", rows:[] },
+    no_distance:{ label:"No distance", rows:[] },
+  };
+  const records = (rows || []).map((row, index) => directoryQualityIssueRecord_(row, row.source_row || index + 2)).filter(record => record.business && !record.excluded);
+  const add = (name, record, detail) => {
+    const item = { name:record.business, row:record.source_row, account_id:record.account_id, customer:record.customer, detail:detail || "" };
+    categories[name].rows.push(item);
+  };
+  records.forEach(record => {
+    if (!record.email) add("no_email", record);
+    if (record.outcome === "Bad address" && record.status === "Needs email" && record.email) add("bad_email", record, "Bad address still in Email");
+    if (!record.contact) add("no_contact", record);
+    if (directoryQualityPlaceholderContact_(record)) add("placeholder_contact", record);
+    if (!record.customer && (record.miles === "" || record.miles === null || record.miles === undefined)) add("no_distance", record);
+  });
+  const byNameCity = new Map();
+  const byPhone = new Map();
+  records.forEach(record => {
+    const business = directoryQualityBusinessKey_(record.business);
+    const city = directoryQualityBusinessKey_(record.city);
+    const nameKey = business && city ? `${business}::${city}` : "";
+    const phoneKey = directoryQualityPhoneKey_(record.phone);
+    if (nameKey) { if (!byNameCity.has(nameKey)) byNameCity.set(nameKey, []); byNameCity.get(nameKey).push(record); }
+    if (phoneKey) { if (!byPhone.has(phoneKey)) byPhone.set(phoneKey, []); byPhone.get(phoneKey).push(record); }
+  });
+  const duplicateDetails = new Map();
+  const markDuplicates = (groups, detail) => groups.forEach(group => {
+    const identities = new Set(group.map(record => record.account_id || `row:${record.source_row}`));
+    if (identities.size < 2) return;
+    group.forEach(record => {
+      const key = record.source_row;
+      if (!duplicateDetails.has(key)) duplicateDetails.set(key, { record:record, details:new Set() });
+      duplicateDetails.get(key).details.add(detail);
+    });
+  });
+  markDuplicates(byNameCity, "same business name and city");
+  markDuplicates(byPhone, "same phone number");
+  duplicateDetails.forEach(item => add("duplicates", item.record, Array.from(item.details).join("; ")));
+  Object.keys(categories).forEach(name => {
+    const category = categories[name];
+    category.rows.sort((a, b) => String(a.name).localeCompare(String(b.name)) || a.row - b.row);
+    category.count = category.rows.length;
+    category.prospects = category.rows.filter(item => !item.customer).length;
+    category.customers = category.rows.filter(item => item.customer).length;
+  });
+  const total = Object.keys(categories).reduce((sum, name) => sum + categories[name].count, 0);
+  return { categories:categories, total:total, records:records };
+}
+
+function directoryQualityNote_(email, now) {
+  return `${Utilities.formatDate(now || new Date(), Session.getScriptTimeZone(), "yyyy-MM-dd")} - Bad email (bounced): ${String(email || "").trim().toLowerCase()}`;
+}
+
+/** One weekly Directory pass. A real run only changes hard-bounced addresses that still occupy Email. */
+function directoryQualityCheck_(options) {
+  const dryRun = !!options?.dryRun;
+  const now = options?.now ? new Date(options.now) : new Date();
+  const sheet = getOutreachSheet_(OUTREACH_SHEET_NAME);
+  const headers = getHeaderMap_(sheet);
+  const rows = getAllRowsAsObjects_(sheet);
+  let report = directoryQualityReportFromRows_(rows);
+  const moved = [];
+  report.categories.bad_email.rows.forEach(item => {
+    const row = rows[item.row - 2];
+    if (!row) return;
+    const email = String(outreachValue_(row, ["email", "email_address"]) || "").trim();
+    if (!email) return;
+    moved.push(Object.assign({}, item, { email:email }));
+    if (dryRun) return;
+    const notes = String(outreachValue_(row, ["notes"]) || "").trim();
+    const note = directoryQualityNote_(email, now);
+    const notesKey = ["notes"].find(key => headers[key] !== undefined);
+    const emailKey = ["email", "email_address"].find(key => headers[key] !== undefined);
+    if (notesKey) sheet.getRange(item.row, headers[notesKey] + 1).setValue([notes, note].filter(Boolean).join("\n"));
+    if (emailKey) sheet.getRange(item.row, headers[emailKey] + 1).setValue("");
+    row[notesKey] = [notes, note].filter(Boolean).join("\n");
+    row[emailKey] = "";
+  });
+  if (!dryRun && moved.length) {
+    report = directoryQualityReportFromRows_(rows);
+    appendAudit_("DIRECTORY_QUALITY_BAD_EMAILS_MOVED", "Directory", "weekly-check", "", "System", OUTREACH_SHEET_NAME, OUTREACH_SHEET_NAME, "Completed", `${moved.length} address(es) moved: ${moved.map(item => `${item.name} (row ${item.row})`).join(", ")}`);
+  }
+  const result = { ran_at:now.toISOString(), dry_run:dryRun, moved_bad_emails:moved, report:report };
+  console.log(JSON.stringify({ event:"directory_quality_check", dry_run:dryRun, total:report.total, moved_bad_emails:moved.length, businesses:moved.map(item => item.name) }));
+  return result;
+}
+
+function runDirectoryQualityCheck() { return directoryQualityCheck_({}); }
+function previewDirectoryQualityCheck() { return directoryQualityCheck_({ dryRun:true }); }
+
+function maybeRunDirectoryQualityCheck_(now) {
+  const date = now instanceof Date ? now : new Date();
+  const week = taskManagerSlot_(date, Session.getScriptTimeZone() || "America/Chicago").weekId;
+  const properties = PropertiesService.getScriptProperties();
+  if (properties.getProperty(DIRECTORY_QUALITY_LAST_RUN_PROPERTY) === week) return { skipped:"Already checked this week.", week:week };
+  const result = directoryQualityCheck_({ now:date });
+  properties.setProperty(DIRECTORY_QUALITY_LAST_RUN_PROPERTY, week);
+  return result;
+}
+
 function accountIdentityFromRows_(rows) {
   const identity = { by_id:new Map(), by_row:new Map(), by_email:new Map(), by_business_city:new Map(), rows:rows };
   rows.forEach((row, index) => {
@@ -1643,6 +1798,8 @@ function outreachSlimRecord_(row, sourceRow, draftMap, programMap, engagementMap
     county:String(outreachValue_(row, ["county"]) || "").trim(),
     email_confidence:String(outreachValue_(row, ["email_confidence"]) || "").trim(),
     relationship:String(outreachValue_(row, ["relationship"]) || "").trim(),
+    customer_source:String(outreachValue_(row, ["customer_source"]) || "").trim(),
+    notes:String(outreachValue_(row, ["notes"]) || "").trim(),
     newsletter_status:String(program.newsletter_status || "Not invited"),
     ordering_status:String(program.ordering_status || "Not offered"),
     opened:Number(engagement.open_count || 0) > 0,
@@ -1663,7 +1820,7 @@ function outreachSlimPayload_(record) {
     "status", "next_email", "priority", "next_follow_up", "last_emailed", "outcome", "do_not_email", "segment",
     "wave", "top_50", "craft_spirit_fit", "miles", "county", "email_confidence", "relationship", "newsletter_status",
     "ordering_status", "opened", "clicked", "search_text", "weekly_eligible",
-    "weekly_exclusion_reasons", "has_saved_draft", "campaign",
+    "weekly_exclusion_reasons", "has_saved_draft", "campaign", "customer_source", "notes", "directory_quality",
   ];
   return fields.reduce((payload, field) => {
     payload[field] = record[field];
@@ -1741,6 +1898,14 @@ function apiGetOutreachDashboard_(p) {
   const today = due.concat(ready.filter(record => !due.some(item => item.source_row === record.source_row)))
     .slice(0, 30);
   const directory = records.slice().sort((a, b) => String(a.business).localeCompare(String(b.business)));
+  // Reuse the Directory rows already loaded for this screen. The quality list is a work view, not a stored copy.
+  const quality = directoryQualityReportFromRows_(records);
+  const issuesByRow = new Map();
+  Object.keys(quality.categories).forEach(name => quality.categories[name].rows.forEach(item => {
+    if (!issuesByRow.has(item.row)) issuesByRow.set(item.row, []);
+    issuesByRow.get(item.row).push({ type:name, label:quality.categories[name].label, detail:item.detail });
+  }));
+  records.forEach(record => { record.directory_quality = issuesByRow.get(record.source_row) || []; });
   const mailer = cachedOutreachMailerStatus_() || {
     can_send:false,
     test_send_available:false,
@@ -1773,6 +1938,10 @@ function apiGetOutreachDashboard_(p) {
       total_businesses: directory.length,
       waiting: waiting.length,
       weekly_ready: weeklyReady.length,
+      directory_quality: Object.keys(quality.categories).reduce((summary, name) => {
+        summary[name] = quality.categories[name].count;
+        return summary;
+      }, {}),
     },
   };
 }

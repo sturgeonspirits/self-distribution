@@ -1,10 +1,10 @@
 <!doctype html>
-<!-- App version: 2026.11.19.89-WEB -->
+<!-- App version: 2026.11.19.90-WEB -->
 <html>
 <head>
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover"/>
-  <meta name="app-version" content="2026.11.19.89-WEB" />
+  <meta name="app-version" content="2026.11.19.90-WEB" />
   <meta name="theme-color" content="#536f77" />
   <link rel="icon" href="/assets/distribution-hub-icon.svg" type="image/svg+xml" />
   <link rel="manifest" href="/site.webmanifest" />
@@ -2276,6 +2276,7 @@
           <option value="follow_up_due">Follow-ups due</option>
           <option value="interested">Interested</option>
           <option value="contact_issues">Bad address or wrong contact</option>
+          <option value="directory_quality">Missing email or name</option>
           <option value="weekly">Weekly: Fit 5, 0–15 mi</option>
           <option value="distance_needed">Fit 5 needing distance</option>
           <option value="closed">Closed businesses</option>
@@ -2805,7 +2806,7 @@
 
   <footer style="max-width:1200px;margin:18px auto 120px;padding:0 12px;text-align:center;color:#6b7280;font-size:12px;">
     Designed by <a href="https://scriptspirit.dev" target="_blank" rel="noopener noreferrer" style="color:#1d4ed8;text-decoration:none;font-weight:700;">Script Spirit</a>
-<span id="appVersionFooter"> • Version 2026.11.19.89-WEB</span>
+<span id="appVersionFooter"> • Version 2026.11.19.90-WEB</span>
   </footer>
 
 
@@ -2828,7 +2829,7 @@
   window.addEventListener("unhandledrejection", e => console.error("Unhandled promise rejection:", e.reason));
   window.addEventListener("error", e => console.error("Unhandled error:", e.error || e.message));
   const $ = (id) => document.getElementById(id);
-  const APP_VERSION = "2026.11.19.89-WEB";
+  const APP_VERSION = "2026.11.19.90-WEB";
   $("appVersionFooter").textContent = ` • Version ${APP_VERSION}`;
   function screenCacheKey(screen){ return `distribution_hub:${APP_VERSION}:${staffSession?.email || "unknown"}:${screen}`; }
   function readScreenCache(screen){
@@ -2862,12 +2863,15 @@
   let outreachData = { today: [], directory: [], sent: [], newsletter: [], campaigns: [], replies: [], summary: { due_today: 0, total_businesses: 0, waiting: 0, weekly_ready: 0 } };
   let outreachView = localStorage.getItem("outreach_view") || "today";
   if (outreachView === "leads") outreachView = "directory";
-  const OUTREACH_AUDIENCE_PRESETS = ["weekly", "distance_needed", "follow_up_due", "interested", "contact_issues", "closed"];
+  const OUTREACH_AUDIENCE_PRESETS = ["weekly", "distance_needed", "follow_up_due", "interested", "contact_issues", "directory_quality", "closed"];
   // "Visit scheduled" (2026.11.19.79-WEB) asks for the visit date as its next follow-up; "Visited" records a visit made.
   const OUTREACH_FOLLOW_UP_OUTCOMES = ["Interested", "Schedule tasting", "Follow up later", "Visit in person", "Visit scheduled"];
   const OUTREACH_INTERESTED_OUTCOMES = [...OUTREACH_FOLLOW_UP_OUTCOMES, "Tasting visit", "Visited"];
   // "Who to show" always starts on All businesses; the last choice is not restored.
   let outreachAudiencePreset = "all";
+  const outreachLinkParams = new URLSearchParams(location.search);
+  if (outreachLinkParams.get("outreach") === "directory") { activeAppSection = "outreach"; outreachView = "directory"; }
+  if (OUTREACH_AUDIENCE_PRESETS.includes(outreachLinkParams.get("audience"))) outreachAudiencePreset = outreachLinkParams.get("audience");
   let outreachSort = ["recommended", "distance", "fit", "business"].includes(localStorage.getItem("outreach_sort"))
     ? localStorage.getItem("outreach_sort")
     : "recommended";
@@ -4514,6 +4518,7 @@
     if (outreachAudiencePreset === "follow_up_due") rows = rows.filter(outreachFollowUpIsDue);
     if (outreachAudiencePreset === "interested") rows = rows.filter(outreachOutcomeIsInterested);
     if (outreachAudiencePreset === "contact_issues") rows = rows.filter(outreachHasContactIssue);
+    if (outreachAudiencePreset === "directory_quality") rows = rows.filter(record => Array.isArray(record.directory_quality) && record.directory_quality.length);
     rows = rows.filter(matchesQuery);
 
     const businessSort = (a, b) => String(a.business || "").localeCompare(String(b.business || ""));
@@ -6095,6 +6100,11 @@
               : outreachAudiencePreset === "closed"
                 ? `${records.length} closed`
                 : `${records.length} shown${outreachClosedHiddenCount ? ` · ${outreachClosedHiddenCount} closed hidden` : ""}`;
+              : outreachAudiencePreset === "directory_quality"
+                ? `${records.length} need directory fixes`
+                : outreachAudiencePreset === "closed"
+                  ? `${records.length} closed`
+                  : `${records.length} shown${outreachClosedHiddenCount ? ` · ${outreachClosedHiddenCount} closed hidden` : ""}`;
     if (!records.length) {
       const emptyDetail = outreachAudiencePreset === "weekly"
         ? "No businesses in this work stage meet every weekly audience rule."
@@ -6106,11 +6116,13 @@
               ? "No businesses are currently marked interested."
               : outreachAudiencePreset === "contact_issues"
                 ? "No businesses need a corrected contact or email."
-                : outreachAudiencePreset === "closed"
-                  ? "No businesses in this view are marked closed."
-                  : outreachClosedHiddenCount
-                    ? `${outreachClosedHiddenCount} closed ${outreachClosedHiddenCount === 1 ? "business matches" : "businesses match"}; choose Closed businesses under Who to show to see ${outreachClosedHiddenCount === 1 ? "it" : "them"}.`
-                    : "Try another work stage or clear the search.";
+                : outreachAudiencePreset === "directory_quality"
+                  ? "No active businesses have a missing email, contact name, distance, placeholder name, or possible duplicate."
+                  : outreachAudiencePreset === "closed"
+                    ? "No businesses in this view are marked closed."
+                    : outreachClosedHiddenCount
+                      ? `${outreachClosedHiddenCount} closed ${outreachClosedHiddenCount === 1 ? "business matches" : "businesses match"}; choose Closed businesses under Who to show to see ${outreachClosedHiddenCount === 1 ? "it" : "them"}.`
+                      : "Try another work stage or clear the search.";
       list.innerHTML = `<div class="outreachEmpty"><strong>Nothing in this view</strong><span>${emptyDetail}</span></div>`;
       refreshIcons();
       return;
@@ -6155,6 +6167,7 @@
             ${record.miles !== null && record.miles !== undefined && record.miles !== "" ? `<span class="badge blue">${escapeHtml(record.miles)} mi</span>` : (Number(record.craft_spirit_fit || 0) === 5 ? `<span class="badge amber">Distance needed</span>` : "")}
             ${priority ? `<span class="badge amber">${escapeHtml(priority)} priority</span>` : ""}
             ${record.outcome ? `<span class="badge">${escapeHtml(record.outcome)}</span>` : ""}
+            ${(record.directory_quality || []).map(issue => `<span class="badge amber">${escapeHtml(issue.label)}${issue.detail ? `: ${issue.detail}` : ""}</span>`).join("")}
             ${(record.newsletter_status || record.programs?.newsletter_status) === "Subscribed" ? `<span class="badge green">Newsletter</span>` : ""}
             ${(record.ordering_status || record.programs?.ordering_status) === "Active" ? `<span class="badge blue">Online ordering</span>` : ""}
             ${(record.opened || Number(record.email_engagement?.open_count || 0) > 0) ? `<span class="badge blue">Estimated opened</span>` : ""}
@@ -6257,7 +6270,7 @@
     if (!res.is_mock) loadOutreachReplies().catch(error => { if (outreachView === "replies") handleOutreachLoadError(error); });
   }
 
-  // Karl, 2026-11-19 (2026.11.19.88-WEB): which campaign still has an email waiting for this business. Businesses whose
+  // Karl, 2026-11-19 (2026.11.19.89-WEB): which campaign still has an email waiting for this business. Businesses whose
   // next email is scheduled are left off Today by the server; the others show here so you don't email them by hand.
   function outreachCampaignBadge(record){
     const campaign = record.campaign;

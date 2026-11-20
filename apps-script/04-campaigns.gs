@@ -264,6 +264,7 @@ function campaignDirectoryRecord_(row, sourceRow) {
     last_emailed:outreachValue_(row, ["last_emailed", "last_email"]),
     message_id:String(outreachValue_(row, ["message_id", "zoho_message_id"]) || "").trim(),
     outcome:String(outreachValue_(row, ["outcome"]) || "").trim(),
+    notes:String(outreachValue_(row, ["notes"]) || "").trim(),
     do_not_email:toBool_(outreachValue_(row, ["do_not_email", "do_not_contact"])),
     segment:String(outreachValue_(row, ["segment"]) || "").trim(),
     wave:String(outreachValue_(row, ["wave"]) || "").trim(),
@@ -459,6 +460,7 @@ function customerInviteEligibility_(record) {
   if (!String(record.account_id || "").trim()) reasons.push("No Account ID on the Directory row");
   if (!email) reasons.push("No email on file");
   else if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) reasons.push("Recipient email is invalid");
+  if (typeof outreachBadEmailInNotes_ === "function" && outreachBadEmailInNotes_(record.notes, email)) reasons.push("Recipient email is recorded as a bounced address");
   if (record.do_not_email && !customerDoNotEmailIsAutomatic_(record)) reasons.push("Do Not Email is ticked");
   if (optOut.includes(status) || optOut.includes(outcome)) reasons.push("Business is excluded from email");
   // Only a link actually emailed counts. Accounts activated before 2026.10.12.43 were marked Active

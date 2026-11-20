@@ -803,6 +803,16 @@ function outreachRecentStageSend_(record, stage, cooldownDays, now) {
   });
 }
 
+/** Addresses removed after a hard bounce remain unsafe even if somebody pastes one back into Email. */
+function outreachBadEmailInNotes_(notes, email) {
+  const wanted = String(email || "").trim().toLowerCase();
+  if (!wanted) return false;
+  return String(notes || "").split(/\r?\n/).some(line => {
+    const found = line.match(/\bBad email\s*\(bounced\)\s*:\s*([^\s,;]+)/i);
+    return !!found && String(found[1] || "").replace(/[.]+$/, "").toLowerCase() === wanted;
+  });
+}
+
 function outreachSendEligibility_(record, options) {
   const reasons = [];
   const email = String(record.email || "").trim().toLowerCase();
@@ -811,6 +821,7 @@ function outreachSendEligibility_(record, options) {
   const outcome = String(record.outcome || "").trim().toLowerCase();
   const confidence = String(record.email_confidence || "").trim().toLowerCase();
   if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) reasons.push("Recipient email is invalid");
+  if (typeof outreachBadEmailInNotes_ === "function" && outreachBadEmailInNotes_(record.notes, email)) reasons.push("Recipient email is recorded as a bounced address");
   if (record.do_not_email || ["closed", "do not contact", "not interested", "unsubscribed"].includes(status) || ["bad address", "closed", "unsubscribed", "not interested", "do not contact"].includes(outcome)) reasons.push("Business is excluded from email");
   if (outreachIsCocktailListOutcome_(outcome)) reasons.push("Recipient receives the cocktail list instead of sales outreach");
   const crossSendCooldown = outreachCrossSendCooldownReason_(email, false);
@@ -1009,8 +1020,14 @@ function apiUpdateOutreachOutcome_(p) {
         if (found.length && String(found[0].account_id || "").trim() === accountId) altLine = inboundReplyAltEmailLine_(found[0], currentEmail, priorNotes, today);
       } catch (error) { console.warn(`Alt email not learned from reply ${p.reply_id}: ${String(error.message || error)}`); }
     }
-    const newNoteLines = [p.notes ? `${today} - ${String(p.notes).trim()}` : "", altLine].filter(Boolean);
+    const badAddressEmail = outcome === "Bad address" && currentEmail ? currentEmail : "";
+    const newNoteLines = [
+      p.notes ? `${today} - ${String(p.notes).trim()}` : "",
+      badAddressEmail ? directoryQualityNote_(badAddressEmail, new Date()) : "",
+      altLine,
+    ].filter(Boolean);
     if (newNoteLines.length) setRowValue(["notes"], [priorNotes].concat(newNoteLines).filter(Boolean).join("\n"));
+    if (badAddressEmail) setRowValue(["email", "email_address"], "");
 
     if (h.outcome !== undefined) {
       sheet.getRange(rowNumber, h.outcome + 1).setDataValidation(
@@ -1032,13 +1049,15 @@ function apiUpdateOutreachOutcome_(p) {
     if (outcome === "Unsubscribed") unsubscribeNewsletterContactByEmail_(currentEmail, String(p.staff_name || "Outreach outcome"));
 
     appendOutreachActivity_({ account_id:accountId, business:currentBusiness, email:currentEmail }, outcome, String(p.notes || ""));
-    appendAudit_("UPDATE_OUTREACH_OUTCOME", "Account", accountId, accountId, String(p.staff_name || "Staff"), OUTREACH_SHEET_NAME, OUTREACH_SHEET_NAME, "Completed", outcome);
+    appendAudit_("UPDATE_OUTREACH_OUTCOME", "Account", accountId, accountId, String(p.staff_name || "Staff"), OUTREACH_SHEET_NAME, OUTREACH_SHEET_NAME, "Completed", `${outcome}${badAddressEmail ? `; moved bounced address ${badAddressEmail}` : ""}`);
     // The reply it was logged from is handled, and every reply of this business waiting for an outcome gets it.
     let reply = null;
     try { reply = recordInboundReplyOutcome_(accountId, outcome, String(p.staff_name || "Staff"), p.reply_id || ""); }
     catch (error) { console.warn(`Outcome saved; replies not updated: ${String(error.message || error)}`); }
     const altEmail = altLine ? (altLine.match(/Alt email: (\S+)/) || [])[1] || "" : "";
-    return { message:altEmail ? `Outcome saved. ${altEmail} added as an alternate email.` : "Outcome saved.", account_id:accountId, source_row:rowNumber, status:outreachStatusForOutcome_(outcome), reply:reply, alt_email_added:altEmail };
+    const message = badAddressEmail ? "Bad address saved; the bounced email was moved to Notes and cleared from Email."
+      : altEmail ? `Outcome saved. ${altEmail} added as an alternate email.` : "Outcome saved.";
+    return { message:message, account_id:accountId, source_row:rowNumber, status:outreachStatusForOutcome_(outcome), reply:reply, alt_email_added:altEmail, bad_email_moved:badAddressEmail };
   } finally {
     lock.releaseLock();
   }

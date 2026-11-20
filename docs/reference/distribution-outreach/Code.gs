@@ -1,13 +1,11 @@
 /**
  * Sturgeon Spirits Distribution Outreach
  *
- * VERSION: 2026.11.05.35-APP
+ * VERSION: 2026.11.19.36-APP
  *
  * CHANGES IN THIS VERSION
- * - Closed Directory businesses are refused for sales, Cocktail list, customer invite, welcome, and payment-reminder
- *   sends. Closed is not presented as an address-fix action.
- * - Adds getOutboxHeldCount, a secret-authenticated read-only action for Inventory API to release a stale hold once
- *   Zoho's Outbox is empty. It reuses the existing folder/message read scopes and returns -1 when unknown.
+ * - A Directory address previously moved to Notes as "Bad email (bounced)" is refused if it is typed back into Email.
+ *   This is the independent final send gate for sales campaigns and customer ordering invites.
  *
  * DEPLOY
  * - Apps Script project: distribution outreach
@@ -19,7 +17,7 @@
  * Earlier version notes: docs/history/distribution-outreach-changes.md (move this version's notes there when the version changes).
  */
 
-const OUTREACH_VERSION = '2026.11.05.35-APP';
+const OUTREACH_VERSION = '2026.11.19.36-APP';
 const NURTURE_CHECK_IN_DUPLICATE_COOLDOWN_DAYS = 60;
 
 const OUTREACH = Object.freeze({
@@ -297,6 +295,17 @@ function appStageWasRecentlySent_(email, stage, cooldownDays) {
   });
 }
 
+// Inventory API moves a hard bounce to "YYYY-MM-DD - Bad email (bounced): address" in Notes.
+// The mailer reads the Directory fresh at send time, so frozen campaign recipients cannot revive that address.
+function directoryRowHasBouncedEmail_(row, email) {
+  const wanted = String(email || '').trim().toLowerCase();
+  if (!wanted) return false;
+  return String(row[OUTREACH.COL.NOTES - 1] || '').split(/\r?\n/).some(function (line) {
+    const found = line.match(/\bBad email\s*\(bounced\)\s*:\s*([^\s,;]+)/i);
+    return !!found && String(found[1] || '').replace(/[.]+$/, '').toLowerCase() === wanted;
+  });
+}
+
 function validateAppLead_(body, testMode) {
   const sheet = assertStagingEnvironment_().getSheetByName(OUTREACH.LEADS_SHEET);
   const rowNumber = Number(body.source_row);
@@ -310,6 +319,7 @@ function validateAppLead_(body, testMode) {
   if (business !== String(body.business || '').trim() || email !== String(body.recipient || '').trim().toLowerCase()) throw new Error('Source lead changed. Refresh the Hub before sending.');
   if (stage.toLowerCase() !== String(body.message_stage || '').trim().toLowerCase()) throw new Error('Email stage changed. Refresh the Hub before sending.');
   if (!testMode && !isValidEmail_(email)) throw new Error('Recipient email is invalid.');
+  if (!testMode && typeof directoryRowHasBouncedEmail_ === 'function' && directoryRowHasBouncedEmail_(row, email)) throw new Error('This address is recorded as a bounced email in the Directory.');
   if (!testMode && (isTicked_(row[OUTREACH.COL.DO_NOT_EMAIL - 1]) || ['closed', 'do not contact', 'not interested', 'unsubscribed'].indexOf(status) >= 0 || ['bad address', 'closed', 'not interested', 'unsubscribed', 'do not contact'].indexOf(outcome) >= 0)) {
     throw new Error('The source lead is blocked from email.');
   }
@@ -379,6 +389,7 @@ function validateCustomerLead_(body, testMode) {
   const outcome = String(row[OUTREACH.COL.OUTCOME - 1] || '').trim().toLowerCase();
   if (business !== String(body.business || '').trim() || email !== String(body.recipient || '').trim().toLowerCase()) throw new Error('Customer row changed. Refresh the Hub before sending.');
   if (!testMode && !isValidEmail_(email)) throw new Error('Recipient email is invalid.');
+  if (!testMode && typeof directoryRowHasBouncedEmail_ === 'function' && directoryRowHasBouncedEmail_(row, email)) throw new Error('This address is recorded as a bounced email in the Directory.');
   const dneBlocks = isTicked_(row[OUTREACH.COL.DO_NOT_EMAIL - 1]) && !automaticCustomerDoNotEmail_(row);
   if (!testMode && (dneBlocks || ['closed', 'do not contact', 'not interested', 'unsubscribed', 'bad address'].indexOf(status) >= 0 || ['bad address', 'closed', 'not interested', 'unsubscribed', 'do not contact'].indexOf(outcome) >= 0)) {
     throw new Error('The customer is blocked from email.');

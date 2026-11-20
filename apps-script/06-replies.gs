@@ -211,8 +211,11 @@ function inboundReplyIndex_() {
   records.forEach(record => {
     if (record.email) remember(byEmail, record.email, record);
     const alternates = Array.from(record.notes.matchAll(/alt(?:ernate)?\.?\s*e-?mail\s*:?\s*([^\s,;|()]+@[^\s,;|()]+)/gi)).map(match => match[1].toLowerCase().replace(/[.]+$/, ""));
-    alternates.forEach(email => remember(byEmail, email, record));
-    [record.email].concat(alternates).forEach(email => {
+    // A hard-bounced address is removed from Email, but late delivery notices must still find this business.
+    const bounced = Array.from(record.notes.matchAll(/bad email\s*\(bounced\)\s*:\s*([^\s,;|()]+@[^\s,;|()]+)/gi)).map(match => match[1].toLowerCase().replace(/[.]+$/, ""));
+    const remembered = Array.from(new Set(alternates.concat(bounced)));
+    remembered.forEach(email => remember(byEmail, email, record));
+    [record.email].concat(remembered).forEach(email => {
       const domain = email.split("@")[1] || "";
       if (domain && !INBOUND_REPLY_FREE_MAIL_DOMAINS.includes(domain) && !ownDomains.has(domain)) remember(byDomain, domain, record);
     });

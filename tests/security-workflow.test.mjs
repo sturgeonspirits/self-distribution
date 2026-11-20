@@ -1261,8 +1261,9 @@ test("Distribution Outreach sendCustomerEmail refuses opt-outs, changed rows, ot
   // From isTicked_ through validateCustomerLead_ (includes the CUSTOMER_INVITE_STAGE constant).
   const start = mailer.indexOf("function isTicked_(");
   const source = mailer.slice(start, mailer.indexOf("\nfunction validateNewsletterContact_", start));
-  const COL = { BUSINESS:1, EMAIL:2, STATUS:3, OUTCOME:4, DO_NOT_EMAIL:5, LAST_DATA_COLUMN:5 };
-  const make = (row, history = []) => new Function("assertStagingEnvironment_", "OUTREACH", "isValidEmail_", "appSentHistory_", `${source}\nreturn validateCustomerLead_;`)(
+  const bouncedAddressHelper = mailer.slice(mailer.indexOf("function directoryRowHasBouncedEmail_("), mailer.indexOf("\nfunction validateAppLead_", mailer.indexOf("function directoryRowHasBouncedEmail_(")));
+  const COL = { BUSINESS:1, EMAIL:2, STATUS:3, OUTCOME:4, DO_NOT_EMAIL:5, NOTES:6, LAST_DATA_COLUMN:6 };
+  const make = (row, history = []) => new Function("assertStagingEnvironment_", "OUTREACH", "isValidEmail_", "appSentHistory_", `${bouncedAddressHelper}\n${source}\nreturn validateCustomerLead_;`)(
     () => ({ getSheetByName:() => ({ getLastRow:() => 2, getLastColumn:() => 5, getRange:() => ({ getValues:() => [row] }) }) }),
     { LEADS_SHEET:"Directory", FIRST_DATA_ROW:2, COL }, email => /@/.test(email), () => history);
   const body = { source_row:2, business:"Fox & Crow", recipient:"owner@fox.test", message_stage:"Order online invite" };
@@ -1271,6 +1272,7 @@ test("Distribution Outreach sendCustomerEmail refuses opt-outs, changed rows, ot
   assert.throws(() => make(good)({ ...body, message_stage:"Initial" }, false), /Order online invite stage/);
   assert.throws(() => make(["Fox & Crow", "owner@fox.test", "Existing customer", "", true])(body, false), /blocked from email/);
   assert.throws(() => make(["Fox & Crow", "owner@fox.test", "Existing customer", "", "Yes"])(body, false), /blocked from email/, "Do Not Email typed as text counts");
+  assert.throws(() => make(["Fox & Crow", "owner@fox.test", "Existing customer", "", false, "2026-11-19 - Bad email (bounced): owner@fox.test"])(body, false), /recorded as a bounced email/, "a frozen recipient is rechecked against a bounced address typed back into Email");
   assert.throws(() => make(["Fox & Crow", "owner@fox.test", "Existing customer", "Unsubscribed", false])(body, false), /blocked from email/);
   assert.throws(() => make(["Other Bar", "owner@fox.test", "", "", false])(body, false), /changed/);
   assert.throws(() => make(good, [{ result:"APP SENT", intended_recipient:"owner@fox.test", message_stage:"Order online invite" }])(body, false), /already sent/);

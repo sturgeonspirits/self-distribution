@@ -150,6 +150,7 @@ test("first run writes one task per open Hub item, on the right day", async () =
     "hub-cmp-CMP-APP-FU1-follow-up-2",
     "hub-cmprun-CMP-FLAWED-unsent",
     "hub-cmprun-CMP-OSH2-paused",
+    "hub-directory-quality-2026-10-26",
     "hub-fu-ACC-CINDERS-2026-10-24",
     "hub-fu-ACC-GABES-2026-10-31",
     "hub-order-ORD-1-invoice",
@@ -157,7 +158,7 @@ test("first run writes one task per open Hub item, on the right day", async () =
     "hub-reply-RPL-OPEN",
   ]);
   assert.equal(result.closed, 0);
-  assert.equal(rows().length, 10, "the secretary's row is kept and nine are added");
+  assert.equal(rows().length, 11, "the secretary's row is kept and ten Hub tasks are added");
 
   const cinders = byId("hub-fu-ACC-CINDERS-2026-10-24");
   assert.equal(cinders.weekId, "2026-10-26");
@@ -181,6 +182,10 @@ test("first run writes one task per open Hub item, on the right day", async () =
   assert.match(byId("hub-cmprun-CMP-OSH2-paused").title, /resume paused campaign 'Oshkosh 2' \(69 left\)/);
   assert.match(byId("hub-cmprun-CMP-FLAWED-unsent").title, /Send or delete campaign 'Flawed local' \(31 not sent\)/);
   assert.match(byId("hub-order-ORD-1-invoice").title, /The Wild Boar: invoice in Badger/);
+  const quality = byId("hub-directory-quality-2026-10-26");
+  assert.match(quality.title, /^Directory: \d+ leads need fixing$/);
+  assert.match(quality.description, /No contact name:/);
+  assert.match(quality.description, /audience=directory_quality/);
   assert.equal(byId("hub-fu-ACC-BREWS-2026-11-04"), undefined, "next week's follow-up waits for its week");
 });
 
@@ -196,7 +201,7 @@ test("a second run with nothing changed writes nothing", async () => {
 test("a dry run reports without writing", async () => {
   const { state, sync, properties } = await harness();
   const result = sync({ dryRun: true });
-  assert.equal(result.created, 9);
+  assert.equal(result.created, 10);
   assert.equal(state.tasks.rows.length, 2);
   assert.equal(properties.size, 0);
 });
@@ -260,6 +265,28 @@ test("an open group task is retitled when its count changes", async () => {
   const result = sync();
   assert.equal(result.updated, 1);
   assert.equal(byId("hub-cmp-CMP-APP-FU1-follow-up-2").title, "Send Follow-up 2 to 'Appleton Follow-up 1' (1 business)");
+});
+
+test("the weekly directory-quality task closes when every reported issue is fixed", async () => {
+  const state = fixture();
+  const initialDirectory = state.hub["Distribution Directory and Leads"];
+  initialDirectory.rows[0].push("Miles");
+  initialDirectory.rows.slice(1).forEach(row => { row[14] = ""; });
+  const { sync, byId } = await harness(state);
+  sync();
+  assert.equal(byId("hub-directory-quality-2026-10-26").completed, "FALSE");
+  const directory = initialDirectory;
+  directory.rows.slice(1).forEach((row, index) => {
+    row[1] = `Casey ${index + 1}`;
+    row[2] = row[2] || `casey${index + 1}@example.com`;
+    row[3] = row[3] || `920-555-${String(1100 + index).slice(-4)}`;
+    row[4] = row[4] || `City ${index + 1}`;
+    row[7] = row[7] === "Needs email" ? "Not contacted" : row[7];
+    row[9] = row[9] === "Bad address" ? "" : row[9];
+    row[14] = "5";
+  });
+  const result = sync();
+  assert.equal(byId("hub-directory-quality-2026-10-26").completed, "TRUE", JSON.stringify(result));
 });
 
 test("text that looks like a formula is written as text", async () => {

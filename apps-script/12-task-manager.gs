@@ -26,6 +26,7 @@ const TASK_MANAGER_KEY_LABEL = "Hub key: ";
 const TASK_MANAGER_CLOSED_LABEL = "Closed by the Hub ";
 const TASK_MANAGER_CATEGORY = "sales";
 const TASK_MANAGER_HUB_URL = "https://distribution.sturgeonspirits.com/";
+const TASK_MANAGER_DIRECTORY_QUALITY_URL = "https://distribution.sturgeonspirits.com/?outreach=directory&audience=directory_quality";
 const TASK_MANAGER_TASK_HEADERS = ["id", "title", "category", "description", "dayOfWeek", "completed", "weekId",
   "repeatsWeekly", "repeatPattern", "originTaskId", "deleted", "reminderDate", "assignee", "priority", "shiftHours", "updatedAt"];
 // Directory statuses whose next step is a campaign email; one task per source campaign covers them.
@@ -59,6 +60,9 @@ function runTaskManagerSync() {
   // Once a day, build drafts for sequence steps that came due, so their review tasks are in this same sync.
   try { maybeRunSequenceStepCheck_(new Date()); }
   catch (error) { console.error(`Sequence step check failed: ${String(error && error.message || error)}`); }
+  // Once a week, clear hard-bounced addresses and capture the Directory quality report before task reconciliation.
+  try { maybeRunDirectoryQualityCheck_(new Date()); }
+  catch (error) { console.error(`Directory quality check failed: ${String(error && error.message || error)}`); }
   try { syncTaskManager_({}); }
   catch (error) { console.error(`Task manager sync failed: ${String(error && error.message || error)}`); }
 }
@@ -179,6 +183,28 @@ function taskManagerHubItems_(now, timeZone) {
 
   // Directory: personal follow-ups one by one; campaign follow-ups grouped by the campaign that last emailed them.
   const directory = rowsWithSource_(getOutreachSheet_(OUTREACH_SHEET_NAME));
+  // This dry report reads the rows already in memory, so each hourly reconciliation reflects staff fixes immediately.
+  const directoryQuality = directoryQualityReportFromRows_(directory);
+  const qualityRows = new Set();
+  Object.keys(directoryQuality.categories).forEach(name => directoryQuality.categories[name].rows.forEach(item => qualityRows.add(item.row)));
+  if (qualityRows.size) {
+    const key = `${TASK_MANAGER_KEY_PREFIX}directory-quality-${taskManagerSlot_(now, timeZone).weekId}`;
+    const breakdown = Object.keys(directoryQuality.categories)
+      .map(name => ({ label:directoryQuality.categories[name].label, count:directoryQuality.categories[name].count }))
+      .filter(item => item.count)
+      .map(item => `${item.label}: ${item.count}`)
+      .join("; ");
+    items.push({
+      key:key, kind:"directory-quality", summary:true, priority:"high",
+      title:`Directory: ${qualityRows.size} lead${qualityRows.size === 1 ? "" : "s"} need fixing`,
+      slot:taskManagerSlot_(now, timeZone),
+      description:taskManagerDescription_([
+        breakdown,
+        `Open the quality list: ${TASK_MANAGER_DIRECTORY_QUALITY_URL}`,
+        "Outreach > Businesses > Who to show: Missing email or name. This task refreshes as the Directory is fixed and closes when every count is zero.",
+      ], key),
+    });
+  }
   const campaignInfo = taskManagerCampaignInfo_();
   const groups = new Map();
   directory.forEach(row => {
