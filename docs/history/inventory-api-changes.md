@@ -3,6 +3,12 @@
 Moved out of the Inventory API header (`apps-script/Code.gs`, now `apps-script/01-core.gs`) on 2026-10-17 so the deployed file stays short. Newest first, copied word for word. The header keeps only the current version (`CHANGES IN THIS VERSION`); when a new version is made, move that section to the top of this file.
 
 ```
+CHANGES IN 2026.11.20.96-APP
+Directory cleanup, Part F (Karl, 2026-11-20): weekly quality runs process Badger and DOR sources before reporting.
+
+```
+
+```
 CHANGES IN 2026.11.20.95-APP
 Directory cleanup, Part E (Karl, 2026-11-20): Wisconsin DOR liquor-only license pulls merge Class A and Class B
 records, log them in License Leads, and use the shared helper for matched contact/address blanks.

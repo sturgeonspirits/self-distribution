@@ -1,9 +1,10 @@
 /*********************************
  * Inventory API (JSON) for Netlify. Part 1 of 12: core.
- * App version: 2026.11.20.96-APP
+ * App version: 2026.11.20.97-APP
  *
  * CHANGES IN THIS VERSION
- * Directory cleanup, Part F (Karl, 2026-11-20): weekly quality runs process Badger and DOR sources before reporting.
+ * Directory cleanup D review fixes (Karl, 2026-11-20): Badger customer pulls run after daily invoices without blocking
+ * them, log unknown list fields safely, and preview actual fill/difference results on copied rows.
  *
  * PARTS (load in this order; filePushOrder in .clasp.json): 01-core (config, cache, sheets, setup, relay, request router),
  * 02-inventory, 03-outreach-directory, 04-campaigns, 05-sequences, 06-replies, 07-sending, 08-applications,
@@ -18,7 +19,7 @@
  * Earlier version notes: docs/history/inventory-api-changes.md (move this version's notes there when the version changes).
  *********************************/
 
-const APP_VERSION = "2026.11.20.96-APP";
+const APP_VERSION = "2026.11.20.97-APP";
 
 const SHEET_NAMES = {
   STORES: "Stores",

@@ -408,6 +408,8 @@ function scheduledInvoiceImport() {
     throw new Error("Scheduled import refused: this is not the production tracker. Turn the trigger off here.");
   }
   const result = dailyImportSource_() === "BADGER" ? importFromBadger() : importInvoicePdfs();
+  try { maybePullBadgerCustomersMonthly(); }
+  catch (error) { console.warn(`Badger customer pull failed after invoice import: ${String(error && error.message || error)}`); }
   console.log(`Scheduled import result: ${JSON.stringify(result)}`);
   return result;
 }
@@ -758,6 +760,9 @@ function fetchBadgerCustomerList_() {
     if (!data || !Number.isInteger(count) || count < 0 || !Array.isArray(data.data)) throw new Error("Badger customer list returned an unexpected response shape.");
     if (total === null) total = count;
     if (total !== count) throw new Error("Badger customer count changed while reading; nothing was written. Run again.");
+    if (data.data.length && !["name", "customerName", "billToName"].some(key => data.data[0][key] !== undefined)) {
+      console.warn(`Badger customer list has no recognized name field; first record keys: ${Object.keys(data.data[0]).join(", ")}`);
+    }
     data.data.forEach(customer => {
       const id = String(customer && customer.id || "").trim();
       if (!/^\d+$/.test(id) || seen.has(id)) throw new Error("Badger customer list returned an incomplete or repeated record.");
