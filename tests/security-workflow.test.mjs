@@ -2009,7 +2009,7 @@ test("source contains formula protection, global error listeners, and recoverabl
   assert.match(backend, /OUTREACH_CAMPAIGN_RECIPIENTS_SHEET_NAME/);
   assert.match(backend, /batch size must be between 1 and 20/i);
   assert.match(backend, /const OUTREACH_OUTCOME_VALUES = \[/);
-  assert.match(backend, /"Wrong contact", "Bad address", "Closed", "Not interested", "Unsubscribed"/);
+  assert.match(backend, /"Wrong contact", "Bad address", "Closed", "Not interested", "Not a buyer", "Unsubscribed"/);
   assert.match(backend, /requireValueInList\(OUTREACH_OUTCOME_VALUES, true\)/);
   assert.match(backend.slice(backend.indexOf("\nfunction apiUpdateOutreachOutcome_("), backend.indexOf("\nfunction apiLogOutreachContact_(")), /writeChangedRowCells_\(sheet, rowNumber, originalValues, values\);/, "an outcome save writes only the changed cells");
   const outcomeDialogSource = index.slice(index.indexOf("function setOutcomeDialogEditing"), index.indexOf("async function openContactLogForRecord"));
@@ -2374,6 +2374,7 @@ test("Phase 1 Closed result, campaign display, and duplicate-header guard stay w
   ]);
   const outcomeValues = new Function(`${backend.slice(backend.indexOf("const OUTREACH_OUTCOME_VALUES"), backend.indexOf("const OUTREACH_FOLLOW_UP_OUTCOMES"))}; return { outcomes:OUTREACH_OUTCOME_VALUES, statuses:OUTREACH_DIRECTORY_STATUS_VALUES };`)();
   assert.ok(outcomeValues.outcomes.includes("Closed"));
+  assert.ok(outcomeValues.outcomes.includes("Not a buyer"));
   assert.ok(outcomeValues.statuses.includes("Closed"));
   const repairSource = backend.slice(backend.indexOf("function repairOutreachDirectoryValidations_"), backend.indexOf("const OUTREACH_MONTHLY_CONTENT_SECTION"));
   const repaired = new Function("setOutreachDirectoryValidation_", "OUTREACH_DIRECTORY_STAGE_VALUES", "OUTREACH_DIRECTORY_STATUS_VALUES", "OUTREACH_OUTCOME_VALUES", `${repairSource}; return repairOutreachDirectoryValidations_;`)(
@@ -2384,7 +2385,9 @@ test("Phase 1 Closed result, campaign display, and duplicate-header guard stay w
   assert.match(backend, /getRange\(1, 1, 1, sheet\.getLastColumn\(\)\)\.getValues\(\)\[0\]\.map\(normalizeHeader_\)/);
   assert.match(backend, /clearCampaignSchedule_\(campaign, "", ""\);/);
   assert.match(index, /data-outcome="Closed"/);
+  assert.match(index, /data-outcome="Not a buyer"/);
   assert.match(index, /<option>Closed<\/option>/);
+  assert.match(index, /<option>Not a buyer<\/option>/);
   assert.match(index, /openOutcomeDialog\(record\);[\s\S]*?openOutcomeDialog\(fullRecord, true\)/);
   assert.match(index, /String\(campaign\?\.status \|\| ""\)\.startsWith\("Complete"\)/);
   assert.match(index, /function campaignDeliveryDateLabel\(campaign\)/);

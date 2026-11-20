@@ -101,3 +101,14 @@ test("a moved address still matches an inbound bounce and the weekly guard only 
   assert.equal(second.skipped, "Already checked this week.");
   assert.ok(properties.get("DIRECTORY_QUALITY_LAST_RUN"));
 });
+
+test("Not a buyer maps to Do not contact and is blocked by every Hub email gate", async () => {
+  const { context } = await contextFor();
+  vm.runInContext("outreachCrossSendCooldownReason_ = () => '';", context);
+  assert.equal(call(context, "outreachStatusForOutcome_('Not a buyer')"), "Do not contact");
+  assert.equal(call(context, "isDoNotContact_({ status:'Needs email', outcome:'Not a buyer', do_not_email:false })"), true);
+  const reasons = call(context, "outreachSendEligibility_({ email:'buyer@example.com', notes:'', status:'Do not contact', outcome:'Not a buyer', next_email:'Initial', do_not_email:true, email_confidence:'confirmed', activity:[] }, { initial_sent_emails:new Set(), skip_legacy_pilot:true })");
+  assert.ok(reasons.includes("Business is excluded from email"));
+  assert.equal(call(context, "outreachServiceAreaMiles_({ 'Service area miles':42 })"), 42);
+  assert.equal(call(context, "outreachServiceAreaMiles_({})"), 60);
+});

@@ -3,6 +3,10 @@
 Moved out of the `docs/reference/distribution-outreach/Code.gs` header on 2026-10-17 so the deployed file stays short. Newest first, copied word for word. The header keeps only the current version (`CHANGES IN THIS VERSION`); when a new version is made, move that section to the top of this file.
 
 ```
+CHANGES IN 2026.11.19.36-APP
+- A Directory address previously moved to Notes as "Bad email (bounced)" is refused if it is typed back into Email.
+  This is the independent final send gate for sales campaigns and customer ordering invites.
+
 CHANGES IN 2026.11.05.35-APP
 - Closed Directory businesses are refused for sales, Cocktail list, customer invite, welcome, and payment-reminder
   sends. Closed is not presented as an address-fix action.

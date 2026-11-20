@@ -343,6 +343,7 @@ function outreachStatusForOutcome_(outcome) {
     "Visit in person": "Interested",
     "Visit scheduled": "Interested",
     "Visited": "Interested",
+    "Not a buyer": "Do not contact",
     "Wrong contact": "Needs email",
     "Bad address": "Needs email",
     "Closed": "Closed",
@@ -356,7 +357,7 @@ const OUTREACH_OUTCOME_VALUES = [
   "Interested", "Schedule tasting", "Tasting visit", "Wants cocktail list", "Follow up later", "Visit in person",
   // 2026.11.19.78-APP (Karl): a visit set up with the business, and a visit made.
   "Visit scheduled", "Visited",
-  "Wrong contact", "Bad address", "Closed", "Not interested", "Unsubscribed",
+  "Wrong contact", "Bad address", "Closed", "Not interested", "Not a buyer", "Unsubscribed",
 ];
 const OUTREACH_DIRECTORY_STAGE_VALUES = ["Initial", "Follow-up 1", "Follow-up 2", "Nurture check-in", "Reactivation", "Complete"];
 const OUTREACH_DIRECTORY_STATUS_VALUES = [
@@ -822,7 +823,7 @@ function outreachSendEligibility_(record, options) {
   const confidence = String(record.email_confidence || "").trim().toLowerCase();
   if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) reasons.push("Recipient email is invalid");
   if (typeof outreachBadEmailInNotes_ === "function" && outreachBadEmailInNotes_(record.notes, email)) reasons.push("Recipient email is recorded as a bounced address");
-  if (record.do_not_email || ["closed", "do not contact", "not interested", "unsubscribed"].includes(status) || ["bad address", "closed", "unsubscribed", "not interested", "do not contact"].includes(outcome)) reasons.push("Business is excluded from email");
+  if (record.do_not_email || ["closed", "do not contact", "not interested", "not a buyer", "unsubscribed"].includes(status) || ["bad address", "closed", "unsubscribed", "not interested", "not a buyer", "do not contact"].includes(outcome)) reasons.push("Business is excluded from email");
   if (outreachIsCocktailListOutcome_(outcome)) reasons.push("Recipient receives the cocktail list instead of sales outreach");
   const crossSendCooldown = outreachCrossSendCooldownReason_(email, false);
   if (crossSendCooldown) reasons.push(crossSendCooldown);
@@ -1008,7 +1009,7 @@ function apiUpdateOutreachOutcome_(p) {
     setRowValue(["outcome"], outcome);
     setRowValue(["record_updated_at"], new Date());
     if (followUpDate) setRowValue(["next_follow-up", "next_follow_up"], followUpDate);
-    if (["Not interested", "Unsubscribed"].includes(outcome)) setRowValue(["do_not_email", "do_not_contact"], true);
+    if (["Not interested", "Not a buyer", "Unsubscribed"].includes(outcome)) setRowValue(["do_not_email", "do_not_contact"], true);
     const today = Utilities.formatDate(new Date(), Session.getScriptTimeZone(), "yyyy-MM-dd");
     const priorNotes = String(outreachValue_(current, ["notes"]) || "").trim();
     // Logged from a reply sent from another address: remember that address so later replies match this business.
@@ -1102,7 +1103,7 @@ function apiLogOutreachContact_(p) {
       set(["status"], outreachStatusForOutcome_(outcome));
       set(["outcome"], outcome);
       if (followUpDate) set(["next_follow-up", "next_follow_up"], followUpDate);
-      if (["Not interested", "Unsubscribed"].includes(outcome)) set(["do_not_email", "do_not_contact"], true);
+      if (["Not interested", "Not a buyer", "Unsubscribed"].includes(outcome)) set(["do_not_email", "do_not_contact"], true);
     }
     if (channel === "Email outside app") {
       set(["last_emailed"], contactDate);

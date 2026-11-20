@@ -251,10 +251,11 @@ test("ensureHeaderColumns_ skips the live read when the cache has every column, 
   assert.deepEqual(context.__header, ["Campaign ID", "Status", "Schedule Detail", "Message Stage", "Sequence ID"]);
 });
 
-test("isDoNotContact_ adds Closed only; older outcomes still count through status alone", async () => {
+test("isDoNotContact_ checks Closed and Not a buyer outcomes; older outcomes still count through status alone", async () => {
   const { call } = await backend();
   assert.equal(call(`isDoNotContact_({ status:"Closed" })`), true);
   assert.equal(call(`isDoNotContact_({ status:"Needs email", outcome:"Closed" })`), true);
+  assert.equal(call(`isDoNotContact_({ status:"Needs email", outcome:"Not a buyer" })`), true);
   // A business whose old result was Not interested but whose status later moved on stays in the queues.
   assert.equal(call(`isDoNotContact_({ status:"Interested", outcome:"Not interested" })`), false);
   assert.equal(call(`isDoNotContact_({ status:"Existing customer", outcome:"Unsubscribed" })`), false);

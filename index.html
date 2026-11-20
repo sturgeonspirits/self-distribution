@@ -1,10 +1,10 @@
 <!doctype html>
-<!-- App version: 2026.11.19.90-WEB -->
+<!-- App version: 2026.11.19.91-WEB -->
 <html>
 <head>
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover"/>
-  <meta name="app-version" content="2026.11.19.90-WEB" />
+  <meta name="app-version" content="2026.11.19.91-WEB" />
   <meta name="theme-color" content="#536f77" />
   <link rel="icon" href="/assets/distribution-hub-icon.svg" type="image/svg+xml" />
   <link rel="manifest" href="/site.webmanifest" />
@@ -2659,6 +2659,7 @@
         <button class="outcomeOption" type="button" data-outcome="Bad address">Bad address</button>
         <button class="outcomeOption" type="button" data-outcome="Closed">Closed</button>
         <button class="outcomeOption" type="button" data-outcome="Not interested">Not interested</button>
+        <button class="outcomeOption" type="button" data-outcome="Not a buyer">Not a buyer</button>
         <button class="outcomeOption" type="button" data-outcome="Unsubscribed">Unsubscribed</button>
       </div>
       <label for="outcomeFollowUpDate">Next follow-up</label>
@@ -2675,7 +2676,7 @@
 
   <dialog id="contactLogDialog">
     <div class="dlgHeader"><div><div class="dlgTitle">Log contact</div><div class="smallMuted" id="contactLogBusiness"></div></div><button id="closeContactLogBtn" type="button">Close</button></div>
-    <div class="dlgBody"><div class="workflowEditGrid"><div><label for="contactLogDate">Date</label><input id="contactLogDate" type="date" /></div><div><label for="contactLogChannel">Channel</label><select id="contactLogChannel"><option>In person</option><option>Phone</option><option>Email outside app</option><option>Event/tasting</option><option>Other</option></select></div><div><label for="contactLogStaff">Staff member</label><input id="contactLogStaff" /></div><div><label for="contactLogPerson">Contact person</label><input id="contactLogPerson" /></div><div><label for="contactLogOutcome">Outcome (optional)</label><select id="contactLogOutcome"><option value="">No outcome yet</option><option>Interested</option><option>Schedule tasting</option><option>Tasting visit</option><option>Wants cocktail list</option><option>Follow up later</option><option>Visit scheduled</option><option>Visited</option><option value="Visit in person">Visit in person (to do)</option><option>Wrong contact</option><option>Bad address</option><option>Closed</option><option>Not interested</option><option>Unsubscribed</option></select></div><div><label for="contactLogFollowUp">Next follow-up</label><input id="contactLogFollowUp" type="date" /></div><div class="full"><label for="contactLogNotes">Notes</label><textarea id="contactLogNotes" placeholder="What happened? For a tasting, include the cocktail and who poured it."></textarea></div></div><div class="status" id="contactLogStatus"></div><div class="dlgActions"><button class="primary" id="saveContactLogBtn" type="button">Save contact</button></div></div>
+    <div class="dlgBody"><div class="workflowEditGrid"><div><label for="contactLogDate">Date</label><input id="contactLogDate" type="date" /></div><div><label for="contactLogChannel">Channel</label><select id="contactLogChannel"><option>In person</option><option>Phone</option><option>Email outside app</option><option>Event/tasting</option><option>Other</option></select></div><div><label for="contactLogStaff">Staff member</label><input id="contactLogStaff" /></div><div><label for="contactLogPerson">Contact person</label><input id="contactLogPerson" /></div><div><label for="contactLogOutcome">Outcome (optional)</label><select id="contactLogOutcome"><option value="">No outcome yet</option><option>Interested</option><option>Schedule tasting</option><option>Tasting visit</option><option>Wants cocktail list</option><option>Follow up later</option><option>Visit scheduled</option><option>Visited</option><option value="Visit in person">Visit in person (to do)</option><option>Wrong contact</option><option>Bad address</option><option>Closed</option><option>Not interested</option><option>Not a buyer</option><option>Unsubscribed</option></select></div><div><label for="contactLogFollowUp">Next follow-up</label><input id="contactLogFollowUp" type="date" /></div><div class="full"><label for="contactLogNotes">Notes</label><textarea id="contactLogNotes" placeholder="What happened? For a tasting, include the cocktail and who poured it."></textarea></div></div><div class="status" id="contactLogStatus"></div><div class="dlgActions"><button class="primary" id="saveContactLogBtn" type="button">Save contact</button></div></div>
   </dialog>
 
   <dialog id="businessDetailDialog">
@@ -2806,7 +2807,7 @@
 
   <footer style="max-width:1200px;margin:18px auto 120px;padding:0 12px;text-align:center;color:#6b7280;font-size:12px;">
     Designed by <a href="https://scriptspirit.dev" target="_blank" rel="noopener noreferrer" style="color:#1d4ed8;text-decoration:none;font-weight:700;">Script Spirit</a>
-<span id="appVersionFooter"> • Version 2026.11.19.90-WEB</span>
+<span id="appVersionFooter"> • Version 2026.11.19.91-WEB</span>
   </footer>
 
 
@@ -2829,7 +2830,7 @@
   window.addEventListener("unhandledrejection", e => console.error("Unhandled promise rejection:", e.reason));
   window.addEventListener("error", e => console.error("Unhandled error:", e.error || e.message));
   const $ = (id) => document.getElementById(id);
-  const APP_VERSION = "2026.11.19.90-WEB";
+  const APP_VERSION = "2026.11.19.91-WEB";
   $("appVersionFooter").textContent = ` • Version ${APP_VERSION}`;
   function screenCacheKey(screen){ return `distribution_hub:${APP_VERSION}:${staffSession?.email || "unknown"}:${screen}`; }
   function readScreenCache(screen){
@@ -7032,7 +7033,7 @@
         outcome:outcome,
         status:res.status || record.status,
         next_follow_up:nextFollowUp || record.next_follow_up,
-        do_not_email:["Not interested", "Unsubscribed"].includes(outcome) || !!record.do_not_email,
+        do_not_email:["Not interested", "Not a buyer", "Unsubscribed"].includes(outcome) || !!record.do_not_email,
       });
       $("outcomeDialog").close();
       toast("Outcome saved");

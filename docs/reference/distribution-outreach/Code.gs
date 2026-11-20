@@ -1,11 +1,10 @@
 /**
  * Sturgeon Spirits Distribution Outreach
  *
- * VERSION: 2026.11.19.36-APP
+ * VERSION: 2026.11.19.37-APP
  *
  * CHANGES IN THIS VERSION
- * - A Directory address previously moved to Notes as "Bad email (bounced)" is refused if it is typed back into Email.
- *   This is the independent final send gate for sales campaigns and customer ordering invites.
+ * - New "Not a buyer" Directory outcome is an opt-out at the final mailer gate, like Do not contact.
  *
  * DEPLOY
  * - Apps Script project: distribution outreach
@@ -17,7 +16,7 @@
  * Earlier version notes: docs/history/distribution-outreach-changes.md (move this version's notes there when the version changes).
  */
 
-const OUTREACH_VERSION = '2026.11.19.36-APP';
+const OUTREACH_VERSION = '2026.11.19.37-APP';
 const NURTURE_CHECK_IN_DUPLICATE_COOLDOWN_DAYS = 60;
 
 const OUTREACH = Object.freeze({
@@ -320,7 +319,7 @@ function validateAppLead_(body, testMode) {
   if (stage.toLowerCase() !== String(body.message_stage || '').trim().toLowerCase()) throw new Error('Email stage changed. Refresh the Hub before sending.');
   if (!testMode && !isValidEmail_(email)) throw new Error('Recipient email is invalid.');
   if (!testMode && typeof directoryRowHasBouncedEmail_ === 'function' && directoryRowHasBouncedEmail_(row, email)) throw new Error('This address is recorded as a bounced email in the Directory.');
-  if (!testMode && (isTicked_(row[OUTREACH.COL.DO_NOT_EMAIL - 1]) || ['closed', 'do not contact', 'not interested', 'unsubscribed'].indexOf(status) >= 0 || ['bad address', 'closed', 'not interested', 'unsubscribed', 'do not contact'].indexOf(outcome) >= 0)) {
+  if (!testMode && (isTicked_(row[OUTREACH.COL.DO_NOT_EMAIL - 1]) || ['closed', 'do not contact', 'not interested', 'not a buyer', 'unsubscribed'].indexOf(status) >= 0 || ['bad address', 'closed', 'not interested', 'not a buyer', 'unsubscribed', 'do not contact'].indexOf(outcome) >= 0)) {
     throw new Error('The source lead is blocked from email.');
   }
   const duplicate = appSentHistory_().some(function (item) {
@@ -343,8 +342,8 @@ function isTicked_(value) {
   return value === true || /^(true|yes|y|1)$/i.test(String(value === null || value === undefined ? '' : value).trim());
 }
 
-// Closed is a business-level result, not an email-address repair task. Match by Account ID when available so a
-// payment reminder or Cocktail-list contact using another address is still refused for the closed business.
+// A Directory opt-out is a business-level result, not an email-address repair task. Match by Account ID when
+// available so a payment reminder or Cocktail-list contact using another address is still refused for that business.
 function assertDirectoryRecipientNotClosed_(accountId, email) {
   const normalizedAccount = String(accountId || '').trim();
   const normalizedEmail = String(email || '').trim().toLowerCase();
@@ -352,14 +351,16 @@ function assertDirectoryRecipientNotClosed_(accountId, email) {
   const sheet = assertStagingEnvironment_().getSheetByName(OUTREACH.LEADS_SHEET);
   if (!sheet || sheet.getLastRow() < OUTREACH.FIRST_DATA_ROW) return;
   const rows = sheet.getRange(OUTREACH.FIRST_DATA_ROW, 1, sheet.getLastRow() - 1, Math.max(sheet.getLastColumn(), OUTREACH.COL.LAST_DATA_COLUMN)).getValues();
-  const closed = rows.some(function (row) {
+  const blocked = rows.some(function (row) {
     const sameAccount = normalizedAccount && String(row[OUTREACH.COL.ACCOUNT_ID - 1] || '').trim() === normalizedAccount;
     const sameEmail = normalizedEmail && String(row[OUTREACH.COL.EMAIL - 1] || '').trim().toLowerCase() === normalizedEmail;
     if (!sameAccount && !sameEmail) return false;
-    return String(row[OUTREACH.COL.STATUS - 1] || '').trim().toLowerCase() === 'closed'
-      || String(row[OUTREACH.COL.OUTCOME - 1] || '').trim().toLowerCase() === 'closed';
+    const status = String(row[OUTREACH.COL.STATUS - 1] || '').trim().toLowerCase();
+    const outcome = String(row[OUTREACH.COL.OUTCOME - 1] || '').trim().toLowerCase();
+    return ['closed', 'do not contact', 'not interested', 'not a buyer', 'unsubscribed', 'bad address'].indexOf(status) >= 0
+      || ['closed', 'do not contact', 'not interested', 'not a buyer', 'unsubscribed', 'bad address'].indexOf(outcome) >= 0;
   });
-  if (closed) throw new Error('This business is marked Closed in the Directory.');
+  if (blocked) throw new Error('This business is blocked from email in the Directory.');
 }
 
 // Order-online invite to a current customer. The Hub chooses the audience; this check is the
@@ -391,7 +392,7 @@ function validateCustomerLead_(body, testMode) {
   if (!testMode && !isValidEmail_(email)) throw new Error('Recipient email is invalid.');
   if (!testMode && typeof directoryRowHasBouncedEmail_ === 'function' && directoryRowHasBouncedEmail_(row, email)) throw new Error('This address is recorded as a bounced email in the Directory.');
   const dneBlocks = isTicked_(row[OUTREACH.COL.DO_NOT_EMAIL - 1]) && !automaticCustomerDoNotEmail_(row);
-  if (!testMode && (dneBlocks || ['closed', 'do not contact', 'not interested', 'unsubscribed', 'bad address'].indexOf(status) >= 0 || ['bad address', 'closed', 'not interested', 'unsubscribed', 'do not contact'].indexOf(outcome) >= 0)) {
+  if (!testMode && (dneBlocks || ['closed', 'do not contact', 'not interested', 'not a buyer', 'unsubscribed', 'bad address'].indexOf(status) >= 0 || ['bad address', 'closed', 'not interested', 'not a buyer', 'unsubscribed', 'do not contact'].indexOf(outcome) >= 0)) {
     throw new Error('The customer is blocked from email.');
   }
   const accountId = String(row[OUTREACH.COL.ACCOUNT_ID - 1] || '').trim();
@@ -422,13 +423,11 @@ function validateWelcomeRecipient_(body, testMode) {
   if (business !== String(body.business || '').trim()) throw new Error('Customer row changed. Refresh the Hub before sending.');
   if (rowAccountId && String(body.account_id || '').trim() && rowAccountId !== String(body.account_id).trim()) throw new Error('Customer account changed. Refresh the Hub before sending.');
   if (!testMode && !isValidEmail_(email)) throw new Error('Recipient email is invalid.');
-  if (!testMode && (String(row[OUTREACH.COL.STATUS - 1] || '').trim().toLowerCase() === 'closed' || String(row[OUTREACH.COL.OUTCOME - 1] || '').trim().toLowerCase() === 'closed')) {
-    throw new Error('This business is marked Closed in the Directory.');
-  }
+  if (!testMode) assertDirectoryRecipientNotClosed_(rowAccountId, rowEmail || email);
   if (!testMode && email === rowEmail) {
     const status = String(row[OUTREACH.COL.STATUS - 1] || '').trim().toLowerCase();
     const outcome = String(row[OUTREACH.COL.OUTCOME - 1] || '').trim().toLowerCase();
-    if (['bad address', 'unsubscribed', 'do not contact'].indexOf(status) >= 0 || ['bad address', 'unsubscribed', 'do not contact'].indexOf(outcome) >= 0) {
+    if (['bad address', 'unsubscribed', 'do not contact', 'not interested', 'not a buyer', 'closed'].indexOf(status) >= 0 || ['bad address', 'unsubscribed', 'do not contact', 'not interested', 'not a buyer', 'closed'].indexOf(outcome) >= 0) {
       throw new Error('This address is marked ' + (status || outcome) + ' in the Directory. Fix the email before sending.');
     }
   }

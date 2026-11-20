@@ -593,8 +593,8 @@ function outreachStatusLower_(record) {
 function isDoNotContact_(record) {
   const status = outreachStatusLower_(record);
   const outcome = String(record.outcome || "").trim().toLowerCase();
-  // Closed is checked on both status and outcome; the other outcomes keep their earlier behavior (status only).
-  return record.do_not_email || ["do not contact", "not interested", "closed"].includes(status) || outcome === "closed";
+  // Closed and Not a buyer are checked on both status and outcome; older outcomes keep their earlier behavior (status only).
+  return record.do_not_email || ["do not contact", "not interested", "closed"].includes(status) || ["closed", "not a buyer"].includes(outcome);
 }
 
 function isSentOutreach_(record) {
@@ -809,6 +809,20 @@ function getOutreachCampaignSettings_() {
     console.warn("Outreach campaign-settings cache write failed: " + String(error && error.message || error));
   }
   return __OUTREACH_CAMPAIGN_SETTINGS;
+}
+
+const OUTREACH_SERVICE_AREA_MILES_KEY = "Service area miles";
+const OUTREACH_DEFAULT_SERVICE_AREA_MILES = 60;
+function ensureOutreachServiceAreaSetting_() {
+  const sheet = getOutreachSheet_("Campaign Settings");
+  const keys = sheet.getRange(2, 1, Math.max(1, sheet.getLastRow() - 1), 1).getDisplayValues().map(row => String(row[0] || "").trim());
+  const added = !keys.includes(OUTREACH_SERVICE_AREA_MILES_KEY);
+  if (added) sheet.getRange(sheet.getLastRow() + 1, 1, 1, 2).setValues([[OUTREACH_SERVICE_AREA_MILES_KEY, OUTREACH_DEFAULT_SERVICE_AREA_MILES]]);
+  return { key:OUTREACH_SERVICE_AREA_MILES_KEY, default_miles:OUTREACH_DEFAULT_SERVICE_AREA_MILES, added:added };
+}
+function outreachServiceAreaMiles_(settings) {
+  const miles = Number((settings || getOutreachCampaignSettings_())[OUTREACH_SERVICE_AREA_MILES_KEY]);
+  return Number.isFinite(miles) && miles >= 0 ? miles : OUTREACH_DEFAULT_SERVICE_AREA_MILES;
 }
 
 function outreachMonthlyContentValues_(row, settings, hasRecentBadgerInvoice) {

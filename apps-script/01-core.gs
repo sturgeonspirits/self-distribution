@@ -1,12 +1,11 @@
 /*********************************
  * Inventory API (JSON) for Netlify. Part 1 of 12: core.
- * App version: 2026.11.19.88-APP
+ * App version: 2026.11.19.89-APP
  *
  * CHANGES IN THIS VERSION
- * Directory quality (Karl, 2026-11-19): a weekly check identifies active Directory rows with missing or bounced
- * email, missing or placeholder contacts, possible duplicate businesses, and missing prospect distances; it creates
- * a self-closing weekly task and the Outreach "Missing email or name" work list. Hard-bounced addresses move from
- * Email to a dated Notes line, remain reply-matchable, and are refused if re-entered.
+ * Directory cleanup, Part A (Karl, 2026-11-19): repairHubStructure adds Campaign Settings "Service area miles" (60
+ * by default); new Log outcome "Not a buyer" writes Do not contact and blocks all Hub/mailer email paths. Includes
+ * the prior hard-bounce cleanup.
  *
  * PARTS (load in this order; filePushOrder in .clasp.json): 01-core (config, cache, sheets, setup, relay, request router),
  * 02-inventory, 03-outreach-directory, 04-campaigns, 05-sequences, 06-replies, 07-sending, 08-applications,
@@ -21,7 +20,7 @@
  * Earlier version notes: docs/history/inventory-api-changes.md (move this version's notes there when the version changes).
  *********************************/
 
-const APP_VERSION = "2026.11.19.88-APP";
+const APP_VERSION = "2026.11.19.89-APP";
 
 const SHEET_NAMES = {
   STORES: "Stores",
@@ -917,6 +916,7 @@ function repairHubStructure_() {
   identity.directory_validations = directoryValidations;
   identity.monthly_content = ensureOutreachMonthlyContent_();
   identity.sell_sheet = ensureSellSheetStructure_();
+  identity.service_area = ensureOutreachServiceAreaSetting_();
   identity.sequences = ensureSequenceStructure_();
   return identity;
 }

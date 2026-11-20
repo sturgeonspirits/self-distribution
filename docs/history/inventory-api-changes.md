@@ -3,6 +3,12 @@
 Moved out of the Inventory API header (`apps-script/Code.gs`, now `apps-script/01-core.gs`) on 2026-10-17 so the deployed file stays short. Newest first, copied word for word. The header keeps only the current version (`CHANGES IN THIS VERSION`); when a new version is made, move that section to the top of this file.
 
 ```
+CHANGES IN 2026.11.19.88-APP
+Directory quality (Karl, 2026-11-19): a weekly check identifies active Directory rows with missing or bounced
+email, missing or placeholder contacts, possible duplicate businesses, and missing prospect distances; it creates
+a self-closing weekly task and the Outreach "Missing email or name" work list. Hard-bounced addresses move from
+Email to a dated Notes line, remain reply-matchable, and are refused if re-entered.
+
 CHANGES IN 2026.11.19.87-APP
 Today and campaigns (Karl, 2026-11-19): the Outreach screen now knows which businesses are in a campaign that still has
 an email waiting for them (openCampaignMembership_ in 04-campaigns.gs; each record gets campaign:{name, state, stage},

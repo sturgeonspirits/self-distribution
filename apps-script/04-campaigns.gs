@@ -289,7 +289,7 @@ function newsletterCocktailListEligibility_(record) {
   // An active customer who subscribed to the Cocktail list still receives it; any
   // recorded opt-out (status, outcome, newsletter or program) still excludes them.
   const activeCustomer = directoryStatus === "existing customer" && String(record.program_ordering_status || "").trim().toLowerCase() === "active";
-  const optOut = ["closed", "do not contact", "unsubscribed", "bad address", "not interested"];
+  const optOut = ["closed", "do not contact", "unsubscribed", "bad address", "not interested", "not a buyer"];
   if ((record.do_not_email && !activeCustomer) || optOut.includes(directoryStatus) || optOut.includes(directoryOutcome)) reasons.push("Business is excluded from email");
   if (["unsubscribed", "declined"].includes(programStatus)) reasons.push("Account program excludes newsletter email");
   const cooldown = outreachCrossSendCooldownReason_(email, true);
@@ -456,7 +456,7 @@ function customerInviteEligibility_(record) {
   const status = String(record.status || "").trim().toLowerCase();
   const outcome = String(record.outcome || "").trim().toLowerCase();
   const confidence = String(record.email_confidence || "").trim().toLowerCase();
-  const optOut = ["closed", "do not contact", "not interested", "unsubscribed", "bad address"];
+  const optOut = ["closed", "do not contact", "not interested", "not a buyer", "unsubscribed", "bad address"];
   if (!String(record.account_id || "").trim()) reasons.push("No Account ID on the Directory row");
   if (!email) reasons.push("No email on file");
   else if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) reasons.push("Recipient email is invalid");
