@@ -169,3 +169,38 @@ test("DOR pages use subject, keep liquor-only records once, and reject a non-OK 
   assert.deepEqual(records.map(row => row.rn), [1], "a dual liquor license is one record and beer/wine-only records are excluded");
   assert.throws(() => vm.runInContext(`dorPageRows_({ result:'Error', count:'0', subject:[] })`, context), /did not return Ok/);
 });
+
+test("DOR preview uses the shared fill rules, plans one add for duplicate businesses, and never writes", async () => {
+  const { context } = await contextFor();
+  const directory = { getLastRow:() => 2, getLastColumn:() => 12 };
+  context.__directory = directory;
+  vm.runInContext(`
+    getOutreachSs_ = () => ({ getSheetByName:() => null });
+    milesForZip_ = zip => zip === '54945' ? 12 : 100;
+    outreachServiceAreaMiles_ = () => 60;
+    permanentId_ = () => 'ACC-new';
+  `, context);
+  const rows = [{ account_id:'A1', business_name:'Matched Bar', contact_person:'', email:'', address:'1 Main', city:'Oshkosh', zip:'54945', notes:'', relationship:'Prospect', status:'Needs email' }];
+  const records = [
+    { rn:'1', AL:1, businessName:'Matched Bar', agentName:'Jamie Smith', address:'1 Main', city:'Oshkosh', zip:'54945', lastUpdated:'2026-11-01' },
+    { rn:'2', BL:1, businessName:'New Bar', agentName:'Rae Jones', address:'2 Main', city:'Oshkosh', zip:'54945', county:'Winnebago', lastUpdated:'2026-11-02' },
+    { rn:'3', AL:1, businessName:'New Bar', agentName:'Other Agent', address:'2 Main', city:'Oshkosh', zip:'54945', lastUpdated:'2026-11-03' },
+    { rn:'4', AL:1, businessName:'Far Bar', agentName:'Far Agent', address:'4 Main', city:'Far', zip:'99999', lastUpdated:'2026-11-04' },
+  ];
+  const result = call(context, `processDorLiquorLicenses_({ dryRun:true, records:${JSON.stringify(records)}, identity:accountIdentityFromRows_(${JSON.stringify(rows)}), directory:__directory, now:new Date('2026-11-20T12:00:00Z') })`);
+  assert.equal(result.filled, 1, 'blank contact is a real would-fill');
+  assert.equal(result.added, 1, 'same business under two RNs is planned once');
+  assert.equal(result.outside, 1);
+  assert.deepEqual(result.examples.would_add.map(item => item.business), ['New Bar']);
+  assert.deepEqual(result.examples.would_fill.map(item => item.business), ['Matched Bar']);
+  assert.equal(rows[0].contact_person, '', 'preview does not mutate its input row');
+});
+
+test("DOR time budget leaves the weekly guard open so an editor rerun can resume", async () => {
+  const { context, properties } = await contextFor();
+  vm.runInContext("directoryQualityCheck_ = () => ({ complete:false, dor:{ stopped:true } });", context);
+  const result = call(context, "maybeRunDirectoryQualityCheck_(new Date('2026-11-19T15:00:00-06:00'))");
+  assert.equal(result.complete, false);
+  assert.equal(properties.get('DIRECTORY_QUALITY_LAST_RUN'), undefined);
+  assert.equal(call(context, "typeof runDirectoryQualityCheckNow"), 'function');
+});

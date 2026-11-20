@@ -184,8 +184,13 @@ function taskManagerHubItems_(now, timeZone) {
   const directoryQuality = directoryQualityReportFromRows_(directory, { service_area_miles:outreachServiceAreaMiles_(getOutreachCampaignSettings_()) });
   const duplicateCount = directoryQuality.categories.duplicates.count;
   const customerWithoutEmail = directoryQuality.categories.no_email.rows.filter(item => item.customer).length;
+  let badgerDifferences = [];
+  try {
+    const summary = JSON.parse(PropertiesService.getScriptProperties().getProperty("DIRECTORY_QUALITY_LAST_SUMMARY") || "{}");
+    badgerDifferences = (summary.badger?.examples || []).filter(item => item.fill?.conflicts?.length).map(item => item.business).filter(Boolean);
+  } catch (error) { console.warn("Directory quality summary unavailable: " + String(error.message || error)); }
   const decisionCount = new Set(directoryQuality.categories.duplicates.rows.map(item => item.row)
-    .concat(directoryQuality.categories.no_email.rows.filter(item => item.customer).map(item => item.row))).size;
+    .concat(directoryQuality.categories.no_email.rows.filter(item => item.customer).map(item => item.row))).size + badgerDifferences.length;
   if (decisionCount) {
     const key = `${TASK_MANAGER_KEY_PREFIX}directory-quality-${taskManagerSlot_(now, timeZone).weekId}`;
     const inAreaBreakdown = Object.keys(directoryQuality.categories)
@@ -199,10 +204,10 @@ function taskManagerHubItems_(now, timeZone) {
       title:`Directory: ${decisionCount} decision${decisionCount === 1 ? "" : "s"} needed`,
       slot:taskManagerSlot_(now, timeZone),
       description:taskManagerDescription_([
-        `Possible duplicates: ${duplicateCount}; current or lapsed customers without email: ${customerWithoutEmail}.`,
+        `Possible duplicates: ${duplicateCount}; current or lapsed customers without email: ${customerWithoutEmail}; Badger differences: ${badgerDifferences.length}${badgerDifferences.length ? ` (${badgerDifferences.slice(0, 25).join(", ")})` : ""}.`,
         `Still missing in the ${directoryQuality.outside_service_area.service_area_miles}-mile service area: ${inAreaBreakdown}.`,
         `Open the quality list: ${TASK_MANAGER_DIRECTORY_QUALITY_URL}`,
-        "Decide only the possible duplicates and customer ordering-link email gaps. This task closes itself when both counts are zero.",
+        "Decide only the possible duplicates, customer ordering-link email gaps, and Badger differences. This task closes itself when those counts are zero.",
       ], key),
     });
   }

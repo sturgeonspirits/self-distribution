@@ -14,6 +14,9 @@ const DIRECTORY_QUALITY_PLACEHOLDER_CONTACT_PATTERNS = [
   /\bpay master\b/i, /\bna na\b/i, /\btbd\b/i, /\bunknown\b/i,
 ];
 const DIRECTORY_QUALITY_LAST_RUN_PROPERTY = "DIRECTORY_QUALITY_LAST_RUN";
+// The first DOR catch-up can be large. Leave enough Apps Script time for the
+// final sheet writes, then continue from the durable DOR high-water mark.
+const DIRECTORY_QUALITY_MAX_RUN_MS = 4.5 * 60 * 1000;
 
 function directoryQualityBusinessKey_(value) {
   return normalizeBusinessKey_(value).replace(/\b(llc|inc|incorporated|ltd|limited|corp|corporation)\b/g, "").replace(/\s+/g, " ").trim();
@@ -166,6 +169,7 @@ function directoryApplyContactFillToValues_(values, headers, source, now) {
   const noteLines = [];
   if (fillLines.length) noteLines.push(`${date} - Filled ${fillLines.join(" and ")} from ${label}.`);
   conflictLines.forEach(line => noteLines.push(`${date} - ${line}.`));
+  if (source?.note && !notes.toLowerCase().includes(String(source.note).toLowerCase())) noteLines.push(`${date} - ${String(source.note).trim()}`);
   if (noteLines.length && directoryFillHeaderKey_(headers, ["notes"]) !== undefined) {
     set(["notes"], [notes].concat(noteLines).filter(Boolean).join("\n"));
     result.changed = true;
@@ -193,6 +197,60 @@ function directoryApplyContactFillForRecord_(record, source, now) {
   return result;
 }
 
+/** Apply many trusted fills from one re-read. The caller already owns the Directory lock. */
+function directoryApplyContactFillsBatch_(entries, now) {
+  const sheet = getOutreachSheet_(OUTREACH_SHEET_NAME);
+  if (!entries || !entries.length || sheet.getLastRow() < 2) return [];
+  const headers = getHeaderMap_(sheet);
+  const width = sheet.getLastColumn();
+  const values = sheet.getRange(2, 1, sheet.getLastRow() - 1, width).getValues();
+  const originals = values.map(row => row.slice());
+  const accountKey = directoryFillHeaderKey_(headers, ["account_id", "account id"]);
+  const businessKey = directoryFillHeaderKey_(headers, ["business", "business_name"]);
+  const changed = new Set();
+  const results = entries.map(entry => {
+    const record = entry.record || {};
+    const index = Number(record.source_row) - 2;
+    if (index < 0 || index >= values.length) return { changed:false, skipped:"Directory row missing" };
+    const row = values[index];
+    if (accountKey !== undefined && record.account_id && String(row[headers[accountKey]] || "").trim() !== String(record.account_id).trim()) return { changed:false, skipped:"Directory row changed" };
+    if (businessKey !== undefined && record.business && String(row[headers[businessKey]] || "").trim() !== String(record.business).trim()) return { changed:false, skipped:"Directory row changed" };
+    const result = directoryApplyContactFillToValues_(row, headers, entry.source, now);
+    if (result.changed) changed.add(index);
+    return result;
+  });
+  // Batch only the changed cells. Directory rows can have staff-owned columns,
+  // so bulk-writing a whole row would make a concurrent edit unnecessarily risky.
+  const changedByColumn = new Map();
+  changed.forEach(index => values[index].forEach((value, column) => {
+    if (value === originals[index][column]) return;
+    const rows = changedByColumn.get(column) || []; rows.push(index); changedByColumn.set(column, rows);
+  }));
+  changedByColumn.forEach((rows, column) => rows.sort((a, b) => a - b).forEach((index, position, all) => {
+    if (position && index === all[position - 1] + 1) return;
+    let end = index;
+    while (all.includes(end + 1)) end += 1;
+    sheet.getRange(index + 2, column + 1, end - index + 1, 1).setValues(values.slice(index, end + 1).map(row => [row[column]]));
+  }));
+  return results;
+}
+
+function directoryApplyFillToRecordCopy_(record, source, now) {
+  const headers = {};
+  const values = [];
+  Object.keys(record.row || {}).forEach((key, index) => { headers[key] = index; values.push(record.row[key]); });
+  return directoryApplyContactFillToValues_(values, headers, source, now);
+}
+
+function directoryIdentityAdd_(identity, input, accountId, sourceRow) {
+  const record = { account_id:accountId, source_row:sourceRow, business:input.business_name, email:String(input.email || "").toLowerCase(), city:input.city, row:input, pending_add:true };
+  identity.by_id.set(accountId, record); identity.by_row.set(sourceRow, record); identity.rows.push(input);
+  if (record.email) { const email = identity.by_email.get(record.email) || []; email.push(record); identity.by_email.set(record.email, email); }
+  const key = `${normalizeBusinessKey_(record.business)}::${normalizeBusinessKey_(record.city)}`;
+  const matches = identity.by_business_city.get(key) || []; matches.push(record); identity.by_business_city.set(key, matches);
+  return record;
+}
+
 const DOR_LIQUOR_URL = "https://ww2.revenue.wi.gov/WebServicesPublicWeb/rest/liquor/all";
 const DOR_LICENSE_LEADS_HEADERS = ["DOR RN", "Business Name", "Agent", "Street", "City", "ZIP", "License Types", "Last Updated", "Result", "Processed At"];
 const DOR_LAST_UPDATED_PROPERTY = "DIRECTORY_DOR_LAST_UPDATED";
@@ -218,26 +276,91 @@ function fetchDorLiquorRecords_() {
     }
   }); return dorLiquorRecords_(all);
 }
+function dorLicenseExpired_(item, now) {
+  const value = String(item?.expireDate || item?.expirationDate || "").trim();
+  if (!value) return false;
+  const date = new Date(value);
+  return !Number.isNaN(date.getTime()) && date.getTime() < new Date(now).setHours(0, 0, 0, 0);
+}
+function dorPossiblyClosedEntries_(logSheet, logHeaders, records, identity, now) {
+  if (!logSheet || logSheet.getLastRow() < 2 || logHeaders.dor_rn === undefined) return [];
+  const liveByRn = new Map((records || []).map(item => [String(item.rn || ""), item]));
+  const businessKey = ["business_name", "business"].find(key => logHeaders[key] !== undefined);
+  const cityKey = ["city"].find(key => logHeaders[key] !== undefined);
+  const zipKey = ["zip"].find(key => logHeaders[key] !== undefined);
+  const seen = new Set();
+  return logSheet.getRange(2, 1, logSheet.getLastRow() - 1, logSheet.getLastColumn()).getValues().map(row => {
+    const rn = String(row[logHeaders.dor_rn] || "").trim(); const live = liveByRn.get(rn);
+    if (!rn || (live && !dorLicenseExpired_(live, now))) return null;
+    const business = businessKey ? String(row[logHeaders[businessKey]] || "") : "";
+    const city = cityKey ? String(row[logHeaders[cityKey]] || "") : "";
+    const zip = zipKey ? String(row[logHeaders[zipKey]] || "") : "";
+    const miles = milesForZip_(zip); if (!Number.isFinite(miles) || miles > outreachServiceAreaMiles_()) return null;
+    const record = findIdentityMatch_(identity, "", business, "", city).record;
+    if (!record || seen.has(record.source_row)) return null;
+    seen.add(record.source_row);
+    return { record:record, source:{ label:"WI DOR license list", note:`Possible closed: WI DOR license ${rn} is ${live ? "expired" : "no longer listed"}.` } };
+  }).filter(Boolean);
+}
 function processDorLiquorLicenses_(options) {
-  const dryRun = !!options?.dryRun; const records = dorLiquorRecords_(options?.records || fetchDorLiquorRecords_()); const ss = getOutreachSs_();
-  const sheet = dryRun ? ss.getSheetByName(LICENSE_LEADS_SHEET_NAME) : ensureSheet_(ss, LICENSE_LEADS_SHEET_NAME, DOR_LICENSE_LEADS_HEADERS); const identity = accountIdentityLookup_(); const props = PropertiesService.getScriptProperties();
-  const lastUpdated = String(props.getProperty(DOR_LAST_UPDATED_PROPERTY) || ""); const h = sheet ? getHeaderMap_(sheet) : {}; const seen = new Set(!sheet || sheet.getLastRow() < 2 ? [] : sheet.getRange(2, 1, sheet.getLastRow() - 1, sheet.getLastColumn()).getValues().map(row => `${row[h.dor_rn]}::${row[h.last_updated]}`));
-  const logRows = []; let added = 0, filled = 0, differences = 0, outside = 0, skipped = 0, newest = lastUpdated;
+  const dryRun = !!options?.dryRun; const now = options?.now || new Date();
+  const records = dorLiquorRecords_(options?.records || fetchDorLiquorRecords_()).sort((a, b) => String(a.lastUpdated || "").localeCompare(String(b.lastUpdated || "")) || String(a.rn).localeCompare(String(b.rn)));
+  const ss = getOutreachSs_(); const logSheet = dryRun ? ss.getSheetByName(LICENSE_LEADS_SHEET_NAME) : ensureSheet_(ss, LICENSE_LEADS_SHEET_NAME, DOR_LICENSE_LEADS_HEADERS);
+  const identity = options?.identity || accountIdentityLookup_(); const directory = options?.directory || getOutreachSheet_(OUTREACH_SHEET_NAME); const props = PropertiesService.getScriptProperties();
+  const lastUpdated = String(props.getProperty(DOR_LAST_UPDATED_PROPERTY) || ""); const h = logSheet ? getHeaderMap_(logSheet) : {};
+  const seen = new Set(!logSheet || logSheet.getLastRow() < 2 ? [] : logSheet.getRange(2, 1, logSheet.getLastRow() - 1, logSheet.getLastColumn()).getValues().map(row => `${row[h.dor_rn]}::${row[h.last_updated]}`));
+  const fills = [], adds = [], logRows = [], examples = { would_add:[], would_fill:[], differences:[] };
+  let outside = 0, skipped = 0, newest = lastUpdated, stopped = false;
+  const serviceArea = outreachServiceAreaMiles_(); const shouldStop = options?.shouldStop || (() => false);
   records.forEach(item => {
+    if (stopped) return;
     const updated = String(item.lastUpdated || ""); const key = `${item.rn}::${updated}`;
-    if (!dryRun && (seen.has(key) || (lastUpdated && updated <= lastUpdated))) { skipped++; return; }
-    const miles = milesForZip_(String(item.zip || "")); if (!Number.isFinite(miles) || miles > outreachServiceAreaMiles_()) { outside++; return; }
-    const match = findIdentityMatch_(identity, "", item.businessName, "", item.city).record || findIdentityMatch_(identity, "", item.entityName, "", item.city).record || (identity.rows || []).find(row => String(row.address || row.street || "").trim().toLowerCase() === String(item.address || "").trim().toLowerCase() && String(row.zip || row.postal_code || "").trim() === String(item.zip || "").trim());
+    // The log is the per-RN checkpoint. Keep rows sharing the high-water
+    // timestamp eligible so a stop between two same-time records can resume.
+    if (seen.has(key) || (lastUpdated && updated < lastUpdated)) { skipped++; return; }
+    if (!dryRun && shouldStop()) { stopped = true; return; }
+    if (dorLicenseExpired_(item, now)) { skipped++; newest = updated > newest ? updated : newest; return; }
+    const miles = milesForZip_(String(item.zip || "")); if (!Number.isFinite(miles) || miles > serviceArea) { outside++; newest = updated > newest ? updated : newest; return; }
+    const match = findIdentityMatch_(identity, "", item.businessName, "", item.city).record || findIdentityMatch_(identity, "", item.entityName, "", item.city).record || (identity.rows || []).map((row, index) => identity.by_row.get(index + 2) || row).find(record => String(record.row?.address || record.address || record.row?.street || "").trim().toLowerCase() === String(item.address || "").trim().toLowerCase() && String(record.row?.zip || record.row?.postal_code || record.zip || "").trim() === String(item.zip || "").trim());
     const types = [String(item.AL) === "1" && "Class A liquor", String(item.BL) === "1" && "Class B liquor"].filter(Boolean).join(", ");
+    const source = { contact:item.agentName, label:"WI DOR license list", fields:{ street:item.address, city:item.city, zip:item.zip } };
     let result = "Matched, nothing to fill";
-    if (match) { const fill = dryRun ? { changed:!!item.agentName } : directoryApplyContactFillForRecord_(match, { contact:item.agentName, label:"WI DOR license list", fields:{ street:item.address, city:item.city, zip:item.zip } }, new Date()); if (fill.changed) { filled++; result = "Filled contact"; } differences += fill.conflicts?.length || 0; }
-    else { added++; result = "Added"; if (!dryRun) { const accountId = permanentId_("ACC"); getOutreachSheet_(OUTREACH_SHEET_NAME).appendRow(directoryRowFromBusiness_(getOutreachSheet_(OUTREACH_SHEET_NAME), { business_name:item.businessName || item.entityName, city:item.city, address:item.address, zip:item.zip, lead_source:"WI DOR license list", relationship:"Prospect", status:"Needs email", notes:`${Utilities.formatDate(new Date(), Session.getScriptTimeZone(), "yyyy-MM-dd")} - WI DOR license: ${types}.` }, accountId, new Date())); } }
-    if (updated > newest) newest = updated;
-    if (!dryRun) logRows.push([String(item.rn), item.businessName || item.entityName || "", item.agentName || "", item.address || "", item.city || "", item.zip || "", types, updated, result, new Date()]);
+    if (match && match.pending_add) { skipped++; result = "Skipped duplicate"; }
+    else if (match) {
+      const preview = directoryApplyFillToRecordCopy_(match, source, now);
+      fills.push({ record:match, source:source, preview:preview });
+      if (preview.changed) { result = "Filled contact"; if (examples.would_fill.length < 25) examples.would_fill.push({ rn:item.rn, business:match.business, fill:preview }); }
+      if (preview.conflicts?.length && examples.differences.length < 25) examples.differences.push({ rn:item.rn, business:match.business, conflicts:preview.conflicts });
+    } else {
+      try {
+        const input = validateBusinessInput_({ business_name:item.businessName || item.entityName, contact:item.agentName, city:item.city, address:item.address, zip:item.zip, state:"WI", county:item.county, lead_source:"WI DOR license list", relationship:"Prospect", status:"Needs email", notes:`${Utilities.formatDate(now, Session.getScriptTimeZone(), "yyyy-MM-dd")} - WI DOR license: ${types}.` });
+        const duplicate = duplicateBusiness_(identity, input);
+        if (duplicate) { skipped++; result = "Skipped duplicate"; }
+        else {
+          const accountId = permanentId_("ACC"); const sourceRow = directory.getLastRow() + adds.length + 1;
+          adds.push({ input:input, account_id:accountId }); directoryIdentityAdd_(identity, input, accountId, sourceRow);
+          result = "Added"; if (examples.would_add.length < 25) examples.would_add.push({ rn:item.rn, business:input.business_name, city:input.city });
+        }
+      } catch (error) { skipped++; result = `Skipped: ${String(error.message || error).slice(0, 200)}`; }
+    }
+    newest = updated > newest ? updated : newest;
+    if (!dryRun) logRows.push([String(item.rn), item.businessName || item.entityName || "", item.agentName || "", item.address || "", item.city || "", item.zip || "", types, updated, result, now]);
   });
-  if (!dryRun && logRows.length) sheet.getRange(sheet.getLastRow() + 1, 1, logRows.length, logRows[0].length).setValues(logRows);
-  if (!dryRun && newest) props.setProperty(DOR_LAST_UPDATED_PROPERTY, newest);
-  return { records:records.length, filled, added, differences, outside, skipped, examples:records.slice(0, 25).map(item => ({ rn:item.rn, business:item.businessName, last_updated:item.lastUpdated })) };
+  const closedEntries = dorPossiblyClosedEntries_(logSheet, h, records, identity, now);
+  const previews = fills.map(fill => fill.preview); let applied = previews; let closedApplied = closedEntries.map(entry => directoryApplyFillToRecordCopy_(entry.record, entry.source, now));
+  if (!dryRun) {
+    applied = directoryApplyContactFillsBatch_(fills.map(fill => ({ record:fill.record, source:fill.source })), now);
+    closedApplied = directoryApplyContactFillsBatch_(closedEntries, now);
+    if (adds.length) {
+      const directoryHeaders = getHeaderMap_(directory);
+      directory.getRange(directory.getLastRow() + 1, 1, adds.length, directory.getLastColumn()).setValues(adds.map(add => directoryRowFromBusiness_(directory, add.input, add.account_id, now, directoryHeaders)));
+    }
+    if (logRows.length) logSheet.getRange(logSheet.getLastRow() + 1, 1, logRows.length, logRows[0].length).setValues(logRows);
+    if (newest && newest > lastUpdated) props.setProperty(DOR_LAST_UPDATED_PROPERTY, newest);
+  }
+  const filled = applied.filter(fill => fill.changed).length;
+  const differences = applied.reduce((sum, fill) => sum + (fill.conflicts?.length || 0), 0);
+  return { records:records.length, filled:filled, added:adds.length, differences:differences, outside:outside, skipped:skipped, possibly_closed:closedApplied.filter(item => item.changed).length, complete:!stopped, stopped:stopped, last_updated:newest, examples:examples };
 }
 
 /** Builds the quality report from rows already read from the Directory. It never writes. */
@@ -374,6 +497,12 @@ function directoryQualityFillBlankMiles_(sheet, headers, rows) {
 function directoryQualityCheck_(options) {
   const dryRun = !!options?.dryRun;
   const now = options?.now ? new Date(options.now) : new Date();
+  const startedAt = Date.now();
+  // External work must happen before acquiring the Directory lock. A slow DOR
+  // response must never block staff from logging a reply or sending a campaign.
+  let badgerCustomers, dorRecords, badgerSourceError = "", dorSourceError = "";
+  try { badgerCustomers = badgerCustomerRows_(); } catch (error) { badgerSourceError = String(error.message || error); }
+  try { dorRecords = fetchDorLiquorRecords_(); } catch (error) { dorSourceError = String(error.message || error); }
   const lock = dryRun ? null : LockService.getScriptLock();
   if (lock && !lock.tryLock(30000)) throw new Error("Another directory update is in progress. Try again in a moment.");
   try {
@@ -384,8 +513,13 @@ function directoryQualityCheck_(options) {
     const reportOptions = { service_area_miles:outreachServiceAreaMiles_(settings) };
     const mileage = dryRun ? { updated:0, manual_kept:0, no_zip:0, unknown_zip:0, unknown_zips:[] } : directoryQualityFillBlankMiles_(sheet, headers, rows);
     let badger, dor;
-    try { badger = processBadgerCustomers_({ dryRun:dryRun }); } catch (error) { badger = { error:String(error.message || error) }; }
-    try { dor = processDorLiquorLicenses_({ dryRun:dryRun }); } catch (error) { dor = { error:String(error.message || error) }; }
+    try { badger = badgerSourceError ? { error:badgerSourceError } : processBadgerCustomers_({ dryRun:dryRun, customers:badgerCustomers }); } catch (error) { badger = { error:String(error.message || error) }; }
+    try {
+      dor = dorSourceError ? { error:dorSourceError } : processDorLiquorLicenses_({
+        dryRun:dryRun, records:dorRecords, directory:sheet, identity:accountIdentityFromRows_(rows), now:now,
+        shouldStop:() => !dryRun && Date.now() - startedAt >= DIRECTORY_QUALITY_MAX_RUN_MS,
+      });
+    } catch (error) { dor = { error:String(error.message || error) }; }
     let report = directoryQualityReportFromRows_(rows, reportOptions);
     const moved = [];
     const notesKey = ["notes"].find(key => headers[key] !== undefined);
@@ -420,7 +554,8 @@ function directoryQualityCheck_(options) {
     if (!dryRun && moved.length) {
       appendAudit_("DIRECTORY_QUALITY_BAD_EMAILS_MOVED", "Directory", "weekly-check", "", "System", OUTREACH_SHEET_NAME, OUTREACH_SHEET_NAME, "Completed", `${moved.length} address(es) moved: ${moved.map(item => `${item.name} (row ${item.row})`).join(", ")}`);
     }
-    const result = { ran_at:now.toISOString(), dry_run:dryRun, moved_bad_emails:moved, mileage:mileage, badger:badger, dor:dor, report:report };
+    const result = { ran_at:now.toISOString(), dry_run:dryRun, complete:!dor || dor.complete !== false, moved_bad_emails:moved, mileage:mileage, badger:badger, dor:dor, report:report };
+    if (!dryRun) PropertiesService.getScriptProperties().setProperty("DIRECTORY_QUALITY_LAST_SUMMARY", JSON.stringify({ badger:badger, dor:dor, ran_at:result.ran_at }).slice(0, 8000));
     console.log(JSON.stringify({ event:"directory_quality_check", dry_run:dryRun, total:report.total, outside_service_area:report.outside_service_area.count, moved_bad_emails:moved.length, mileage:mileage, businesses:moved.map(item => item.name) }));
     return result;
   } finally {
@@ -429,6 +564,8 @@ function directoryQualityCheck_(options) {
 }
 
 function runDirectoryQualityCheck() { return directoryQualityCheck_({}); }
+/** Editor command for Karl to run again until the initial DOR catch-up completes. */
+function runDirectoryQualityCheckNow() { return directoryQualityCheck_({}); }
 function previewDirectoryQualityCheck() { return directoryQualityCheck_({ dryRun:true }); }
 const DIRECTORY_QUALITY_TRIGGER_HANDLER = "runScheduledDirectoryQualityCheck";
 function installDirectoryQualityCheck() {
@@ -444,7 +581,7 @@ function maybeRunDirectoryQualityCheck_(now) {
   const properties = PropertiesService.getScriptProperties();
   if (properties.getProperty(DIRECTORY_QUALITY_LAST_RUN_PROPERTY) === week) return { skipped:"Already checked this week.", week:week };
   const result = directoryQualityCheck_({ now:date });
-  properties.setProperty(DIRECTORY_QUALITY_LAST_RUN_PROPERTY, week);
+  if (result.complete !== false) properties.setProperty(DIRECTORY_QUALITY_LAST_RUN_PROPERTY, week);
   return result;
 }
 
@@ -600,8 +737,8 @@ function setDirectoryField_(row, headers, aliases, value) {
   if (key !== undefined) row[headers[key]] = value;
 }
 
-function directoryRowFromBusiness_(sheet, p, accountId, now) {
-  const h = getHeaderMap_(sheet);
+function directoryRowFromBusiness_(sheet, p, accountId, now, headers) {
+  const h = headers || getHeaderMap_(sheet);
   const row = Array(sheet.getLastColumn()).fill("");
   setDirectoryField_(row, h, ["Account ID"], accountId);
   setDirectoryField_(row, h, ["Business Name", "Business"], String(p.business_name || p.business || "").trim());
@@ -610,6 +747,7 @@ function directoryRowFromBusiness_(sheet, p, accountId, now) {
   setDirectoryField_(row, h, ["Phone Number", "Phone"], String(p.phone || "").trim());
   setDirectoryField_(row, h, ["Street Address", "Address"], String(p.address || p.street_address || "").trim());
   setDirectoryField_(row, h, ["City"], String(p.city || "").trim());
+  setDirectoryField_(row, h, ["County"], String(p.county || "").trim());
   setDirectoryField_(row, h, ["State"], String(p.state || "WI").trim().toUpperCase());
   setDirectoryField_(row, h, ["Zip Code", "ZIP"], String(p.postal_code || p.zip || "").trim());
   setDirectoryField_(row, h, ["Next Email"], String(p.next_email || "Initial"));
@@ -651,6 +789,7 @@ function validateBusinessInput_(p) {
     phone:sheetSafeText_(p.phone, 40, "Phone"),
     address:sheetSafeText_(p.address || p.street_address, 180, "Address"),
     city:sheetSafeText_(p.city, 100, "City"),
+    county:sheetSafeText_(p.county, 100, "County"),
     state:sheetSafeText_(p.state || "WI", 2, "State").toUpperCase(),
     postal_code:sheetSafeText_(p.postal_code || p.zip, 10, "ZIP code"),
     craft_spirit_fit:fit,

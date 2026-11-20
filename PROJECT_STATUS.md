@@ -16,7 +16,7 @@ History, kept word for word:
 | Component | Source version | Deployment state |
 | --- | --- | --- |
 | Netlify web app and staff proxy | `2026.11.20.92-WEB` (page, staff proxy, tracking) / `2026.11.19.81-WEB` (signup page) on `codex/work` | **Page `.92` pending promotion:** Directory cleanup Part C adds contact-log Email and safe explicit replacement controls. Includes `.91` Part A, `.90` Directory quality work list, `.89` closed-businesses view and `.88` campaign labels. **Live `.85`** (promoted `17f202a`, 2026-11-19): stale saved copy shown at once while the rebuilt one loads; loads after a save and email links ask for current data; proxy sends refresh/rebuild reads once. Includes `.82`/`.81`. Sign-up `.81`; order and sell sheet `.58`. |
-| Inventory API Apps Script | `2026.11.20.99-APP` on `codex/work` | **`.99` pending deploy (`apps-script/deploy.sh`):** D–F review fixes: verified DOR, previewable sources, and dedicated weekly quality trigger. **Live `.86`** (deployed 2026-11-19 with clasp). |
+| Inventory API Apps Script | `2026.11.20.100-APP` on `codex/work` | **`.100` pending Claude review; no deploy:** Directory DOR/Badger catch-up is batched, time-bounded and previewable before the first live run. **Live `.86`** (deployed 2026-11-19 with clasp). |
 | Distribution Outreach Apps Script | `2026.11.19.37-APP` in `docs/reference/distribution-outreach/Code.gs` | **`.37` pending deploy:** Not a buyer blocks final mailer delivery; `.36` also refuses a recorded hard bounce. **Live `.35`** (deployed 2026-11-05; project **distribution outreach**, attached to **Distribution Hub**). |
 | Public customer Netlify proxy | `2026.10.08.5-WEB` | Deployed 2026-10-08. |
 | Badger invoice parser | `2026.11.20.3` in `docs/reference/badger-parser/Code.gs` | **`2026.11.20.3` pending deploy:** confirmed read-only customer pull maps Badger's live detail shape and refuses unexpected fields. `2026.10.08.3` live in the Badger Invoice Tracker since 2026-10-08. |
@@ -57,6 +57,7 @@ Setup steps recorded in the history whose completion was **not re-verified** on 
 
 ## Recent changes (one line each; details in `docs/history/` and git)
 
+- 2026-11-20 `.100-APP` (Codex; E/F hardening, pending Claude review): Directory quality fetches sources before its lock, batches only changed cells/new DOR rows, resumes before runtime exhaustion, previews actual fills/adds/differences, flags possibly closed licensees, and puts Badger differences in Karl's decision task. Tests: `tests/directory-quality.test.mjs`, `tests/task-manager-sync.test.mjs`.
 - 2026-11-20 `.99-APP` (Codex; F review fixes): Directory quality no longer runs in the hourly task sync; its installer creates a Monday Central trigger and previews run both sources without writes.
 - 2026-11-20 `.98-APP` (Codex; E review fixes): live DOR `subject` pages, liquor-only de-duplication, incremental/batched License Leads, and in-area prospect creation. Tests: `tests/directory-quality.test.mjs`.
 - 2026-11-20 Badger parser `2026.11.20.3` (Codex; D1 fix): confirmed live customer-detail mapping uses addressLine1/addressLine2 and exact response-shape validation. Tests: `tests/badger-parser.test.cjs`.

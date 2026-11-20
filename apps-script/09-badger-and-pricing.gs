@@ -442,22 +442,18 @@ function badgerCustomerFields_(customer, business) {
 function processBadgerCustomers_(options) {
   const dryRun = !!options?.dryRun; const identity = accountIdentityLookup_(); const aliases = readBadgerCustomerAliases_();
   const result = { matched:0, filled:0, would_fill:0, differences:0, examples:[], skipped:0 };
-  badgerCustomerRows_().forEach(customer => {
+  const fills = [];
+  (options?.customers || badgerCustomerRows_()).forEach(customer => {
     const record = badgerCustomerDirectoryMatch_(customer, identity, aliases);
     if (!record) { result.skipped += 1; return; }
     result.matched += 1;
     const source = { email:customer.email, contact:"", email_confidence:"Confirmed", label:"Badger", fields:badgerCustomerFields_(customer, record.business) };
-    if (dryRun) {
-      const headers = {}; const values = []; Object.keys(record.row || {}).forEach((key, index) => { headers[key] = index; values.push(record.row[key]); });
-      const fill = directoryApplyContactFillToValues_(values, headers, source, new Date());
-      if (fill.changed) { result.would_fill += 1; if (result.examples.length < 25) result.examples.push({ business:record.business, fill:fill }); }
-      result.differences += fill.conflicts?.length || 0;
-      return;
-    }
-    const fill = directoryApplyContactFillForRecord_(record, source, new Date());
-    if (fill.changed) result.filled += 1;
-    result.differences += fill.conflicts?.length || 0;
+    const fill = directoryApplyFillToRecordCopy_(record, source, new Date());
+    fills.push({ record:record, source:source, preview:fill });
+    if (fill.changed && result.examples.length < 25) result.examples.push({ business:record.business, fill:fill });
   });
+  const applied = dryRun ? fills.map(fill => fill.preview) : directoryApplyContactFillsBatch_(fills.map(fill => ({ record:fill.record, source:fill.source })), new Date());
+  applied.forEach(fill => { if (fill.changed) { result.filled += 1; result.would_fill += 1; } result.differences += fill.conflicts?.length || 0; });
   return result;
 }
 
