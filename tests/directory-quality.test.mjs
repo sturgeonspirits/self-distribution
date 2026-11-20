@@ -15,9 +15,9 @@ async function contextFor() {
   const context = {
     console:{ log() {}, warn() {}, error() {} },
     Utilities:{ formatDate }, Session:{ getScriptTimeZone:() => "America/Chicago" },
-    PropertiesService:{ getScriptProperties:() => ({ getProperty:key => properties.get(key) || null, setProperty:(key, value) => properties.set(key, value) }) },
+    PropertiesService:{ getScriptProperties:() => ({ getProperty:key => properties.get(key) || null, setProperty:(key, value) => properties.set(key, value), setProperties:values => Object.entries(values).forEach(([key, value]) => properties.set(key, value)) }) },
     CacheService:{ getScriptCache:() => ({ get:() => null, put() {}, remove() {} }) },
-    SpreadsheetApp:{}, LockService:{}, ScriptApp:{}, ContentService:{}, MimeType:{},
+    SpreadsheetApp:{}, LockService:{ getScriptLock:() => ({ tryLock:() => true, releaseLock() {} }) }, ScriptApp:{}, ContentService:{}, MimeType:{},
   };
   vm.createContext(context);
   vm.runInContext(await readBackend(), context);
@@ -31,9 +31,9 @@ function call(context, expression) {
 test("placeholder checks catch configured placeholders but not an ordinary name containing na", async () => {
   const { context } = await contextFor();
   const rows = [
-    { business_name:"One Bar", contact_person:"Nate Anderson", email:"nate@example.com", city:"Oshkosh", account_id:"A1", relationship:"Prospect" },
-    { business_name:"Two Bar", contact_person:"na na", email:"two@example.com", city:"Oshkosh", account_id:"A2", relationship:"Prospect" },
-    { business_name:"Three Bar", contact_person:"Club Manager", email:"three@example.com", city:"Oshkosh", account_id:"A3", relationship:"Prospect" },
+    { business_name:"One Bar", contact_person:"Nate Anderson", email:"nate@example.com", city:"Oshkosh", account_id:"A1", relationship:"Prospect", miles:10 },
+    { business_name:"Two Bar", contact_person:"na na", email:"two@example.com", city:"Oshkosh", account_id:"A2", relationship:"Prospect", miles:10 },
+    { business_name:"Three Bar", contact_person:"Club Manager", email:"three@example.com", city:"Oshkosh", account_id:"A3", relationship:"Prospect", miles:10 },
   ];
   const report = call(context, `directoryQualityReportFromRows_(${JSON.stringify(rows)})`);
   assert.deepEqual(report.categories.placeholder_contact.rows.map(item => item.name), ["Three Bar", "Two Bar"]);
@@ -42,10 +42,10 @@ test("placeholder checks catch configured placeholders but not an ordinary name 
 test("duplicates require matching name and city or phone, never a shared chain email alone", async () => {
   const { context } = await contextFor();
   const rows = [
-    { business_name:"The Cozumel, LLC", contact_person:"Maria Smith", email:"chain@example.com", city:"Oshkosh", phone_number:"920-555-0101", account_id:"A1", relationship:"Prospect" },
-    { business_name:"Cozumel Inc.", contact_person:"Maria Smith", email:"other@example.com", city:"Oshkosh", phone_number:"920-555-0102", account_id:"A2", relationship:"Prospect" },
-    { business_name:"Anduzzi's North", contact_person:"Rae Jones", email:"chain@example.com", city:"Green Bay", phone_number:"920-555-0103", account_id:"A3", relationship:"Prospect" },
-    { business_name:"Anduzzi's South", contact_person:"Rae Jones", email:"chain@example.com", city:"Green Bay", phone_number:"920-555-0104", account_id:"A4", relationship:"Prospect" },
+    { business_name:"The Cozumel, LLC", contact_person:"Maria Smith", email:"chain@example.com", city:"Oshkosh", phone_number:"920-555-0101", account_id:"A1", relationship:"Prospect", miles:10 },
+    { business_name:"Cozumel Inc.", contact_person:"Maria Smith", email:"other@example.com", city:"Oshkosh", phone_number:"920-555-0102", account_id:"A2", relationship:"Prospect", miles:10 },
+    { business_name:"Anduzzi's North", contact_person:"Rae Jones", email:"chain@example.com", city:"Green Bay", phone_number:"920-555-0103", account_id:"A3", relationship:"Prospect", miles:10 },
+    { business_name:"Anduzzi's South", contact_person:"Rae Jones", email:"chain@example.com", city:"Green Bay", phone_number:"920-555-0104", account_id:"A4", relationship:"Prospect", miles:10 },
   ];
   const report = call(context, `directoryQualityReportFromRows_(${JSON.stringify(rows)})`);
   assert.deepEqual(report.categories.duplicates.rows.map(item => item.name), ["Cozumel Inc.", "The Cozumel, LLC"]);
@@ -69,7 +69,7 @@ test("weekly check moves only hard-bounced addresses into Notes and the send val
     },
   };
   context.__sheet = sheet;
-  vm.runInContext("getOutreachSheet_ = () => __sheet; appendAudit_ = () => {};", context);
+  vm.runInContext("getOutreachSheet_ = () => __sheet; getOutreachCampaignSettings_ = () => ({}); appendAudit_ = () => {};", context);
   const result = call(context, "directoryQualityCheck_({ now:'2026-11-19T15:00:00-06:00' })");
   assert.equal(result.moved_bad_emails.length, 1);
   assert.equal(values[1][2], "");
@@ -77,6 +77,47 @@ test("weekly check moves only hard-bounced addresses into Notes and the send val
   assert.equal(values[2][2], "wrong@example.com", "Wrong contact is a staff decision and stays put");
   const reasons = call(context, "outreachSendEligibility_({ email:'bounce@example.com', notes:'2026-11-19 - Bad email (bounced): bounce@example.com', status:'Not contacted', outcome:'', next_email:'Initial', do_not_email:false, email_confidence:'confirmed', activity:[] }, { initial_sent_emails:new Set(), skip_legacy_pilot:true })");
   assert.ok(reasons.includes("Recipient email is recorded as a bounced address"));
+});
+
+test("weekly check fills blank automatic Miles from ZIP and keeps manual Miles untouched", async () => {
+  const { context } = await contextFor();
+  const values = [["Business Name", "Zip", "Miles", "Miles Source"],
+    ["Automatic miles", "54945", "", ""],
+    ["Manual miles", "54945", "", "manual"],
+    ["Unknown ZIP", "99999", "", ""]];
+  const sheet = {
+    getLastRow:() => values.length, getLastColumn:() => values[0].length,
+    getParent:() => ({ getId:() => "miles-test" }), getSheetId:() => 1,
+    getRange(row, column, height = 1, width = 1) {
+      return {
+        getValues:() => Array.from({ length:height }, (_, i) => Array.from({ length:width }, (_, j) => values[row - 1 + i]?.[column - 1 + j] ?? "")),
+        setValue:value => { values[row - 1][column - 1] = value; },
+      };
+    },
+  };
+  context.__sheet = sheet;
+  vm.runInContext("getOutreachSheet_ = () => __sheet; getOutreachCampaignSettings_ = () => ({}); milesForZip_ = zip => zip === '54945' ? 42 : null;", context);
+  const result = call(context, "directoryQualityCheck_({ now:'2026-11-19T15:00:00-06:00' })");
+  assert.equal(values[1][2], 42);
+  assert.equal(values[1][3], "zip");
+  assert.equal(values[2][2], "", "manual source prevents an automatic overwrite");
+  assert.equal(result.mileage.updated, 1);
+  assert.deepEqual(result.mileage.unknown_zips, ["99999"]);
+});
+
+test("quality work is restricted to the service area, while distant customers remain included", async () => {
+  const { context } = await contextFor();
+  vm.runInContext("milesForZip_ = zip => zip === '54945' ? 42 : null;", context);
+  const rows = [
+    { business_name:"In area", email:"", contact_person:"Pat", relationship:"Prospect", miles:10 },
+    { business_name:"At 61", email:"", contact_person:"Pat", relationship:"Prospect", miles:61 },
+    { business_name:"Blank miles", email:"", contact_person:"Pat", relationship:"Prospect", miles:"", zip:"54945" },
+    { business_name:"Lapsed customer", email:"", contact_person:"Pat", relationship:"Lapsed customer", miles:200 },
+  ];
+  const report = call(context, `directoryQualityReportFromRows_(${JSON.stringify(rows)}, { service_area_miles:60 })`);
+  assert.deepEqual(report.categories.no_email.rows.map(item => item.name), ["In area", "Lapsed customer"]);
+  assert.equal(report.outside_service_area.count, 2);
+  assert.equal(report.categories.no_distance.count, 0, "a usable ZIP is filled automatically, not put on Karl's list");
 });
 
 test("a moved address still matches an inbound bounce and the weekly guard only runs once", async () => {

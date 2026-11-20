@@ -112,19 +112,19 @@ function campaignCenterForCriteria_(type, value) {
   const centroidMap = zipCentroidMap_();
   if (type === "distillery") {
     const centroid = zipCentroidForZip_("54902");
-    if (!centroid) throw new Error("ZIP Centroids is missing the distillery ZIP (54902).");
+    if (!centroid || !Number.isFinite(centroid.latitude) || !Number.isFinite(centroid.longitude)) throw new Error("ZIP Centroids is missing coordinates for the distillery ZIP (54902).");
     return { type:"distillery", label:"Distillery (54902)", zip:"54902", latitude:centroid.latitude, longitude:centroid.longitude };
   }
   if (type === "zip") {
     const zip = normalizeZip_(value);
     const centroid = zipCentroidForZip_(zip);
-    if (!centroid) throw new Error("Campaign center ZIP must be in the ZIP Centroids tab.");
+    if (!centroid || !Number.isFinite(centroid.latitude) || !Number.isFinite(centroid.longitude)) throw new Error("Campaign center ZIP must have coordinates in the ZIP Centroids tab.");
     return { type:"zip", label:`ZIP ${zip}`, zip:zip, latitude:centroid.latitude, longitude:centroid.longitude };
   }
   if (type === "city") {
     const city = campaignCriteriaText_(value, 80, "Campaign center city");
     if (!city) throw new Error("Enter a campaign center city.");
-    const matches = Array.from(centroidMap.entries()).filter(([, centroid]) => String(centroid.city || "").trim().toLowerCase() === city);
+    const matches = Array.from(centroidMap.entries()).filter(([, centroid]) => String(centroid.city || "").trim().toLowerCase() === city && Number.isFinite(centroid.latitude) && Number.isFinite(centroid.longitude));
     if (!matches.length) throw new Error("Campaign center city was not found in ZIP Centroids. Use a ZIP instead.");
     const latitude = matches.reduce((sum, [, centroid]) => sum + Number(centroid.latitude), 0) / matches.length;
     const longitude = matches.reduce((sum, [, centroid]) => sum + Number(centroid.longitude), 0) / matches.length;

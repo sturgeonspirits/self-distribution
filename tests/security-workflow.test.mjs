@@ -2033,6 +2033,15 @@ test("narrow Outreach reply panels allow grid and flex children to shrink", asyn
   assert.match(index, /\.replyDoneRow > div\{overflow-wrap:anywhere\}/);
 });
 
+test("Directory quality stays server-side and the slim Outreach payload omits long Notes", async () => {
+  const backend = await readBackend();
+  const slimPayload = backend.slice(backend.indexOf("function outreachSlimPayload_"), backend.indexOf("function apiGetOutreachDashboard_"));
+  const dashboard = backend.slice(backend.indexOf("function apiGetOutreachDashboard_"), backend.indexOf("function apiGetOutreachRecord_"));
+  assert.doesNotMatch(slimPayload, /"customer_source"/);
+  assert.doesNotMatch(slimPayload, /"notes"/);
+  assert.match(dashboard, /directoryQualityReportFromRows_\(rows, \{ service_area_miles:outreachServiceAreaMiles_\(getOutreachCampaignSettings_\(\)\) \}\)/);
+});
+
 test("formula-like staff text is stored with a literal-text prefix", async () => {
   const backend = await readBackend();
   const publicTextSource = backend.match(/function publicText_\([\s\S]*?\n\}/)?.[0];

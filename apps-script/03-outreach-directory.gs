@@ -40,7 +40,9 @@ function directoryQualityIssueRecord_(row, sourceRow) {
     customer_source:String(outreachValue_(row, ["customer_source"]) || "").trim(),
     do_not_email:toBool_(outreachValue_(row, ["do_not_email", "do_not_contact"])),
     miles:outreachValue_(row, ["miles", "distance", "distance_miles"]),
+    postal_code:String(outreachValue_(row, ["zip", "zip_code", "postal_code"]) || "").trim(),
   };
+  record.miles = outreachMiles_(record.miles);
   record.customer = /customer/i.test(record.relationship) || String(record.status).toLowerCase() === "existing customer";
   record.excluded = ["closed", "do not contact"].includes(record.status.toLowerCase())
     || (record.do_not_email && !customerDoNotEmailIsAutomatic_(record));
@@ -56,7 +58,9 @@ function directoryQualityPlaceholderContact_(record) {
 }
 
 /** Builds the quality report from rows already read from the Directory. It never writes. */
-function directoryQualityReportFromRows_(rows) {
+function directoryQualityReportFromRows_(rows, options) {
+  const configuredMiles = Number(options && options.service_area_miles);
+  const serviceAreaMiles = Number.isFinite(configuredMiles) && configuredMiles >= 0 ? configuredMiles : OUTREACH_DEFAULT_SERVICE_AREA_MILES;
   const categories = {
     no_email:{ label:"No email", rows:[] },
     bad_email:{ label:"Bad email still on file", rows:[] },
@@ -65,17 +69,37 @@ function directoryQualityReportFromRows_(rows) {
     duplicates:{ label:"Possible duplicates", rows:[] },
     no_distance:{ label:"No distance", rows:[] },
   };
-  const records = (rows || []).map((row, index) => directoryQualityIssueRecord_(row, row.source_row || index + 2)).filter(record => record.business && !record.excluded);
+  const allRecords = (rows || []).map((row, index) => directoryQualityIssueRecord_(row, row.source_row || index + 2)).filter(record => record.business && !record.excluded);
+  const records = [];
   const add = (name, record, detail) => {
     const item = { name:record.business, row:record.source_row, account_id:record.account_id, customer:record.customer, detail:detail || "" };
     categories[name].rows.push(item);
   };
+  const outsideServiceArea = { count:0, blank_miles:0, beyond_miles:0, service_area_miles:serviceAreaMiles };
+  allRecords.forEach(record => {
+    if (record.customer) {
+      records.push(record);
+      return;
+    }
+    if (record.miles === null) {
+      outsideServiceArea.count += 1;
+      outsideServiceArea.blank_miles += 1;
+      // A ZIP without a usable centroid is an automatic mileage repair, not a statewide lead for Karl.
+      if (!directoryQualityHasUsableZip_(record)) add("no_distance", record, "No usable ZIP");
+      return;
+    }
+    if (record.miles > serviceAreaMiles) {
+      outsideServiceArea.count += 1;
+      outsideServiceArea.beyond_miles += 1;
+      return;
+    }
+    records.push(record);
+  });
   records.forEach(record => {
     if (!record.email) add("no_email", record);
     if (record.outcome === "Bad address" && record.status === "Needs email" && record.email) add("bad_email", record, "Bad address still in Email");
     if (!record.contact) add("no_contact", record);
     if (directoryQualityPlaceholderContact_(record)) add("placeholder_contact", record);
-    if (!record.customer && (record.miles === "" || record.miles === null || record.miles === undefined)) add("no_distance", record);
   });
   const byNameCity = new Map();
   const byPhone = new Map();
@@ -108,45 +132,114 @@ function directoryQualityReportFromRows_(rows) {
     category.customers = category.rows.filter(item => item.customer).length;
   });
   const total = Object.keys(categories).reduce((sum, name) => sum + categories[name].count, 0);
-  return { categories:categories, total:total, records:records };
+  return { categories:categories, total:total, records:records, outside_service_area:outsideServiceArea };
+}
+
+function directoryQualityHasUsableZip_(record) {
+  const zip = normalizeZip_(record && record.postal_code);
+  return !!zip && milesForZip_(zip) !== null;
+}
+
+function directoryQualityBadEmailItems_(rows) {
+  return (rows || [])
+    .map((row, index) => directoryQualityIssueRecord_(row, row.source_row || index + 2))
+    .filter(record => record.business && !record.excluded && record.outcome === "Bad address" && record.status === "Needs email" && record.email)
+    .map(record => ({ name:record.business, row:record.source_row, account_id:record.account_id, customer:record.customer, detail:"Bad address still in Email" }));
 }
 
 function directoryQualityNote_(email, now) {
   return `${Utilities.formatDate(now || new Date(), Session.getScriptTimeZone(), "yyyy-MM-dd")} - Bad email (bounced): ${String(email || "").trim().toLowerCase()}`;
 }
 
-/** One weekly Directory pass. A real run only changes hard-bounced addresses that still occupy Email. */
+/** Fills blank automatic Miles values without touching a staff-entered manual distance. */
+function directoryQualityFillBlankMiles_(sheet, headers, rows) {
+  const zipKey = ["zip", "zip_code", "postal_code"].find(key => headers[key] !== undefined);
+  const milesKey = ["miles", "distance", "distance_miles"].find(key => headers[key] !== undefined);
+  const sourceKey = ["miles_source"].find(key => headers[key] !== undefined);
+  const counts = { updated:0, manual_kept:0, no_zip:0, unknown_zip:0, unknown_zips:[] };
+  if (!zipKey || !milesKey) return counts;
+  const unknown = new Set();
+  rows.forEach((row, index) => {
+    if (outreachMiles_(row[milesKey]) !== null) return;
+    if (sourceKey && String(row[sourceKey] || "").trim().toLowerCase() === "manual") {
+      counts.manual_kept += 1;
+      return;
+    }
+    const zip = normalizeZip_(row[zipKey]);
+    if (!zip) {
+      counts.no_zip += 1;
+      return;
+    }
+    const miles = milesForZip_(zip);
+    if (miles === null) {
+      counts.unknown_zip += 1;
+      unknown.add(zip);
+      return;
+    }
+    const sourceRow = index + 2;
+    sheet.getRange(sourceRow, headers[milesKey] + 1).setValue(miles);
+    if (sourceKey) sheet.getRange(sourceRow, headers[sourceKey] + 1).setValue("zip");
+    row[milesKey] = miles;
+    if (sourceKey) row[sourceKey] = "zip";
+    counts.updated += 1;
+  });
+  counts.unknown_zips = Array.from(unknown).sort();
+  return counts;
+}
+
+/** One weekly Directory pass. It fills blank automatic Miles and moves only verified hard-bounced addresses. */
 function directoryQualityCheck_(options) {
   const dryRun = !!options?.dryRun;
   const now = options?.now ? new Date(options.now) : new Date();
-  const sheet = getOutreachSheet_(OUTREACH_SHEET_NAME);
-  const headers = getHeaderMap_(sheet);
-  const rows = getAllRowsAsObjects_(sheet);
-  let report = directoryQualityReportFromRows_(rows);
-  const moved = [];
-  report.categories.bad_email.rows.forEach(item => {
-    const row = rows[item.row - 2];
-    if (!row) return;
-    const email = String(outreachValue_(row, ["email", "email_address"]) || "").trim();
-    if (!email) return;
-    moved.push(Object.assign({}, item, { email:email }));
-    if (dryRun) return;
-    const notes = String(outreachValue_(row, ["notes"]) || "").trim();
-    const note = directoryQualityNote_(email, now);
+  const lock = dryRun ? null : LockService.getScriptLock();
+  if (lock && !lock.tryLock(30000)) throw new Error("Another directory update is in progress. Try again in a moment.");
+  try {
+    const sheet = getOutreachSheet_(OUTREACH_SHEET_NAME);
+    const headers = getHeaderMap_(sheet);
+    const rows = getAllRowsAsObjects_(sheet);
+    const settings = getOutreachCampaignSettings_();
+    const reportOptions = { service_area_miles:outreachServiceAreaMiles_(settings) };
+    const mileage = dryRun ? { updated:0, manual_kept:0, no_zip:0, unknown_zip:0, unknown_zips:[] } : directoryQualityFillBlankMiles_(sheet, headers, rows);
+    let report = directoryQualityReportFromRows_(rows, reportOptions);
+    const moved = [];
     const notesKey = ["notes"].find(key => headers[key] !== undefined);
     const emailKey = ["email", "email_address"].find(key => headers[key] !== undefined);
-    if (notesKey) sheet.getRange(item.row, headers[notesKey] + 1).setValue([notes, note].filter(Boolean).join("\n"));
-    if (emailKey) sheet.getRange(item.row, headers[emailKey] + 1).setValue("");
-    row[notesKey] = [notes, note].filter(Boolean).join("\n");
-    row[emailKey] = "";
-  });
-  if (!dryRun && moved.length) {
-    report = directoryQualityReportFromRows_(rows);
-    appendAudit_("DIRECTORY_QUALITY_BAD_EMAILS_MOVED", "Directory", "weekly-check", "", "System", OUTREACH_SHEET_NAME, OUTREACH_SHEET_NAME, "Completed", `${moved.length} address(es) moved: ${moved.map(item => `${item.name} (row ${item.row})`).join(", ")}`);
+    const businessKey = ["business", "business_name"].find(key => headers[key] !== undefined);
+    directoryQualityBadEmailItems_(rows).forEach(item => {
+      const row = rows[item.row - 2];
+      const email = String(row && outreachValue_(row, ["email", "email_address"]) || "").trim();
+      if (!email) return;
+      if (dryRun) {
+        moved.push(Object.assign({}, item, { email:email }));
+        return;
+      }
+      // Rows can move while this job is waiting on another writer. Under the lock, check identity again before clearing Email.
+      if (!notesKey || !emailKey || !businessKey) return;
+      const liveValues = sheet.getRange(item.row, 1, 1, sheet.getLastColumn()).getValues()[0];
+      const liveBusiness = String(liveValues[headers[businessKey]] || "").trim();
+      const liveEmail = String(liveValues[headers[emailKey]] || "").trim();
+      if (liveBusiness !== item.name || liveEmail.toLowerCase() !== email.toLowerCase()) return;
+      const notes = String(liveValues[headers[notesKey]] || "").trim();
+      const nextNotes = [notes, directoryQualityNote_(email, now)].filter(Boolean).join("\n");
+      sheet.getRange(item.row, headers[notesKey] + 1).setValue(nextNotes);
+      sheet.getRange(item.row, headers[emailKey] + 1).setValue("");
+      row[notesKey] = nextNotes;
+      row[emailKey] = "";
+      moved.push(Object.assign({}, item, { email:email }));
+    });
+    if (!dryRun && (moved.length || mileage.updated)) {
+      report = directoryQualityReportFromRows_(rows, reportOptions);
+      bumpReadCacheVersion_(["outreach"]);
+    }
+    if (!dryRun && moved.length) {
+      appendAudit_("DIRECTORY_QUALITY_BAD_EMAILS_MOVED", "Directory", "weekly-check", "", "System", OUTREACH_SHEET_NAME, OUTREACH_SHEET_NAME, "Completed", `${moved.length} address(es) moved: ${moved.map(item => `${item.name} (row ${item.row})`).join(", ")}`);
+    }
+    const result = { ran_at:now.toISOString(), dry_run:dryRun, moved_bad_emails:moved, mileage:mileage, report:report };
+    console.log(JSON.stringify({ event:"directory_quality_check", dry_run:dryRun, total:report.total, outside_service_area:report.outside_service_area.count, moved_bad_emails:moved.length, mileage:mileage, businesses:moved.map(item => item.name) }));
+    return result;
+  } finally {
+    if (lock) lock.releaseLock();
   }
-  const result = { ran_at:now.toISOString(), dry_run:dryRun, moved_bad_emails:moved, report:report };
-  console.log(JSON.stringify({ event:"directory_quality_check", dry_run:dryRun, total:report.total, moved_bad_emails:moved.length, businesses:moved.map(item => item.name) }));
-  return result;
 }
 
 function runDirectoryQualityCheck() { return directoryQualityCheck_({}); }
@@ -645,7 +738,7 @@ function normalizeZip_(value) {
 function zipCentroidMap_() {
   if (__ZIP_CENTROID_MAP) return __ZIP_CENTROID_MAP;
   const cache = CacheService.getScriptCache();
-  const cacheKey = "hub_zip_centroids_v2";
+  const cacheKey = "hub_zip_centroids_v3";
   try {
     const cached = JSON.parse(cache.get(cacheKey) || "null");
     if (cached && typeof cached === "object" && Object.values(cached).every(item => item && typeof item === "object")) {
@@ -671,11 +764,12 @@ function zipCentroidMap_() {
     const miles = outreachMiles_(row[milesIndex]);
     const latitude = Number(row[latitudeIndex]);
     const longitude = Number(row[longitudeIndex]);
-    if (!zip || !Number.isFinite(latitude) || !Number.isFinite(longitude)) return;
+    // Mileage can be used even when a centroid has no coordinates. Campaign centers still require coordinates.
+    if (!zip) return;
     map.set(zip, {
       city:String(headers.city === undefined ? "" : row[headers.city] || "").trim(),
-      latitude:latitude,
-      longitude:longitude,
+      latitude:Number.isFinite(latitude) ? latitude : null,
+      longitude:Number.isFinite(longitude) ? longitude : null,
       miles_from_distillery:miles,
     });
   });
@@ -1785,7 +1879,6 @@ function outreachSlimRecord_(row, sourceRow, draftMap, programMap, engagementMap
     outreachValue_(row, ["wave"]),
     outreachValue_(row, ["lead_source"]),
     outreachValue_(row, ["website", "website_url", "url"]),
-    String(outreachValue_(row, ["notes"]) || "").slice(0, 200),
   ].map(value => String(value || "").trim()).filter(Boolean).join(" ").toLowerCase();
   const record = {
     account_id:accountId,
@@ -1812,8 +1905,6 @@ function outreachSlimRecord_(row, sourceRow, draftMap, programMap, engagementMap
     county:String(outreachValue_(row, ["county"]) || "").trim(),
     email_confidence:String(outreachValue_(row, ["email_confidence"]) || "").trim(),
     relationship:String(outreachValue_(row, ["relationship"]) || "").trim(),
-    customer_source:String(outreachValue_(row, ["customer_source"]) || "").trim(),
-    notes:String(outreachValue_(row, ["notes"]) || "").trim(),
     newsletter_status:String(program.newsletter_status || "Not invited"),
     ordering_status:String(program.ordering_status || "Not offered"),
     opened:Number(engagement.open_count || 0) > 0,
@@ -1834,7 +1925,7 @@ function outreachSlimPayload_(record) {
     "status", "next_email", "priority", "next_follow_up", "last_emailed", "outcome", "do_not_email", "segment",
     "wave", "top_50", "craft_spirit_fit", "miles", "county", "email_confidence", "relationship", "newsletter_status",
     "ordering_status", "opened", "clicked", "search_text", "weekly_eligible",
-    "weekly_exclusion_reasons", "has_saved_draft", "campaign", "customer_source", "notes", "directory_quality",
+    "weekly_exclusion_reasons", "has_saved_draft", "campaign", "directory_quality",
   ];
   return fields.reduce((payload, field) => {
     payload[field] = record[field];
@@ -1912,8 +2003,8 @@ function apiGetOutreachDashboard_(p) {
   const today = due.concat(ready.filter(record => !due.some(item => item.source_row === record.source_row)))
     .slice(0, 30);
   const directory = records.slice().sort((a, b) => String(a.business).localeCompare(String(b.business)));
-  // Reuse the Directory rows already loaded for this screen. The quality list is a work view, not a stored copy.
-  const quality = directoryQualityReportFromRows_(records);
+  // Use the full Directory rows for quality so Notes and Customer Source never travel in the slim page payload.
+  const quality = directoryQualityReportFromRows_(rows, { service_area_miles:outreachServiceAreaMiles_(getOutreachCampaignSettings_()) });
   const issuesByRow = new Map();
   Object.keys(quality.categories).forEach(name => quality.categories[name].rows.forEach(item => {
     if (!issuesByRow.has(item.row)) issuesByRow.set(item.row, []);
@@ -1952,10 +2043,10 @@ function apiGetOutreachDashboard_(p) {
       total_businesses: directory.length,
       waiting: waiting.length,
       weekly_ready: weeklyReady.length,
-      directory_quality: Object.keys(quality.categories).reduce((summary, name) => {
+      directory_quality: Object.assign(Object.keys(quality.categories).reduce((summary, name) => {
         summary[name] = quality.categories[name].count;
         return summary;
-      }, {}),
+      }, {}), { outside_service_area:quality.outside_service_area.count }),
     },
   };
 }

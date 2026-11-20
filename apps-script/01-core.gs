@@ -1,11 +1,11 @@
 /*********************************
  * Inventory API (JSON) for Netlify. Part 1 of 12: core.
- * App version: 2026.11.19.89-APP
+ * App version: 2026.11.19.90-APP
  *
  * CHANGES IN THIS VERSION
- * Directory cleanup, Part A (Karl, 2026-11-19): repairHubStructure adds Campaign Settings "Service area miles" (60
- * by default); new Log outcome "Not a buyer" writes Do not contact and blocks all Hub/mailer email paths. Includes
- * the prior hard-bounce cleanup.
+ * Directory quality review fixes (Karl, 2026-11-19): quality work is now limited to the configurable service area,
+ * blank automatic Miles are filled from ZIP, and the weekly task is normal-priority for only duplicates or customer
+ * email decisions. Weekly writes lock and re-check bounce rows; the slim Outreach payload excludes Notes/Customer Source.
  *
  * PARTS (load in this order; filePushOrder in .clasp.json): 01-core (config, cache, sheets, setup, relay, request router),
  * 02-inventory, 03-outreach-directory, 04-campaigns, 05-sequences, 06-replies, 07-sending, 08-applications,
@@ -20,7 +20,7 @@
  * Earlier version notes: docs/history/inventory-api-changes.md (move this version's notes there when the version changes).
  *********************************/
 
-const APP_VERSION = "2026.11.19.89-APP";
+const APP_VERSION = "2026.11.19.90-APP";
 
 const SHEET_NAMES = {
   STORES: "Stores",

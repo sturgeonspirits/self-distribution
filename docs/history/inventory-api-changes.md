@@ -3,6 +3,11 @@
 Moved out of the Inventory API header (`apps-script/Code.gs`, now `apps-script/01-core.gs`) on 2026-10-17 so the deployed file stays short. Newest first, copied word for word. The header keeps only the current version (`CHANGES IN THIS VERSION`); when a new version is made, move that section to the top of this file.
 
 ```
+CHANGES IN 2026.11.19.89-APP
+Directory cleanup, Part A (Karl, 2026-11-19): repairHubStructure adds Campaign Settings "Service area miles" (60
+by default); new Log outcome "Not a buyer" writes Do not contact and blocks all Hub/mailer email paths. Includes
+the prior hard-bounce cleanup.
+
 CHANGES IN 2026.11.19.88-APP
 Directory quality (Karl, 2026-11-19): a weekly check identifies active Directory rows with missing or bounced
 email, missing or placeholder contacts, possible duplicate businesses, and missing prospect distances; it creates

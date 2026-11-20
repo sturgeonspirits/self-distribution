@@ -184,24 +184,28 @@ function taskManagerHubItems_(now, timeZone) {
   // Directory: personal follow-ups one by one; campaign follow-ups grouped by the campaign that last emailed them.
   const directory = rowsWithSource_(getOutreachSheet_(OUTREACH_SHEET_NAME));
   // This dry report reads the rows already in memory, so each hourly reconciliation reflects staff fixes immediately.
-  const directoryQuality = directoryQualityReportFromRows_(directory);
-  const qualityRows = new Set();
-  Object.keys(directoryQuality.categories).forEach(name => directoryQuality.categories[name].rows.forEach(item => qualityRows.add(item.row)));
-  if (qualityRows.size) {
+  const directoryQuality = directoryQualityReportFromRows_(directory, { service_area_miles:outreachServiceAreaMiles_(getOutreachCampaignSettings_()) });
+  const duplicateCount = directoryQuality.categories.duplicates.count;
+  const customerWithoutEmail = directoryQuality.categories.no_email.rows.filter(item => item.customer).length;
+  const decisionCount = new Set(directoryQuality.categories.duplicates.rows.map(item => item.row)
+    .concat(directoryQuality.categories.no_email.rows.filter(item => item.customer).map(item => item.row))).size;
+  if (decisionCount) {
     const key = `${TASK_MANAGER_KEY_PREFIX}directory-quality-${taskManagerSlot_(now, timeZone).weekId}`;
-    const breakdown = Object.keys(directoryQuality.categories)
+    const inAreaBreakdown = Object.keys(directoryQuality.categories)
+      .filter(name => name !== "no_distance")
       .map(name => ({ label:directoryQuality.categories[name].label, count:directoryQuality.categories[name].count }))
       .filter(item => item.count)
       .map(item => `${item.label}: ${item.count}`)
-      .join("; ");
+      .join("; ") || "none";
     items.push({
-      key:key, kind:"directory-quality", summary:true, priority:"high",
-      title:`Directory: ${qualityRows.size} lead${qualityRows.size === 1 ? "" : "s"} need fixing`,
+      key:key, kind:"directory-quality", summary:true, priority:"normal",
+      title:`Directory: ${decisionCount} decision${decisionCount === 1 ? "" : "s"} needed`,
       slot:taskManagerSlot_(now, timeZone),
       description:taskManagerDescription_([
-        breakdown,
+        `Possible duplicates: ${duplicateCount}; current or lapsed customers without email: ${customerWithoutEmail}.`,
+        `Still missing in the ${directoryQuality.outside_service_area.service_area_miles}-mile service area: ${inAreaBreakdown}.`,
         `Open the quality list: ${TASK_MANAGER_DIRECTORY_QUALITY_URL}`,
-        "Outreach > Businesses > Who to show: Missing email or name. This task refreshes as the Directory is fixed and closes when every count is zero.",
+        "Decide only the possible duplicates and customer ordering-link email gaps. This task closes itself when both counts are zero.",
       ], key),
     });
   }
