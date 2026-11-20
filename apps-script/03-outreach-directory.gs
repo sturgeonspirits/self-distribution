@@ -252,17 +252,44 @@ function directoryIdentityAdd_(identity, input, accountId, sourceRow) {
 }
 
 const DOR_LIQUOR_URL = "https://ww2.revenue.wi.gov/WebServicesPublicWeb/rest/liquor/all";
-const DOR_LICENSE_LEADS_HEADERS = ["DOR RN", "Business Name", "Agent", "Street", "City", "ZIP", "License Types", "Last Updated", "Result", "Processed At"];
+// DOR's "rn" is only a row position inside one search (rn_low pages on it): the Class A and Class B pulls both
+// number from 1, and the same license moves position as licenses come and go. DOR returns no license ID, so a
+// license is identified by its own details (Claude, checked live 2026-11-20).
+const DOR_LICENSE_LEADS_HEADERS = ["License Key", "Business Name", "Agent", "Street", "City", "ZIP", "License Types", "Last Updated", "Result", "Processed At"];
 const DOR_LAST_UPDATED_PROPERTY = "DIRECTORY_DOR_LAST_UPDATED";
 function dorPageRows_(payload) {
   if (!payload || String(payload.result || "").toLowerCase() !== "ok") throw new Error("DOR liquor list did not return Ok.");
   if (!Array.isArray(payload.subject) || !Number.isFinite(Number(payload.count))) throw new Error("DOR liquor list returned an unexpected page.");
   return { rows:payload.subject, count:Number(payload.count) };
 }
+function dorKeyText_(value) {
+  return String(value || "").toLowerCase().replace(/&/g, " and ").replace(/[^a-z0-9]+/g, " ").trim();
+}
+/** Stable identity for one DOR license record: legal name, trade name, street, ZIP and municipality. Never rn. */
+function dorLicenseKey_(item) {
+  return [
+    directoryQualityBusinessKey_(item && item.entityName),
+    directoryQualityBusinessKey_(item && item.businessName),
+    dorKeyText_(item && item.address),
+    String(item && item.zip || "").replace(/\D/g, "").slice(0, 5),
+    dorKeyText_(item && item.municipality),
+  ].join("|");
+}
+/** Liquor licensees only, one record per license key. A licensee in both pulls keeps both liquor flags. */
 function dorLiquorRecords_(records) {
-  const seen = new Map();
-  (records || []).forEach(row => { if (row && String(row.rn || "").trim() && (String(row.AL) === "1" || String(row.BL) === "1")) seen.set(String(row.rn), row); });
-  return Array.from(seen.values());
+  const byKey = new Map();
+  (records || []).forEach(row => {
+    if (!row || !(String(row.AL) === "1" || String(row.BL) === "1")) return;
+    const key = dorLicenseKey_(row);
+    if (!key.replace(/\|/g, "")) return;
+    const existing = byKey.get(key);
+    if (!existing) { byKey.set(key, Object.assign({}, row, { license_key:key })); return; }
+    const newer = String(row.lastUpdated || "") > String(existing.lastUpdated || "") ? row : existing;
+    const merged = Object.assign({}, newer, { license_key:key });
+    ["AB", "AC", "AL", "BB", "BL", "CW"].forEach(flag => { merged[flag] = String(existing[flag]) === "1" || String(row[flag]) === "1" ? 1 : 0; });
+    byKey.set(key, merged);
+  });
+  return Array.from(byKey.values());
 }
 function fetchDorLiquorRecords_() {
   const all = [];
@@ -283,15 +310,15 @@ function dorLicenseExpired_(item, now) {
   return !Number.isNaN(date.getTime()) && date.getTime() < new Date(now).setHours(0, 0, 0, 0);
 }
 function dorPossiblyClosedEntries_(logSheet, logHeaders, records, identity, now) {
-  if (!logSheet || logSheet.getLastRow() < 2 || logHeaders.dor_rn === undefined) return [];
-  const liveByRn = new Map((records || []).map(item => [String(item.rn || ""), item]));
+  if (!logSheet || logSheet.getLastRow() < 2 || logHeaders.license_key === undefined) return [];
+  const liveByKey = new Map((records || []).map(item => [String(item.license_key || dorLicenseKey_(item)), item]));
   const businessKey = ["business_name", "business"].find(key => logHeaders[key] !== undefined);
   const cityKey = ["city"].find(key => logHeaders[key] !== undefined);
   const zipKey = ["zip"].find(key => logHeaders[key] !== undefined);
   const seen = new Set();
   return logSheet.getRange(2, 1, logSheet.getLastRow() - 1, logSheet.getLastColumn()).getValues().map(row => {
-    const rn = String(row[logHeaders.dor_rn] || "").trim(); const live = liveByRn.get(rn);
-    if (!rn || (live && !dorLicenseExpired_(live, now))) return null;
+    const licenseKey = String(row[logHeaders.license_key] || "").trim(); const live = liveByKey.get(licenseKey);
+    if (!licenseKey || (live && !dorLicenseExpired_(live, now))) return null;
     const business = businessKey ? String(row[logHeaders[businessKey]] || "") : "";
     const city = cityKey ? String(row[logHeaders[cityKey]] || "") : "";
     const zip = zipKey ? String(row[logHeaders[zipKey]] || "") : "";
@@ -299,23 +326,26 @@ function dorPossiblyClosedEntries_(logSheet, logHeaders, records, identity, now)
     const record = findIdentityMatch_(identity, "", business, "", city).record;
     if (!record || seen.has(record.source_row)) return null;
     seen.add(record.source_row);
-    return { record:record, source:{ label:"WI DOR license list", note:`Possible closed: WI DOR license ${rn} is ${live ? "expired" : "no longer listed"}.` } };
+    return { record:record, source:{ label:"WI DOR license list", note:`Possibly closed: WI DOR liquor license for ${business || "this business"} (${city}) is ${live ? "expired" : "no longer listed"}.` } };
   }).filter(Boolean);
 }
 function processDorLiquorLicenses_(options) {
   const dryRun = !!options?.dryRun; const now = options?.now || new Date();
-  const records = dorLiquorRecords_(options?.records || fetchDorLiquorRecords_()).sort((a, b) => String(a.lastUpdated || "").localeCompare(String(b.lastUpdated || "")) || String(a.rn).localeCompare(String(b.rn)));
+  const records = dorLiquorRecords_(options?.records || fetchDorLiquorRecords_()).sort((a, b) => String(a.lastUpdated || "").localeCompare(String(b.lastUpdated || "")) || String(a.license_key).localeCompare(String(b.license_key)));
+  // "No longer listed" is only trustworthy against a complete pull. fetchDorLiquorRecords_ throws rather than return
+  // a partial list; callers passing records say so with complete_pull:false.
+  const completePull = options?.complete_pull !== false;
   const ss = getOutreachSs_(); const logSheet = dryRun ? ss.getSheetByName(LICENSE_LEADS_SHEET_NAME) : ensureSheet_(ss, LICENSE_LEADS_SHEET_NAME, DOR_LICENSE_LEADS_HEADERS);
   const identity = options?.identity || accountIdentityLookup_(); const directory = options?.directory || getOutreachSheet_(OUTREACH_SHEET_NAME); const props = PropertiesService.getScriptProperties();
   const lastUpdated = String(props.getProperty(DOR_LAST_UPDATED_PROPERTY) || ""); const h = logSheet ? getHeaderMap_(logSheet) : {};
-  const seen = new Set(!logSheet || logSheet.getLastRow() < 2 ? [] : logSheet.getRange(2, 1, logSheet.getLastRow() - 1, logSheet.getLastColumn()).getValues().map(row => `${row[h.dor_rn]}::${row[h.last_updated]}`));
+  const seen = new Set(!logSheet || logSheet.getLastRow() < 2 ? [] : logSheet.getRange(2, 1, logSheet.getLastRow() - 1, logSheet.getLastColumn()).getValues().map(row => `${row[h.license_key]}::${row[h.last_updated]}`));
   const fills = [], adds = [], logRows = [], examples = { would_add:[], would_fill:[], differences:[] };
   let outside = 0, skipped = 0, newest = lastUpdated, stopped = false;
   const serviceArea = outreachServiceAreaMiles_(); const shouldStop = options?.shouldStop || (() => false);
   records.forEach(item => {
     if (stopped) return;
-    const updated = String(item.lastUpdated || ""); const key = `${item.rn}::${updated}`;
-    // The log is the per-RN checkpoint. Keep rows sharing the high-water
+    const updated = String(item.lastUpdated || ""); const key = `${item.license_key}::${updated}`;
+    // The log is the per-license checkpoint. Keep rows sharing the high-water
     // timestamp eligible so a stop between two same-time records can resume.
     if (seen.has(key) || (lastUpdated && updated < lastUpdated)) { skipped++; return; }
     if (!dryRun && shouldStop()) { stopped = true; return; }
@@ -329,8 +359,8 @@ function processDorLiquorLicenses_(options) {
     else if (match) {
       const preview = directoryApplyFillToRecordCopy_(match, source, now);
       fills.push({ record:match, source:source, preview:preview });
-      if (preview.changed) { result = "Filled contact"; if (examples.would_fill.length < 25) examples.would_fill.push({ rn:item.rn, business:match.business, fill:preview }); }
-      if (preview.conflicts?.length && examples.differences.length < 25) examples.differences.push({ rn:item.rn, business:match.business, conflicts:preview.conflicts });
+      if (preview.changed) { result = "Filled contact"; if (examples.would_fill.length < 25) examples.would_fill.push({ license_key:item.license_key, business:match.business, fill:preview }); }
+      if (preview.conflicts?.length && examples.differences.length < 25) examples.differences.push({ license_key:item.license_key, business:match.business, conflicts:preview.conflicts });
     } else {
       try {
         const input = validateBusinessInput_({ business_name:item.businessName || item.entityName, contact:item.agentName, city:item.city, address:item.address, zip:item.zip, state:"WI", county:item.county, lead_source:"WI DOR license list", relationship:"Prospect", status:"Needs email", notes:`${Utilities.formatDate(now, Session.getScriptTimeZone(), "yyyy-MM-dd")} - WI DOR license: ${types}.` });
@@ -339,14 +369,14 @@ function processDorLiquorLicenses_(options) {
         else {
           const accountId = permanentId_("ACC"); const sourceRow = directory.getLastRow() + adds.length + 1;
           adds.push({ input:input, account_id:accountId }); directoryIdentityAdd_(identity, input, accountId, sourceRow);
-          result = "Added"; if (examples.would_add.length < 25) examples.would_add.push({ rn:item.rn, business:input.business_name, city:input.city });
+          result = "Added"; if (examples.would_add.length < 25) examples.would_add.push({ license_key:item.license_key, business:input.business_name, city:input.city });
         }
       } catch (error) { skipped++; result = `Skipped: ${String(error.message || error).slice(0, 200)}`; }
     }
     newest = updated > newest ? updated : newest;
-    if (!dryRun) logRows.push([String(item.rn), item.businessName || item.entityName || "", item.agentName || "", item.address || "", item.city || "", item.zip || "", types, updated, result, now]);
+    if (!dryRun) logRows.push([String(item.license_key), item.businessName || item.entityName || "", item.agentName || "", item.address || "", item.city || "", item.zip || "", types, updated, result, now]);
   });
-  const closedEntries = dorPossiblyClosedEntries_(logSheet, h, records, identity, now);
+  const closedEntries = completePull ? dorPossiblyClosedEntries_(logSheet, h, records, identity, now) : [];
   const previews = fills.map(fill => fill.preview); let applied = previews; let closedApplied = closedEntries.map(entry => directoryApplyFillToRecordCopy_(entry.record, entry.source, now));
   if (!dryRun) {
     applied = directoryApplyContactFillsBatch_(fills.map(fill => ({ record:fill.record, source:fill.source })), now);

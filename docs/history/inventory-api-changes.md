@@ -3,6 +3,14 @@
 Moved out of the Inventory API header (`apps-script/Code.gs`, now `apps-script/01-core.gs`) on 2026-10-17 so the deployed file stays short. Newest first, copied word for word. The header keeps only the current version (`CHANGES IN THIS VERSION`); when a new version is made, move that section to the top of this file.
 
 ```
+CHANGES IN 2026.11.20.100-APP
+Directory cleanup E/F hardening (Karl, 2026-11-20): prefetches DOR and Badger before locking, batches only changed
+Directory cells/new DOR rows, resumes DOR safely before the runtime limit, previews real fill/add/difference actions,
+notes possibly closed licensees, and includes Badger differences in Karl's decision task.
+
+```
+
+```
 CHANGES IN 2026.11.20.99-APP
 Directory cleanup F review fixes (Karl, 2026-11-20): Directory quality uses a dedicated Monday Central trigger,
 not the hourly task sync; previews read Badger and DOR in dry mode without writing.

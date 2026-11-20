@@ -165,8 +165,13 @@ test("DOR pages use subject, keep liquor-only records once, and reject a non-OK 
   const { context } = await contextFor();
   const page = call(context, `dorPageRows_({ result:'Ok', count:'2', subject:[{ rn:1, AL:1 }, { rn:2, BL:1 }] })`);
   assert.equal(page.count, 2);
-  const records = call(context, `dorLiquorRecords_([{ rn:1, AL:1 }, { rn:1, BL:1 }, { rn:2, AB:1 }, { rn:3, CW:1 }])`);
-  assert.deepEqual(records.map(row => row.rn), [1], "a dual liquor license is one record and beer/wine-only records are excluded");
+  const records = call(context, `dorLiquorRecords_([
+    { rn:1, AL:1, entityName:'Alpha LLC', businessName:'Alpha Bar', address:'1 Main St', zip:'54901', municipality:'Oshkosh' },
+    { rn:9, BL:1, entityName:'Alpha LLC', businessName:'Alpha Bar', address:'1 Main St', zip:'54901', municipality:'Oshkosh' },
+    { rn:2, AB:1, entityName:'Beer Only LLC', businessName:'Beer Only', address:'2 Main St', zip:'54901', municipality:'Oshkosh' },
+    { rn:3, CW:1, entityName:'Wine Only LLC', businessName:'Wine Only', address:'3 Main St', zip:'54901', municipality:'Oshkosh' },
+  ])`);
+  assert.deepEqual(records.map(row => row.businessName), ["Alpha Bar"], "a dual liquor license is one record and beer/wine-only records are excluded");
   assert.throws(() => vm.runInContext(`dorPageRows_({ result:'Error', count:'0', subject:[] })`, context), /did not return Ok/);
 });
 
@@ -203,4 +208,63 @@ test("DOR time budget leaves the weekly guard open so an editor rerun can resume
   assert.equal(result.complete, false);
   assert.equal(properties.get('DIRECTORY_QUALITY_LAST_RUN'), undefined);
   assert.equal(call(context, "typeof runDirectoryQualityCheckNow"), 'function');
+});
+
+// DOR's rn is only a row position within one search (checked live 2026-11-20): both pulls number from 1.
+function fakeSheet(id, rows) {
+  return {
+    rows,
+    getParent:() => ({ getId:() => "ss" }), getSheetId:() => id,
+    getLastRow() { return this.rows.length; }, getLastColumn() { return this.rows[0] ? this.rows[0].length : 0; },
+    getRange(row, column, rowCount, columnCount) {
+      const sheet = this;
+      return {
+        getValues:() => sheet.rows.slice(row - 1, row - 1 + rowCount).map(values => values.slice(column - 1, column - 1 + columnCount)),
+        setValues:values => values.forEach((values, offset) => { sheet.rows[row - 1 + offset] = values; }),
+      };
+    },
+  };
+}
+
+test("DOR licenses are identified by their details, never by rn", async () => {
+  const { context } = await contextFor();
+  const classA = [{ rn:1, AL:1, BL:0, entityName:"Alpha LLC", businessName:"Alpha Bar", address:"1 Main St", zip:"54901", municipality:"Oshkosh", lastUpdated:"2026-07-01" }];
+  const classB = [
+    { rn:1, AL:0, BL:1, entityName:"Beta Inc", businessName:"Beta Pub", address:"5 Elm St", zip:"54902", municipality:"Oshkosh", lastUpdated:"2026-07-02" },
+    { rn:2, AL:0, BL:1, entityName:"Alpha, LLC", businessName:"Alpha Bar", address:"1 Main St.", zip:"54901-1234", municipality:"Oshkosh", lastUpdated:"2026-09-01" },
+  ];
+  const records = call(context, `dorLiquorRecords_(${JSON.stringify(classA.concat(classB))})`);
+  assert.equal(records.length, 2, "overlapping rn values from the two pulls are different businesses and both are kept");
+  const alpha = records.find(row => row.businessName === "Alpha Bar");
+  assert.equal(alpha.AL, 1); assert.equal(alpha.BL, 1, "the same licensee in both pulls is one record holding both liquor classes");
+  assert.equal(alpha.lastUpdated, "2026-09-01", "the newer of the two copies wins");
+  assert.equal(call(context, `dorLicenseKey_(${JSON.stringify(classA[0])})`), call(context, `dorLicenseKey_(${JSON.stringify(Object.assign({}, classA[0], { rn:777 }))})`));
+});
+
+test("a license at a new rn is not reprocessed or flagged closed; a missing one is flagged only after a complete pull", async () => {
+  const { context } = await contextFor();
+  const alpha = { rn:57, AL:1, entityName:"Alpha LLC", businessName:"Alpha Bar", address:"1 Main St", zip:"54901", municipality:"Oshkosh", city:"Oshkosh", agentName:"Pat Doe", lastUpdated:"2026-11-01", expireDate:"2027-06-30" };
+  const gone = { entityName:"Gone LLC", businessName:"Gone Tavern", address:"9 Oak St", zip:"54901", municipality:"Oshkosh" };
+  context.__alphaKey = vm.runInContext(`dorLicenseKey_(${JSON.stringify(alpha)})`, context);
+  context.__goneKey = vm.runInContext(`dorLicenseKey_(${JSON.stringify(gone)})`, context);
+  const header = vm.runInContext("DOR_LICENSE_LEADS_HEADERS", context).slice();
+  context.__log = fakeSheet("log", [header,
+    [context.__alphaKey, "Alpha Bar", "Pat Doe", "1 Main St", "Oshkosh", "54901", "Class A liquor", "2026-11-01", "Matched, nothing to fill", ""],
+    [context.__goneKey, "Gone Tavern", "Sam Roe", "9 Oak St", "Oshkosh", "54901", "Class B liquor", "2026-07-01", "Matched, nothing to fill", ""],
+  ]);
+  vm.runInContext(`
+    getOutreachSs_ = () => ({ getSheetByName:() => __log });
+    milesForZip_ = () => 10;
+    outreachServiceAreaMiles_ = () => 60;
+  `, context);
+  const rows = [
+    { account_id:"A1", business_name:"Alpha Bar", contact_person:"Pat Doe", city:"Oshkosh", zip:"54901", notes:"", relationship:"Prospect", status:"Sent" },
+    { account_id:"A2", business_name:"Gone Tavern", contact_person:"Sam Roe", city:"Oshkosh", zip:"54901", notes:"", relationship:"Prospect", status:"Sent" },
+  ];
+  const run = completePull => call(context, `processDorLiquorLicenses_({ dryRun:true, complete_pull:${completePull}, records:${JSON.stringify([alpha])}, identity:accountIdentityFromRows_(${JSON.stringify(rows)}), directory:{ getLastRow:() => 3, getLastColumn:() => 12 }, now:new Date('2026-11-20T12:00:00Z') })`);
+  const result = run(true);
+  assert.equal(result.skipped, 1, "Alpha at a new rn with the same lastUpdated is already logged");
+  assert.equal(result.added, 0); assert.equal(result.filled, 0);
+  assert.equal(result.possibly_closed, 1, "only Gone Tavern, absent from a complete pull, is possibly closed");
+  assert.equal(run(false).possibly_closed, 0, "an incomplete pull never flags a business as closed");
 });
