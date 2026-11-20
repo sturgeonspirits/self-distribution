@@ -472,9 +472,12 @@ t("staging Badger import writes only TEST tabs", () => {
 
 t("daily source defaults to PDF, can switch to Badger (production only), and shows in Parser Status", () => {
   const b = makeBadger([]); bInv(b, "101", "SS0170", "Wagner Market", [{ q: 6, d: "Gin", p: 22 }]);
-  const e = makeEnv({ ssId: PROD_ID, sheets: prodSheets(), noActive: false, badger: b, props: CREDS, files: [pdf("F9", "0165.pdf")], texts: { F9: invText("SS0165", "Acorn Ridge", [{ q: 6, d: "Gin" }]) } });
+  const e = makeEnv({ ssId: PROD_ID, sheets: prodSheets(), noActive: false, badger: b, props: Object.assign({}, CREDS, { BADGER_CUSTOMER_LAST_PULL_MONTH:"20261002" }), files: [pdf("F9", "0165.pdf")], texts: { F9: invText("SS0165", "Acorn Ridge", [{ q: 6, d: "Gin" }]) } });
   e.ctx.showParserStatus(); assert.match(e.toasts[e.toasts.length - 1], /daily source: PDF/); assert.match(e.toasts[e.toasts.length - 1], /Badger login settings: present/);
-  const r1 = e.ctx.scheduledInvoiceImport(); assert.strictEqual(r1.imported, 1); assert.strictEqual(r1.source, undefined, "PDF import by default"); assert.ok(b.requests.length >= 0, "the post-invoice customer pull is independently best-effort");
+  const r1 = e.ctx.scheduledInvoiceImport(); assert.strictEqual(r1.imported, 1); assert.strictEqual(r1.source, undefined, "PDF import by default"); assert.deepStrictEqual(b.requests, [], "the already-pulled month makes no Badger customer request");
+  delete e.propStore.BADGER_CUSTOMER_LAST_PULL_MONTH; b.requests.length = 0;
+  e.ctx.scheduledInvoiceImport();
+  assert.deepStrictEqual(b.requests, ["POST /Login/Authenticate", "POST /Api/customer/Paged"], "an unset monthly marker attempts only the customer pull, never invoice endpoints");
   e.ctx.useBadgerForDailyImport(); e.ctx.showParserStatus(); assert.match(e.toasts[e.toasts.length - 1], /daily source: Badger/);
   const r2 = e.ctx.scheduledInvoiceImport(); assert.strictEqual(r2.source, "BADGER"); assert.strictEqual(r2.imported, 1);
   assert.strictEqual(e.tabs["Invoices"].rows.length, 3);
