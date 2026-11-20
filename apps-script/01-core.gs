@@ -1,11 +1,11 @@
 /*********************************
  * Inventory API (JSON) for Netlify. Part 1 of 12: core.
- * App version: 2026.11.20.102-APP
+ * App version: 2026.11.20.103-APP
  *
  * CHANGES IN THIS VERSION
- * Directory preview tab (Claude, 2026-11-20): previewDirectoryQualityCheck() also runs the reply-note backfill preview
- * and writes every planned change (DOR adds, fills, differences and possibly closed; Badger fills and differences;
- * bounced emails; reply-note fills) to the "Directory Preview" tab, rewritten each time. It changes no Directory row.
+ * DOR fetch speed (Claude, 2026-11-20): the first previewDirectoryQualityCheck() hit Apps Script's 6-minute limit. DOR's
+ * pages are now fetched in parallel batches of 20 after each pull's first page (61 sequential fetches before), and
+ * the run logs how long the sources and the preview took.
  *
  * PARTS (load in this order; filePushOrder in .clasp.json): 01-core (config, cache, sheets, setup, relay, request router),
  * 02-inventory, 03-outreach-directory, 04-campaigns, 05-sequences, 06-replies, 07-sending, 08-applications,
@@ -20,7 +20,7 @@
  * Earlier version notes: docs/history/inventory-api-changes.md (move this version's notes there when the version changes).
  *********************************/
 
-const APP_VERSION = "2026.11.20.102-APP";
+const APP_VERSION = "2026.11.20.103-APP";
 
 const SHEET_NAMES = {
   STORES: "Stores",

@@ -292,17 +292,43 @@ function dorLiquorRecords_(records) {
   });
   return Array.from(byKey.values());
 }
+const DOR_PAGE_SIZE = 250;
+const DOR_FETCH_BATCH = 20;
+function dorLiquorUrl_(flag, low) {
+  return `${DOR_LIQUOR_URL}?search=&city=&sort=0&AB=0&AC=0&AL=${flag === "AL" ? 1 : 0}&BB=0&BL=${flag === "BL" ? 1 : 0}&CW=0&rn_low=${low}`;
+}
+function dorFetchedPage_(response, url) {
+  const code = response.getResponseCode();
+  if (code !== 200) throw new Error(`DOR liquor list returned HTTP ${code} for ${url}`);
+  return dorPageRows_(JSON.parse(response.getContentText()));
+}
+/**
+ * Both liquor pulls, all pages. The first page of each gives the count; the rest are fetched in parallel batches
+ * (one page at a time took most of Apps Script's 6 minutes on 2026-11-20). All or nothing: a short or failed page throws.
+ */
 function fetchDorLiquorRecords_() {
+  const started = Date.now();
   const all = [];
   ["AL", "BL"].forEach(flag => {
-    let low = 0, count = null;
-    while (count === null || low < count) {
-      const url = `${DOR_LIQUOR_URL}?search=&city=&sort=0&AB=0&AC=0&AL=${flag === "AL" ? 1 : 0}&BB=0&BL=${flag === "BL" ? 1 : 0}&CW=0&rn_low=${low}`;
-      const page = dorPageRows_(JSON.parse(UrlFetchApp.fetch(url, { muteHttpExceptions:true }).getContentText()));
-      const rows = page.rows; count = page.count; all.push.apply(all, rows); low += 250;
-      if (!rows.length && low < count) throw new Error("DOR liquor list paging stopped early.");
+    const firstUrl = dorLiquorUrl_(flag, 0);
+    const first = dorFetchedPage_(UrlFetchApp.fetch(firstUrl, { muteHttpExceptions:true }), firstUrl);
+    const rows = first.rows.slice();
+    const urls = [];
+    for (let low = DOR_PAGE_SIZE; low < first.count; low += DOR_PAGE_SIZE) urls.push(dorLiquorUrl_(flag, low));
+    for (let index = 0; index < urls.length; index += DOR_FETCH_BATCH) {
+      const batch = urls.slice(index, index + DOR_FETCH_BATCH);
+      UrlFetchApp.fetchAll(batch.map(url => ({ url:url, muteHttpExceptions:true }))).forEach((response, offset) => {
+        const page = dorFetchedPage_(response, batch[offset]);
+        if (!page.rows.length) throw new Error("DOR liquor list paging stopped early.");
+        rows.push.apply(rows, page.rows);
+      });
     }
-  }); return dorLiquorRecords_(all);
+    if (rows.length !== first.count) throw new Error(`DOR ${flag} pull returned ${rows.length} of ${first.count} licenses; nothing was used.`);
+    all.push.apply(all, rows);
+  });
+  const records = dorLiquorRecords_(all);
+  console.log(JSON.stringify({ event:"dor_liquor_fetch", raw:all.length, licensees:records.length, seconds:Math.round((Date.now() - started) / 1000) }));
+  return records;
 }
 function dorLicenseExpired_(item, now) {
   const value = String(item?.expireDate || item?.expirationDate || "").trim();
@@ -537,6 +563,7 @@ function directoryQualityCheck_(options) {
   let badgerCustomers, dorRecords, badgerSourceError = "", dorSourceError = "";
   try { badgerCustomers = badgerCustomerRows_(); } catch (error) { badgerSourceError = String(error.message || error); }
   try { dorRecords = fetchDorLiquorRecords_(); } catch (error) { dorSourceError = String(error.message || error); }
+  console.log(JSON.stringify({ event:"directory_quality_sources", seconds:Math.round((Date.now() - startedAt) / 1000), badger_error:badgerSourceError, dor_error:dorSourceError }));
   const lock = dryRun ? null : LockService.getScriptLock();
   if (lock && !lock.tryLock(30000)) throw new Error("Another directory update is in progress. Try again in a moment.");
   try {
@@ -605,7 +632,9 @@ function runDirectoryQualityCheckNow() { return directoryQualityCheck_({}); }
  * everything they would do to the "Directory Preview" tab (rewritten each time) so it can be checked in full.
  */
 function previewDirectoryQualityCheck() {
+  const started = Date.now();
   const quality = directoryQualityCheck_({ dryRun:true });
+  console.log(JSON.stringify({ event:"directory_preview_quality_done", seconds:Math.round((Date.now() - started) / 1000) }));
   let backfill;
   try { backfill = backfillDirectoryReplyContacts_(true); } catch (error) { backfill = { error:String(error.message || error) }; }
   const rows = directoryPreviewRows_(quality, backfill);

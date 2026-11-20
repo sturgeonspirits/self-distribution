@@ -286,3 +286,24 @@ test("the preview tab lists every planned change by section, with a count line p
   assert.equal(section("Reply notes: would fill")[1][3], "Filled contact person Jay Supple");
   assert.ok(rows.every(row => row.length === 4));
 });
+
+test("DOR pulls fetch the first page, then the rest in parallel, and refuse a short pull", async () => {
+  const { context } = await contextFor();
+  const page = (flag, low, count) => {
+    const rows = []; for (let i = low; i < Math.min(low + 250, count); i++) rows.push({ rn:i + 1, [flag]:1, entityName:`${flag} ${i}`, businessName:`${flag} Biz ${i}`, address:`${i} Main`, zip:"54901", municipality:"Oshkosh" });
+    return { result:"Ok", count:String(count), subject:rows };
+  };
+  const counts = { AL:600, BL:260 };
+  const respond = url => {
+    const flag = /AL=1/.test(url) ? "AL" : "BL"; const low = Number(url.match(/rn_low=(\d+)/)[1]);
+    return { getResponseCode:() => 200, getContentText:() => JSON.stringify(page(flag, low, counts[flag])) };
+  };
+  const calls = { fetch:0, fetchAll:0 };
+  context.UrlFetchApp = { fetch:url => { calls.fetch++; return respond(url); }, fetchAll:requests => { calls.fetchAll++; return requests.map(request => respond(request.url)); } };
+  const records = call(context, "fetchDorLiquorRecords_()");
+  assert.equal(records.length, 860);
+  assert.equal(calls.fetch, 2, "one first page per pull");
+  assert.equal(calls.fetchAll, 2, "the remaining pages go out in parallel batches");
+  context.UrlFetchApp.fetchAll = requests => requests.map(request => ({ getResponseCode:() => 200, getContentText:() => JSON.stringify({ result:"Ok", count:"600", subject:[] }) }));
+  assert.throws(() => vm.runInContext("fetchDorLiquorRecords_()", context), /paging stopped early|returned/);
+});

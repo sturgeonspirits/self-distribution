@@ -3,6 +3,14 @@
 Moved out of the Inventory API header (`apps-script/Code.gs`, now `apps-script/01-core.gs`) on 2026-10-17 so the deployed file stays short. Newest first, copied word for word. The header keeps only the current version (`CHANGES IN THIS VERSION`); when a new version is made, move that section to the top of this file.
 
 ```
+CHANGES IN 2026.11.20.102-APP
+Directory preview tab (Claude, 2026-11-20): previewDirectoryQualityCheck() also runs the reply-note backfill preview
+and writes every planned change (DOR adds, fills, differences and possibly closed; Badger fills and differences;
+bounced emails; reply-note fills) to the "Directory Preview" tab, rewritten each time. It changes no Directory row.
+
+```
+
+```
 CHANGES IN 2026.11.20.101-APP
 DOR license identity (Claude, 2026-11-20): DOR's rn is only a row position within one search (both pulls number
 from 1), so licenses are now keyed by legal name, trade name, street, ZIP and municipality. The key merges the
