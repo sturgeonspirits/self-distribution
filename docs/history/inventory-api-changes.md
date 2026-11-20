@@ -3,6 +3,16 @@
 Moved out of the Inventory API header (`apps-script/Code.gs`, now `apps-script/01-core.gs`) on 2026-10-17 so the deployed file stays short. Newest first, copied word for word. The header keeps only the current version (`CHANGES IN THIS VERSION`); when a new version is made, move that section to the top of this file.
 
 ```
+CHANGES IN 2026.11.20.105-APP
+Directory preview findings (Claude, 2026-11-20): DOR agent names are cleaned ("NULL" dropped, ALL CAPS and
+"Last, First" turned into "First Last") before they fill or create a contact; a contact differing only in format,
+a city, a street spelling or a ZIP+4 is no longer noted as a difference; Street Address fills (the alias was
+missing); preview adds no longer leak into the Directory counts; reply-note backfill skips rows it wouldn't fill;
+the preview counts would-add businesses within 15/30/45/60 miles and shows each one's distance.
+
+```
+
+```
 CHANGES IN 2026.11.20.104-APP
 DOR processing speed (Claude, 2026-11-20): the .103 preview fetched DOR in 6 s but still hit the 6-minute limit. The
 DOR pass called the Directory sheet's getLastRow (and formatDate, getScriptTimeZone, getUuid) once per planned add,

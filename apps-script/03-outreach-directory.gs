@@ -297,6 +297,7 @@ const DOR_LIQUOR_URL = "https://ww2.revenue.wi.gov/WebServicesPublicWeb/rest/liq
 // license is identified by its own details (Claude, checked live 2026-11-20).
 const DOR_LICENSE_LEADS_HEADERS = ["License Key", "Business Name", "Agent", "Street", "City", "ZIP", "License Types", "Last Updated", "Result", "Processed At"];
 const DOR_LAST_UPDATED_PROPERTY = "DIRECTORY_DOR_LAST_UPDATED";
+const DOR_ADD_RADIUS_PROPERTY = "DIRECTORY_DOR_ADD_RADIUS";
 function dorPageRows_(payload) {
   if (!payload || String(payload.result || "").toLowerCase() !== "ok") throw new Error("DOR liquor list did not return Ok.");
   if (!Array.isArray(payload.subject) || !Number.isFinite(Number(payload.count))) throw new Error("DOR liquor list returned an unexpected page.");
@@ -410,6 +411,12 @@ function processDorLiquorLicenses_(options) {
   const exampleCap = dryRun ? Infinity : 25;
   let outside = 0, skipped = 0, newest = lastUpdated, stopped = false;
   const serviceArea = outreachServiceAreaMiles_(); const shouldStop = options?.shouldStop || (() => false);
+  // Licensees beyond the new-business radius aren't logged, and a larger radius than last run's ignores the
+  // high-water mark once, so raising the setting later reaches the licenses skipped before.
+  const addRadius = options?.add_radius_miles ?? outreachNewBusinessRadiusMiles_();
+  const storedRadius = Number(props.getProperty(DOR_ADD_RADIUS_PROPERTY));
+  const checkpoint = Number.isFinite(storedRadius) && addRadius > storedRadius ? "" : lastUpdated;
+  let beyondAddRadius = 0;
   // Read once: getLastRow, formatDate and getUuid are slow service calls, and a first run plans thousands of adds.
   const directoryLastRow = directory.getLastRow();
   const todayText = Utilities.formatDate(now, Session.getScriptTimeZone(), "yyyy-MM-dd");
@@ -425,7 +432,7 @@ function processDorLiquorLicenses_(options) {
     const updated = String(item.lastUpdated || ""); const key = `${item.license_key}::${updated}`;
     // The log is the per-license checkpoint. Keep rows sharing the high-water
     // timestamp eligible so a stop between two same-time records can resume.
-    if (seen.has(key) || (lastUpdated && updated < lastUpdated)) { skipped++; return; }
+    if (seen.has(key) || (checkpoint && updated < checkpoint)) { skipped++; return; }
     if (!dryRun && shouldStop()) { stopped = true; return; }
     if (dorLicenseExpired_(item, now)) { skipped++; newest = updated > newest ? updated : newest; return; }
     const miles = milesForZip_(String(item.zip || "")); if (!Number.isFinite(miles) || miles > serviceArea) { outside++; newest = updated > newest ? updated : newest; return; }
@@ -440,6 +447,8 @@ function processDorLiquorLicenses_(options) {
       fills.push({ record:match, source:source, preview:preview });
       if (preview.changed) { result = "Filled contact"; if (examples.would_fill.length < exampleCap) examples.would_fill.push({ license_key:item.license_key, business:match.business, city:item.city, detail:(preview.details || []).join(" ") }); }
       if (preview.conflicts?.length && examples.differences.length < exampleCap) examples.differences.push({ license_key:item.license_key, business:match.business, city:item.city, conflicts:preview.conflicts });
+    } else if (miles > addRadius) {
+      beyondAddRadius++; newest = updated > newest ? updated : newest; return;
     } else {
       try {
         const input = validateBusinessInput_({ business_name:item.businessName || item.entityName, contact:agent, city:item.city, address:item.address, zip:item.zip, state:"WI", county:item.county, lead_source:"WI DOR license list", relationship:"Prospect", status:"Needs email", notes:`${todayText} - WI DOR license: ${types}.` });
@@ -468,12 +477,13 @@ function processDorLiquorLicenses_(options) {
     }
     if (logRows.length) logSheet.getRange(logSheet.getLastRow() + 1, 1, logRows.length, logRows[0].length).setValues(logRows);
     if (newest && newest > lastUpdated) props.setProperty(DOR_LAST_UPDATED_PROPERTY, newest);
+    if (!stopped) props.setProperty(DOR_ADD_RADIUS_PROPERTY, String(addRadius));
   }
   const filled = applied.filter(fill => fill.changed).length;
   const differences = applied.reduce((sum, fill) => sum + (fill.conflicts?.length || 0), 0);
   const addMiles = examples.would_add.map(item => Number(item.miles)).filter(Number.isFinite);
   const added_by_miles = [15, 30, 45, 60].reduce((bands, limit) => { bands[limit] = addMiles.filter(value => value <= limit).length; return bands; }, {});
-  return { added_by_miles:added_by_miles, records:records.length, filled:filled, added:adds.length, differences:differences, outside:outside, skipped:skipped, possibly_closed:closedApplied.filter(item => item.changed).length, complete:!stopped, stopped:stopped, last_updated:newest, examples:examples };
+  return { added_by_miles:added_by_miles, add_radius_miles:addRadius, beyond_add_radius:beyondAddRadius, records:records.length, filled:filled, added:adds.length, differences:differences, outside:outside, skipped:skipped, possibly_closed:closedApplied.filter(item => item.changed).length, complete:!stopped, stopped:stopped, last_updated:newest, examples:examples };
 }
 
 /** Builds the quality report from rows already read from the Directory. It never writes. */
@@ -714,7 +724,9 @@ function directoryPreviewRows_(quality, backfill) {
   rows.push(["Summary", "DOR liquor licensees read", "", text(dor.records)]);
   rows.push(["Summary", "DOR outside the service area", "", text(dor.outside)]);
   rows.push(["Summary", "Blank Miles fillable from ZIP", "", text(quality && quality.mileage && quality.mileage.updated)]);
-  Object.keys(dor.added_by_miles || {}).forEach(limit => rows.push(["Summary", `DOR would add within ${limit} miles`, "", text(dor.added_by_miles[limit])]));
+  rows.push(["Summary", "New business radius (miles, straight line)", "", text(dor.add_radius_miles)]);
+  rows.push(["Summary", "DOR licensees not yet in the Directory beyond that radius (not added)", "", text(dor.beyond_add_radius)]);
+  Object.keys(dor.added_by_miles || {}).filter(limit => Number(limit) <= Number(dor.add_radius_miles)).forEach(limit => rows.push(["Summary", `DOR would add within ${limit} miles`, "", text(dor.added_by_miles[limit])]));
   sourceError("DOR", dor); sourceError("Badger", badger); sourceError("Reply backfill", backfill);
   section("DOR: would add", examples.would_add, item => [item.business, item.city, item.detail]);
   section("DOR: would fill", examples.would_fill, item => [item.business, item.city, item.detail]);
@@ -1403,7 +1415,17 @@ function ensureOutreachServiceAreaSetting_() {
   const keys = sheet.getRange(2, 1, Math.max(1, sheet.getLastRow() - 1), 1).getDisplayValues().map(row => String(row[0] || "").trim());
   const added = !keys.includes(OUTREACH_SERVICE_AREA_MILES_KEY);
   if (added) sheet.getRange(sheet.getLastRow() + 1, 1, 1, 2).setValues([[OUTREACH_SERVICE_AREA_MILES_KEY, OUTREACH_DEFAULT_SERVICE_AREA_MILES]]);
-  return { key:OUTREACH_SERVICE_AREA_MILES_KEY, default_miles:OUTREACH_DEFAULT_SERVICE_AREA_MILES, added:added };
+  const radiusAdded = !keys.includes(OUTREACH_NEW_BUSINESS_RADIUS_KEY);
+  if (radiusAdded) sheet.getRange(sheet.getLastRow() + 1, 1, 1, 2).setValues([[OUTREACH_NEW_BUSINESS_RADIUS_KEY, OUTREACH_DEFAULT_NEW_BUSINESS_RADIUS]]);
+  return { key:OUTREACH_SERVICE_AREA_MILES_KEY, default_miles:OUTREACH_DEFAULT_SERVICE_AREA_MILES, added:added, new_business_radius_added:radiusAdded };
+}
+// New prospects from DOR are only added this close (Karl, 2026-11-20: 30 miles; distances are straight-line from the
+// distillery to the ZIP's center). Filling details on businesses already in the Directory uses the service area.
+const OUTREACH_NEW_BUSINESS_RADIUS_KEY = "New business radius miles";
+const OUTREACH_DEFAULT_NEW_BUSINESS_RADIUS = 30;
+function outreachNewBusinessRadiusMiles_(settings) {
+  const miles = Number((settings || getOutreachCampaignSettings_())[OUTREACH_NEW_BUSINESS_RADIUS_KEY]);
+  return Number.isFinite(miles) && miles >= 0 ? miles : OUTREACH_DEFAULT_NEW_BUSINESS_RADIUS;
 }
 function outreachServiceAreaMiles_(settings) {
   const miles = Number((settings || getOutreachCampaignSettings_())[OUTREACH_SERVICE_AREA_MILES_KEY]);

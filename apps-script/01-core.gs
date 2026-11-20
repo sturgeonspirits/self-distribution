@@ -1,13 +1,11 @@
 /*********************************
  * Inventory API (JSON) for Netlify. Part 1 of 12: core.
- * App version: 2026.11.20.105-APP
+ * App version: 2026.11.20.106-APP
  *
  * CHANGES IN THIS VERSION
- * Directory preview findings (Claude, 2026-11-20): DOR agent names are cleaned ("NULL" dropped, ALL CAPS and
- * "Last, First" turned into "First Last") before they fill or create a contact; a contact differing only in format,
- * a city, a street spelling or a ZIP+4 is no longer noted as a difference; Street Address fills (the alias was
- * missing); preview adds no longer leak into the Directory counts; reply-note backfill skips rows it wouldn't fill;
- * the preview counts would-add businesses within 15/30/45/60 miles and shows each one's distance.
+ * New business radius (Karl, 2026-11-20): Campaign Settings "New business radius miles" (30) limits which DOR
+ * licensees are added as new prospects; filling details on existing businesses still uses Service area miles (60).
+ * Distances are straight-line to the ZIP's center. Raising the radius later goes back over licenses skipped before.
  *
  * PARTS (load in this order; filePushOrder in .clasp.json): 01-core (config, cache, sheets, setup, relay, request router),
  * 02-inventory, 03-outreach-directory, 04-campaigns, 05-sequences, 06-replies, 07-sending, 08-applications,
@@ -22,7 +20,7 @@
  * Earlier version notes: docs/history/inventory-api-changes.md (move this version's notes there when the version changes).
  *********************************/
 
-const APP_VERSION = "2026.11.20.105-APP";
+const APP_VERSION = "2026.11.20.106-APP";
 
 const SHEET_NAMES = {
   STORES: "Stores",

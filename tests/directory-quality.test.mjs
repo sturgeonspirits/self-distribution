@@ -182,7 +182,7 @@ test("DOR preview uses the shared fill rules, plans one add for duplicate busine
   vm.runInContext(`
     getOutreachSs_ = () => ({ getSheetByName:() => null });
     milesForZip_ = zip => zip === '54945' ? 12 : 100;
-    outreachServiceAreaMiles_ = () => 60;
+    outreachServiceAreaMiles_ = () => 60; outreachNewBusinessRadiusMiles_ = () => 30;
     permanentId_ = () => 'ACC-new';
   `, context);
   const rows = [{ account_id:'A1', business_name:'Matched Bar', contact_person:'', email:'', address:'1 Main', city:'Oshkosh', zip:'54945', notes:'', relationship:'Prospect', status:'Needs email' }];
@@ -255,7 +255,7 @@ test("a license at a new rn is not reprocessed or flagged closed; a missing one 
   vm.runInContext(`
     getOutreachSs_ = () => ({ getSheetByName:() => __log });
     milesForZip_ = () => 10;
-    outreachServiceAreaMiles_ = () => 60;
+    outreachServiceAreaMiles_ = () => 60; outreachNewBusinessRadiusMiles_ = () => 30;
   `, context);
   const rows = [
     { account_id:"A1", business_name:"Alpha Bar", contact_person:"Pat Doe", city:"Oshkosh", zip:"54901", notes:"", relationship:"Prospect", status:"Sent" },
@@ -314,7 +314,7 @@ test("a large DOR pass makes no per-license service calls and matches on Street 
   const formatDate = context.Utilities.formatDate;
   context.Utilities.formatDate = (...args) => { calls.formatDate++; return formatDate(...args); };
   context.__directory = { getLastRow:() => { calls.lastRow++; return 2; }, getLastColumn:() => 40 };
-  vm.runInContext(`getOutreachSs_ = () => ({ getSheetByName:() => null }); milesForZip_ = () => 10; outreachServiceAreaMiles_ = () => 60;`, context);
+  vm.runInContext(`getOutreachSs_ = () => ({ getSheetByName:() => null }); milesForZip_ = () => 10; outreachServiceAreaMiles_ = () => 60; outreachNewBusinessRadiusMiles_ = () => 30;`, context);
   const rows = [{ account_id:"A1", business_name:"Old Name Tavern", contact_person:"", street_address:"12 Oak Street", zip_code:"54901", city:"Oshkosh", notes:"", relationship:"Prospect", status:"Sent" }];
   const records = [{ rn:1, BL:1, entityName:"New Owner LLC", businessName:"Renamed Bar", agentName:"Kim Park", address:"12 Oak St.", zip:"54901-2222", city:"Oshkosh", municipality:"Oshkosh", lastUpdated:"2026-08-01" }];
   // "12 Oak St." vs "12 Oak Street" only match by key text if written the same; use the Directory's exact wording.
@@ -351,4 +351,21 @@ test("city and street spellings fill blanks but never create difference notes; Z
   const result = call(context, `directoryApplyContactFillToValues_(__values, __headers, { label:"WI DOR license list", contact:"PAT DOE", fields:{ street:"1 Main St.", city:"GRAND CHUTE", zip:"54914-1234" } }, new Date("2026-11-20T12:00:00Z"))`);
   assert.equal(context.__values[2], "1 Main St.", "blank Street Address is filled");
   assert.deepEqual(result.conflicts, [], "no notes for city, ZIP+4 or the same contact in capitals");
+});
+
+test("new businesses are only added within the new-business radius, and raising it later reaches the skipped ones", async () => {
+  const { context, properties } = await contextFor();
+  vm.runInContext(`getOutreachSs_ = () => ({ getSheetByName:() => null }); milesForZip_ = zip => Number(zip.slice(-2)); outreachServiceAreaMiles_ = () => 60; outreachNewBusinessRadiusMiles_ = () => 30;`, context);
+  const records = [
+    { rn:1, BL:1, entityName:"Near LLC", businessName:"Near Bar", address:"1 A St", zip:"54920", city:"Oshkosh", municipality:"Oshkosh", lastUpdated:"2026-07-01" },
+    { rn:2, BL:1, entityName:"Far LLC", businessName:"Far Bar", address:"2 B St", zip:"54945", city:"Iola", municipality:"Iola", lastUpdated:"2026-07-01" },
+  ];
+  const run = (radius, dry) => call(context, `processDorLiquorLicenses_({ dryRun:${dry}, add_radius_miles:${radius}, records:${JSON.stringify(records)}, identity:accountIdentityFromRows_([]), directory:{ getLastRow:() => 1, getLastColumn:() => 40 }, now:new Date('2026-11-20T12:00:00Z') })`);
+  const first = run(30, true);
+  assert.equal(first.added, 1, "only the 20-mile bar is added at a 30-mile radius");
+  assert.equal(first.beyond_add_radius, 1);
+  properties.set("DIRECTORY_DOR_LAST_UPDATED", "2026-07-02");
+  properties.set("DIRECTORY_DOR_ADD_RADIUS", "30");
+  assert.equal(run(30, true).added, 0, "the same radius respects the checkpoint");
+  assert.equal(run(50, true).added, 2, "a larger radius goes back over licenses skipped before");
 });
