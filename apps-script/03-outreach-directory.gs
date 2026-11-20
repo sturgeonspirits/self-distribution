@@ -50,11 +50,110 @@ function directoryQualityIssueRecord_(row, sourceRow) {
 }
 
 function directoryQualityPlaceholderContact_(record) {
-  const contact = String(record.contact || "").trim();
+  return directoryContactIsPlaceholder_(record.contact, record.business);
+}
+
+/** A blank is handled separately in the quality report; this recognizes only a value safe to replace. */
+function directoryContactIsPlaceholder_(contactValue, businessValue) {
+  const contact = String(contactValue || "").trim();
   if (!contact) return false;
   if (DIRECTORY_QUALITY_PLACEHOLDER_CONTACT_PATTERNS.some(pattern => pattern.test(contact))) return true;
-  if (directoryQualityBusinessKey_(contact) && directoryQualityBusinessKey_(contact) === directoryQualityBusinessKey_(record.business)) return true;
+  if (directoryQualityBusinessKey_(contact) && directoryQualityBusinessKey_(contact) === directoryQualityBusinessKey_(businessValue)) return true;
   return contact.split(/\s+/).filter(Boolean).length === 1;
+}
+
+function directoryFillHeaderKey_(headers, aliases) {
+  return aliases.map(normalizeHeader_).find(key => headers[key] !== undefined);
+}
+
+/** Never learn an address that is clearly automated, ours, malformed, or already recorded as a hard bounce. */
+function directoryFillEmailAllowed_(emailValue, notes) {
+  const email = String(emailValue || "").trim().toLowerCase();
+  if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) return false;
+  if (/^(no-?reply|do-?not-?reply|donotreply|mailer-daemon|mail-daemon|mailerdaemon|postmaster)@/.test(email)) return false;
+  if (email.endsWith("@sturgeonspirits.com")) return false;
+  return typeof outreachBadEmailInNotes_ !== "function" || !outreachBadEmailInNotes_(notes, email);
+}
+
+/**
+ * Applies one trusted source to an in-memory Directory row. It never overwrites a real name or email;
+ * callers own the row lock and write only the changed cells afterwards.
+ */
+function directoryApplyContactFillToValues_(values, headers, source, now) {
+  const get = aliases => {
+    const key = directoryFillHeaderKey_(headers, aliases);
+    return key === undefined ? "" : values[headers[key]];
+  };
+  const set = (aliases, value) => {
+    const key = directoryFillHeaderKey_(headers, aliases);
+    if (key === undefined || values[headers[key]] === value) return false;
+    values[headers[key]] = value;
+    return true;
+  };
+  const result = { changed:false, email_filled:false, contact_filled:false, notes_added:false, conflicts:[] };
+  const date = Utilities.formatDate(now || new Date(), Session.getScriptTimeZone(), "yyyy-MM-dd");
+  const label = String(source?.label || "source").trim() || "source";
+  const business = String(get(["business", "business_name"]) || "").trim();
+  const notes = String(get(["notes"]) || "").trim();
+  const existingEmail = String(get(["email", "email_address"]) || "").trim().toLowerCase();
+  const existingContact = String(get(["contact", "contact_name", "contact_person", "first_name"]) || "").trim();
+  const outcome = String(get(["outcome"]) || "").trim();
+  const relationship = String(get(["relationship"]) || "").trim().toLowerCase();
+  const status = String(get(["status"]) || "").trim().toLowerCase();
+  const fillLines = [];
+  const conflictLines = [];
+  const email = String(source?.email || "").trim().toLowerCase();
+  const contact = String(source?.contact || "").replace(/[\r\n]+/g, " ").trim();
+  const replacingBadAddress = outcome.toLowerCase() === "bad address";
+  // A source address that is unsafe invalidates the whole source, including its display name.
+  if (email && !directoryFillEmailAllowed_(email, notes)) return result;
+
+  if (email) {
+    if (!existingEmail || replacingBadAddress) {
+      if (set(["email", "email_address"], email)) {
+        result.changed = true;
+        result.email_filled = true;
+        fillLines.push(`email ${email}`);
+        if (source.email_confidence) set(["email_confidence"], String(source.email_confidence));
+        if (source.email_source_url && !String(get(["email_source_url"]) || "").trim()) set(["email_source_url"], String(source.email_source_url));
+        if (replacingBadAddress) set(["outcome"], "");
+        if (relationship === "prospect" && status === "needs email") set(["status"], "Not contacted");
+      }
+    } else if (existingEmail !== email) {
+      const conflict = `${label} has email ${email}`;
+      if (!notes.toLowerCase().includes(conflict.toLowerCase())) {
+        conflictLines.push(conflict);
+        result.conflicts.push(`email ${email}`);
+      }
+    }
+  }
+
+  if (contact) {
+    if (!existingContact || directoryContactIsPlaceholder_(existingContact, business)) {
+      if (set(["contact", "contact_name", "contact_person", "first_name"], contact)) {
+        result.changed = true;
+        result.contact_filled = true;
+        fillLines.push(`contact person ${contact}`);
+      }
+    } else if (existingContact.toLowerCase() !== contact.toLowerCase()) {
+      const conflict = `${label} has contact ${contact}`;
+      if (!notes.toLowerCase().includes(conflict.toLowerCase())) {
+        conflictLines.push(conflict);
+        result.conflicts.push(`contact ${contact}`);
+      }
+    }
+  }
+
+  const noteLines = [];
+  if (fillLines.length) noteLines.push(`${date} - Filled ${fillLines.join(" and ")} from ${label}.`);
+  conflictLines.forEach(line => noteLines.push(`${date} - ${line}.`));
+  if (noteLines.length && directoryFillHeaderKey_(headers, ["notes"]) !== undefined) {
+    set(["notes"], [notes].concat(noteLines).filter(Boolean).join("\n"));
+    result.changed = true;
+    result.notes_added = true;
+  }
+  if (result.changed) set(["record_updated_at"], now || new Date());
+  return result;
 }
 
 /** Builds the quality report from rows already read from the Directory. It never writes. */

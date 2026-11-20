@@ -483,6 +483,106 @@ function inboundReplyAltEmailLine_(reply, directoryEmail, priorNotes, dateText) 
   return `${dateText} - Alt email: ${from}${label}`;
 }
 
+const INBOUND_REPLY_CONTACT_ROLE_WORDS = new Set(["info", "office", "manager", "sales", "bar", "staff", "admin", "team"]);
+
+/** A reply display name is useful only when it is plainly a person's name, not an inbox or role. */
+function inboundReplyPersonContactName_(nameValue, businessValue, emailValue) {
+  const name = String(nameValue || "").replace(/[\r\n]+/g, " ").replace(/\s+/g, " ").trim();
+  if (!name || /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(name)) return "";
+  const words = name.replace(/[^A-Za-zÀ-ÿ'’.\- ]/g, " ").split(/\s+/).filter(Boolean);
+  if (words.length < 2 || words.some(word => INBOUND_REPLY_CONTACT_ROLE_WORDS.has(word.toLowerCase().replace(/[.'’]/g, "")))) return "";
+  if (directoryQualityBusinessKey_(name) === directoryQualityBusinessKey_(businessValue)) return "";
+  if (String(emailValue || "").trim().toLowerCase() === name.toLowerCase()) return "";
+  return name.slice(0, 120);
+}
+
+/** Apply a trusted person reply to its matched Directory row without changing any real contact detail. */
+function applyInboundReplyDirectoryFill_(match, message, classification, receivedAt) {
+  const record = match && match.record;
+  if (!record || !INBOUND_REPLY_STRONG_MATCHES.includes(match.matched_by)) return { changed:false };
+  if (match.bounce || classification.category === "Bounce" || classification.category === "Out of office") return { changed:false };
+  const email = String(match.email || "").trim().toLowerCase();
+  const contact = inboundReplyPersonContactName_(message && message.from_name, record.business, email);
+  const lock = LockService.getScriptLock();
+  if (!lock.tryLock(10000)) return { changed:false, skipped:"Directory is busy" };
+  try {
+    const sheet = getOutreachSheet_(OUTREACH_SHEET_NAME);
+    const headers = getHeaderMap_(sheet);
+    const range = sheet.getRange(record.source_row, 1, 1, sheet.getLastColumn());
+    const values = range.getValues()[0];
+    const original = values.slice();
+    const notesKey = directoryFillHeaderKey_(headers, ["notes"]);
+    if (!directoryFillEmailAllowed_(email, notesKey === undefined ? "" : values[headers[notesKey]])) return { changed:false, skipped:"Sender address is not fillable" };
+    const accountKey = directoryFillHeaderKey_(headers, ["account_id"]);
+    const businessKey = directoryFillHeaderKey_(headers, ["business", "business_name"]);
+    if (accountKey !== undefined && record.account_id && String(values[headers[accountKey]] || "").trim() !== String(record.account_id).trim()) return { changed:false, skipped:"Directory row changed" };
+    if (businessKey !== undefined && String(values[headers[businessKey]] || "").trim() !== String(record.business || "").trim()) return { changed:false, skipped:"Directory row changed" };
+    const result = directoryApplyContactFillToValues_(values, headers, { email:email, contact:contact, email_confidence:"Confirmed", label:"email reply" }, receivedAt);
+    if (!result.changed) return result;
+    writeChangedRowCells_(sheet, record.source_row, original, values);
+    appendAudit_("FILL_DIRECTORY_FROM_REPLY", "Directory", String(record.account_id || ""), "", "Reply checker", INBOUND_REPLIES_SHEET_NAME, OUTREACH_SHEET_NAME, "Completed", `${result.email_filled ? "Email filled" : ""}${result.email_filled && result.contact_filled ? "; " : ""}${result.contact_filled ? "contact filled" : ""}${result.conflicts.length ? `${(result.email_filled || result.contact_filled) ? "; " : ""}difference noted` : ""}.`);
+    return result;
+  } finally {
+    lock.releaseLock();
+  }
+}
+
+function inboundReplyAltEmailCandidates_(notes) {
+  return String(notes || "").split(/\r?\n/).map(line => {
+    const match = line.match(/Alt email:\s*([^\s(]+)(?:\s+\((.*?),\s*from an email reply\)|\s+\(from an email reply\))?/i);
+    return match ? { email:String(match[1] || "").trim().toLowerCase(), name:String(match[2] || "").trim() } : null;
+  }).filter(Boolean);
+}
+
+function backfillDirectoryReplyContacts_(dryRun) {
+  const lock = dryRun ? null : LockService.getScriptLock();
+  if (lock && !lock.tryLock(30000)) throw new Error("Another directory update is in progress. Try again in a moment.");
+  try {
+    const sheet = getOutreachSheet_(OUTREACH_SHEET_NAME);
+    const headers = getHeaderMap_(sheet);
+    const rowCount = Math.max(0, sheet.getLastRow() - 1);
+    const values = rowCount ? sheet.getRange(2, 1, rowCount, sheet.getLastColumn()).getValues() : [];
+    const result = { dry_run:!!dryRun, scanned:values.length, updated:0, email_filled:0, contact_filled:0, examples:[] };
+    values.forEach((row, index) => {
+      const original = row.slice();
+      const notesKey = directoryFillHeaderKey_(headers, ["notes"]);
+      const businessKey = directoryFillHeaderKey_(headers, ["business", "business_name"]);
+      const notes = notesKey === undefined ? "" : row[headers[notesKey]];
+      const business = businessKey === undefined ? "" : row[headers[businessKey]];
+      const candidates = inboundReplyAltEmailCandidates_(notes).reverse().filter(candidate => directoryFillEmailAllowed_(candidate.email, notes));
+      const emailCandidate = candidates[0] || null;
+      const contactCandidate = candidates.map(candidate => Object.assign({}, candidate, { name:inboundReplyPersonContactName_(candidate.name, business, candidate.email) })).find(candidate => candidate.name) || null;
+      if (!emailCandidate && !contactCandidate) return;
+      const fill = directoryApplyContactFillToValues_(row, headers, {
+        email:emailCandidate ? emailCandidate.email : "",
+        contact:contactCandidate ? contactCandidate.name : "",
+        email_confidence:"Confirmed",
+        label:"email reply",
+      }, new Date());
+      if (!fill.changed) return;
+      result.updated += 1;
+      result.email_filled += fill.email_filled ? 1 : 0;
+      result.contact_filled += fill.contact_filled ? 1 : 0;
+      if (result.examples.length < 25) result.examples.push({ row:index + 2, business:String(business || "").trim(), email:fill.email_filled, contact:fill.contact_filled });
+      if (!dryRun) writeChangedRowCells_(sheet, index + 2, original, row);
+    });
+    if (!dryRun && result.updated) {
+      appendAudit_("BACKFILL_DIRECTORY_FROM_REPLY_NOTES", "Directory", "", "", "Karl (editor)", INBOUND_REPLIES_SHEET_NAME, OUTREACH_SHEET_NAME, "Completed", `${result.updated} rows updated from existing Alt email notes.`);
+      bumpReadCacheVersion_(["outreach"]);
+    }
+    return result;
+  } finally {
+    if (lock) lock.releaseLock();
+  }
+}
+
+function previewBackfillDirectoryReplyContacts() { return backfillDirectoryReplyContacts_(true); }
+function backfillDirectoryReplyContacts() {
+  const result = backfillDirectoryReplyContacts_(false);
+  Logger.log(JSON.stringify(result));
+  return result;
+}
+
 /**
  * Records an outcome on the business's replies: the reply it was logged from (handled if still open) and every
  * reply of that account waiting for an outcome. Writes only status and Outcome Logged cells.
@@ -624,7 +724,7 @@ function checkInboundReplies_(trigger) {
   const started = Date.now();
   const properties = PropertiesService.getScriptProperties();
   const sinceMs = Number(properties.getProperty(INBOUND_REPLY_SINCE_PROPERTY) || 0) || (started - INBOUND_REPLY_LOOKBACK_DAYS * 24 * 60 * 60 * 1000);
-  const summary = { at:new Date().toISOString(), trigger:trigger, checked:0, added:0, auto_actions:0, skipped:0, duplicates:0, answered:0, scan_capped:false, error:"", more_available:false };
+  const summary = { at:new Date().toISOString(), trigger:trigger, checked:0, added:0, auto_actions:0, directory_fills:0, skipped:0, duplicates:0, answered:0, scan_capped:false, error:"", more_available:false };
   try {
     const listing = callOutreachMailer_({ action:"listInboxMessages", since_ms:sinceMs });
     const messages = (listing.messages || []).filter(message => message && message.message_id).sort((a, b) => Number(a.received_ms || 0) - Number(b.received_ms || 0));
@@ -730,6 +830,15 @@ function checkInboundReplies_(trigger) {
       const automaticReply = classification.category === "Bounce" || classification.category === "Out of office";
       if (!automaticReply) recordInboundReplyEngagement_(match, "reply", receivedAt);
       else if (classification.category === "Bounce") recordInboundReplyEngagement_(match, "bounce", receivedAt);
+      if (!automaticReply) {
+        try {
+          const fill = applyInboundReplyDirectoryFill_(match, message, classification, receivedAt);
+          if (fill.changed) summary.directory_fills += 1;
+        } catch (error) {
+          // Saving the reply remains more important than a convenience fill; a later backfill can retry it.
+          console.warn(`Directory fill from reply failed: ${String(error && error.message || error)}`);
+        }
+      }
       const stops = applyInboundReplySafeStops_(match, classification, receivedAt);
       if (stops.applied) summary.auto_actions += 1;
       const fields = inboundReplyOutcomeFields_(classification, stops, receivedAt);
@@ -755,7 +864,7 @@ function checkInboundReplies_(trigger) {
         console.error(`Closing answered replies failed: ${String(error && error.message || error)}`);
       }
     }
-    if (summary.added || summary.auto_actions || summary.answered) {
+    if (summary.added || summary.auto_actions || summary.directory_fills || summary.answered) {
       bumpReadCacheVersion_(["outreach"]);
       // On the schedule, rebuild Outreach now so the next page load doesn't wait for it (.84). A staff press of
       // Check for new replies skips this to answer quickly; the page refreshes the stale copy itself.
@@ -770,7 +879,7 @@ function checkInboundReplies_(trigger) {
     cache.remove(INBOUND_REPLY_RUNNING_CACHE_KEY);
   }
   return {
-    message:`Checked ${summary.checked} new Inbox message(s): ${summary.added} repl${summary.added === 1 ? "y" : "ies"} added${summary.auto_actions ? `, ${summary.auto_actions} applied automatically` : ""}${summary.answered ? `, ${summary.answered} answered in Zoho` : ""}.${summary.more_available ? " More messages are waiting; they are picked up on the next check." : ""}${summary.scan_capped ? " The Sent folder scan hit its limit; some answers may not be seen." : ""}`,
+    message:`Checked ${summary.checked} new Inbox message(s): ${summary.added} repl${summary.added === 1 ? "y" : "ies"} added${summary.directory_fills ? `, ${summary.directory_fills} Directory contact${summary.directory_fills === 1 ? "" : "s"} filled` : ""}${summary.auto_actions ? `, ${summary.auto_actions} applied automatically` : ""}${summary.answered ? `, ${summary.answered} answered in Zoho` : ""}.${summary.more_available ? " More messages are waiting; they are picked up on the next check." : ""}${summary.scan_capped ? " The Sent folder scan hit its limit; some answers may not be seen." : ""}`,
     last_run:summary,
   };
 }
