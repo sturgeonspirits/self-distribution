@@ -43,7 +43,8 @@ function directoryQualityIssueRecord_(row, sourceRow) {
     postal_code:String(outreachValue_(row, ["zip", "zip_code", "postal_code"]) || "").trim(),
   };
   record.miles = outreachMiles_(record.miles);
-  record.customer = /customer/i.test(record.relationship) || String(record.status).toLowerCase() === "existing customer";
+  record.customer = OUTREACH_CUSTOMER_HISTORY_RELATIONSHIPS.includes(String(record.relationship || "").trim().toLowerCase())
+    || String(record.status).toLowerCase() === "existing customer";
   record.excluded = ["closed", "do not contact"].includes(record.status.toLowerCase())
     || (record.do_not_email && !customerDoNotEmailIsAutomatic_(record));
   return record;
@@ -117,7 +118,12 @@ function directoryApplyContactFillToValues_(values, headers, source, now) {
         if (source.email_confidence) set(["email_confidence"], String(source.email_confidence));
         if (source.email_source_url && !String(get(["email_source_url"]) || "").trim()) set(["email_source_url"], String(source.email_source_url));
         if (replacingBadAddress) set(["outcome"], "");
-        if (relationship === "prospect" && status === "needs email") set(["status"], "Not contacted");
+        if (relationship === "prospect" && status === "needs email") {
+          const statusAfterFill = String(source.status_after_fill || "Not contacted");
+          set(["status"], statusAfterFill);
+          if (statusAfterFill.toLowerCase() === "replied") set(["next_follow-up", "next_follow_up"], "");
+        }
+        if (replacingBadAddress && String(get(["status"]) || "").trim().toLowerCase() === "not contacted") set(["next_email", "stage"], "Initial");
       }
     } else if (existingEmail !== email) {
       const conflict = `${label} has email ${email}`;

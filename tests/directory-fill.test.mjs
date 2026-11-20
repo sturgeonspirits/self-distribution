@@ -20,7 +20,7 @@ async function contextFor() {
 
 const HEADERS = {
   business_name:0, contact_person:1, email:2, status:3, outcome:4, notes:5, relationship:6,
-  email_confidence:7, record_updated_at:8, email_source_url:9,
+  email_confidence:7, record_updated_at:8, email_source_url:9, next_email:10, next_follow_up:11,
 };
 
 function apply(context, values, source) {
@@ -91,18 +91,21 @@ test("a replacement reply address clears Bad address, while an address recorded 
   assert.equal(bounced[2], "");
 });
 
-test("reply name rules accept a person and reject roles, addresses, and the business name", async () => {
+test("reply name rules accept people and reject roles, business-like display names, addresses, and bad initials", async () => {
   const context = await contextFor();
   const name = expression => JSON.parse(JSON.stringify(vm.runInContext(expression, context)));
-  assert.equal(name(`inboundReplyPersonContactName_('Jamie Smith', 'A Bar', 'owner@abar.example')`), "Jamie Smith");
-  assert.equal(name(`inboundReplyPersonContactName_('Info Desk', 'A Bar', 'info@abar.example')`), "");
+  ["Jim Nigl", "Mary Jo Crooks", "Andrea Reichenberger"].forEach(person => assert.equal(name(`inboundReplyPersonContactName_(${JSON.stringify(person)}, 'A Bar', 'owner@abar.example')`), person));
+  [
+    ["Info Desk", "A Bar"], ["Customer Service", "A Bar"], ["Front Desk", "A Bar"], ["Bottoms Up Oshkosh", "Bottoms Up Oshkosh"],
+    ["Fox River Brewing", "Fox River Brewing Co"], ["Mr Brews Taphouse", "Mr Brews Taphouse"], ["The Hangar", "The Hangar"], ["J Smith", "A Bar"], ["Jim R 3", "A Bar"],
+  ].forEach(([value, business]) => assert.equal(name(`inboundReplyPersonContactName_(${JSON.stringify(value)}, ${JSON.stringify(business)}, 'info@abar.example')`), "", value));
   assert.equal(name(`inboundReplyPersonContactName_('owner@abar.example', 'A Bar', 'owner@abar.example')`), "");
   assert.equal(name(`inboundReplyPersonContactName_('A Bar', 'A Bar', 'owner@abar.example')`), "");
 });
 
-test("a strong person reply fills both details, while a role name and automatic reply do not", async () => {
+test("a strong person reply becomes Replied, while a role name and automatic reply do not fill a person", async () => {
   const context = await contextFor();
-  const values = ["A Bar", "", "", "Needs email", "", "", "Prospect", "", "", ""];
+  const values = ["A Bar", "", "", "Needs email", "", "", "Prospect", "", "", "", "Initial", "2026-11-20"];
   context.__sheet = directorySheet(values);
   vm.runInContext("getOutreachSheet_ = () => __sheet; LockService.getScriptLock = () => ({ tryLock:() => true, releaseLock() {} }); appendAudit_ = () => {};", context);
   const fill = args => JSON.parse(JSON.stringify(vm.runInContext(`applyInboundReplyDirectoryFill_(${JSON.stringify(args.match)}, ${JSON.stringify(args.message)}, ${JSON.stringify(args.classification)}, new Date('2026-11-19T15:00:00-06:00'))`, context)));
@@ -110,14 +113,32 @@ test("a strong person reply fills both details, while a role name and automatic 
   assert.equal(fill({ ...base, message:{ from_name:"Jamie Smith" }, classification:{ category:"Needs reading" } }).changed, true);
   assert.equal(values[1], "Jamie Smith");
   assert.equal(values[2], "owner@abar.example");
+  assert.equal(values[3], "Replied");
+  assert.equal(values[11], "");
+  assert.equal(JSON.parse(JSON.stringify(vm.runInContext(`isReadyOutreach_({ email:'owner@abar.example', status:${JSON.stringify(values[3])}, next_email:'Initial' })`, context))), false, "a reply-filled record cannot re-enter an Initial campaign");
   const roleValues = ["B Bar", "", "", "Needs email", "", "", "Prospect", "", "", ""];
   context.__sheet = directorySheet(roleValues);
   const role = { match:{ record:{ source_row:2, account_id:"ACC-B", business:"B Bar" }, matched_by:"Address we emailed", email:"info@bbar.example", bounce:false } };
   assert.equal(fill({ ...role, message:{ from_name:"Info Desk" }, classification:{ category:"Needs reading" } }).contact_filled, false);
   assert.equal(roleValues[2], "info@bbar.example", "a role inbox still supplies a confirmed address");
+  const unreadValues = ["Unread Bar", "", "", "Needs email", "", "", "Prospect", "", "", "", "Initial", ""];
+  context.__sheet = directorySheet(unreadValues);
+  const unread = { match:{ record:{ source_row:2, account_id:"ACC-U", business:"Unread Bar" }, matched_by:"Address we emailed", email:"owner@unread.example", bounce:false } };
+  assert.equal(fill({ ...unread, message:{ from_name:"Jamie Smith" }, classification:{ category:"Needs reading", no_pause:true } }).changed, true);
+  assert.equal(unreadValues[1], "", "an unsafe Needs reading reply may supply its address but not a guessed person");
+  assert.equal(unreadValues[2], "owner@unread.example");
   const automaticValues = ["C Bar", "", "", "Needs email", "", "", "Prospect", "", "", ""];
   context.__sheet = directorySheet(automaticValues);
   const automatic = { match:{ record:{ source_row:2, account_id:"ACC-C", business:"C Bar" }, matched_by:"Address we emailed", email:"owner@cbar.example", bounce:false } };
   assert.equal(fill({ ...automatic, message:{ from_name:"Casey Smith" }, classification:{ category:"Out of office" } }).changed, false);
   assert.equal(automaticValues[2], "");
+});
+
+test("a non-reply source restores a bounced prospect to Initial when it becomes Not contacted", async () => {
+  const context = await contextFor();
+  const values = ["A Bar", "", "old@abar.example", "Needs email", "Bad address", "", "Prospect", "", "", "", "Follow-up 1", ""];
+  apply(context, values, { email:"owner@abar.example", email_confidence:"Published", label:"web lookup" });
+  assert.equal(values[3], "Not contacted");
+  assert.equal(values[4], "");
+  assert.equal(values[10], "Initial");
 });

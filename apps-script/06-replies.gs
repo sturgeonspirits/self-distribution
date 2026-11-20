@@ -483,14 +483,31 @@ function inboundReplyAltEmailLine_(reply, directoryEmail, priorNotes, dateText) 
   return `${dateText} - Alt email: ${from}${label}`;
 }
 
-const INBOUND_REPLY_CONTACT_ROLE_WORDS = new Set(["info", "office", "manager", "sales", "bar", "staff", "admin", "team"]);
+const INBOUND_REPLY_CONTACT_ROLE_WORDS = new Set([
+  "info", "office", "manager", "sales", "bar", "staff", "admin", "team", "service", "support", "customer",
+  "events", "event", "booking", "bookings", "reservations", "hello", "contact", "orders", "accounting", "billing",
+  "marketing", "desk", "front", "owner", "owners", "management", "general", "mgr", "gm",
+]);
+const INBOUND_REPLY_CONTACT_BUSINESS_WORDS = new Set([
+  "bar", "grill", "pub", "tavern", "saloon", "club", "brewing", "brewery", "taphouse", "tap", "restaurant", "lounge",
+  "inn", "supper", "liquor", "liquors", "market", "wine", "spirits", "bistro", "cafe", "kitchen", "golf", "lanes", "bowl",
+  "hotel", "resort", "marina", "catering", "llc", "inc", "co", "company", "corp",
+]);
+
+function inboundReplyNameWords_(value) {
+  return String(value || "").toLowerCase().replace(/[^a-zà-ÿ'’.\- ]/g, " ").split(/\s+/).map(word => word.replace(/[.'’-]/g, "")).filter(Boolean);
+}
 
 /** A reply display name is useful only when it is plainly a person's name, not an inbox or role. */
 function inboundReplyPersonContactName_(nameValue, businessValue, emailValue) {
   const name = String(nameValue || "").replace(/[\r\n]+/g, " ").replace(/\s+/g, " ").trim();
   if (!name || /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(name)) return "";
-  const words = name.replace(/[^A-Za-zÀ-ÿ'’.\- ]/g, " ").split(/\s+/).filter(Boolean);
-  if (words.length < 2 || words.some(word => INBOUND_REPLY_CONTACT_ROLE_WORDS.has(word.toLowerCase().replace(/[.'’]/g, "")))) return "";
+  if (/\d/.test(name)) return "";
+  const words = inboundReplyNameWords_(name);
+  if (words.length < 2 || words.some(word => INBOUND_REPLY_CONTACT_ROLE_WORDS.has(word) || INBOUND_REPLY_CONTACT_BUSINESS_WORDS.has(word))) return "";
+  if (words.some((word, index) => word.length === 1 && (index === 0 || index === words.length - 1))) return "";
+  const businessWords = new Set(inboundReplyNameWords_(businessValue).filter(word => word.length >= 3 && !["the", "and"].includes(word)));
+  if (words.some(word => word.length >= 3 && businessWords.has(word))) return "";
   if (directoryQualityBusinessKey_(name) === directoryQualityBusinessKey_(businessValue)) return "";
   if (String(emailValue || "").trim().toLowerCase() === name.toLowerCase()) return "";
   return name.slice(0, 120);
@@ -502,7 +519,9 @@ function applyInboundReplyDirectoryFill_(match, message, classification, receive
   if (!record || !INBOUND_REPLY_STRONG_MATCHES.includes(match.matched_by)) return { changed:false };
   if (match.bounce || classification.category === "Bounce" || classification.category === "Out of office") return { changed:false };
   const email = String(match.email || "").trim().toLowerCase();
-  const contact = inboundReplyPersonContactName_(message && message.from_name, record.business, email);
+  const contact = classification.category === "Needs reading" && classification.no_pause
+    ? ""
+    : inboundReplyPersonContactName_(message && message.from_name, record.business, email);
   const lock = LockService.getScriptLock();
   if (!lock.tryLock(10000)) return { changed:false, skipped:"Directory is busy" };
   try {
@@ -517,7 +536,7 @@ function applyInboundReplyDirectoryFill_(match, message, classification, receive
     const businessKey = directoryFillHeaderKey_(headers, ["business", "business_name"]);
     if (accountKey !== undefined && record.account_id && String(values[headers[accountKey]] || "").trim() !== String(record.account_id).trim()) return { changed:false, skipped:"Directory row changed" };
     if (businessKey !== undefined && String(values[headers[businessKey]] || "").trim() !== String(record.business || "").trim()) return { changed:false, skipped:"Directory row changed" };
-    const result = directoryApplyContactFillToValues_(values, headers, { email:email, contact:contact, email_confidence:"Confirmed", label:"email reply" }, receivedAt);
+    const result = directoryApplyContactFillToValues_(values, headers, { email:email, contact:contact, email_confidence:"Confirmed", label:"email reply", status_after_fill:"Replied" }, receivedAt);
     if (!result.changed) return result;
     writeChangedRowCells_(sheet, record.source_row, original, values);
     appendAudit_("FILL_DIRECTORY_FROM_REPLY", "Directory", String(record.account_id || ""), "", "Reply checker", INBOUND_REPLIES_SHEET_NAME, OUTREACH_SHEET_NAME, "Completed", `${result.email_filled ? "Email filled" : ""}${result.email_filled && result.contact_filled ? "; " : ""}${result.contact_filled ? "contact filled" : ""}${result.conflicts.length ? `${(result.email_filled || result.contact_filled) ? "; " : ""}difference noted` : ""}.`);
@@ -558,6 +577,7 @@ function backfillDirectoryReplyContacts_(dryRun) {
         contact:contactCandidate ? contactCandidate.name : "",
         email_confidence:"Confirmed",
         label:"email reply",
+        status_after_fill:"Replied",
       }, new Date());
       if (!fill.changed) return;
       result.updated += 1;

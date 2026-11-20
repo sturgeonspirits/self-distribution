@@ -3,6 +3,13 @@
 Moved out of the Inventory API header (`apps-script/Code.gs`, now `apps-script/01-core.gs`) on 2026-10-17 so the deployed file stays short. Newest first, copied word for word. The header keeps only the current version (`CHANGES IN THIS VERSION`); when a new version is made, move that section to the top of this file.
 
 ```
+CHANGES IN 2026.11.19.91-APP
+Directory cleanup, Part B (Karl, 2026-11-19): trusted person replies now fill blank/bounced Email and blank or
+placeholder Contact Person without overwriting real data; existing Alt email Notes can be previewed then backfilled.
+
+```
+
+```
 CHANGES IN 2026.11.19.90-APP
 Directory quality review fixes (Karl, 2026-11-19): quality work is now limited to the configurable service area,
 blank automatic Miles are filled from ZIP, and the weekly task is normal-priority for only duplicates or customer

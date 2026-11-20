@@ -120,6 +120,13 @@ test("quality work is restricted to the service area, while distant customers re
   assert.equal(report.categories.no_distance.count, 0, "a usable ZIP is filled automatically, not put on Karl's list");
 });
 
+test("customer-history relationships, including Win-back due, stay in Directory quality regardless of distance", async () => {
+  const { context } = await contextFor();
+  const report = call(context, `directoryQualityReportFromRows_([{ business_name:'Returning Bar', email:'', contact_person:'Pat', relationship:'Win-back due', miles:200 }], { service_area_miles:60 })`);
+  assert.deepEqual(report.categories.no_email.rows.map(item => item.name), ["Returning Bar"]);
+  assert.equal(report.outside_service_area.count, 0);
+});
+
 test("a moved address still matches an inbound bounce and the weekly guard only runs once", async () => {
   const { context, properties } = await contextFor();
   const rows = [{ account_id:"A1", business_name:"Bounced Bar", email:"", notes:"2026-11-19 - Bad email (bounced): late@example.com" }];

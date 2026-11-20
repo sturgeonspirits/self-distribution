@@ -1,6 +1,6 @@
 # Sturgeon Distribution Hub — Project Status
 
-Last updated: 2026-11-19
+Last updated: 2026-11-20
 
 Read this file before inspecting the repository or changing the application. Never put secret values in this file.
 
@@ -16,7 +16,7 @@ History, kept word for word:
 | Component | Source version | Deployment state |
 | --- | --- | --- |
 | Netlify web app and staff proxy | `2026.11.19.91-WEB` (page) / `2026.11.19.85-WEB` (staff proxy) / `2026.11.19.81-WEB` (signup page) on `codex/work` | **Page `.91` pending promotion:** Directory cleanup Part A adds Not a buyer to both outcome controls; includes `.90` Directory quality work list, `.89` closed-businesses view and `.88` campaign labels. **Live `.85`** (promoted `17f202a`, 2026-11-19): stale saved copy shown at once while the rebuilt one loads; loads after a save and email links ask for current data; proxy sends refresh/rebuild reads once. Includes `.82`/`.81`. Sign-up `.81`; order and sell sheet `.58`. |
-| Inventory API Apps Script | `2026.11.19.91-APP` on `codex/work` | **`.91` pending deploy (`apps-script/deploy.sh`):** Directory cleanup Part B fills trusted reply email/contact details and adds preview-first Alt-email backfill; includes `.90` review fixes, `.89` Part A and `.88` weekly quality work. **Live `.86`** (deployed 2026-11-19 with clasp, web app version 89): Code.gs split into 12 parts, no behavior change; includes `.84` speed fixes 1-3 and `.83`/`.80`/`.78`/`.76`. |
+| Inventory API Apps Script | `2026.11.20.92-APP` on `codex/work` | **`.92` pending deploy (`apps-script/deploy.sh`):** review fixes for Directory cleanup B: reply fills set Replied and reject unsafe names; customer history stays in quality work. Includes `.91` Part B, `.90` review fixes, `.89` Part A and `.88` weekly quality work. **Live `.86`** (deployed 2026-11-19 with clasp, web app version 89): Code.gs split into 12 parts, no behavior change; includes `.84` speed fixes 1-3 and `.83`/`.80`/`.78`/`.76`. |
 | Distribution Outreach Apps Script | `2026.11.19.37-APP` in `docs/reference/distribution-outreach/Code.gs` | **`.37` pending deploy:** Not a buyer blocks final mailer delivery; `.36` also refuses a recorded hard bounce. **Live `.35`** (deployed 2026-11-05; project **distribution outreach**, attached to **Distribution Hub**). |
 | Public customer Netlify proxy | `2026.10.08.5-WEB` | Deployed 2026-10-08. |
 | Badger invoice parser | `2026.11.17.1` in `docs/reference/badger-parser/Code.gs` | **`2026.11.17.1` pending deploy:** numbers above 170 kept as Badger has them (SS171 and SS0171 are two invoices). `2026.10.08.3` live in the Badger Invoice Tracker since 2026-10-08; daily 5:45 am import reads Badger directly (no PDFs). Watch: a new Badger product spelling may need a row in the Sales Data product table (N–O). |
@@ -57,6 +57,7 @@ Setup steps recorded in the history whose completion was **not re-verified** on 
 
 ## Recent changes (one line each; details in `docs/history/` and git)
 
+- 2026-11-20 `.92-APP` (Codex; Directory cleanup B review fixes, pending review): customer-history relationships stay in quality work; reply-sourced fills become Replied and clear follow-ups; unsafe/business-like sender names are refused. Tests: `tests/directory-fill.test.mjs`, `tests/directory-quality.test.mjs`.
 - 2026-11-19 `.91-APP` (Codex; Directory cleanup B, pending review): trusted person replies fill blank/bounced email and blank/placeholder contact details; preview-first Alt-email Notes backfill reuses the same safe helper. Tests: `tests/directory-fill.test.mjs`.
 - 2026-11-19 `.90-APP` (Codex; Directory quality review fixes, pending review): service-area-scoped work list, weekly ZIP Miles fill (manual values kept), decision-only normal task, locked/rechecked bounce writes, and smaller Outreach payload. Tests: `tests/directory-quality.test.mjs`, `tests/task-manager-sync.test.mjs`.
 - 2026-11-19 `.89-APP` / page `.91-WEB` / outreach `.37-APP` (Codex; Directory cleanup A, pending review): Campaign Settings gets Service area miles (60) through repair; Not a buyer is a strict Do not contact outcome in the Hub and mailer. Tests: `tests/directory-quality.test.mjs`.
