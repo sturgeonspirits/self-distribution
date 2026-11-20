@@ -19,7 +19,7 @@ History, kept word for word:
 | Inventory API Apps Script | `2026.11.20.97-APP` on `codex/work` | **`.97` pending deploy (`apps-script/deploy.sh`):** D review safety fixes; Parts E–F review fixes remain in progress. **Live `.86`** (deployed 2026-11-19 with clasp). |
 | Distribution Outreach Apps Script | `2026.11.19.37-APP` in `docs/reference/distribution-outreach/Code.gs` | **`.37` pending deploy:** Not a buyer blocks final mailer delivery; `.36` also refuses a recorded hard bounce. **Live `.35`** (deployed 2026-11-05; project **distribution outreach**, attached to **Distribution Hub**). |
 | Public customer Netlify proxy | `2026.10.08.5-WEB` | Deployed 2026-10-08. |
-| Badger invoice parser | `2026.11.17.1` in `docs/reference/badger-parser/Code.gs` | **`2026.11.17.1` pending deploy:** numbers above 170 kept as Badger has them (SS171 and SS0171 are two invoices). `2026.10.08.3` live in the Badger Invoice Tracker since 2026-10-08; daily 5:45 am import reads Badger directly (no PDFs). Watch: a new Badger product spelling may need a row in the Sales Data product table (N–O). |
+| Badger invoice parser | `2026.11.20.3` in `docs/reference/badger-parser/Code.gs` | **`2026.11.20.3` pending deploy:** confirmed read-only customer pull maps Badger's live detail shape and refuses unexpected fields. `2026.10.08.3` live in the Badger Invoice Tracker since 2026-10-08. |
 
 Branches: develop on `codex/work`; Netlify production builds `codex/distribution-system-foundation`. Promote reviewed work with `git push origin codex/work:codex/distribution-system-foundation` (fast-forward only); never commit directly to the production branch. Remote: `https://github.com/sturgeonspirits/self-distribution.git`. Karl's Mac checkout is `~/self-distribution-app` (aligned with `codex/work` on 2026-10-17; chat's old commit `0c3cea3` kept on branch `backup/chat-sellsheet-2026-10-15`).
 
@@ -57,6 +57,7 @@ Setup steps recorded in the history whose completion was **not re-verified** on 
 
 ## Recent changes (one line each; details in `docs/history/` and git)
 
+- 2026-11-20 Badger parser `2026.11.20.3` (Codex; D1 fix): confirmed live customer-detail mapping uses addressLine1/addressLine2 and exact response-shape validation. Tests: `tests/badger-parser.test.cjs`.
 - 2026-11-20 `.97-APP` / Badger parser (Codex; D review fixes): daily post-invoice customer pull, shape diagnostics, and dry-run would-fill/difference reporting.
 - 2026-11-20 `.96-APP` (Codex; Directory cleanup F): weekly quality run processes Badger and DOR sources before refreshed reporting.
 - 2026-11-20 `.95-APP` (Codex; Directory cleanup E): DOR Class A/Class B liquor pulls merge by RN, write License Leads and fill matched blank contact/address fields. Tests: `tests/directory-fill.test.mjs`.

@@ -455,6 +455,13 @@ t("the parser can only read Badger (allow-list)", () => {
   assert.ok(!/BADGER_PASSWORD\s*[:=]\s*["']/.test(SRC), "no password in the code");
 });
 
+t("Badger customer detail uses the confirmed live shape and keeps address line two", () => {
+  const e = makeEnv({ ssId: PROD_ID, sheets: prodSheets() });
+  const row = e.ctx.badgerCustomerDetailRow_({ id:"51" }, { id:51, name:"Fox and Crow", resellerNumber:"R", addressLine1:"1 Main St", addressLine2:"Suite B", city:"Ripon", postalCode:"54971", email:"owner@example.com", phone:"920-555-0100" }, "now");
+  assert.deepStrictEqual(Array.from(row), ["51", "Fox and Crow", "owner@example.com", "920-555-0100", "1 Main St, Suite B", "Ripon", "54971", "now"]);
+  assert.throws(() => e.ctx.badgerCustomerDetailRow_({ id:"51" }, { id:51, name:"Bad" }, "now"), /changed shape/);
+});
+
 t("staging Badger import writes only TEST tabs", () => {
   const b = makeBadger([]); bInv(b, "101", "SS0170", "Wagner Market", [{ q: 6, d: "Gin", p: 22 }]);
   const e = makeEnv({ ssId: STAGE_ID, badger: b, props: CREDS });
@@ -481,7 +488,7 @@ t("menu offers the Badger import, Compare, Apply, PDF fallback and daily source 
     .forEach(fn => assert.ok(e.ctx.__menu.items.includes(fn), fn));
   assert.strictEqual(e.ctx.__menu.items[0], "importFromBadger");
   const s = makeEnv({ ssId: STAGE_ID }); s.ctx.onOpen(); assert.ok(!s.ctx.__menu.items.includes("useBadgerForDailyImport"));
-  assert.match(SRC, /const BADGER_PARSER_VERSION = "2026\.11\.20\.2";/);
+  assert.match(SRC, /const BADGER_PARSER_VERSION = "2026\.11\.20\.3";/);
 });
 
 /* -------------------- 2026.10.08.1 review fixes -------------------- */

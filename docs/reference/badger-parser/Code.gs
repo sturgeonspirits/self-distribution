@@ -1,9 +1,13 @@
 /**
  * STURGEON SPIRITS — BADGER INVOICE PARSER
  *
- * VERSION: 2026.11.20.2
+ * VERSION: 2026.11.20.3
  *
- * CHANGES IN THIS VERSION (2026.11.20.2, from 2026.11.17.1)
+ * CHANGES IN THIS VERSION (2026.11.20.3, from 2026.11.20.2)
+ * - Confirmed against Badger's live customer endpoints: customer detail maps addressLine1/addressLine2,
+ *   city, postalCode, email and phone exactly, and fails safely on a changed response shape.
+ *
+ * CHANGES IN 2026.11.20.2 (from 2026.11.17.1)
  * - Monthly, read-only Badger customer pull writes the Badger Customers tab for the Hub's Directory quality work.
  *   It reads only the paged customer list and GET customer/{id}; it never writes Badger.
  *
@@ -131,7 +135,7 @@
  *   (Project Settings > Script Properties). Never put them in this file.
  */
 
-const BADGER_PARSER_VERSION = "2026.11.20.2";
+const BADGER_PARSER_VERSION = "2026.11.20.3";
 
 const PARSER_PRODUCTION_FOLDER_ID = "1ccOfQpk69SLyMYskD2srlNqHCGm1VBJ5";
 
@@ -779,17 +783,20 @@ function fetchBadgerCustomerDetail_(id) {
   return payload && payload.data && typeof payload.data === "object" ? payload.data : payload;
 }
 
-function badgerCustomerField_(row, keys) {
-  for (let i = 0; i < keys.length; i++) if (row && row[keys[i]] !== undefined && row[keys[i]] !== null) return row[keys[i]];
-  return "";
+function badgerCustomerDetailRow_(listRow, detail, pulledAt) {
+  const expected = ["id", "name", "resellerNumber", "addressLine1", "addressLine2", "city", "postalCode", "email", "phone"];
+  const missing = expected.filter(key => detail[key] === undefined);
+  if (missing.length) throw new Error(`Badger customer ${listRow.id} changed shape; missing ${missing.join(", ")}. Keys: ${Object.keys(detail || {}).join(", ")}`);
+  const street = [detail.addressLine1, detail.addressLine2].map(value => String(value || "").trim()).filter(Boolean).join(", ");
+  return [String(detail.id), detail.name, detail.email, detail.phone, street, detail.city, detail.postalCode, pulledAt];
 }
 
 function pullBadgerCustomers() {
   const env = parserEnv_(); const customers = fetchBadgerCustomerList_(); const pulledAt = new Date();
   const rows = customers.map(listRow => {
-    const id = String(badgerCustomerField_(listRow, ["id", "customerId"]) || "").trim();
-    const detail = fetchBadgerCustomerDetail_(id) || {}; const source = Object.assign({}, listRow, detail);
-    return [id, badgerCustomerField_(source, ["name", "customerName", "billToName"]), badgerCustomerField_(source, ["email", "emailAddress", "billToEmail"]), badgerCustomerField_(source, ["phone", "billToPhone"]), badgerCustomerField_(source, ["street", "address", "address1", "billToAddress"]), badgerCustomerField_(source, ["city", "billToCity"]), badgerCustomerField_(source, ["zip", "zipCode", "postalCode", "billToZip"]), pulledAt];
+    const id = String(listRow.id || "").trim();
+    if (!/^\d+$/.test(id)) throw new Error("Badger customer list returned an invalid id.");
+    return badgerCustomerDetailRow_(listRow, fetchBadgerCustomerDetail_(id) || {}, pulledAt);
   });
   const sheet = ensureSheet_(env.ss, env.sheets.customers, BADGER_CUSTOMER_HEADERS);
   sheet.clearContents(); sheet.getRange(1, 1, 1, BADGER_CUSTOMER_HEADERS.length).setValues([BADGER_CUSTOMER_HEADERS]);
