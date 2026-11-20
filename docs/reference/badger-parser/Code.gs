@@ -1,9 +1,13 @@
 /**
  * STURGEON SPIRITS — BADGER INVOICE PARSER
  *
- * VERSION: 2026.11.17.1
+ * VERSION: 2026.11.20.2
  *
- * CHANGES IN THIS VERSION (2026.11.17.1, from 2026.10.08.3)
+ * CHANGES IN THIS VERSION (2026.11.20.2, from 2026.11.17.1)
+ * - Monthly, read-only Badger customer pull writes the Badger Customers tab for the Hub's Directory quality work.
+ *   It reads only the paged customer list and GET customer/{id}; it never writes Badger.
+ *
+ * CHANGES IN 2026.11.17.1 (from 2026.10.08.3)
  * - Invoice numbers above 170 are kept exactly as Badger has them. Invoices ran SS0163-SS0170,
  *   then SS171-SS173 were entered without the leading zero, and on 2026-11-17 the Hub created
  *   SS0171 (Acorn Ridge) as a separate Badger invoice beside SS171 (Fox and Crow). Badger can't
@@ -127,7 +131,7 @@
  *   (Project Settings > Script Properties). Never put them in this file.
  */
 
-const BADGER_PARSER_VERSION = "2026.11.17.1";
+const BADGER_PARSER_VERSION = "2026.11.20.2";
 
 const PARSER_PRODUCTION_FOLDER_ID = "1ccOfQpk69SLyMYskD2srlNqHCGm1VBJ5";
 
@@ -149,7 +153,8 @@ const PARSER_ENVIRONMENTS = Object.freeze({
       previousMonth: "Previous Month",
       state: "Parser State",
       monthlyUnits: "Monthly Units",
-      compare: "Badger Compare"
+      compare: "Badger Compare",
+      customers: "Badger Customers"
     })
   }),
   // STAGING - Badger Invoice Tracker - 2026-09-15
@@ -169,7 +174,8 @@ const PARSER_ENVIRONMENTS = Object.freeze({
       previousMonth: "TEST - Previous Month",
       state: "TEST - Parser State",
       monthlyUnits: "TEST - Monthly Units",
-      compare: "TEST - Badger Compare"
+      compare: "TEST - Badger Compare",
+      customers: "TEST - Badger Customers"
     })
   })
 });
@@ -202,6 +208,9 @@ const PARSER_SETTINGS = Object.freeze({
   BADGER_MAX_DETAILS_PER_RUN: 200,
   BADGER_MAX_CORRECTIONS_PER_RUN: 40, // Apply: leaves time for the Sheets writes after the Badger reads
   BADGER_COMPARE_CONTINUE_MS: 60 * 60 * 1000, // a stopped Compare is continued only within an hour
+  BADGER_CUSTOMER_PAGE_SIZE: 500,
+  BADGER_CUSTOMER_MAX_PAGES: 100,
+  BADGER_CUSTOMER_PULL_PROPERTY: "BADGER_CUSTOMER_LAST_PULL_MONTH",
   BADGER_CHANNEL: "Wholesale (Badger)"
 });
 
@@ -272,6 +281,7 @@ function onOpen() {
   if (env) {
     menu
       .addItem("1. Import from Badger now", "importFromBadger")
+      .addItem("Pull Badger customers now", "pullBadgerCustomers")
       .addItem("2. Rebuild Monthly Summary", "rebuildMonthlySummary")
       .addItem("3. Rebuild Previous Month", "rebuildPreviousMonthSummary")
       .addItem("4. Rebuild Monthly Units", "rebuildMonthlyUnits")
@@ -619,8 +629,8 @@ function badgerParserUrl_(method, path) {
   const m = String(method || "").toUpperCase();
   const p = String(path || "");
   const allowed =
-    (m === "POST" && (p === "/Login/Authenticate" || p === "/Api/invoice/Paged")) ||
-    (m === "GET" && /^\/api\/invoice\/\d+$/.test(p));
+    (m === "POST" && (p === "/Login/Authenticate" || p === "/Api/invoice/Paged" || p === "/Api/customer/Paged")) ||
+    (m === "GET" && (/^\/api\/invoice\/\d+$/.test(p) || /^\/api\/customer\/\d+$/.test(p)));
   if (!allowed) throw new Error(`Badger request ${m} ${p} is not allowed (the parser only reads Badger).`);
   return PARSER_SETTINGS.BADGER_BASE_URL + p;
 }
@@ -736,6 +746,57 @@ function fetchBadgerInvoiceDetail_(badgerId) {
   const detail = payload && payload.data ? payload.data : payload;
   if (!detail || !Array.isArray(detail.lines)) throw new Error(`Badger invoice ${badgerId} returned no line list.`);
   return detail;
+}
+
+const BADGER_CUSTOMER_HEADERS = ["Badger Customer ID", "Name", "Email", "Phone", "Street", "City", "ZIP", "Pulled At"];
+
+function fetchBadgerCustomerList_() {
+  const customers = []; const seen = new Set(); let total = null;
+  for (let page = 0; page < PARSER_SETTINGS.BADGER_CUSTOMER_MAX_PAGES; page++) {
+    const payload = badgerReadJson_("POST", "/Api/customer/Paged", { pageSize:PARSER_SETTINGS.BADGER_CUSTOMER_PAGE_SIZE, page:page, sorts:[], filters:[], parameters:{} }, "Badger customer list");
+    const data = payload && payload.data; const count = Number(data && data.totalCount);
+    if (!data || !Number.isInteger(count) || count < 0 || !Array.isArray(data.data)) throw new Error("Badger customer list returned an unexpected response shape.");
+    if (total === null) total = count;
+    if (total !== count) throw new Error("Badger customer count changed while reading; nothing was written. Run again.");
+    data.data.forEach(customer => {
+      const id = String(customer && customer.id || "").trim();
+      if (!/^\d+$/.test(id) || seen.has(id)) throw new Error("Badger customer list returned an incomplete or repeated record.");
+      seen.add(id); customers.push(customer);
+    });
+    if (customers.length === total) return customers;
+    if (!data.data.length || customers.length > total) throw new Error("Badger customer list returned an incomplete page sequence.");
+  }
+  throw new Error("Badger customer list exceeded the safe page limit.");
+}
+
+function fetchBadgerCustomerDetail_(id) {
+  const payload = badgerReadJson_("GET", `/api/customer/${id}`, null, `Badger customer ${id}`);
+  return payload && payload.data && typeof payload.data === "object" ? payload.data : payload;
+}
+
+function badgerCustomerField_(row, keys) {
+  for (let i = 0; i < keys.length; i++) if (row && row[keys[i]] !== undefined && row[keys[i]] !== null) return row[keys[i]];
+  return "";
+}
+
+function pullBadgerCustomers() {
+  const env = parserEnv_(); const customers = fetchBadgerCustomerList_(); const pulledAt = new Date();
+  const rows = customers.map(listRow => {
+    const id = String(badgerCustomerField_(listRow, ["id", "customerId"]) || "").trim();
+    const detail = fetchBadgerCustomerDetail_(id) || {}; const source = Object.assign({}, listRow, detail);
+    return [id, badgerCustomerField_(source, ["name", "customerName", "billToName"]), badgerCustomerField_(source, ["email", "emailAddress", "billToEmail"]), badgerCustomerField_(source, ["phone", "billToPhone"]), badgerCustomerField_(source, ["street", "address", "address1", "billToAddress"]), badgerCustomerField_(source, ["city", "billToCity"]), badgerCustomerField_(source, ["zip", "zipCode", "postalCode", "billToZip"]), pulledAt];
+  });
+  const sheet = ensureSheet_(env.ss, env.sheets.customers, BADGER_CUSTOMER_HEADERS);
+  sheet.clearContents(); sheet.getRange(1, 1, 1, BADGER_CUSTOMER_HEADERS.length).setValues([BADGER_CUSTOMER_HEADERS]);
+  if (rows.length) sheet.getRange(2, 1, rows.length, BADGER_CUSTOMER_HEADERS.length).setValues(rows);
+  PropertiesService.getScriptProperties().setProperty(PARSER_SETTINGS.BADGER_CUSTOMER_PULL_PROPERTY, Utilities.formatDate(pulledAt, PARSER_SETTINGS.AUTO_IMPORT_TIMEZONE, "yyyy-MM"));
+  return notify_(`Pulled ${rows.length} Badger customers (read-only).`, "Badger Customers");
+}
+
+function maybePullBadgerCustomersMonthly() {
+  const month = Utilities.formatDate(new Date(), PARSER_SETTINGS.AUTO_IMPORT_TIMEZONE, "yyyy-MM");
+  if (PropertiesService.getScriptProperties().getProperty(PARSER_SETTINGS.BADGER_CUSTOMER_PULL_PROPERTY) === month) return { skipped:"Already pulled this month." };
+  return { message:pullBadgerCustomers() };
 }
 
 /**

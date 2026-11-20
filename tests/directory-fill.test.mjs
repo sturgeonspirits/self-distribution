@@ -20,7 +20,7 @@ async function contextFor() {
 
 const HEADERS = {
   business_name:0, contact_person:1, email:2, status:3, outcome:4, notes:5, relationship:6,
-  email_confidence:7, record_updated_at:8, email_source_url:9, next_email:10, next_follow_up:11,
+  email_confidence:7, record_updated_at:8, email_source_url:9, next_email:10, next_follow_up:11, phone:12, street:13, city:14, zip:15,
 };
 
 function apply(context, values, source) {
@@ -156,4 +156,17 @@ test("Log contact fills missing details, keeps a different value by default, and
   assert.match(existing[5], /Log contact has email jamie@abar\.example/);
   apply(context, existing, { email:"jamie@abar.example", contact:"Jamie Smith", email_confidence:"Confirmed", label:"Log contact", replace_email:true, replace_contact:true });
   assert.deepEqual(existing.slice(1, 3), ["Jamie Smith", "jamie@abar.example"]);
+});
+
+test("Badger fills blank contact fields but records differences and refuses known bad addresses", async () => {
+  const context = await contextFor();
+  const values = ["Acorn Ridge", "", "", "Needs email", "", "", "Prospect", "", "", "", "", ""];
+  apply(context, values, { email:"buyer@acorn.example", email_confidence:"Confirmed", label:"Badger", fields:{ phone:"920-555-0100", street:"1 Main St", city:"Oshkosh", zip:"54901" } });
+  assert.equal(values[2], "buyer@acorn.example");
+  const fields = JSON.parse(JSON.stringify(vm.runInContext(`badgerCustomerFields_({ zip:'94968', street:'x', city:'x' }, 'Acorn Ridge')`, context)));
+  assert.equal(fields.zip, "", "known Badger typo ZIP is never offered to the shared filler");
+  const differing = ["A Bar", "", "", "Not contacted", "", "", "Prospect", "", "", "", "", ""];
+  apply(context, differing, { label:"Badger", fields:{ phone:"920-555-0100" } });
+  apply(context, differing, { label:"Badger", fields:{ phone:"920-555-9999" } });
+  assert.match(differing[5], /Badger has phone 920-555-9999/);
 });

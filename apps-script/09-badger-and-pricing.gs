@@ -415,6 +415,46 @@ function apiSyncBadgerStatus_(p) {
   return syncBadgerStatus_(authenticatedActor_(p, "Sturgeon Distribution Hub"));
 }
 
+function badgerCustomerRows_() {
+  const sheet = SpreadsheetApp.openById(BADGER_TRACKER_SPREADSHEET_ID).getSheetByName(BADGER_CUSTOMERS_SHEET_NAME);
+  if (!sheet || sheet.getLastRow() < 2) return [];
+  const h = getHeaderMap_(sheet);
+  return sheet.getRange(2, 1, sheet.getLastRow() - 1, sheet.getLastColumn()).getValues().map(row => ({
+    id:String(row[h.badger_customer_id] || "").trim(), name:String(row[h.name] || "").trim(), email:String(row[h.email] || "").trim(), phone:String(row[h.phone] || "").trim(), street:String(row[h.street] || "").trim(), city:String(row[h.city] || "").trim(), zip:String(row[h.zip] || "").trim(),
+  })).filter(row => row.id && row.name);
+}
+
+function badgerCustomerDirectoryMatch_(customer, identity, aliases) {
+  const byId = (identity.rows || []).find(row => String(row.badger_customer_id || "").trim() === customer.id);
+  if (byId) return identity.by_id.get(String(byId.account_id || "")) || null;
+  const exact = aliases.by_name.get(canonicalBadgerAliasName_(customer.name));
+  if (exact && exact.size === 1) return identity.by_id.get(Array.from(exact)[0]) || null;
+  const loose = aliases.by_key.get(normalizeCustomerMatchKey_(customer.name));
+  return loose && loose.size === 1 ? identity.by_id.get(Array.from(loose)[0]) || null : null;
+}
+
+function badgerCustomerFields_(customer, business) {
+  const knownBadZip = ["94968", "53901"].includes(String(customer.zip || "").replace(/\D/g, ""));
+  const foxOldAddress = /fox\s+and\s+crow/i.test(String(business || "")) && /ripon/i.test(`${customer.street} ${customer.city}`);
+  return { phone:customer.phone, street:foxOldAddress ? "" : customer.street, city:foxOldAddress ? "" : customer.city, zip:knownBadZip || foxOldAddress ? "" : customer.zip };
+}
+
+function processBadgerCustomers_(options) {
+  const dryRun = !!options?.dryRun; const identity = accountIdentityLookup_(); const aliases = readBadgerCustomerAliases_();
+  const result = { matched:0, filled:0, differences:0, skipped:0 };
+  badgerCustomerRows_().forEach(customer => {
+    const record = badgerCustomerDirectoryMatch_(customer, identity, aliases);
+    if (!record) { result.skipped += 1; return; }
+    result.matched += 1;
+    const source = { email:customer.email, contact:"", email_confidence:"Confirmed", label:"Badger", fields:badgerCustomerFields_(customer, record.business) };
+    if (dryRun) return;
+    const fill = directoryApplyContactFillForRecord_(record, source, new Date());
+    if (fill.changed) result.filled += 1;
+    result.differences += fill.conflicts?.length || 0;
+  });
+  return result;
+}
+
 function badgerMoneyToCents_(value) {
   const normalized = String(value ?? "").replace(/[$,\s]/g, "").replace(/^\((.*)\)$/, "-$1");
   const amount = Number(normalized);

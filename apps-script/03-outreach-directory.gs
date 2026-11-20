@@ -150,6 +150,19 @@ function directoryApplyContactFillToValues_(values, headers, source, now) {
     }
   }
 
+  const extraAliases = { phone:["phone", "phone_number", "telephone"], street:["street", "address", "address_1"], city:["city", "town"], zip:["zip", "zip_code", "postal_code"] };
+  Object.keys(source?.fields || {}).forEach(field => {
+    const aliases = extraAliases[field]; const incoming = String(source.fields[field] || "").trim();
+    if (!aliases || !incoming) return;
+    const existing = String(get(aliases) || "").trim();
+    if (!existing && set(aliases, incoming)) {
+      result.changed = true; fillLines.push(`${field} ${incoming}`);
+    } else if (existing && existing.toLowerCase() !== incoming.toLowerCase()) {
+      const conflict = `${label} has ${field} ${incoming}`;
+      if (!notes.toLowerCase().includes(conflict.toLowerCase())) { conflictLines.push(conflict); result.conflicts.push(`${field} ${incoming}`); }
+    }
+  });
+
   const noteLines = [];
   if (fillLines.length) noteLines.push(`${date} - Filled ${fillLines.join(" and ")} from ${label}.`);
   conflictLines.forEach(line => noteLines.push(`${date} - ${line}.`));

@@ -3,6 +3,13 @@
 Moved out of the Inventory API header (`apps-script/Code.gs`, now `apps-script/01-core.gs`) on 2026-10-17 so the deployed file stays short. Newest first, copied word for word. The header keeps only the current version (`CHANGES IN THIS VERSION`); when a new version is made, move that section to the top of this file.
 
 ```
+CHANGES IN 2026.11.20.93-APP
+Directory cleanup, Part C (Karl, 2026-11-20): Log contact can safely fill or explicitly replace Directory contact
+details through the shared helper; paper customer applications fill matched Directory blanks the same way.
+
+```
+
+```
 CHANGES IN 2026.11.20.92-APP
 Directory cleanup review fixes (Karl, 2026-11-20): Directory quality recognizes all customer-history relationships;
 reply fills set Replied and clear follow-up dates, while other fills restore Initial; unsafe/business-like reply

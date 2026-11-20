@@ -448,7 +448,9 @@ t("an expired Badger session logs in again once; a rejected login stops the run"
 t("the parser can only read Badger (allow-list)", () => {
   const e = makeEnv({ ssId: PROD_ID, sheets: prodSheets() });
   assert.match(e.ctx.badgerParserUrl_("GET", "/api/invoice/123"), /\/api\/invoice\/123$/);
-  ["POST /api/invoice", "GET /api/customer/5", "GET /api/invoice/validateforcreate?number=0170&date=2026-10-08", "PUT /api/invoice/123", "DELETE /api/invoice/123", "POST /Api/Invoice/Paged/orderorinvoicenumber"]
+  assert.match(e.ctx.badgerParserUrl_("GET", "/api/customer/5"), /\/api\/customer\/5$/);
+  assert.match(e.ctx.badgerParserUrl_("POST", "/Api/customer/Paged"), /\/Api\/customer\/Paged$/);
+  ["POST /api/invoice", "GET /api/invoice/validateforcreate?number=0170&date=2026-10-08", "PUT /api/invoice/123", "DELETE /api/invoice/123", "POST /Api/Invoice/Paged/orderorinvoicenumber"]
     .forEach(q => { const [m, p] = q.split(" "); assert.throws(() => e.ctx.badgerParserUrl_(m, p), /not allowed/, q); });
   assert.ok(!/BADGER_PASSWORD\s*[:=]\s*["']/.test(SRC), "no password in the code");
 });
@@ -475,11 +477,11 @@ t("daily source defaults to PDF, can switch to Badger (production only), and sho
 
 t("menu offers the Badger import, Compare, Apply, PDF fallback and daily source items", () => {
   const e = makeEnv({ ssId: PROD_ID, sheets: prodSheets() }); e.ctx.onOpen();
-  ["importFromBadger", "compareWithBadger", "applyBadgerCorrections", "importInvoicePdfs", "rebuildMonthlyUnits", "useBadgerForDailyImport", "usePdfForDailyImport", "showParserStatus"]
+  ["importFromBadger", "pullBadgerCustomers", "compareWithBadger", "applyBadgerCorrections", "importInvoicePdfs", "rebuildMonthlyUnits", "useBadgerForDailyImport", "usePdfForDailyImport", "showParserStatus"]
     .forEach(fn => assert.ok(e.ctx.__menu.items.includes(fn), fn));
   assert.strictEqual(e.ctx.__menu.items[0], "importFromBadger");
   const s = makeEnv({ ssId: STAGE_ID }); s.ctx.onOpen(); assert.ok(!s.ctx.__menu.items.includes("useBadgerForDailyImport"));
-  assert.match(SRC, /const BADGER_PARSER_VERSION = "2026\.11\.17\.1";/);
+  assert.match(SRC, /const BADGER_PARSER_VERSION = "2026\.11\.20\.2";/);
 });
 
 /* -------------------- 2026.10.08.1 review fixes -------------------- */
