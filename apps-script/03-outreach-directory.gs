@@ -110,11 +110,11 @@ function directoryApplyContactFillToValues_(values, headers, source, now) {
   if (email && !directoryFillEmailAllowed_(email, notes)) return result;
 
   if (email) {
-    if (!existingEmail || replacingBadAddress) {
+    if (!existingEmail || replacingBadAddress || (source && source.replace_email && existingEmail !== email)) {
       if (set(["email", "email_address"], email)) {
         result.changed = true;
         result.email_filled = true;
-        fillLines.push(`email ${email}`);
+        fillLines.push(`${existingEmail ? "replacement email" : "email"} ${email}`);
         if (source.email_confidence) set(["email_confidence"], String(source.email_confidence));
         if (source.email_source_url && !String(get(["email_source_url"]) || "").trim()) set(["email_source_url"], String(source.email_source_url));
         if (replacingBadAddress) set(["outcome"], "");
@@ -135,11 +135,11 @@ function directoryApplyContactFillToValues_(values, headers, source, now) {
   }
 
   if (contact) {
-    if (!existingContact || directoryContactIsPlaceholder_(existingContact, business)) {
+    if (!existingContact || directoryContactIsPlaceholder_(existingContact, business) || (source && source.replace_contact && existingContact.toLowerCase() !== contact.toLowerCase())) {
       if (set(["contact", "contact_name", "contact_person", "first_name"], contact)) {
         result.changed = true;
         result.contact_filled = true;
-        fillLines.push(`contact person ${contact}`);
+        fillLines.push(`${existingContact ? "replacement contact person" : "contact person"} ${contact}`);
       }
     } else if (existingContact.toLowerCase() !== contact.toLowerCase()) {
       const conflict = `${label} has contact ${contact}`;
@@ -159,6 +159,24 @@ function directoryApplyContactFillToValues_(values, headers, source, now) {
     result.notes_added = true;
   }
   if (result.changed) set(["record_updated_at"], now || new Date());
+  return result;
+}
+
+/** Applies the shared contact fill safely to one re-checked Directory row while its caller owns the script lock. */
+function directoryApplyContactFillForRecord_(record, source, now) {
+  if (!record || !Number.isInteger(Number(record.source_row))) return { changed:false, skipped:"Directory row missing" };
+  const sheet = getOutreachSheet_(OUTREACH_SHEET_NAME);
+  const rowNumber = Number(record.source_row);
+  if (rowNumber < 2 || rowNumber > sheet.getLastRow()) return { changed:false, skipped:"Directory row missing" };
+  const headers = getHeaderMap_(sheet);
+  const values = sheet.getRange(rowNumber, 1, 1, sheet.getLastColumn()).getValues()[0];
+  const original = values.slice();
+  const accountKey = directoryFillHeaderKey_(headers, ["account_id", "account id"]);
+  const businessKey = directoryFillHeaderKey_(headers, ["business", "business_name"]);
+  if (accountKey !== undefined && record.account_id && String(values[headers[accountKey]] || "").trim() !== String(record.account_id).trim()) return { changed:false, skipped:"Directory row changed" };
+  if (businessKey !== undefined && record.business && String(values[headers[businessKey]] || "").trim() !== String(record.business).trim()) return { changed:false, skipped:"Directory row changed" };
+  const result = directoryApplyContactFillToValues_(values, headers, source, now || new Date());
+  if (result.changed) writeChangedRowCells_(sheet, rowNumber, original, values);
   return result;
 }
 

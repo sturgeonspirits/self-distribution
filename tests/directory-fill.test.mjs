@@ -142,3 +142,18 @@ test("a non-reply source restores a bounced prospect to Initial when it becomes 
   assert.equal(values[4], "");
   assert.equal(values[10], "Initial");
 });
+
+test("Log contact fills missing details, keeps a different value by default, and replaces only when asked", async () => {
+  const context = await contextFor();
+  const blank = ["A Bar", "", "", "Needs email", "", "", "Prospect", "", "", "", "Initial", ""];
+  apply(context, blank, { email:"jamie@abar.example", contact:"Jamie Smith", email_confidence:"Confirmed", label:"Log contact" });
+  assert.equal(blank[1], "Jamie Smith");
+  assert.equal(blank[2], "jamie@abar.example");
+  assert.equal(blank[3], "Not contacted");
+  const existing = ["A Bar", "Alex Jones", "alex@abar.example", "Not contacted", "", "", "Prospect", "", "", "", "", ""];
+  apply(context, existing, { email:"jamie@abar.example", contact:"Jamie Smith", email_confidence:"Confirmed", label:"Log contact" });
+  assert.deepEqual(existing.slice(1, 3), ["Alex Jones", "alex@abar.example"]);
+  assert.match(existing[5], /Log contact has email jamie@abar\.example/);
+  apply(context, existing, { email:"jamie@abar.example", contact:"Jamie Smith", email_confidence:"Confirmed", label:"Log contact", replace_email:true, replace_contact:true });
+  assert.deepEqual(existing.slice(1, 3), ["Jamie Smith", "jamie@abar.example"]);
+});

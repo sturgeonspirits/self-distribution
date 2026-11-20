@@ -1,11 +1,10 @@
 /*********************************
  * Inventory API (JSON) for Netlify. Part 1 of 12: core.
- * App version: 2026.11.20.92-APP
+ * App version: 2026.11.20.93-APP
  *
  * CHANGES IN THIS VERSION
- * Directory cleanup review fixes (Karl, 2026-11-20): Directory quality recognizes all customer-history relationships;
- * reply fills set Replied and clear follow-up dates, while other fills restore Initial; unsafe/business-like reply
- * display names are refused.
+ * Directory cleanup, Part C (Karl, 2026-11-20): Log contact can safely fill or explicitly replace Directory contact
+ * details through the shared helper; paper customer applications fill matched Directory blanks the same way.
  *
  * PARTS (load in this order; filePushOrder in .clasp.json): 01-core (config, cache, sheets, setup, relay, request router),
  * 02-inventory, 03-outreach-directory, 04-campaigns, 05-sequences, 06-replies, 07-sending, 08-applications,
@@ -20,7 +19,7 @@
  * Earlier version notes: docs/history/inventory-api-changes.md (move this version's notes there when the version changes).
  *********************************/
 
-const APP_VERSION = "2026.11.20.92-APP";
+const APP_VERSION = "2026.11.20.93-APP";
 
 const SHEET_NAMES = {
   STORES: "Stores",

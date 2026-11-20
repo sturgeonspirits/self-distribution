@@ -1091,12 +1091,20 @@ function apiLogOutreachContact_(p) {
     const originalValues = values.slice();
     const current = {}; Object.keys(h).forEach(key => current[key] = values[h[key]]);
     const business = String(outreachValue_(current, ["business", "business_name"]) || "").trim();
-    const email = String(outreachValue_(current, ["email", "email_address"]) || "").trim();
     const accountId = String(current.account_id || "").trim();
     if (business !== String(p.business || "").trim()) throw new Error("Lead changed in the sheet. Refresh and try again.");
     const set = (keys, value) => { const key = keys.find(key => h[key] !== undefined); if (key) values[h[key]] = value; };
     const notes = publicText_(p.notes || "", 4000, "Notes");
     const contactPerson = publicText_(p.contact_person || "", 120, "Contact person");
+    const contactEmail = p.contact_email ? publicEmail_(p.contact_email, "Contact email", false) : "";
+    const directoryFill = directoryApplyContactFillToValues_(values, h, {
+      email:contactEmail,
+      contact:contactPerson,
+      email_confidence:"Confirmed",
+      label:"Log contact",
+      replace_email:toBool_(p.replace_contact_email),
+      replace_contact:toBool_(p.replace_contact_person),
+    }, contactDate);
     const noteDetail = [channel, contactPerson && `with ${contactPerson}`, notes].filter(Boolean).join(" — ");
     let automaticFollowUpText = "";
     if (outcome) {
@@ -1119,28 +1127,34 @@ function apiLogOutreachContact_(p) {
         automaticFollowUpText = Utilities.formatDate(automaticFollowUp, Session.getScriptTimeZone(), "yyyy-MM-dd");
       }
     }
-    const priorNotes = String(outreachValue_(current, ["notes"]) || "").trim();
+    const priorNotes = String(outreachValue_(values, ["notes"]) || "").trim();
     const datedNote = `${Utilities.formatDate(contactDate, Session.getScriptTimeZone(), "yyyy-MM-dd")} — ${noteDetail || "Contact logged"}`;
     set(["notes"], priorNotes ? `${priorNotes}\n${datedNote}` : datedNote);
     set(["record_updated_at"], new Date());
     writeChangedRowCells_(sheet, rowNumber, originalValues, values);
+    const directoryValue = keys => {
+      const key = keys.find(name => h[name] !== undefined);
+      return key ? values[h[key]] : "";
+    };
+    const finalEmail = String(directoryValue(["email", "email_address"]) || "").trim();
+    const finalContact = String(directoryValue(["contact", "contact_name", "contact_person", "first_name"]) || "").trim();
     if (outcome && outreachIsCocktailListOutcome_(outcome)) {
       upsertNewsletterFromCocktailReply_({
         account_id:accountId,
         source_row:rowNumber,
         business:business,
-        contact:String(outreachValue_(current, ["contact", "contact_name", "contact_person", "first_name"]) || "").trim(),
-        email:email,
+        contact:finalContact,
+        email:finalEmail,
         relationship:String(outreachValue_(current, ["relationship"]) || "").trim(),
       }, contactDate);
     }
-    if (outcome === "Unsubscribed") unsubscribeNewsletterContactByEmail_(email, String(p.staff_name || "Outreach contact log"));
+    if (outcome === "Unsubscribed") unsubscribeNewsletterContactByEmail_(finalEmail, String(p.staff_name || "Outreach contact log"));
     const activity = getOutreachSheet_(OUTREACH_ACTIVITY_SHEET_NAME);
     const ah = ensureHeaderColumns_(activity, [ACCOUNT_ID_HEADER]);
     const activityRow = Array(activity.getLastColumn()).fill("");
     const activitySet = (key, value) => { if (ah[key] !== undefined) activityRow[ah[key]] = value; };
     activitySet("timestamp", contactDate); activitySet("account_id", accountId); activitySet("business", business);
-    activitySet("intended_recipient", email); activitySet("message_stage", channel); activitySet("subject", "Staff contact log");
+    activitySet("intended_recipient", finalEmail); activitySet("message_stage", channel); activitySet("subject", "Staff contact log");
     activitySet("result", "CONTACT LOGGED"); activitySet("error/detail", noteDetail); activitySet("error_detail", noteDetail);
     activitySet("staff", String(p.staff_name)); activitySet("mailer_version", APP_VERSION);
     activity.appendRow(activityRow);
@@ -1149,7 +1163,7 @@ function apiLogOutreachContact_(p) {
       try { recordInboundReplyOutcome_(accountId, outcome, String(p.staff_name || "Staff"), ""); }
       catch (error) { console.warn(`Contact logged; replies not updated: ${String(error.message || error)}`); }
     }
-    return { message:"Contact logged.", account_id:accountId, source_row:rowNumber, status:outcome ? outreachStatusForOutcome_(outcome) : (channel === "Email outside app" ? "Sent" : String(outreachValue_(current, ["status"]) || "")), next_follow_up:followUpText || automaticFollowUpText };
+    return { message:"Contact logged.", account_id:accountId, source_row:rowNumber, status:outcome ? outreachStatusForOutcome_(outcome) : (channel === "Email outside app" ? "Sent" : String(directoryValue(["status"]) || "")), next_follow_up:followUpText || automaticFollowUpText, directory_fill:directoryFill };
   } finally { lock.releaseLock(); }
 }
 

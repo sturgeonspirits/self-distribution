@@ -1,10 +1,10 @@
 <!doctype html>
-<!-- App version: 2026.11.19.91-WEB -->
+<!-- App version: 2026.11.20.92-WEB -->
 <html>
 <head>
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover"/>
-  <meta name="app-version" content="2026.11.19.91-WEB" />
+  <meta name="app-version" content="2026.11.20.92-WEB" />
   <meta name="theme-color" content="#536f77" />
   <link rel="icon" href="/assets/distribution-hub-icon.svg" type="image/svg+xml" />
   <link rel="manifest" href="/site.webmanifest" />
@@ -2676,7 +2676,7 @@
 
   <dialog id="contactLogDialog">
     <div class="dlgHeader"><div><div class="dlgTitle">Log contact</div><div class="smallMuted" id="contactLogBusiness"></div></div><button id="closeContactLogBtn" type="button">Close</button></div>
-    <div class="dlgBody"><div class="workflowEditGrid"><div><label for="contactLogDate">Date</label><input id="contactLogDate" type="date" /></div><div><label for="contactLogChannel">Channel</label><select id="contactLogChannel"><option>In person</option><option>Phone</option><option>Email outside app</option><option>Event/tasting</option><option>Other</option></select></div><div><label for="contactLogStaff">Staff member</label><input id="contactLogStaff" /></div><div><label for="contactLogPerson">Contact person</label><input id="contactLogPerson" /></div><div><label for="contactLogOutcome">Outcome (optional)</label><select id="contactLogOutcome"><option value="">No outcome yet</option><option>Interested</option><option>Schedule tasting</option><option>Tasting visit</option><option>Wants cocktail list</option><option>Follow up later</option><option>Visit scheduled</option><option>Visited</option><option value="Visit in person">Visit in person (to do)</option><option>Wrong contact</option><option>Bad address</option><option>Closed</option><option>Not interested</option><option>Not a buyer</option><option>Unsubscribed</option></select></div><div><label for="contactLogFollowUp">Next follow-up</label><input id="contactLogFollowUp" type="date" /></div><div class="full"><label for="contactLogNotes">Notes</label><textarea id="contactLogNotes" placeholder="What happened? For a tasting, include the cocktail and who poured it."></textarea></div></div><div class="status" id="contactLogStatus"></div><div class="dlgActions"><button class="primary" id="saveContactLogBtn" type="button">Save contact</button></div></div>
+    <div class="dlgBody"><div class="workflowEditGrid"><div><label for="contactLogDate">Date</label><input id="contactLogDate" type="date" /></div><div><label for="contactLogChannel">Channel</label><select id="contactLogChannel"><option>In person</option><option>Phone</option><option>Email outside app</option><option>Event/tasting</option><option>Other</option></select></div><div><label for="contactLogStaff">Staff member</label><input id="contactLogStaff" /></div><div><label for="contactLogPerson">Contact person</label><input id="contactLogPerson" /></div><div><label for="contactLogEmail">Email (optional)</label><input id="contactLogEmail" type="email" /></div><div><label for="contactLogOutcome">Outcome (optional)</label><select id="contactLogOutcome"><option value="">No outcome yet</option><option>Interested</option><option>Schedule tasting</option><option>Tasting visit</option><option>Wants cocktail list</option><option>Follow up later</option><option>Visit scheduled</option><option>Visited</option><option value="Visit in person">Visit in person (to do)</option><option>Wrong contact</option><option>Bad address</option><option>Closed</option><option>Not interested</option><option>Not a buyer</option><option>Unsubscribed</option></select></div><div><label for="contactLogFollowUp">Next follow-up</label><input id="contactLogFollowUp" type="date" /></div><div class="full" id="contactLogExisting" hidden><label><input id="contactLogReplaceDetails" type="checkbox" /> Replace the different contact details already in the Directory</label><div class="smallMuted" id="contactLogExistingText"></div></div><div class="full"><label for="contactLogNotes">Notes</label><textarea id="contactLogNotes" placeholder="What happened? For a tasting, include the cocktail and who poured it."></textarea></div></div><div class="status" id="contactLogStatus"></div><div class="dlgActions"><button class="primary" id="saveContactLogBtn" type="button">Save contact</button></div></div>
   </dialog>
 
   <dialog id="businessDetailDialog">
@@ -2807,7 +2807,7 @@
 
   <footer style="max-width:1200px;margin:18px auto 120px;padding:0 12px;text-align:center;color:#6b7280;font-size:12px;">
     Designed by <a href="https://scriptspirit.dev" target="_blank" rel="noopener noreferrer" style="color:#1d4ed8;text-decoration:none;font-weight:700;">Script Spirit</a>
-<span id="appVersionFooter"> • Version 2026.11.19.91-WEB</span>
+<span id="appVersionFooter"> • Version 2026.11.20.92-WEB</span>
   </footer>
 
 
@@ -2830,7 +2830,7 @@
   window.addEventListener("unhandledrejection", e => console.error("Unhandled promise rejection:", e.reason));
   window.addEventListener("error", e => console.error("Unhandled error:", e.error || e.message));
   const $ = (id) => document.getElementById(id);
-  const APP_VERSION = "2026.11.19.91-WEB";
+  const APP_VERSION = "2026.11.20.92-WEB";
   $("appVersionFooter").textContent = ` • Version ${APP_VERSION}`;
   function screenCacheKey(screen){ return `distribution_hub:${APP_VERSION}:${staffSession?.email || "unknown"}:${screen}`; }
   function readScreenCache(screen){
@@ -7055,11 +7055,27 @@
     $("contactLogChannel").value = "In person";
     $("contactLogStaff").value = $("outreachStaffName").value.trim() || localStorage.getItem("customer_staff_name") || "";
     $("contactLogPerson").value = fullRecord.contact || "";
+    $("contactLogEmail").value = fullRecord.email || "";
+    $("contactLogReplaceDetails").checked = false;
     $("contactLogOutcome").value = "";
     $("contactLogFollowUp").value = "";
     $("contactLogNotes").value = "";
     $("contactLogStatus").textContent = "";
+    updateContactLogReplacementChoice();
     if (!$("contactLogDialog").open) $("contactLogDialog").showModal();
+  }
+
+  function updateContactLogReplacementChoice(){
+    const record = selectedOutreachRecord;
+    if (!record) return;
+    const enteredName = $("contactLogPerson").value.trim().toLowerCase();
+    const enteredEmail = $("contactLogEmail").value.trim().toLowerCase();
+    const currentName = String(record.contact || "").trim();
+    const currentEmail = String(record.email || "").trim();
+    const differs = (!!enteredName && !!currentName && enteredName !== currentName.toLowerCase()) || (!!enteredEmail && !!currentEmail && enteredEmail !== currentEmail.toLowerCase());
+    $("contactLogExisting").hidden = !differs;
+    $("contactLogExistingText").textContent = differs ? `Current Directory details: ${[currentName, currentEmail].filter(Boolean).join(" • ")}. Leave this unchecked to keep them and add your details to Notes.` : "";
+    if (!differs) $("contactLogReplaceDetails").checked = false;
   }
 
   async function saveContactLog(){
@@ -7071,7 +7087,7 @@
     button.disabled = true;
     $("contactLogStatus").textContent = "Saving contact...";
     try {
-      const res = await staffApiPost({ action:"logOutreachContact", account_id:record.account_id, source_row:record.source_row, business:record.business, contact_date:$("contactLogDate").value, channel:$("contactLogChannel").value, staff_name:staffName, contact_person:$("contactLogPerson").value.trim(), outcome:$("contactLogOutcome").value, next_follow_up:$("contactLogFollowUp").value, notes:$("contactLogNotes").value.trim() });
+      const res = await staffApiPost({ action:"logOutreachContact", account_id:record.account_id, source_row:record.source_row, business:record.business, contact_date:$("contactLogDate").value, channel:$("contactLogChannel").value, staff_name:staffName, contact_person:$("contactLogPerson").value.trim(), contact_email:$("contactLogEmail").value.trim(), replace_contact_person:$("contactLogReplaceDetails").checked, replace_contact_email:$("contactLogReplaceDetails").checked, outcome:$("contactLogOutcome").value, next_follow_up:$("contactLogFollowUp").value, notes:$("contactLogNotes").value.trim() });
       if (!res.ok) throw new Error(res.error || "Contact could not be saved.");
       if ($("contactLogOutcome").value && repliesAwaitingOutcomeFor(record.account_id)) loadOutreachReplies().catch(() => {});
       patchOutreachRecordLocally(record.source_row, { status:res.status || record.status, next_follow_up:res.next_follow_up || record.next_follow_up, last_emailed:$("contactLogChannel").value === "Email outside app" ? $("contactLogDate").value : record.last_emailed, next_email:$("contactLogChannel").value === "Email outside app" && String(record.next_email || "").toLowerCase() === "initial" ? "Follow-up 1" : record.next_email });
@@ -9205,6 +9221,8 @@
   });
   $("closeOutcomeBtn").addEventListener("click", () => $("outcomeDialog").close());
   $("closeContactLogBtn").addEventListener("click", () => $("contactLogDialog").close());
+  $("contactLogPerson").addEventListener("input", updateContactLogReplacementChoice);
+  $("contactLogEmail").addEventListener("input", updateContactLogReplacementChoice);
   $("saveContactLogBtn").addEventListener("click", saveContactLog);
   $("outcomeDialog").addEventListener("close", () => { outreachOutcomeOpenRequest += 1; outcomeReplyId = ""; });
   $("outreachReviewSubject").addEventListener("input", updateOutreachDraftState);

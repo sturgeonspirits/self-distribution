@@ -302,6 +302,9 @@ function apiSubmitCustomerApplication_(p, entry) {
     set("submission_source", paper ? "Paper form" : "Online form");
     set("entered_by", paper ? entry.entered_by : "");
     sheet.appendRow(row);
+    const directoryFill = paper && link.record
+      ? directoryApplyContactFillForRecord_(link.record, { email:application.primary_email, contact:application.primary_contact_name, email_confidence:"Confirmed", label:"paper application" }, now)
+      : { changed:false };
     upsertNewsletterFromApplication_(application);
     const applicationRow = sheet.getLastRow();
     if (paper) {
@@ -322,8 +325,8 @@ function apiSubmitCustomerApplication_(p, entry) {
       updateIntegrationJob_(notificationJob, notification.status === "Sent" ? "Completed" : "Retry", notification.error);
     }
     completeSubmissionJournal_(journal, "Completed", application.application_id, "");
-    appendAudit_("SUBMIT_APPLICATION", "Application", application.application_id, application.account_id, paper ? entry.entered_by : "Public customer form", paper ? "Paper customer form" : "Customer application", CUSTOMER_APPLICATIONS_SHEET_NAME, "Completed", application.account_link_status);
-    return { message:"Application received for review.", application_id:application.application_id, account_link_status:application.account_link_status };
+    appendAudit_("SUBMIT_APPLICATION", "Application", application.application_id, application.account_id, paper ? entry.entered_by : "Public customer form", paper ? "Paper customer form" : "Customer application", CUSTOMER_APPLICATIONS_SHEET_NAME, "Completed", `${application.account_link_status}${directoryFill.changed ? "; Directory blanks filled" : ""}`);
+    return { message:"Application received for review.", application_id:application.application_id, account_link_status:application.account_link_status, directory_fill:directoryFill };
   } catch (error) {
     if (journal) completeSubmissionJournal_(journal, "Needs recovery", "", error.message || error);
     throw error;

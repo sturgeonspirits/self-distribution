@@ -40,6 +40,7 @@ test("a paper form is marked as one and skips the new-application email", () => 
   assert.match(fn, /if \(!paper && String\(p\.form_trap/);
   assert.match(backend, /submission_source:String\(row\.submission_source \|\| "Online form"\),\s*entered_by:String\(row\.entered_by \|\| ""\),/);
   assert.match(index, /label:"Received as", value:record\.submission_source === "Paper form"/);
+  assert.match(fn, /directoryApplyContactFillForRecord_\(link\.record, \{ email:application\.primary_email, contact:application\.primary_contact_name, email_confidence:"Confirmed", label:"paper application" \}, now\)/);
 });
 
 test("the new-application email opens the application in the Hub", () => {
