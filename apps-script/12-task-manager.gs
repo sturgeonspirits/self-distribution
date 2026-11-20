@@ -60,9 +60,6 @@ function runTaskManagerSync() {
   // Once a day, build drafts for sequence steps that came due, so their review tasks are in this same sync.
   try { maybeRunSequenceStepCheck_(new Date()); }
   catch (error) { console.error(`Sequence step check failed: ${String(error && error.message || error)}`); }
-  // Once a week, clear hard-bounced addresses and capture the Directory quality report before task reconciliation.
-  try { maybeRunDirectoryQualityCheck_(new Date()); }
-  catch (error) { console.error(`Directory quality check failed: ${String(error && error.message || error)}`); }
   try { syncTaskManager_({}); }
   catch (error) { console.error(`Task manager sync failed: ${String(error && error.message || error)}`); }
 }

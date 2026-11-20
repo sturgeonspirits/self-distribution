@@ -220,8 +220,8 @@ function fetchDorLiquorRecords_() {
 }
 function processDorLiquorLicenses_(options) {
   const dryRun = !!options?.dryRun; const records = dorLiquorRecords_(options?.records || fetchDorLiquorRecords_()); const ss = getOutreachSs_();
-  const sheet = ensureSheet_(ss, LICENSE_LEADS_SHEET_NAME, DOR_LICENSE_LEADS_HEADERS); const identity = accountIdentityLookup_(); const props = PropertiesService.getScriptProperties();
-  const lastUpdated = String(props.getProperty(DOR_LAST_UPDATED_PROPERTY) || ""); const h = getHeaderMap_(sheet); const seen = new Set(sheet.getLastRow() < 2 ? [] : sheet.getRange(2, 1, sheet.getLastRow() - 1, sheet.getLastColumn()).getValues().map(row => `${row[h.dor_rn]}::${row[h.last_updated]}`));
+  const sheet = dryRun ? ss.getSheetByName(LICENSE_LEADS_SHEET_NAME) : ensureSheet_(ss, LICENSE_LEADS_SHEET_NAME, DOR_LICENSE_LEADS_HEADERS); const identity = accountIdentityLookup_(); const props = PropertiesService.getScriptProperties();
+  const lastUpdated = String(props.getProperty(DOR_LAST_UPDATED_PROPERTY) || ""); const h = sheet ? getHeaderMap_(sheet) : {}; const seen = new Set(!sheet || sheet.getLastRow() < 2 ? [] : sheet.getRange(2, 1, sheet.getLastRow() - 1, sheet.getLastColumn()).getValues().map(row => `${row[h.dor_rn]}::${row[h.last_updated]}`));
   const logRows = []; let added = 0, filled = 0, differences = 0, outside = 0, skipped = 0, newest = lastUpdated;
   records.forEach(item => {
     const updated = String(item.lastUpdated || ""); const key = `${item.rn}::${updated}`;
@@ -383,11 +383,9 @@ function directoryQualityCheck_(options) {
     const settings = getOutreachCampaignSettings_();
     const reportOptions = { service_area_miles:outreachServiceAreaMiles_(settings) };
     const mileage = dryRun ? { updated:0, manual_kept:0, no_zip:0, unknown_zip:0, unknown_zips:[] } : directoryQualityFillBlankMiles_(sheet, headers, rows);
-    let badger = { skipped:"Preview does not read Badger Customers." }, dor = { skipped:"Preview does not fetch DOR licenses." };
-    if (!dryRun) {
-      try { badger = processBadgerCustomers_({ dryRun:false }); } catch (error) { badger = { error:String(error.message || error) }; }
-      try { dor = processDorLiquorLicenses_({ dryRun:false }); } catch (error) { dor = { error:String(error.message || error) }; }
-    }
+    let badger, dor;
+    try { badger = processBadgerCustomers_({ dryRun:dryRun }); } catch (error) { badger = { error:String(error.message || error) }; }
+    try { dor = processDorLiquorLicenses_({ dryRun:dryRun }); } catch (error) { dor = { error:String(error.message || error) }; }
     let report = directoryQualityReportFromRows_(rows, reportOptions);
     const moved = [];
     const notesKey = ["notes"].find(key => headers[key] !== undefined);
@@ -432,6 +430,13 @@ function directoryQualityCheck_(options) {
 
 function runDirectoryQualityCheck() { return directoryQualityCheck_({}); }
 function previewDirectoryQualityCheck() { return directoryQualityCheck_({ dryRun:true }); }
+const DIRECTORY_QUALITY_TRIGGER_HANDLER = "runScheduledDirectoryQualityCheck";
+function installDirectoryQualityCheck() {
+  ScriptApp.getProjectTriggers().filter(trigger => trigger.getHandlerFunction() === DIRECTORY_QUALITY_TRIGGER_HANDLER).forEach(trigger => ScriptApp.deleteTrigger(trigger));
+  ScriptApp.newTrigger(DIRECTORY_QUALITY_TRIGGER_HANDLER).timeBased().inTimezone(Session.getScriptTimeZone() || "America/Chicago").onWeekDay(ScriptApp.WeekDay.MONDAY).atHour(6).nearMinute(20).create();
+  return { message:"Weekly Directory quality check installed for Monday about 6:20 AM Central." };
+}
+function runScheduledDirectoryQualityCheck() { return maybeRunDirectoryQualityCheck_(new Date()); }
 
 function maybeRunDirectoryQualityCheck_(now) {
   const date = now instanceof Date ? now : new Date();
