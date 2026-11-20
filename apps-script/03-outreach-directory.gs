@@ -176,6 +176,7 @@ function directoryApplyContactFillToValues_(values, headers, source, now) {
     result.notes_added = true;
   }
   if (result.changed) set(["record_updated_at"], now || new Date());
+  result.details = noteLines.slice();
   return result;
 }
 
@@ -339,7 +340,9 @@ function processDorLiquorLicenses_(options) {
   const identity = options?.identity || accountIdentityLookup_(); const directory = options?.directory || getOutreachSheet_(OUTREACH_SHEET_NAME); const props = PropertiesService.getScriptProperties();
   const lastUpdated = String(props.getProperty(DOR_LAST_UPDATED_PROPERTY) || ""); const h = logSheet ? getHeaderMap_(logSheet) : {};
   const seen = new Set(!logSheet || logSheet.getLastRow() < 2 ? [] : logSheet.getRange(2, 1, logSheet.getLastRow() - 1, logSheet.getLastColumn()).getValues().map(row => `${row[h.license_key]}::${row[h.last_updated]}`));
-  const fills = [], adds = [], logRows = [], examples = { would_add:[], would_fill:[], differences:[] };
+  const fills = [], adds = [], logRows = [], examples = { would_add:[], would_fill:[], differences:[], possibly_closed:[] };
+  // A preview lists everything so Karl and Claude can check the whole first run; a real run keeps 25 of each.
+  const exampleCap = dryRun ? Infinity : 25;
   let outside = 0, skipped = 0, newest = lastUpdated, stopped = false;
   const serviceArea = outreachServiceAreaMiles_(); const shouldStop = options?.shouldStop || (() => false);
   records.forEach(item => {
@@ -359,8 +362,8 @@ function processDorLiquorLicenses_(options) {
     else if (match) {
       const preview = directoryApplyFillToRecordCopy_(match, source, now);
       fills.push({ record:match, source:source, preview:preview });
-      if (preview.changed) { result = "Filled contact"; if (examples.would_fill.length < 25) examples.would_fill.push({ license_key:item.license_key, business:match.business, fill:preview }); }
-      if (preview.conflicts?.length && examples.differences.length < 25) examples.differences.push({ license_key:item.license_key, business:match.business, conflicts:preview.conflicts });
+      if (preview.changed) { result = "Filled contact"; if (examples.would_fill.length < exampleCap) examples.would_fill.push({ license_key:item.license_key, business:match.business, city:item.city, detail:(preview.details || []).join(" ") }); }
+      if (preview.conflicts?.length && examples.differences.length < exampleCap) examples.differences.push({ license_key:item.license_key, business:match.business, city:item.city, conflicts:preview.conflicts });
     } else {
       try {
         const input = validateBusinessInput_({ business_name:item.businessName || item.entityName, contact:item.agentName, city:item.city, address:item.address, zip:item.zip, state:"WI", county:item.county, lead_source:"WI DOR license list", relationship:"Prospect", status:"Needs email", notes:`${Utilities.formatDate(now, Session.getScriptTimeZone(), "yyyy-MM-dd")} - WI DOR license: ${types}.` });
@@ -369,7 +372,7 @@ function processDorLiquorLicenses_(options) {
         else {
           const accountId = permanentId_("ACC"); const sourceRow = directory.getLastRow() + adds.length + 1;
           adds.push({ input:input, account_id:accountId }); directoryIdentityAdd_(identity, input, accountId, sourceRow);
-          result = "Added"; if (examples.would_add.length < 25) examples.would_add.push({ license_key:item.license_key, business:input.business_name, city:input.city });
+          result = "Added"; if (examples.would_add.length < exampleCap) examples.would_add.push({ license_key:item.license_key, business:input.business_name, city:input.city, detail:[types, item.agentName ? `agent ${item.agentName}` : "", item.address].filter(Boolean).join("; ") });
         }
       } catch (error) { skipped++; result = `Skipped: ${String(error.message || error).slice(0, 200)}`; }
     }
@@ -378,6 +381,7 @@ function processDorLiquorLicenses_(options) {
   });
   const closedEntries = completePull ? dorPossiblyClosedEntries_(logSheet, h, records, identity, now) : [];
   const previews = fills.map(fill => fill.preview); let applied = previews; let closedApplied = closedEntries.map(entry => directoryApplyFillToRecordCopy_(entry.record, entry.source, now));
+  closedEntries.forEach((entry, index) => { if (closedApplied[index]?.changed && examples.possibly_closed.length < exampleCap) examples.possibly_closed.push({ business:entry.record.business, city:entry.record.city, detail:entry.source.note }); });
   if (!dryRun) {
     applied = directoryApplyContactFillsBatch_(fills.map(fill => ({ record:fill.record, source:fill.source })), now);
     closedApplied = directoryApplyContactFillsBatch_(closedEntries, now);
@@ -596,7 +600,49 @@ function directoryQualityCheck_(options) {
 function runDirectoryQualityCheck() { return directoryQualityCheck_({}); }
 /** Editor command for Karl to run again until the initial DOR catch-up completes. */
 function runDirectoryQualityCheckNow() { return directoryQualityCheck_({}); }
-function previewDirectoryQualityCheck() { return directoryQualityCheck_({ dryRun:true }); }
+/**
+ * Editor command: runs the weekly check and the reply-note backfill without changing the Directory, and writes
+ * everything they would do to the "Directory Preview" tab (rewritten each time) so it can be checked in full.
+ */
+function previewDirectoryQualityCheck() {
+  const quality = directoryQualityCheck_({ dryRun:true });
+  let backfill;
+  try { backfill = backfillDirectoryReplyContacts_(true); } catch (error) { backfill = { error:String(error.message || error) }; }
+  const rows = directoryPreviewRows_(quality, backfill);
+  const sheet = ensureSheet_(getOutreachSs_(), DIRECTORY_PREVIEW_SHEET_NAME, DIRECTORY_PREVIEW_HEADERS);
+  sheet.getRange(2, 1, Math.max(1, sheet.getLastRow() - 1), DIRECTORY_PREVIEW_HEADERS.length).clearContent();
+  if (rows.length) sheet.getRange(2, 1, rows.length, DIRECTORY_PREVIEW_HEADERS.length).setValues(rows);
+  console.log(`Directory preview written: ${rows.length} rows in the "${DIRECTORY_PREVIEW_SHEET_NAME}" tab.`);
+  return { rows:rows.length, quality:quality, backfill:backfill };
+}
+const DIRECTORY_PREVIEW_SHEET_NAME = "Directory Preview";
+const DIRECTORY_PREVIEW_HEADERS = ["Section", "Business", "City", "Detail"];
+/** Flattens the preview results into tab rows: a count line per section, then one line per business. */
+function directoryPreviewRows_(quality, backfill) {
+  const rows = [];
+  const text = value => String(value === undefined || value === null ? "" : value).slice(0, 2000);
+  const section = (name, items, map) => {
+    const list = Array.isArray(items) ? items : [];
+    rows.push([name, `${list.length} total`, "", ""]);
+    list.forEach(item => rows.push([name].concat(map(item).map(text))));
+  };
+  const sourceError = (name, source) => { if (source && source.error) rows.push([name, "ERROR", "", text(source.error)]); };
+  const dor = quality && quality.dor || {}; const badger = quality && quality.badger || {}; const examples = dor.examples || {};
+  rows.push(["Summary", "Previewed at", "", text(quality && quality.ran_at)]);
+  rows.push(["Summary", "DOR liquor licensees read", "", text(dor.records)]);
+  rows.push(["Summary", "DOR outside the service area", "", text(dor.outside)]);
+  rows.push(["Summary", "Blank Miles fillable from ZIP", "", text(quality && quality.mileage && quality.mileage.updated)]);
+  sourceError("DOR", dor); sourceError("Badger", badger); sourceError("Reply backfill", backfill);
+  section("DOR: would add", examples.would_add, item => [item.business, item.city, item.detail]);
+  section("DOR: would fill", examples.would_fill, item => [item.business, item.city, item.detail]);
+  section("DOR: differences noted", examples.differences, item => [item.business, item.city, (item.conflicts || []).join("; ")]);
+  section("DOR: possibly closed", examples.possibly_closed, item => [item.business, item.city, item.detail]);
+  section("Badger: would fill", (badger.examples || []).filter(item => item.fill && (item.fill.email_filled || item.fill.contact_filled || (item.fill.details || []).some(line => / - Filled /.test(line)))), item => [item.business, "", (item.fill.details || []).join(" ")]);
+  section("Badger: differences noted", (badger.examples || []).filter(item => item.fill && item.fill.conflicts && item.fill.conflicts.length), item => [item.business, "", item.fill.conflicts.join("; ")]);
+  section("Bounced emails to move to Notes", quality && quality.moved_bad_emails, item => [item.name, "", item.email]);
+  section("Reply notes: would fill", backfill && backfill.examples, item => [item.business, "", item.detail || [item.email ? "email" : "", item.contact ? "contact" : ""].filter(Boolean).join(" and ")]);
+  return rows;
+}
 const DIRECTORY_QUALITY_TRIGGER_HANDLER = "runScheduledDirectoryQualityCheck";
 function installDirectoryQualityCheck() {
   ScriptApp.getProjectTriggers().filter(trigger => trigger.getHandlerFunction() === DIRECTORY_QUALITY_TRIGGER_HANDLER).forEach(trigger => ScriptApp.deleteTrigger(trigger));

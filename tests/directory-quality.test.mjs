@@ -268,3 +268,21 @@ test("a license at a new rn is not reprocessed or flagged closed; a missing one 
   assert.equal(result.possibly_closed, 1, "only Gone Tavern, absent from a complete pull, is possibly closed");
   assert.equal(run(false).possibly_closed, 0, "an incomplete pull never flags a business as closed");
 });
+
+test("the preview tab lists every planned change by section, with a count line per section", async () => {
+  const { context } = await contextFor();
+  const quality = {
+    ran_at:"2026-11-20T18:00:00Z", mileage:{ updated:3 },
+    moved_bad_emails:[{ name:"Chester V's", email:"old@example.com" }],
+    badger:{ examples:[{ business:"Acorn Ridge", fill:{ email_filled:true, conflicts:[], details:["2026-11-20 - Filled email a@b.com from Badger."] } }] },
+    dor:{ records:5, outside:2, examples:{ would_add:[{ business:"New Bar", city:"Oshkosh", detail:"Class B liquor" }, { business:"Other Bar", city:"Neenah", detail:"Class A liquor" }], would_fill:[], differences:[], possibly_closed:[{ business:"Gone Tavern", city:"Oshkosh", detail:"Possibly closed" }] } },
+  };
+  const rows = call(context, `directoryPreviewRows_(${JSON.stringify(quality)}, { examples:[{ business:"Fox River", detail:"Filled contact person Jay Supple" }] })`);
+  const section = name => rows.filter(row => row[0] === name);
+  assert.deepEqual(section("DOR: would add").map(row => row[1]), ["2 total", "New Bar", "Other Bar"]);
+  assert.equal(section("DOR: possibly closed")[1][1], "Gone Tavern");
+  assert.equal(section("Badger: would fill")[1][1], "Acorn Ridge");
+  assert.equal(section("Bounced emails to move to Notes")[1][3], "old@example.com");
+  assert.equal(section("Reply notes: would fill")[1][3], "Filled contact person Jay Supple");
+  assert.ok(rows.every(row => row.length === 4));
+});

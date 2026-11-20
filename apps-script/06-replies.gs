@@ -583,7 +583,7 @@ function backfillDirectoryReplyContacts_(dryRun) {
       result.updated += 1;
       result.email_filled += fill.email_filled ? 1 : 0;
       result.contact_filled += fill.contact_filled ? 1 : 0;
-      if (result.examples.length < 25) result.examples.push({ row:index + 2, business:String(business || "").trim(), email:fill.email_filled, contact:fill.contact_filled });
+      if (result.examples.length < (dryRun ? Infinity : 25)) result.examples.push({ row:index + 2, business:String(business || "").trim(), email:fill.email_filled, contact:fill.contact_filled, detail:(fill.details || []).join(" ") });
       if (!dryRun) writeChangedRowCells_(sheet, index + 2, original, row);
     });
     if (!dryRun && result.updated) {

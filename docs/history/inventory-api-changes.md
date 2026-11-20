@@ -3,6 +3,15 @@
 Moved out of the Inventory API header (`apps-script/Code.gs`, now `apps-script/01-core.gs`) on 2026-10-17 so the deployed file stays short. Newest first, copied word for word. The header keeps only the current version (`CHANGES IN THIS VERSION`); when a new version is made, move that section to the top of this file.
 
 ```
+CHANGES IN 2026.11.20.101-APP
+DOR license identity (Claude, 2026-11-20): DOR's rn is only a row position within one search (both pulls number
+from 1), so licenses are now keyed by legal name, trade name, street, ZIP and municipality. The key merges the
+Class A and Class B pulls, checkpoints License Leads ("License Key" column) and drives possibly-closed, which now
+only runs against a complete pull.
+
+```
+
+```
 CHANGES IN 2026.11.20.100-APP
 Directory cleanup E/F hardening (Karl, 2026-11-20): prefetches DOR and Badger before locking, batches only changed
 Directory cells/new DOR rows, resumes DOR safely before the runtime limit, previews real fill/add/difference actions,

@@ -450,7 +450,7 @@ function processBadgerCustomers_(options) {
     const source = { email:customer.email, contact:"", email_confidence:"Confirmed", label:"Badger", fields:badgerCustomerFields_(customer, record.business) };
     const fill = directoryApplyFillToRecordCopy_(record, source, new Date());
     fills.push({ record:record, source:source, preview:fill });
-    if (fill.changed && result.examples.length < 25) result.examples.push({ business:record.business, fill:fill });
+    if (fill.changed && result.examples.length < (dryRun ? Infinity : 25)) result.examples.push({ business:record.business, fill:fill });
   });
   const applied = dryRun ? fills.map(fill => fill.preview) : directoryApplyContactFillsBatch_(fills.map(fill => ({ record:fill.record, source:fill.source })), new Date());
   applied.forEach(fill => { if (fill.changed) { result.filled += 1; result.would_fill += 1; } result.differences += fill.conflicts?.length || 0; });
