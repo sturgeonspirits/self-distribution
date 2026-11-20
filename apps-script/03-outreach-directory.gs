@@ -193,6 +193,39 @@ function directoryApplyContactFillForRecord_(record, source, now) {
   return result;
 }
 
+const DOR_LIQUOR_URL = "https://ww2.revenue.wi.gov/WebServicesPublicWeb/rest/liquor/all";
+const DOR_LICENSE_LEADS_HEADERS = ["DOR RN", "Business Name", "Agent", "Street", "City", "ZIP", "License Types", "Last Updated", "Result", "Processed At"];
+function dorLiquorRecords_(records) {
+  const seen = new Map();
+  (records || []).forEach(row => { if (row && String(row.rn || "").trim() && (String(row.AL) === "1" || String(row.BL) === "1")) seen.set(String(row.rn), row); });
+  return Array.from(seen.values());
+}
+function fetchDorLiquorRecords_() {
+  const all = [];
+  ["AL", "BL"].forEach(flag => {
+    let low = 0, count = null;
+    while (count === null || low < count) {
+      const url = `${DOR_LIQUOR_URL}?search=&city=&sort=0&AB=0&AC=0&AL=${flag === "AL" ? 1 : 0}&BB=0&BL=${flag === "BL" ? 1 : 0}&CW=0&rn_low=${low}`;
+      const payload = JSON.parse(UrlFetchApp.fetch(url, { muteHttpExceptions:true }).getContentText());
+      const rows = Array.isArray(payload.result) ? payload.result : (Array.isArray(payload.data) ? payload.data : []); count = Number(payload.count);
+      if (!Number.isFinite(count)) throw new Error("DOR liquor list returned no count."); all.push.apply(all, rows); low += 250;
+      if (!rows.length && low < count) throw new Error("DOR liquor list paging stopped early.");
+    }
+  }); return dorLiquorRecords_(all);
+}
+function processDorLiquorLicenses_(options) {
+  const dryRun = !!options?.dryRun; const records = options?.records || fetchDorLiquorRecords_(); const ss = getOutreachSs_();
+  const sheet = ensureSheet_(ss, LICENSE_LEADS_SHEET_NAME, DOR_LICENSE_LEADS_HEADERS); const identity = accountIdentityLookup_(); let added = 0, filled = 0, outside = 0;
+  dorLiquorRecords_(records).forEach(item => {
+    const miles = milesForZip_(String(item.zip || "")); if (!Number.isFinite(miles) || miles > outreachServiceAreaMiles_()) { outside++; return; }
+    const match = findIdentityMatch_(identity, "", item.businessName || item.entityName, "", item.city).record;
+    const types = [String(item.AL) === "1" && "Class A liquor", String(item.BL) === "1" && "Class B liquor"].filter(Boolean).join(", ");
+    if (match) { if (!dryRun) { const fill = directoryApplyContactFillForRecord_(match, { contact:item.agentName, label:"WI DOR license list", fields:{ street:item.address, city:item.city, zip:item.zip } }, new Date()); if (fill.changed) filled++; } }
+    else { added++; }
+    if (!dryRun) sheet.appendRow([String(item.rn), item.businessName || item.entityName || "", item.agentName || "", item.address || "", item.city || "", item.zip || "", types, item.lastUpdated || "", match ? "Matched" : "Would add", new Date()]);
+  }); return { records:dorLiquorRecords_(records).length, filled, added, outside };
+}
+
 /** Builds the quality report from rows already read from the Directory. It never writes. */
 function directoryQualityReportFromRows_(rows, options) {
   const configuredMiles = Number(options && options.service_area_miles);

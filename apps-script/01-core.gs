@@ -1,10 +1,10 @@
 /*********************************
  * Inventory API (JSON) for Netlify. Part 1 of 12: core.
- * App version: 2026.11.20.94-APP
+ * App version: 2026.11.20.95-APP
  *
  * CHANGES IN THIS VERSION
- * Directory cleanup, Part D (Karl, 2026-11-20): matched Badger customer records safely fill missing Directory contact,
- * email, phone and address details through the shared helper; known bad Badger ZIP/address values are refused.
+ * Directory cleanup, Part E (Karl, 2026-11-20): Wisconsin DOR liquor-only license pulls merge Class A and Class B
+ * records, log them in License Leads, and use the shared helper for matched contact/address blanks.
  *
  * PARTS (load in this order; filePushOrder in .clasp.json): 01-core (config, cache, sheets, setup, relay, request router),
  * 02-inventory, 03-outreach-directory, 04-campaigns, 05-sequences, 06-replies, 07-sending, 08-applications,
@@ -19,7 +19,7 @@
  * Earlier version notes: docs/history/inventory-api-changes.md (move this version's notes there when the version changes).
  *********************************/
 
-const APP_VERSION = "2026.11.20.94-APP";
+const APP_VERSION = "2026.11.20.95-APP";
 
 const SHEET_NAMES = {
   STORES: "Stores",
@@ -64,6 +64,7 @@ const BADGER_INVOICE_LINKS_SHEET_NAME = "Badger Invoice Links";
 const BADGER_CUSTOMER_ALIASES_SHEET_NAME = "Badger Customer Aliases";
 const BADGER_CUSTOMER_ALIAS_HEADERS = ["Badger Customer Name", "Normalized Key", "Account ID", "Source", "Linked At", "Linked By", "App Version"];
 const BADGER_CUSTOMERS_SHEET_NAME = "Badger Customers";
+const LICENSE_LEADS_SHEET_NAME = "License Leads";
 const BADGER_PAYMENT_REMINDERS_SHEET_NAME = "Badger Payment Reminders";
 const BADGER_PAYMENT_REMINDER_MIN_DAYS = 7;
 const BADGER_PAYMENT_REMINDER_MIN_AGE_CONFIG_KEY = "payment_reminder_min_age_days";
