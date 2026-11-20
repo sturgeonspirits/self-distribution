@@ -369,6 +369,11 @@ function directoryQualityCheck_(options) {
     const settings = getOutreachCampaignSettings_();
     const reportOptions = { service_area_miles:outreachServiceAreaMiles_(settings) };
     const mileage = dryRun ? { updated:0, manual_kept:0, no_zip:0, unknown_zip:0, unknown_zips:[] } : directoryQualityFillBlankMiles_(sheet, headers, rows);
+    let badger = { skipped:"Preview does not read Badger Customers." }, dor = { skipped:"Preview does not fetch DOR licenses." };
+    if (!dryRun) {
+      try { badger = processBadgerCustomers_({ dryRun:false }); } catch (error) { badger = { error:String(error.message || error) }; }
+      try { dor = processDorLiquorLicenses_({ dryRun:false }); } catch (error) { dor = { error:String(error.message || error) }; }
+    }
     let report = directoryQualityReportFromRows_(rows, reportOptions);
     const moved = [];
     const notesKey = ["notes"].find(key => headers[key] !== undefined);
@@ -403,7 +408,7 @@ function directoryQualityCheck_(options) {
     if (!dryRun && moved.length) {
       appendAudit_("DIRECTORY_QUALITY_BAD_EMAILS_MOVED", "Directory", "weekly-check", "", "System", OUTREACH_SHEET_NAME, OUTREACH_SHEET_NAME, "Completed", `${moved.length} address(es) moved: ${moved.map(item => `${item.name} (row ${item.row})`).join(", ")}`);
     }
-    const result = { ran_at:now.toISOString(), dry_run:dryRun, moved_bad_emails:moved, mileage:mileage, report:report };
+    const result = { ran_at:now.toISOString(), dry_run:dryRun, moved_bad_emails:moved, mileage:mileage, badger:badger, dor:dor, report:report };
     console.log(JSON.stringify({ event:"directory_quality_check", dry_run:dryRun, total:report.total, outside_service_area:report.outside_service_area.count, moved_bad_emails:moved.length, mileage:mileage, businesses:moved.map(item => item.name) }));
     return result;
   } finally {

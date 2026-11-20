@@ -16,7 +16,7 @@ History, kept word for word:
 | Component | Source version | Deployment state |
 | --- | --- | --- |
 | Netlify web app and staff proxy | `2026.11.20.92-WEB` (page, staff proxy, tracking) / `2026.11.19.81-WEB` (signup page) on `codex/work` | **Page `.92` pending promotion:** Directory cleanup Part C adds contact-log Email and safe explicit replacement controls. Includes `.91` Part A, `.90` Directory quality work list, `.89` closed-businesses view and `.88` campaign labels. **Live `.85`** (promoted `17f202a`, 2026-11-19): stale saved copy shown at once while the rebuilt one loads; loads after a save and email links ask for current data; proxy sends refresh/rebuild reads once. Includes `.82`/`.81`. Sign-up `.81`; order and sell sheet `.58`. |
-| Inventory API Apps Script | `2026.11.20.95-APP` on `codex/work` | **`.95` pending deploy (`apps-script/deploy.sh`):** Directory cleanup Part E adds DOR liquor-license staging and matched safe fills. Includes Parts A–D. **Live `.86`** (deployed 2026-11-19 with clasp). |
+| Inventory API Apps Script | `2026.11.20.96-APP` on `codex/work` | **`.96` pending deploy (`apps-script/deploy.sh`):** Directory cleanup Parts D–F weekly source processing and quality reporting. **Live `.86`** (deployed 2026-11-19 with clasp). |
 | Distribution Outreach Apps Script | `2026.11.19.37-APP` in `docs/reference/distribution-outreach/Code.gs` | **`.37` pending deploy:** Not a buyer blocks final mailer delivery; `.36` also refuses a recorded hard bounce. **Live `.35`** (deployed 2026-11-05; project **distribution outreach**, attached to **Distribution Hub**). |
 | Public customer Netlify proxy | `2026.10.08.5-WEB` | Deployed 2026-10-08. |
 | Badger invoice parser | `2026.11.17.1` in `docs/reference/badger-parser/Code.gs` | **`2026.11.17.1` pending deploy:** numbers above 170 kept as Badger has them (SS171 and SS0171 are two invoices). `2026.10.08.3` live in the Badger Invoice Tracker since 2026-10-08; daily 5:45 am import reads Badger directly (no PDFs). Watch: a new Badger product spelling may need a row in the Sales Data product table (N–O). |
@@ -57,6 +57,7 @@ Setup steps recorded in the history whose completion was **not re-verified** on 
 
 ## Recent changes (one line each; details in `docs/history/` and git)
 
+- 2026-11-20 `.96-APP` (Codex; Directory cleanup F): weekly quality run processes Badger and DOR sources before refreshed reporting.
 - 2026-11-20 `.95-APP` (Codex; Directory cleanup E): DOR Class A/Class B liquor pulls merge by RN, write License Leads and fill matched blank contact/address fields. Tests: `tests/directory-fill.test.mjs`.
 - 2026-11-20 `.94-APP` / Badger parser `2026.11.20.2` (Codex; Directory cleanup D): a monthly read-only Badger Customers pull and alias/ID-matched safe Directory fills; known Badger address typos are refused. Tests: `tests/badger-parser.test.cjs`, `tests/directory-fill.test.mjs`.
 - 2026-11-20 `.93-APP` / `.92-WEB` (Codex; Directory cleanup C): Log contact and matched paper applications reuse the shared fill helper; contact-log differences stay by default unless Karl explicitly checks replace. Tests: `tests/directory-fill.test.mjs`, `tests/paper-application.test.mjs`.
