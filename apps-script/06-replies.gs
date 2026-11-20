@@ -579,7 +579,8 @@ function backfillDirectoryReplyContacts_(dryRun) {
         label:"email reply",
         status_after_fill:"Replied",
       }, new Date());
-      if (!fill.changed) return;
+      // Alt email lines already record a second address; only an actual fill is worth a change here.
+      if (!fill.changed || !(fill.email_filled || fill.contact_filled)) return;
       result.updated += 1;
       result.email_filled += fill.email_filled ? 1 : 0;
       result.contact_filled += fill.contact_filled ? 1 : 0;

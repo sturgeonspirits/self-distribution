@@ -326,3 +326,29 @@ test("a large DOR pass makes no per-license service calls and matches on Street 
   assert.ok(calls.lastRow <= 1, `getLastRow was called ${calls.lastRow} times`);
   assert.ok(calls.formatDate <= 3, `formatDate was called ${calls.formatDate} times`);
 });
+
+test("DOR agent names are cleaned for greetings, and the same person in another format isn't a difference", async () => {
+  const { context } = await contextFor();
+  const clean = name => vm.runInContext(`dorCleanPersonName_(${JSON.stringify(name)})`, context);
+  assert.equal(clean("NULL"), "");
+  assert.equal(clean("QUIMBY, BRADLEY C."), "Bradley C. Quimby");
+  assert.equal(clean("KERSTEN, MICHELLE L.."), "Michelle L. Kersten");
+  assert.equal(clean("ELVER GRIMM, III"), "Elver Grimm III");
+  assert.equal(clean("JOHN J. HOGERTY, II"), "John J. Hogerty II");
+  assert.equal(clean("PATRICK MCCONNELL"), "Patrick McConnell");
+  assert.equal(clean("ERIN O'TOOLE"), "Erin O'Toole");
+  assert.equal(clean("JASON  BAER"), "Jason Baer");
+  assert.equal(clean("Erin O'Toole Turner"), "Erin O'Toole Turner", "mixed case is left as typed");
+  assert.equal(clean("MARY V SMITH"), "Mary V Smith");
+  assert.equal(vm.runInContext(`directoryPersonKey_("Jason Baer") === directoryPersonKey_("BAER, JASON")`, context), true);
+});
+
+test("city and street spellings fill blanks but never create difference notes; ZIP+4 isn't a difference", async () => {
+  const { context } = await contextFor();
+  const headers = { business_name:0, contact_person:1, street_address:2, city:3, zip_code:4, notes:5, status:6, relationship:7, record_updated_at:8 };
+  const values = ["Bar", "Pat Doe", "", "Appleton", "54914", "", "Sent", "Prospect", ""];
+  context.__values = values; context.__headers = headers;
+  const result = call(context, `directoryApplyContactFillToValues_(__values, __headers, { label:"WI DOR license list", contact:"PAT DOE", fields:{ street:"1 Main St.", city:"GRAND CHUTE", zip:"54914-1234" } }, new Date("2026-11-20T12:00:00Z"))`);
+  assert.equal(context.__values[2], "1 Main St.", "blank Street Address is filled");
+  assert.deepEqual(result.conflicts, [], "no notes for city, ZIP+4 or the same contact in capitals");
+});

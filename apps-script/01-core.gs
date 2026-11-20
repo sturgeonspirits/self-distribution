@@ -1,13 +1,13 @@
 /*********************************
  * Inventory API (JSON) for Netlify. Part 1 of 12: core.
- * App version: 2026.11.20.104-APP
+ * App version: 2026.11.20.105-APP
  *
  * CHANGES IN THIS VERSION
- * DOR processing speed (Claude, 2026-11-20): the .103 preview fetched DOR in 6 s but still hit the 6-minute limit. The
- * DOR pass called the Directory sheet's getLastRow (and formatDate, getScriptTimeZone, getUuid) once per planned add,
- * about 23,000 service calls at full scale; it now reads them once per run. The street + ZIP match used column names
- * the Directory doesn't have and scanned every row per license; it now reads Street Address / Zip Code through an index.
- * New rows reuse one column count. Full-scale simulation: ~5 s of work and 23,000 calls down to 0.3 s and ~20 calls.
+ * Directory preview findings (Claude, 2026-11-20): DOR agent names are cleaned ("NULL" dropped, ALL CAPS and
+ * "Last, First" turned into "First Last") before they fill or create a contact; a contact differing only in format,
+ * a city, a street spelling or a ZIP+4 is no longer noted as a difference; Street Address fills (the alias was
+ * missing); preview adds no longer leak into the Directory counts; reply-note backfill skips rows it wouldn't fill;
+ * the preview counts would-add businesses within 15/30/45/60 miles and shows each one's distance.
  *
  * PARTS (load in this order; filePushOrder in .clasp.json): 01-core (config, cache, sheets, setup, relay, request router),
  * 02-inventory, 03-outreach-directory, 04-campaigns, 05-sequences, 06-replies, 07-sending, 08-applications,
@@ -22,7 +22,7 @@
  * Earlier version notes: docs/history/inventory-api-changes.md (move this version's notes there when the version changes).
  *********************************/
 
-const APP_VERSION = "2026.11.20.104-APP";
+const APP_VERSION = "2026.11.20.105-APP";
 
 const SHEET_NAMES = {
   STORES: "Stores",

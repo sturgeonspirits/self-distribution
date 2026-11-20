@@ -3,6 +3,16 @@
 Moved out of the Inventory API header (`apps-script/Code.gs`, now `apps-script/01-core.gs`) on 2026-10-17 so the deployed file stays short. Newest first, copied word for word. The header keeps only the current version (`CHANGES IN THIS VERSION`); when a new version is made, move that section to the top of this file.
 
 ```
+CHANGES IN 2026.11.20.104-APP
+DOR processing speed (Claude, 2026-11-20): the .103 preview fetched DOR in 6 s but still hit the 6-minute limit. The
+DOR pass called the Directory sheet's getLastRow (and formatDate, getScriptTimeZone, getUuid) once per planned add,
+about 23,000 service calls at full scale; it now reads them once per run. The street + ZIP match used column names
+the Directory doesn't have and scanned every row per license; it now reads Street Address / Zip Code through an index.
+New rows reuse one column count. Full-scale simulation: ~5 s of work and 23,000 calls down to 0.3 s and ~20 calls.
+
+```
+
+```
 CHANGES IN 2026.11.20.103-APP
 DOR fetch speed (Claude, 2026-11-20): the first previewDirectoryQualityCheck() hit Apps Script's 6-minute limit. DOR's
 pages are now fetched in parallel batches of 20 after each pull's first page (61 sequential fetches before), and

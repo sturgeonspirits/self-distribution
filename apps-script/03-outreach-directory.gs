@@ -75,6 +75,31 @@ function directoryFillDateText_(now) {
   return __DIRECTORY_FILL_DATE.text;
 }
 
+/** Compares two person names ignoring case, punctuation and "Last, First" order. */
+function directoryPersonKey_(value) {
+  return dorCleanPersonName_(value).toLowerCase().replace(/[^a-z0-9]+/g, " ").trim();
+}
+const DOR_NAME_SUFFIXES = /^(jr|sr|ii|iii|iv|v)\.?$/i;
+/**
+ * DOR agent names arrive as typed by clerks: "NULL" for none, ALL CAPS, or "QUIMBY, BRADLEY C.". Outreach greets
+ * by first name, so turn them into "Bradley C. Quimby"; an empty-looking value becomes "".
+ */
+function dorCleanPersonName_(value) {
+  let name = String(value || "").replace(/\s+/g, " ").trim().replace(/[.,]+$/, (match) => match.startsWith(".") ? "." : "");
+  if (!name || /^(null|n\/?a|none|unknown|tbd|-+)$/i.test(name)) return "";
+  const parts = name.split(",").map(part => part.trim()).filter(Boolean);
+  if (parts.length >= 2) {
+    const tail = parts.slice(1);
+    if (tail.every(part => DOR_NAME_SUFFIXES.test(part))) name = [parts[0]].concat(tail).join(" ");
+    else if (parts.length === 2 || (parts.length === 3 && DOR_NAME_SUFFIXES.test(parts[2]))) name = [parts[1], parts[0]].concat(parts.slice(2)).join(" ");
+  }
+  if (/[a-z]/.test(name)) return name;
+  return name.toLowerCase().split(" ").map(word => {
+    if (DOR_NAME_SUFFIXES.test(word) && !/^v\.?$/i.test(word)) return word.toUpperCase();
+    return word.replace(/(^|['’\-])([a-z])/g, (match, lead, letter) => lead + letter.toUpperCase()).replace(/^Mc([a-z])/, (match, letter) => `Mc${letter.toUpperCase()}`);
+  }).join(" ");
+}
+
 function directoryFillHeaderKey_(headers, aliases) {
   return aliases.map(normalizeHeader_).find(key => headers[key] !== undefined);
 }
@@ -153,7 +178,7 @@ function directoryApplyContactFillToValues_(values, headers, source, now) {
         result.contact_filled = true;
         fillLines.push(`${existingContact ? "replacement contact person" : "contact person"} ${contact}`);
       }
-    } else if (existingContact.toLowerCase() !== contact.toLowerCase()) {
+    } else if (directoryPersonKey_(existingContact) !== directoryPersonKey_(contact)) {
       const conflict = `${label} has contact ${contact}`;
       if (!notes.toLowerCase().includes(conflict.toLowerCase())) {
         conflictLines.push(conflict);
@@ -162,14 +187,19 @@ function directoryApplyContactFillToValues_(values, headers, source, now) {
     }
   }
 
-  const extraAliases = { phone:["phone", "phone_number", "telephone"], street:["street", "address", "address_1"], city:["city", "town"], zip:["zip", "zip_code", "postal_code"] };
+  const extraAliases = { phone:["phone", "phone_number", "telephone"], street:["street_address", "street", "address", "address_1"], city:["city", "town"], zip:["zip", "zip_code", "postal_code"] };
+  // Only differences worth a decision get a Notes line. City (a mailing city vs the licensing town, e.g. Appleton vs
+  // Grand Chute) and street spelling ("St." vs "Street") differ harmlessly, so they're filled when blank and never noted.
+  const sameField = (field, a, b) => field === "zip" ? String(a).replace(/\D/g, "").slice(0, 5) === String(b).replace(/\D/g, "").slice(0, 5)
+    : field === "phone" ? String(a).replace(/\D/g, "").slice(-10) === String(b).replace(/\D/g, "").slice(-10)
+    : true;
   Object.keys(source?.fields || {}).forEach(field => {
     const aliases = extraAliases[field]; const incoming = String(source.fields[field] || "").trim();
     if (!aliases || !incoming) return;
     const existing = String(get(aliases) || "").trim();
     if (!existing && set(aliases, incoming)) {
       result.changed = true; fillLines.push(`${field} ${incoming}`);
-    } else if (existing && existing.toLowerCase() !== incoming.toLowerCase()) {
+    } else if (existing && !sameField(field, existing, incoming)) {
       const conflict = `${label} has ${field} ${incoming}`;
       if (!notes.toLowerCase().includes(conflict.toLowerCase())) { conflictLines.push(conflict); result.conflicts.push(`${field} ${incoming}`); }
     }
@@ -401,7 +431,8 @@ function processDorLiquorLicenses_(options) {
     const miles = milesForZip_(String(item.zip || "")); if (!Number.isFinite(miles) || miles > serviceArea) { outside++; newest = updated > newest ? updated : newest; return; }
     const match = findIdentityMatch_(identity, "", item.businessName, "", item.city).record || findIdentityMatch_(identity, "", item.entityName, "", item.city).record || byAddress.get(addressKey(item.address, item.zip)) || null;
     const types = [String(item.AL) === "1" && "Class A liquor", String(item.BL) === "1" && "Class B liquor"].filter(Boolean).join(", ");
-    const source = { contact:item.agentName, label:"WI DOR license list", fields:{ street:item.address, city:item.city, zip:item.zip } };
+    const agent = dorCleanPersonName_(item.agentName);
+    const source = { contact:agent, label:"WI DOR license list", fields:{ street:item.address, city:item.city, zip:item.zip } };
     let result = "Matched, nothing to fill";
     if (match && match.pending_add) { skipped++; result = "Skipped duplicate"; }
     else if (match) {
@@ -411,14 +442,14 @@ function processDorLiquorLicenses_(options) {
       if (preview.conflicts?.length && examples.differences.length < exampleCap) examples.differences.push({ license_key:item.license_key, business:match.business, city:item.city, conflicts:preview.conflicts });
     } else {
       try {
-        const input = validateBusinessInput_({ business_name:item.businessName || item.entityName, contact:item.agentName, city:item.city, address:item.address, zip:item.zip, state:"WI", county:item.county, lead_source:"WI DOR license list", relationship:"Prospect", status:"Needs email", notes:`${todayText} - WI DOR license: ${types}.` });
+        const input = validateBusinessInput_({ business_name:item.businessName || item.entityName, contact:agent, city:item.city, address:item.address, zip:item.zip, state:"WI", county:item.county, lead_source:"WI DOR license list", relationship:"Prospect", status:"Needs email", notes:`${todayText} - WI DOR license: ${types}.` });
         const duplicate = duplicateBusiness_(identity, input);
         if (duplicate) { skipped++; result = "Skipped duplicate"; }
         else {
           const accountId = dryRun ? `ACC-PREVIEW-${adds.length + 1}` : permanentId_("ACC"); const sourceRow = directoryLastRow + adds.length + 1;
           adds.push({ input:input, account_id:accountId }); const added = directoryIdentityAdd_(identity, input, accountId, sourceRow);
           const addedKey = addressKey(input.address, input.postal_code); if (addedKey && !byAddress.has(addedKey)) byAddress.set(addedKey, added);
-          result = "Added"; if (examples.would_add.length < exampleCap) examples.would_add.push({ license_key:item.license_key, business:input.business_name, city:input.city, detail:[types, item.agentName ? `agent ${item.agentName}` : "", item.address].filter(Boolean).join("; ") });
+          result = "Added"; if (examples.would_add.length < exampleCap) examples.would_add.push({ license_key:item.license_key, business:input.business_name, city:input.city, miles:miles, detail:[`${miles} mi`, types, agent ? `agent ${agent}` : "", item.address].filter(Boolean).join("; ") });
         }
       } catch (error) { skipped++; result = `Skipped: ${String(error.message || error).slice(0, 200)}`; }
     }
@@ -440,7 +471,9 @@ function processDorLiquorLicenses_(options) {
   }
   const filled = applied.filter(fill => fill.changed).length;
   const differences = applied.reduce((sum, fill) => sum + (fill.conflicts?.length || 0), 0);
-  return { records:records.length, filled:filled, added:adds.length, differences:differences, outside:outside, skipped:skipped, possibly_closed:closedApplied.filter(item => item.changed).length, complete:!stopped, stopped:stopped, last_updated:newest, examples:examples };
+  const addMiles = examples.would_add.map(item => Number(item.miles)).filter(Number.isFinite);
+  const added_by_miles = [15, 30, 45, 60].reduce((bands, limit) => { bands[limit] = addMiles.filter(value => value <= limit).length; return bands; }, {});
+  return { added_by_miles:added_by_miles, records:records.length, filled:filled, added:adds.length, differences:differences, outside:outside, skipped:skipped, possibly_closed:closedApplied.filter(item => item.changed).length, complete:!stopped, stopped:stopped, last_updated:newest, examples:examples };
 }
 
 /** Builds the quality report from rows already read from the Directory. It never writes. */
@@ -597,7 +630,7 @@ function directoryQualityCheck_(options) {
     try { badger = badgerSourceError ? { error:badgerSourceError } : processBadgerCustomers_({ dryRun:dryRun, customers:badgerCustomers }); } catch (error) { badger = { error:String(error.message || error) }; }
     try {
       dor = dorSourceError ? { error:dorSourceError } : processDorLiquorLicenses_({
-        dryRun:dryRun, records:dorRecords, directory:sheet, identity:accountIdentityFromRows_(rows), now:now,
+        dryRun:dryRun, records:dorRecords, directory:sheet, identity:accountIdentityFromRows_(rows.slice()), now:now,
         shouldStop:() => !dryRun && Date.now() - startedAt >= DIRECTORY_QUALITY_MAX_RUN_MS,
       });
     } catch (error) { dor = { error:String(error.message || error) }; }
@@ -681,6 +714,7 @@ function directoryPreviewRows_(quality, backfill) {
   rows.push(["Summary", "DOR liquor licensees read", "", text(dor.records)]);
   rows.push(["Summary", "DOR outside the service area", "", text(dor.outside)]);
   rows.push(["Summary", "Blank Miles fillable from ZIP", "", text(quality && quality.mileage && quality.mileage.updated)]);
+  Object.keys(dor.added_by_miles || {}).forEach(limit => rows.push(["Summary", `DOR would add within ${limit} miles`, "", text(dor.added_by_miles[limit])]));
   sourceError("DOR", dor); sourceError("Badger", badger); sourceError("Reply backfill", backfill);
   section("DOR: would add", examples.would_add, item => [item.business, item.city, item.detail]);
   section("DOR: would fill", examples.would_fill, item => [item.business, item.city, item.detail]);
