@@ -306,6 +306,19 @@ test("DOR pulls fetch the first page, then the rest in parallel, and refuse a sh
   assert.equal(calls.fetchAll, 2, "the remaining pages go out in parallel batches");
   context.UrlFetchApp.fetchAll = requests => requests.map(request => ({ getResponseCode:() => 200, getContentText:() => JSON.stringify({ result:"Ok", count:"600", subject:[] }) }));
   assert.throws(() => vm.runInContext("fetchDorLiquorRecords_()", context), /paging stopped early|returned/);
+
+  // A parallel batch that returns an overlapping page is caught and fetched again one page at a time.
+  const goodFetch = url => { calls.fetch++; return respond(url); };
+  context.UrlFetchApp.fetch = goodFetch;
+  context.UrlFetchApp.fetchAll = requests => requests.map(request => respond(request.url.replace(/rn_low=\d+/, "rn_low=250")));
+  calls.fetch = 0;
+  const recovered = call(context, "fetchDorLiquorRecords_()");
+  assert.equal(recovered.length, 860, "the sequential retry gives the full, correct list");
+  assert.ok(calls.fetch > 2, "the inconsistent pull was refetched page by page");
+
+  // If the retry is wrong too, nothing is used.
+  context.UrlFetchApp.fetch = url => respond(url.replace(/rn_low=([1-9]\d*)/, "rn_low=250"));
+  assert.throws(() => vm.runInContext("fetchDorLiquorRecords_()", context), /inconsistent twice/);
 });
 
 test("a large DOR pass makes no per-license service calls and matches on Street Address + Zip Code", async () => {
@@ -368,4 +381,16 @@ test("new businesses are only added within the new-business radius, and raising 
   properties.set("DIRECTORY_DOR_ADD_RADIUS", "30");
   assert.equal(run(30, true).added, 0, "the same radius respects the checkpoint");
   assert.equal(run(50, true).added, 2, "a larger radius goes back over licenses skipped before");
+});
+
+test("records DOR stores twice are accepted; the pull uses the stable sort order", async () => {
+  const { context } = await contextFor();
+  const count = 300;
+  const rowsFor = low => { const rows = []; for (let i = low; i < Math.min(low + 250, count); i++) { const n = i === 260 ? 10 : i; rows.push({ rn:i + 1, AL:1, entityName:`Ent ${n}`, businessName:`Biz ${n}`, address:`${n} Main`, zip:"54901", municipality:"Oshkosh" }); } return rows; };
+  const respond = url => ({ getResponseCode:() => 200, getContentText:() => JSON.stringify(/BL=1/.test(url) ? { result:"Ok", count:"0", subject:[] } : { result:"Ok", count:String(count), subject:rowsFor(Number(url.match(/rn_low=(\d+)/)[1])) }) });
+  const urls = [];
+  context.UrlFetchApp = { fetch:url => { urls.push(url); return respond(url); }, fetchAll:requests => requests.map(request => { urls.push(request.url); return respond(request.url); }) };
+  const records = call(context, "fetchDorLiquorRecords_()");
+  assert.equal(records.length, 299, "record 10 stored twice (on two pages, identically on both pulls) is kept once");
+  assert.ok(urls.every(url => /sort=1&/.test(url)), "every request uses sort=1");
 });

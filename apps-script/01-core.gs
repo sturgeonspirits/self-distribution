@@ -1,11 +1,13 @@
 /*********************************
  * Inventory API (JSON) for Netlify. Part 1 of 12: core.
- * App version: 2026.11.20.106-APP
+ * App version: 2026.11.20.107-APP
  *
  * CHANGES IN THIS VERSION
- * New business radius (Karl, 2026-11-20): Campaign Settings "New business radius miles" (30) limits which DOR
- * licensees are added as new prospects; filling details on existing businesses still uses Service area miles (60).
- * Distances are straight-line to the ZIP's center. Raising the radius later goes back over licenses skipped before.
+ * Complete DOR pulls (Claude, 2026-11-20): DOR's default sort (sort=0) orders ties differently on every request, so
+ * pages overlapped and skipped records: the licensee count changed on every run (14,877 to 14,906) and the Class A
+ * list missed ~14 licensees. Pulls now use sort=1 (identical, complete results on repeated live pulls) and are checked:
+ * each page must start at the row asked for, and a record repeated across pages triggers a one-at-a-time refetch;
+ * repeats identical on both pulls are records DOR stores twice. Otherwise nothing is used.
  *
  * PARTS (load in this order; filePushOrder in .clasp.json): 01-core (config, cache, sheets, setup, relay, request router),
  * 02-inventory, 03-outreach-directory, 04-campaigns, 05-sequences, 06-replies, 07-sending, 08-applications,
@@ -20,7 +22,7 @@
  * Earlier version notes: docs/history/inventory-api-changes.md (move this version's notes there when the version changes).
  *********************************/
 
-const APP_VERSION = "2026.11.20.106-APP";
+const APP_VERSION = "2026.11.20.107-APP";
 
 const SHEET_NAMES = {
   STORES: "Stores",

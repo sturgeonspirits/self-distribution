@@ -3,6 +3,14 @@
 Moved out of the Inventory API header (`apps-script/Code.gs`, now `apps-script/01-core.gs`) on 2026-10-17 so the deployed file stays short. Newest first, copied word for word. The header keeps only the current version (`CHANGES IN THIS VERSION`); when a new version is made, move that section to the top of this file.
 
 ```
+CHANGES IN 2026.11.20.106-APP
+New business radius (Karl, 2026-11-20): Campaign Settings "New business radius miles" (30) limits which DOR
+licensees are added as new prospects; filling details on existing businesses still uses Service area miles (60).
+Distances are straight-line to the ZIP's center. Raising the radius later goes back over licenses skipped before.
+
+```
+
+```
 CHANGES IN 2026.11.20.105-APP
 Directory preview findings (Claude, 2026-11-20): DOR agent names are cleaned ("NULL" dropped, ALL CAPS and
 "Last, First" turned into "First Last") before they fill or create a contact; a contact differing only in format,

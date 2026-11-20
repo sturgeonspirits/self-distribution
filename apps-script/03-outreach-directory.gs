@@ -335,39 +335,82 @@ function dorLiquorRecords_(records) {
 const DOR_PAGE_SIZE = 250;
 const DOR_FETCH_BATCH = 20;
 function dorLiquorUrl_(flag, low) {
-  return `${DOR_LIQUOR_URL}?search=&city=&sort=0&AB=0&AC=0&AL=${flag === "AL" ? 1 : 0}&BB=0&BL=${flag === "BL" ? 1 : 0}&CW=0&rn_low=${low}`;
+  // sort=0 (DOR's default) orders ties differently on every request, so its pages overlap and skip records (checked
+  // live 2026-11-20: 3,835 of 3,849 Class A licensees). sort=1 gave the same complete list on every pull.
+  return `${DOR_LIQUOR_URL}?search=&city=&sort=1&AB=0&AC=0&AL=${flag === "AL" ? 1 : 0}&BB=0&BL=${flag === "BL" ? 1 : 0}&CW=0&rn_low=${low}`;
 }
 function dorFetchedPage_(response, url) {
   const code = response.getResponseCode();
   if (code !== 200) throw new Error(`DOR liquor list returned HTTP ${code} for ${url}`);
   return dorPageRows_(JSON.parse(response.getContentText()));
 }
+/** A record's full content without its row position: the same record on two pages is a paging error. */
+function dorRecordFingerprint_(row) {
+  return JSON.stringify(Object.keys(row || {}).filter(key => key !== "rn").sort().map(key => [key, row[key]]));
+}
+/**
+ * Checks one pull. Returns { problem, repeats }: the problem ("" when fine) and the records that appear on more than
+ * one page. A paging error shows up as a cross-page repeat; DOR also stores a few records twice, which show up the
+ * same way on every pull, so the caller compares repeats between two pulls before trusting them.
+ */
+function dorPullProblem_(pages, count) {
+  const rows = [].concat.apply([], pages.map(page => page.rows));
+  if (rows.length !== count) return { problem:`${rows.length} of ${count} licenses`, repeats:[] };
+  const misplaced = pages.filter(page => page.rows.length && Number(page.rows[0].rn) !== page.low + 1).length;
+  if (misplaced) return { problem:`${misplaced} page(s) didn't start at the row asked for`, repeats:[] };
+  const pagesByRecord = new Map();
+  pages.forEach((page, index) => page.rows.forEach(row => {
+    const key = dorRecordFingerprint_(row);
+    pagesByRecord.set(key, (pagesByRecord.get(key) || new Set()).add(index));
+  }));
+  const repeats = Array.from(pagesByRecord.entries()).filter(([, onPages]) => onPages.size > 1).map(([key]) => key).sort();
+  return { problem:repeats.length ? `${repeats.length} record(s) appeared on two pages` : "", repeats:repeats };
+}
 /**
  * Both liquor pulls, all pages. The first page of each gives the count; the rest are fetched in parallel batches
- * (one page at a time took most of Apps Script's 6 minutes on 2026-11-20). All or nothing: a short or failed page throws.
+ * (one page at a time took most of Apps Script's 6 minutes on 2026-11-20). Each pull is checked before use: from
+ * Google's servers, DOR has returned overlapping pages (the licensee count varied by ~30 between runs). A pull that
+ * fails the check is fetched again one page at a time; if that fails too, nothing is used.
  */
 function fetchDorLiquorRecords_() {
   const started = Date.now();
-  const all = [];
+  const all = []; const retried = [];
   ["AL", "BL"].forEach(flag => {
     const firstUrl = dorLiquorUrl_(flag, 0);
     const first = dorFetchedPage_(UrlFetchApp.fetch(firstUrl, { muteHttpExceptions:true }), firstUrl);
-    const rows = first.rows.slice();
-    const urls = [];
-    for (let low = DOR_PAGE_SIZE; low < first.count; low += DOR_PAGE_SIZE) urls.push(dorLiquorUrl_(flag, low));
-    for (let index = 0; index < urls.length; index += DOR_FETCH_BATCH) {
-      const batch = urls.slice(index, index + DOR_FETCH_BATCH);
-      UrlFetchApp.fetchAll(batch.map(url => ({ url:url, muteHttpExceptions:true }))).forEach((response, offset) => {
-        const page = dorFetchedPage_(response, batch[offset]);
-        if (!page.rows.length) throw new Error("DOR liquor list paging stopped early.");
-        rows.push.apply(rows, page.rows);
-      });
+    const lows = [];
+    for (let low = DOR_PAGE_SIZE; low < first.count; low += DOR_PAGE_SIZE) lows.push(low);
+    const firstPage = { low:0, rows:first.rows };
+    const parallel = () => {
+      const pages = [firstPage];
+      for (let index = 0; index < lows.length; index += DOR_FETCH_BATCH) {
+        const batch = lows.slice(index, index + DOR_FETCH_BATCH);
+        UrlFetchApp.fetchAll(batch.map(low => ({ url:dorLiquorUrl_(flag, low), muteHttpExceptions:true }))).forEach((response, offset) => {
+          const page = dorFetchedPage_(response, dorLiquorUrl_(flag, batch[offset]));
+          if (!page.rows.length) throw new Error("DOR liquor list paging stopped early.");
+          pages.push({ low:batch[offset], rows:page.rows });
+        });
+      }
+      return pages;
+    };
+    const sequential = () => [firstPage].concat(lows.map(low => {
+      const url = dorLiquorUrl_(flag, low);
+      return { low:low, rows:dorFetchedPage_(UrlFetchApp.fetch(url, { muteHttpExceptions:true }), url).rows };
+    }));
+    let pages = parallel();
+    const check = dorPullProblem_(pages, first.count);
+    if (check.problem) {
+      retried.push(`${flag}: ${check.problem}`);
+      pages = sequential();
+      const recheck = dorPullProblem_(pages, first.count);
+      // The same cross-page repeats on both pulls are records DOR stores twice, not paging errors.
+      const sameRepeats = !!recheck.repeats.length && recheck.repeats.join("\n") === check.repeats.join("\n");
+      if (recheck.problem && !sameRepeats) throw new Error(`DOR ${flag} pull was inconsistent twice (${recheck.problem}); nothing was used.`);
     }
-    if (rows.length !== first.count) throw new Error(`DOR ${flag} pull returned ${rows.length} of ${first.count} licenses; nothing was used.`);
-    all.push.apply(all, rows);
+    pages.forEach(page => all.push.apply(all, page.rows));
   });
   const records = dorLiquorRecords_(all);
-  console.log(JSON.stringify({ event:"dor_liquor_fetch", raw:all.length, licensees:records.length, seconds:Math.round((Date.now() - started) / 1000) }));
+  console.log(JSON.stringify({ event:"dor_liquor_fetch", raw:all.length, licensees:records.length, retried:retried, seconds:Math.round((Date.now() - started) / 1000) }));
   return records;
 }
 function dorLicenseExpired_(item, now) {
