@@ -66,6 +66,15 @@ function directoryContactIsPlaceholder_(contactValue, businessValue) {
   return contact.split(/\s+/).filter(Boolean).length === 1;
 }
 
+// The fill helper runs thousands of times in one DOR pass; Utilities and Session are slow service calls.
+let __DIRECTORY_FILL_DATE = { day:null, text:"" };
+function directoryFillDateText_(now) {
+  const date = now instanceof Date ? now : new Date(now || Date.now());
+  const day = Math.floor(date.getTime() / 3600000);
+  if (__DIRECTORY_FILL_DATE.day !== day) __DIRECTORY_FILL_DATE = { day:day, text:Utilities.formatDate(date, Session.getScriptTimeZone(), "yyyy-MM-dd") };
+  return __DIRECTORY_FILL_DATE.text;
+}
+
 function directoryFillHeaderKey_(headers, aliases) {
   return aliases.map(normalizeHeader_).find(key => headers[key] !== undefined);
 }
@@ -95,7 +104,7 @@ function directoryApplyContactFillToValues_(values, headers, source, now) {
     return true;
   };
   const result = { changed:false, email_filled:false, contact_filled:false, notes_added:false, conflicts:[] };
-  const date = Utilities.formatDate(now || new Date(), Session.getScriptTimeZone(), "yyyy-MM-dd");
+  const date = directoryFillDateText_(now);
   const label = String(source?.label || "source").trim() || "source";
   const business = String(get(["business", "business_name"]) || "").trim();
   const notes = String(get(["notes"]) || "").trim();
@@ -371,6 +380,16 @@ function processDorLiquorLicenses_(options) {
   const exampleCap = dryRun ? Infinity : 25;
   let outside = 0, skipped = 0, newest = lastUpdated, stopped = false;
   const serviceArea = outreachServiceAreaMiles_(); const shouldStop = options?.shouldStop || (() => false);
+  // Read once: getLastRow, formatDate and getUuid are slow service calls, and a first run plans thousands of adds.
+  const directoryLastRow = directory.getLastRow();
+  const todayText = Utilities.formatDate(now, Session.getScriptTimeZone(), "yyyy-MM-dd");
+  // Street + ZIP index for the third match attempt (Directory columns "Street Address" and "Zip Code").
+  const addressKey = (street, zip) => { const a = dorKeyText_(street); const z = String(zip || "").replace(/\D/g, "").slice(0, 5); return a && z ? `${a}::${z}` : ""; };
+  const byAddress = new Map();
+  identity.by_row.forEach(record => {
+    const key = addressKey(outreachValue_(record.row || {}, ["street_address", "address", "street"]), outreachValue_(record.row || {}, ["zip_code", "zip", "postal_code"]));
+    if (key && !byAddress.has(key)) byAddress.set(key, record);
+  });
   records.forEach(item => {
     if (stopped) return;
     const updated = String(item.lastUpdated || ""); const key = `${item.license_key}::${updated}`;
@@ -380,7 +399,7 @@ function processDorLiquorLicenses_(options) {
     if (!dryRun && shouldStop()) { stopped = true; return; }
     if (dorLicenseExpired_(item, now)) { skipped++; newest = updated > newest ? updated : newest; return; }
     const miles = milesForZip_(String(item.zip || "")); if (!Number.isFinite(miles) || miles > serviceArea) { outside++; newest = updated > newest ? updated : newest; return; }
-    const match = findIdentityMatch_(identity, "", item.businessName, "", item.city).record || findIdentityMatch_(identity, "", item.entityName, "", item.city).record || (identity.rows || []).map((row, index) => identity.by_row.get(index + 2) || row).find(record => String(record.row?.address || record.address || record.row?.street || "").trim().toLowerCase() === String(item.address || "").trim().toLowerCase() && String(record.row?.zip || record.row?.postal_code || record.zip || "").trim() === String(item.zip || "").trim());
+    const match = findIdentityMatch_(identity, "", item.businessName, "", item.city).record || findIdentityMatch_(identity, "", item.entityName, "", item.city).record || byAddress.get(addressKey(item.address, item.zip)) || null;
     const types = [String(item.AL) === "1" && "Class A liquor", String(item.BL) === "1" && "Class B liquor"].filter(Boolean).join(", ");
     const source = { contact:item.agentName, label:"WI DOR license list", fields:{ street:item.address, city:item.city, zip:item.zip } };
     let result = "Matched, nothing to fill";
@@ -392,12 +411,13 @@ function processDorLiquorLicenses_(options) {
       if (preview.conflicts?.length && examples.differences.length < exampleCap) examples.differences.push({ license_key:item.license_key, business:match.business, city:item.city, conflicts:preview.conflicts });
     } else {
       try {
-        const input = validateBusinessInput_({ business_name:item.businessName || item.entityName, contact:item.agentName, city:item.city, address:item.address, zip:item.zip, state:"WI", county:item.county, lead_source:"WI DOR license list", relationship:"Prospect", status:"Needs email", notes:`${Utilities.formatDate(now, Session.getScriptTimeZone(), "yyyy-MM-dd")} - WI DOR license: ${types}.` });
+        const input = validateBusinessInput_({ business_name:item.businessName || item.entityName, contact:item.agentName, city:item.city, address:item.address, zip:item.zip, state:"WI", county:item.county, lead_source:"WI DOR license list", relationship:"Prospect", status:"Needs email", notes:`${todayText} - WI DOR license: ${types}.` });
         const duplicate = duplicateBusiness_(identity, input);
         if (duplicate) { skipped++; result = "Skipped duplicate"; }
         else {
-          const accountId = permanentId_("ACC"); const sourceRow = directory.getLastRow() + adds.length + 1;
-          adds.push({ input:input, account_id:accountId }); directoryIdentityAdd_(identity, input, accountId, sourceRow);
+          const accountId = dryRun ? `ACC-PREVIEW-${adds.length + 1}` : permanentId_("ACC"); const sourceRow = directoryLastRow + adds.length + 1;
+          adds.push({ input:input, account_id:accountId }); const added = directoryIdentityAdd_(identity, input, accountId, sourceRow);
+          const addedKey = addressKey(input.address, input.postal_code); if (addedKey && !byAddress.has(addedKey)) byAddress.set(addedKey, added);
           result = "Added"; if (examples.would_add.length < exampleCap) examples.would_add.push({ license_key:item.license_key, business:input.business_name, city:input.city, detail:[types, item.agentName ? `agent ${item.agentName}` : "", item.address].filter(Boolean).join("; ") });
         }
       } catch (error) { skipped++; result = `Skipped: ${String(error.message || error).slice(0, 200)}`; }
@@ -412,8 +432,8 @@ function processDorLiquorLicenses_(options) {
     applied = directoryApplyContactFillsBatch_(fills.map(fill => ({ record:fill.record, source:fill.source })), now);
     closedApplied = directoryApplyContactFillsBatch_(closedEntries, now);
     if (adds.length) {
-      const directoryHeaders = getHeaderMap_(directory);
-      directory.getRange(directory.getLastRow() + 1, 1, adds.length, directory.getLastColumn()).setValues(adds.map(add => directoryRowFromBusiness_(directory, add.input, add.account_id, now, directoryHeaders)));
+      const directoryHeaders = getHeaderMap_(directory); const directoryWidth = directory.getLastColumn();
+      directory.getRange(directory.getLastRow() + 1, 1, adds.length, directoryWidth).setValues(adds.map(add => directoryRowFromBusiness_(directory, add.input, add.account_id, now, directoryHeaders, directoryWidth)));
     }
     if (logRows.length) logSheet.getRange(logSheet.getLastRow() + 1, 1, logRows.length, logRows[0].length).setValues(logRows);
     if (newest && newest > lastUpdated) props.setProperty(DOR_LAST_UPDATED_PROPERTY, newest);
@@ -842,9 +862,9 @@ function setDirectoryField_(row, headers, aliases, value) {
   if (key !== undefined) row[headers[key]] = value;
 }
 
-function directoryRowFromBusiness_(sheet, p, accountId, now, headers) {
+function directoryRowFromBusiness_(sheet, p, accountId, now, headers, width) {
   const h = headers || getHeaderMap_(sheet);
-  const row = Array(sheet.getLastColumn()).fill("");
+  const row = Array(width || sheet.getLastColumn()).fill("");
   setDirectoryField_(row, h, ["Account ID"], accountId);
   setDirectoryField_(row, h, ["Business Name", "Business"], String(p.business_name || p.business || "").trim());
   setDirectoryField_(row, h, ["Contact Person", "Contact"], String(p.contact || p.contact_name || "").trim());

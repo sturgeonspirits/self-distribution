@@ -1,11 +1,13 @@
 /*********************************
  * Inventory API (JSON) for Netlify. Part 1 of 12: core.
- * App version: 2026.11.20.103-APP
+ * App version: 2026.11.20.104-APP
  *
  * CHANGES IN THIS VERSION
- * DOR fetch speed (Claude, 2026-11-20): the first previewDirectoryQualityCheck() hit Apps Script's 6-minute limit. DOR's
- * pages are now fetched in parallel batches of 20 after each pull's first page (61 sequential fetches before), and
- * the run logs how long the sources and the preview took.
+ * DOR processing speed (Claude, 2026-11-20): the .103 preview fetched DOR in 6 s but still hit the 6-minute limit. The
+ * DOR pass called the Directory sheet's getLastRow (and formatDate, getScriptTimeZone, getUuid) once per planned add,
+ * about 23,000 service calls at full scale; it now reads them once per run. The street + ZIP match used column names
+ * the Directory doesn't have and scanned every row per license; it now reads Street Address / Zip Code through an index.
+ * New rows reuse one column count. Full-scale simulation: ~5 s of work and 23,000 calls down to 0.3 s and ~20 calls.
  *
  * PARTS (load in this order; filePushOrder in .clasp.json): 01-core (config, cache, sheets, setup, relay, request router),
  * 02-inventory, 03-outreach-directory, 04-campaigns, 05-sequences, 06-replies, 07-sending, 08-applications,
@@ -20,7 +22,7 @@
  * Earlier version notes: docs/history/inventory-api-changes.md (move this version's notes there when the version changes).
  *********************************/
 
-const APP_VERSION = "2026.11.20.103-APP";
+const APP_VERSION = "2026.11.20.104-APP";
 
 const SHEET_NAMES = {
   STORES: "Stores",

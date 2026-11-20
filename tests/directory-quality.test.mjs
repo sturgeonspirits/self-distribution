@@ -307,3 +307,22 @@ test("DOR pulls fetch the first page, then the rest in parallel, and refuse a sh
   context.UrlFetchApp.fetchAll = requests => requests.map(request => ({ getResponseCode:() => 200, getContentText:() => JSON.stringify({ result:"Ok", count:"600", subject:[] }) }));
   assert.throws(() => vm.runInContext("fetchDorLiquorRecords_()", context), /paging stopped early|returned/);
 });
+
+test("a large DOR pass makes no per-license service calls and matches on Street Address + Zip Code", async () => {
+  const { context } = await contextFor();
+  const calls = { lastRow:0, formatDate:0 };
+  const formatDate = context.Utilities.formatDate;
+  context.Utilities.formatDate = (...args) => { calls.formatDate++; return formatDate(...args); };
+  context.__directory = { getLastRow:() => { calls.lastRow++; return 2; }, getLastColumn:() => 40 };
+  vm.runInContext(`getOutreachSs_ = () => ({ getSheetByName:() => null }); milesForZip_ = () => 10; outreachServiceAreaMiles_ = () => 60;`, context);
+  const rows = [{ account_id:"A1", business_name:"Old Name Tavern", contact_person:"", street_address:"12 Oak Street", zip_code:"54901", city:"Oshkosh", notes:"", relationship:"Prospect", status:"Sent" }];
+  const records = [{ rn:1, BL:1, entityName:"New Owner LLC", businessName:"Renamed Bar", agentName:"Kim Park", address:"12 Oak St.", zip:"54901-2222", city:"Oshkosh", municipality:"Oshkosh", lastUpdated:"2026-08-01" }];
+  // "12 Oak St." vs "12 Oak Street" only match by key text if written the same; use the Directory's exact wording.
+  records[0].address = "12 Oak Street";
+  for (let i = 0; i < 300; i++) records.push({ rn:i + 2, AL:1, entityName:`Ent ${i}`, businessName:`Place ${i}`, agentName:`Agent ${i}`, address:`${i} Main`, zip:"54901", city:"Oshkosh", municipality:"Oshkosh", lastUpdated:"2026-08-01" });
+  const result = call(context, `processDorLiquorLicenses_({ dryRun:true, records:${JSON.stringify(records)}, identity:accountIdentityFromRows_(${JSON.stringify(rows)}), directory:__directory, now:new Date('2026-11-20T12:00:00Z') })`);
+  assert.equal(result.added, 300);
+  assert.equal(result.filled, 1, "the renamed bar matched its Directory row by Street Address + Zip Code");
+  assert.ok(calls.lastRow <= 1, `getLastRow was called ${calls.lastRow} times`);
+  assert.ok(calls.formatDate <= 3, `formatDate was called ${calls.formatDate} times`);
+});

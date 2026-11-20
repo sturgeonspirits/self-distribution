@@ -3,6 +3,14 @@
 Moved out of the Inventory API header (`apps-script/Code.gs`, now `apps-script/01-core.gs`) on 2026-10-17 so the deployed file stays short. Newest first, copied word for word. The header keeps only the current version (`CHANGES IN THIS VERSION`); when a new version is made, move that section to the top of this file.
 
 ```
+CHANGES IN 2026.11.20.103-APP
+DOR fetch speed (Claude, 2026-11-20): the first previewDirectoryQualityCheck() hit Apps Script's 6-minute limit. DOR's
+pages are now fetched in parallel batches of 20 after each pull's first page (61 sequential fetches before), and
+the run logs how long the sources and the preview took.
+
+```
+
+```
 CHANGES IN 2026.11.20.102-APP
 Directory preview tab (Claude, 2026-11-20): previewDirectoryQualityCheck() also runs the reply-note backfill preview
 and writes every planned change (DOR adds, fills, differences and possibly closed; Badger fills and differences;
