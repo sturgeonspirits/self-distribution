@@ -1,6 +1,6 @@
 # Sturgeon Distribution Hub — Project Status
 
-Last updated: 2026-11-20
+Last updated: 2026-11-21
 
 Read this file before inspecting the repository or changing the application. Never put secret values in this file.
 
@@ -10,16 +10,19 @@ History, kept word for word:
 - `docs/history/PROJECT_STATUS-through-2026-10-17.md`: this file as it stood before the 2026-10-17 trim (every detailed change entry since September).
 - `docs/history/inventory-api-changes.md`: earlier Inventory API `Code.gs` version notes.
 - `docs/history/distribution-outreach-changes.md`: earlier distribution outreach `Code.gs` version notes.
+- `docs/history/PROJECT_STATUS-2026-10-12-to-2026-11-12.md`: recent-change lines from 2026-10-12 to 2026-11-12, moved 2026-11-21.
 
 ## Current state
 
 | Component | Source version | Deployment state |
 | --- | --- | --- |
-| Netlify web app and staff proxy | `2026.11.20.92-WEB` (page, staff proxy, tracking) / `2026.11.19.81-WEB` (signup page) on `codex/work` | **Page `.92` pending promotion:** Directory cleanup Part C adds contact-log Email and safe explicit replacement controls. Includes `.91` Part A, `.90` Directory quality work list, `.89` closed-businesses view and `.88` campaign labels. **Live `.85`** (promoted `17f202a`, 2026-11-19): stale saved copy shown at once while the rebuilt one loads; loads after a save and email links ask for current data; proxy sends refresh/rebuild reads once. Includes `.82`/`.81`. Sign-up `.81`; order and sell sheet `.58`. |
-| Inventory API Apps Script | `2026.11.20.107-APP` on `codex/work` | **`.107` pending deploy (`.106` deployed and previewed 2026-11-20):** complete, checked DOR pulls (sort=1); `.106` New business radius miles (30); `.105` fixes from the first preview; `.104` no per-license service calls in the DOR pass; `.103` DOR pages fetched in parallel; `.102` `previewDirectoryQualityCheck()` writes every planned change to the "Directory Preview" tab; `.101` keys DOR licenses by their details instead of `rn`; includes `.100` batched, time-bounded, previewable DOR/Badger catch-up. **Live `.86`** (deployed 2026-11-19 with clasp). |
-| Distribution Outreach Apps Script | `2026.11.19.37-APP` in `docs/reference/distribution-outreach/Code.gs` | **`.37` pending deploy:** Not a buyer blocks final mailer delivery; `.36` also refuses a recorded hard bounce. **Live `.35`** (deployed 2026-11-05; project **distribution outreach**, attached to **Distribution Hub**). |
+| Netlify web app and staff proxy | `2026.11.20.92-WEB` (page, staff proxy, tracking) / `2026.11.19.81-WEB` (signup page) | **Live `.92`** (production branch is at `codex/work` bb924e8; live page checked 2026-11-21). Sign-up `.81`; order and sell sheet `.58`. |
+| Inventory API Apps Script | `2026.11.20.107-APP` | **Live `.107`** (Karl deployed with clasp; recorded 2026-11-21). The weekly Directory quality check runs on it for real, Mondays about 6:20 AM Central; first live run 2026-11-23. |
+| Distribution Outreach Apps Script | `2026.11.19.37-APP` in `docs/reference/distribution-outreach/Code.gs` | **Live `.37`** (Karl; recorded 2026-11-21; project **distribution outreach**, attached to **Distribution Hub**). |
 | Public customer Netlify proxy | `2026.10.08.5-WEB` | Deployed 2026-10-08. |
-| Badger invoice parser | `2026.11.20.3` in `docs/reference/badger-parser/Code.gs` | **`2026.11.20.3` pending deploy:** confirmed read-only customer pull maps Badger's live detail shape and refuses unexpected fields. `2026.10.08.3` live in the Badger Invoice Tracker since 2026-10-08. |
+| Badger invoice parser | `2026.11.20.3` in `docs/reference/badger-parser/Code.gs` | **Live version not recorded.** The duplicate-number fix (`2026.11.17.1`) is live: Parser State shows SS171 and SS0171 both imported on 2026-11-18. Karl to confirm whether `2026.11.20.3` (read-only Badger customer pull) is deployed. |
+
+**Record every deploy here in the same session.** On 2026-11-21, `.107`, outreach `.37` and page `.92` were live but still listed as pending, which misled two reviews.
 
 Branches: develop on `codex/work`; Netlify production builds `codex/distribution-system-foundation`. Promote reviewed work with `git push origin codex/work:codex/distribution-system-foundation` (fast-forward only); never commit directly to the production branch. Remote: `https://github.com/sturgeonspirits/self-distribution.git`. Karl's Mac checkout is `~/self-distribution-app` (aligned with `codex/work` on 2026-10-17; chat's old commit `0c3cea3` kept on branch `backup/chat-sellsheet-2026-10-15`).
 
@@ -30,26 +33,33 @@ Standing facts:
 
 ## Open items
 
-- **Order emails (2026-11-17, live; chat review pending, `claude/chat-request-order-notification-clarity-2026-11-17.md`):** first live order ORD-20261117-C50E96EA (Acorn Ridge / Tim's Hardware Store) asked in its notes for Dill Vodka and Orange Vodka; Karl had both set `active` = TRUE on the SKUs tab on 2026-11-17. Also: every SKUs `toast_stock_date` is still 2026-10-04, so the weekly Toast stock import may not be running (check `installToastStockImport()`).
+### Needs Karl's decision
 
-- **Sequences (Part B of `claude/chat-request-campaign-sequences-2026-11-05.md`):** Phases 2 and 4 live in `.59`; migration run 2026-11-05 (4 sequences; duplicate "flawed local campaign" deleted); `runSequenceStepCheck()` drafted 5 step campaigns for Karl to review (Oshkosh FU1 (more) 12, Oshkosh FU2 84, Sep 23 FU1 21, Sep 23 FU2 4, Fond Du Lac FU1 44). **Phase 3 live since 2026-11-17 (Deploy 2: Inventory API `.65`, page `.66`, proxy `.67`);** chat reviewed it (`claude/chat-review-findings-sequences-phase-3-2026-11-05.md`, 2 P1 + 3 P2, all fixed in `.62`). Layout polish of the cards is open for chat.
-- Zoho's usage policy disallows bulk/marketing mail through Zoho Mail at any pace. `.50`/`.34`/`.59` now pace sends and stop on Outbox holds, but moving outreach to a dedicated sender remains open.
-- Bitters: Badger invoices used 187mL (unit 7) but SKUs list 50ml (unit 19); Karl to decide which the Hub should invoice. Canned-cocktail unit support is deployed in Inventory API `.50`.
-- Chat round 2 of `claude/chat-review-campaign-tools-2026-10-17.md` (unique-match P2 fix `67aa20c`; re-applied sell-sheet change and narrow-phone header fix `bf89d1d`) was not confirmed before the 2026-10-17 promotion.
-- Scheduled campaign "second email campaign -- Oshkosh 2" (89, Follow-up 1, 2026-10-20 10:33 CDT) includes 3 businesses not from its source (Gardina's Restaurant, Jerry's Tavern LLC, Oshkosh Arena); "Initial prospect campaign — Oct 17, 2026" (31) is entirely inside it (duplicates are blocked at send). Karl to decide; the 31 can now be deleted.
-- Appleton group is due for Follow-up 2 (since 2026-10-13); its Follow-up 1 went out 2026-10-06 in a campaign named "Initial prospect campaign — Oct 6, 2026" (can now be renamed).
-- Outreach drawing glitch on Karl's Android Chrome: page content verified correct (desktop Chrome, Firefox on the phone draws it fine); parked.
+- **Sequences (Part B of `claude/chat-request-campaign-sequences-2026-11-05.md`):** Phases 2-4 live (Phase 3 since 2026-11-17). `runSequenceStepCheck()` drafted 5 step campaigns for Karl to review: Oshkosh FU1 (more) 12, Oshkosh FU2 84, Sep 23 FU1 21, Sep 23 FU2 4, Fond Du Lac FU1 44. Chat's Phase 3 review findings are fixed (`.62`); layout polish of the cards is open for chat.
+- Older campaigns: "second email campaign -- Oshkosh 2" (89, Follow-up 1) includes 3 businesses not from its source (Gardina's Restaurant, Jerry's Tavern LLC, Oshkosh Arena); "Initial prospect campaign — Oct 17, 2026" (31) is entirely inside it and can be deleted. Appleton is due for Follow-up 2 (since 2026-10-13); its Follow-up 1 went out in a campaign named "Initial prospect campaign — Oct 6, 2026" (can be renamed).
+- Bitters: Badger invoices used 187mL (unit 7) but SKUs list 50ml (unit 19); which should the Hub invoice? (Canned-cocktail units are live since `.50`.)
+- Bulk outreach through Zoho Mail: Zoho's usage policy disallows bulk/marketing mail at any pace; `.50`/`.34`/`.59` pace sends and stop on Outbox holds. Moving campaigns to a dedicated sender is open. Note: ZeptoMail is transactional-only, and most marketing senders require opt-in lists, which DOR-sourced prospects are not; check a provider's policy on cold B2B outreach first.
+- Production cutover runbook (`docs/production-cutover-runbook-2026-09-25.md`) is out of date (see Known issues); Karl to confirm it can be retired.
 
-**Deploy 1 (2026-11-05): steps 1–4 done** (outreach `.35`, Inventory API `.53`, `repairHubStructure()`, web `.61`). Still open:
-- One-time, only when no campaign is Scheduled or Sending (a batch writes whole rows sized to the column count): delete the empty duplicate column **U** "Schedule Detail" on **Outreach Campaigns** and the empty duplicate column **Y** "Message Stage" on **Outreach Campaign Recipients** (checked read-only 2026-11-05: V and Z hold the data).
+### Follow-ups
 
-Setup steps recorded in the history whose completion was **not re-verified** on 2026-10-17 (check before relying on them):
-- `repairHubStructure()` after releases that append columns or Email Editor blocks (sell sheet section, Cocktail list template, CUSTOMER ORDER INVITE EMAIL, Badger Invoice Links tab).
-- Triggers: `installOutreachCampaignScheduler()`, `installToastStockImport()`, `installInboundReplyChecker()`, `installHubReadCacheWarmer()`.
-- Canonical public site: set Hub Configuration `Public site URL` to `https://distribution.sturgeonspirits.com`, then run `rewritePublicSiteUrls()` once.
-- Email Editor B13 (and the Campaign Settings row-24 formula): point the sell sheet link at `https://distribution.sturgeonspirits.com/sell-sheet.html` instead of the Drive PDF.
-- Delete the unused `Current Prices` tab in the Badger Invoice Tracker.
-- Welcome email: chat's staging checks on first real use (approve → review → send → reopen → Send again → a later save keeps Ordering Invite Date).
+- **Toast stock is stale:** every SKUs `toast_stock_date` is still 2026-10-04 and the **Toast 86 Reports** Drive folder (`1kwjhWWg4KONWlcl-FmQ8oXeR9De6e5d_`) showed no CSV on 2026-11-21. The weekly step (2026-10-04 plan, `claude/wholesale-catalog-and-pricing-2026-10-04.md`): after the weekly Toast count, export Toast Reports > Menus > 86 Report (threshold 9999) as CSV and save it in that folder; the hourly `importLatestToastStockReport` updates `toast_stock` / `toast_stock_date` on the SKUs tab (Inventory Backend) and logs unmatched items to the Hub Audit Log. The order page shows only In stock / Out of stock.
+- **Directory quality check, first live run Monday 2026-11-23:** expect about 929 DOR licensees within 30 miles added to the Directory (11-20 preview) and the License Leads tab filled; check both afterward.
+- Order emails (2026-11-17, live; chat review pending, `claude/chat-request-order-notification-clarity-2026-11-17.md`): first live order ORD-20261117-C50E96EA (Acorn Ridge / Tim's Hardware Store) asked for Dill Vodka and Orange Vodka; Karl set both `active` = TRUE on 2026-11-17.
+- Chat round 2 of `claude/chat-review-campaign-tools-2026-10-17.md` (unique-match P2 fix `67aa20c`; sell-sheet change and narrow-phone header fix `bf89d1d`) was not confirmed before the 2026-10-17 promotion.
+- Deploy 1 leftover, one-time, only when no campaign is Scheduled or Sending (a batch writes whole rows sized to the column count): delete the empty duplicate column **U** "Schedule Detail" on **Outreach Campaigns** and the empty duplicate column **Y** "Message Stage" on **Outreach Campaign Recipients** (checked read-only 2026-11-05: V and Z hold the data).
+- Setup steps whose completion was **not re-verified** since 2026-10-17 (check before relying on them):
+  - `repairHubStructure()` after releases that append columns or Email Editor blocks (last run 2026-11-20 with `.102`).
+  - Triggers: `installOutreachCampaignScheduler()`, `installToastStockImport()` (installed 2026-10-04 with `.20`), `installInboundReplyChecker()`, `installHubReadCacheWarmer()`. Confirmed: `installBadgerStatusSyncTrigger()` (2026-11-17), `installDirectoryQualityCheck()` (2026-11-20).
+  - Canonical public site: Hub Configuration `Public site URL` = `https://distribution.sturgeonspirits.com`, then `rewritePublicSiteUrls()` once. (Hub Configuration held only `outreach_hourly_send_limit` on 2026-11-21, so this key is not set there.)
+  - Email Editor B13 (and the Campaign Settings row-24 formula): sell sheet link to `https://distribution.sturgeonspirits.com/sell-sheet.html` instead of the Drive PDF.
+  - Delete the unused `Current Prices` tab in the Badger Invoice Tracker.
+  - Welcome email: chat's staging checks on first real use (approve → review → send → reopen → Send again → a later save keeps Ordering Invite Date).
+- Second, non-admin staff sign-in still unverified (Karl's admin sign-in is verified).
+
+### Parked
+
+- Outreach drawing glitch on Karl's Android Chrome: page content verified correct (desktop Chrome, Firefox on the phone draws it fine).
 
 ## Future-push backlog
 
@@ -57,6 +67,7 @@ Setup steps recorded in the history whose completion was **not re-verified** on 
 
 ## Recent changes (one line each; details in `docs/history/` and git)
 
+- 2026-11-21 (Claude, docs and tests only): recorded the live `.107`, outreach `.37` and page `.92`; corrected stale staging/cutover, sending, Toast and staff-access notes; open items grouped by decision / follow-up / parked; entries before 2026-11-13 moved to `docs/history/PROJECT_STATUS-2026-10-12-to-2026-11-12.md`; added `tests/web-version-parity.test.mjs` (go.js header comment corrected to `.92`).
 - 2026-11-20 `.107-APP` (Claude): the licensee count differed on every preview. Live tests: DOR's default sort=0 reorders ties per request, so pages overlap and skip (Class A: 3,835 of 3,849 distinct); sort=1 returned the identical complete list on repeated parallel pulls; DOR stores 2 Class A records twice. Pulls now use sort=1 and are checked (page start rows, cross-page repeats) with a one-at-a-time refetch. Tests: `tests/directory-quality.test.mjs`.
 - 2026-11-20 `.106-APP` (Claude): second preview: 3,123 would-adds within 60 mi (50 within 15, 929 within 30, 2,115 within 45), 159 fills, 29 real differences, Badger 1 fill and 2 differences, 19 bounces. Karl chose to add new businesses only within 30 miles (straight line): Campaign Settings "New business radius miles"; fills keep the 60-mile service area. Tests: `tests/directory-quality.test.mjs`.
 - 2026-11-20 `.105-APP` (Claude): first full preview (`.104`, 12 s, 3,376 rows): 3,128 DOR would-adds within 60 mi, 163 would-fills, 46 differences, 19 bounces, 8 reply-note rows. Fixed: "NULL"/ALL CAPS/"Last, First" agent names; format-only contact, city, street and ZIP+4 differences; Street Address never filled (alias); preview adds counted in Directory totals; reply backfill writing notes-only rows. Preview now counts adds by distance band. Tests: `tests/directory-quality.test.mjs`.
@@ -100,32 +111,7 @@ Setup steps recorded in the history whose completion was **not re-verified** on 
 
 - 2026-11-17 `.65-APP` / page `.66-WEB` / proxy `.67-WEB` (Claude; chat out of tokens; not deployed): Karl couldn't see the bottles from the new-order email (its link opened the Online Order Requests row; products are on Online Order Lines). The email now carries a priced product table, total, customer notes in a highlighted box, delivery details, and an "Open this order in the Hub" link (`/?order=ORD-...`, opened from fresh data); the sheet row is a footer link. The order window leads with Products (price, line totals, total, notes, next-step hint) and can add or remove products before invoicing (`updateOnlineOrderLines`; active SKUs only; audited). Tests: `tests/order-notification.test.mjs`.
 
-- 2026-11-05 (tests only): Karl decided a follow-up step draft he deletes is drafted again at the next daily check ("next day is good"); pinned by a test in `tests/sequences.test.mjs`. Initial is never redrafted by the daily check.
-- 2026-11-05 `.62-APP` / proxy `.64-WEB` (Claude; not deployed): fixes for chat's Phase 3 review. Two Directory rows sharing an address never both get a sequence (cell left, warning audited); a longer gap waits until the sequence's Review draft is gone; idle syncs write nothing and Build next step skips the sync for a stored sequence; the daily check never redrafts Initial; deleting a sequence's last live campaign clears its Directory Sequence IDs at once. Tests: `tests/sequences.test.mjs`.
-- 2026-11-05 `.61-APP` / `.63-WEB` (Claude; chat out of tokens; not deployed): sequences Phase 3. Campaigns shows one card per sequence (steps in order with sent dates and counts, each step's campaigns as chips that open the review window, "separate campaign" on ones sent before sequences, due and stopped counts, finished sequences folded away) and lists only the other campaigns below; **Build next step** drafts what is due for that sequence now; **Name and timing** renames a sequence or changes its days between steps (now used for its due dates). New Initial campaigns become sequences on their own (`syncSequences_()` before every step check; shared `writeSequencePlan_()`; stale Directory Sequence IDs cleared). Tests: `tests/sequences.test.mjs`.
-- 2026-11-05: `.59` deployed; `previewSequenceMigration()` on live data matched the preview doc (one label glitch, fixed in `.60`: Appleton Follow-up 1 shown as "Dec 31–Oct 6" from a sent date stored as a serial number).
-- 2026-11-05 `.59-APP` + live data (Claude, at Karl's request): the Sep 23 campaign reached prospects far outside the area. The 67 of its businesses with no distance on file had Next Email set to "Complete" and Next Follow-Up cleared in the Directory (rows 2–405; verified only those cells changed); the 26 within 15 miles continue. Wendt's on the Lake (row 124) set to Status/Outcome Closed. Sequences now treat Next Email "Complete" as ended.
-- 2026-11-05 `.58-APP` (Claude): fixes for chat's review of `.54`–`.57` (`claude/chat-review-findings-sequences-2026-11-05.md`): legacy single campaigns, re-sent steps, shared addresses, migration under one lock, DST window label, window re-checked after the hold wait, sequence step needs its columns, failing step check retried with a task, cached `outreachSequences`. Open: a deleted step draft is drafted again the next day (Karl to decide); mailer Outbox count still reports transient holds (Hub re-check covers it). `outreach_hourly_send_limit` set to 30 in Hub Configuration.
-- 2026-11-05 `.57-APP` (Claude): sending window, Karl: email should land late morning to early afternoon, not around the clock (default `10:00-14:00 Mon-Fri`, Hub Configuration `outreach_send_window`, `off` disables); a held send is re-checked ~45 s later in the same run and sending continues if the Outbox emptied (Appleton had slowed to one email per five minutes). Tests: `tests/send-pacing.test.mjs`.
-- 2026-11-05 `.56-APP` (Claude; not deployed): sequences Phase 4. Daily step check from the hourly task sync drafts due steps (new "sequence" audience mode on the normal create path; never approves or sends); drafted steps get an immediate "Review and approve" task; sequence members get no separate "Send ..." reminder; default sequence names by area and start date. `.54` deployed 2026-11-05. Tests: `tests/sequences.test.mjs`.
-- 2026-11-05 `.55-APP` / staff proxy `.62-WEB` (Claude; not deployed): sequences Phase 2. `buildSequencePlan_` groups step campaigns by `source_campaign_id` chains (or stored Sequence ID), gives each business to one sequence (the one that sent its Initial email), and takes its step from the Activity Log; `outreachSequences` read action; editor-only `previewSequenceMigration()` / `migrateCampaignsToSequences()`; `repairHubStructure()` adds the Outreach Sequences tab and Sequence ID / Step columns. Tests: `tests/sequences.test.mjs`.
-- 2026-11-05 `.54-APP` (Apps Script only): the Outbox hold is re-checked after 4 minutes (was 10), so a send that Zoho only had in transit no longer slows a campaign to one email per 10–15 minutes. Deploy 1 (`.53`, outreach `.35`, web `.61`) went live 2026-11-05; `repairHubStructure()` was run.
-- 2026-11-05 `.53-APP` / `.61-WEB` (Claude; chat out of tokens): fixes from `claude/review-7361d41-2026-11-05.md`. The result window ignores a late details load during a save (no double save); `ensureHeaderColumns_` reads the live header only when a column looks missing; `isDoNotContact_` adds only Closed; Deploy 1 order and the duplicate-column cleanup added above.
-- 2026-11-05 `.52-APP` / outreach `.35-APP` (pending Claude Phase 1 review; no deploy): Closed is a permanent non-emailable outcome; outcome dialog is immediately usable while refreshing its record; campaign cards show current schedule and sent dates, clear finished schedules, and refresh Sending/Scheduled state; scheduler releases a hold early after 10 minutes when Zoho's Outbox is empty; live-header checks prevent duplicate campaign columns.
-- 2026-11-05 `.51-APP` (deployed 2026-11-05; Apps Script only): a Zoho Outbox hold makes a scheduled campaign (and Send remaining) wait out the hour and continue on its own instead of pausing until someone clicks again; it pauses only after 3 held sends in a row with no clean send (`OUTREACH_SEND_HOLD_STREAK`) or an uncertain delivery. Prompted by the Appleton Follow-up 2 campaign pausing twice on 2026-11-05 after Zoho held one email for a couple of minutes. Tests: `tests/send-pacing.test.mjs`.
-- 2026-11-01 `.60-WEB` (pending release): allow Outreach reply cards and completed-reply rows to shrink and wrap so 390 px phones and the 280 px Galaxy Fold do not scroll sideways.
-- 2026-11-01: verified live `.50-APP`, outreach `.34-APP`, and `.59-WEB`; unauthenticated inventory returns 401 and authenticated Outreach/Orders load. Pinned the Badger parser test clock to its October fixture so the full suite remains stable across month boundaries (production parser unchanged).
-- 2026-10-30 `.50-APP` / outreach `.34-APP` / `.59-WEB`: send pacing (budget across every real send: 20/hour, 2 per 5 minutes; scheduler one batch of 2 per run; Send remaining = schedule now); mailer reports Zoho Outbox holds, which stop campaign sends for an hour and pause scheduled campaigns. Tests: `tests/send-pacing.test.mjs`.
-- 2026-10-29 `.49-APP` (Inventory API only, no web change): hourly sync of open Hub work into the weekly task manager's Tasks tab (`syncTaskManager_`; keys `hub-reply-`, `hub-fu-`, `hub-cmp-`, `hub-cmprun-`, `hub-app-`, `hub-order-`); tasks close themselves when the Hub item clears. Tests: `tests/task-manager-sync.test.mjs`.
-- 2026-10-28 `.58-WEB` (sell sheet, order page) plus sheet data: canned cocktails restored. The Oct 5 setup step was never done, so the SKUs tab had no cans. Added Price Tiers **Canned cocktail** $3 (per can; $72 per case of 24) and five active SKUs (Grape Popsicle, Cherry Limeade, Mango Collins, Fat Golfer, Fresh-kosh; size `12 oz can`, `invoice_volume` `330ml`, 24 per case, section Canned cocktails). Sell sheet prices the group as **$72/case of 24**; order page help mentions cans and mixing flavors. Print catalog shrink now starts above 70 lines; checked 2 pages public and priced with cans.
-- 2026-10-21 `.57-WEB` (sell sheet only): print was spilling onto a third page (Bitters and contact block) after New and Best seller joined the page-two catalog. Print catalog type 12pt/1.24 → 11pt/1.14 and scales down automatically (to 80% at most) when the catalog has more than 74 lines. Checked with live catalog data, public and priced, in headless Chromium letter print: 2 pages; still 2 with 24 extra test products.
-- 2026-10-17 `.56-WEB` (production, chat's `6655194`, pushed by Claude because the Mac has no GitHub sign-in): Log outcome is non-editable while its live record loads or its save is pending, so loading cannot erase entered text and a save records exactly the outcome, date and note shown when Save was pressed.
-- 2026-10-17 `.47-APP`/`.54`/`.55-WEB` (production): delete unsent campaigns; rename campaigns; follow-ups from an earlier campaign match its businesses by account ID → email → name (unique matches only) with a default "Same businesses" mode and no distance/fit/area filters; previews list who was left out and why, including dates not reached; order page "View sell sheet" link and sell-sheet page-two catalog (chat's `0c3cea3`, re-applied) with a narrow-phone header fix. Chat review: no P1; P2 fixed.
-- 2026-10-17: `PROJECT_STATUS.md` and both `Code.gs` headers trimmed; history moved to `docs/history/` (code unchanged).
-- 2026-10-14 `.50`–`.53-WEB` (production): campaign load race guard (chat P2); section menu always visible in phone count mode; Outreach lists draw 50 at a time; icons converted once; Campaigns shows newest 10.
-- 2026-10-14 `.49-WEB` (production): Zoho sign-in callback recovers instead of showing raw JSON; phone count button label.
-- 2026-10-14 order page `2026.10.14.2-WEB` (production): no empty product box while products load.
-- 2026-10-12 (deployed): Added to Badger checkbox; welcome email on approval with recording fix; every list filter starts on All; customer form fixes.
+Older entries: `docs/history/`.
 
 ## Direct links
 
@@ -148,11 +134,14 @@ Every deploy handoff must name the Apps Script project as it appears in Apps Scr
 | `docs/reference/distribution-outreach/Code.gs` | **distribution outreach** | **Distribution Hub** | https://script.google.com/u/0/home/projects/1T7vAcnmNjZsI8Ym9udfbsi4DDuoDB82SNeoQmjtKTiR0PHer6g_XuFan/edit |
 | `docs/reference/badger-parser/Code.gs` | tracker's script (file `Invoice Parser.gs`) | **Badger Invoice Tracker** | Extensions > Apps Script in the tracker |
 
-### Staging spreadsheets
+### Spreadsheets (live)
 
-- Distribution Directory and Leads: https://docs.google.com/spreadsheets/d/1tWJ2ZnFT15cjuk7qvCWbJUJX1pAQYYsbSy5owWa8Uzo/edit
-- Inventory Backend rollback source: https://docs.google.com/spreadsheets/d/1asGSIuz65hhbXbanDSuLdgsasDKqAyVWgu7DGi42Il8/edit
-- Badger Invoice Tracker: https://docs.google.com/spreadsheets/d/10KM-L-iAXJ4WQ1HfLWWoGkINsi9tEvVs6J5XiHBsMIQ/edit
+The Hub runs on these sheets; the "staging" names in older notes and in `01-core.gs` comments predate live use.
+
+- Distribution Hub (Directory, campaigns, Hub tabs; script **distribution outreach**): https://docs.google.com/spreadsheets/d/1tWJ2ZnFT15cjuk7qvCWbJUJX1pAQYYsbSy5owWa8Uzo/edit
+- Distribution Hub - Inventory Backend (SKUs, Price Tiers, inventory; script **Inventory API**; `inventory_migration_status` is not ACTIVE, so inventory reads stay here): https://docs.google.com/spreadsheets/d/1asGSIuz65hhbXbanDSuLdgsasDKqAyVWgu7DGi42Il8/edit
+- Badger Invoice Tracker (live): https://docs.google.com/spreadsheets/d/1nmHzrZLB2Kv-bLf3z0GBXbkO0XqUL-ETCxUlOlidSEk/edit
+- STAGING - Badger Invoice Tracker (parser test copy only): https://docs.google.com/spreadsheets/d/10KM-L-iAXJ4WQ1HfLWWoGkINsi9tEvVs6J5XiHBsMIQ/edit
 
 ## Authoritative source files
 
@@ -171,7 +160,7 @@ Every deploy handoff must name the Apps Script project as it appears in Apps Scr
 
 Do not use `index-old.html` as current source. Do not modify or delete `_karl-edit/` or other untracked owner files unless the owner explicitly requests it.
 
-`README.md` and the version comment in `netlify.toml` contain older version labels. Use this file and the version constants inside the deployable source files as the current version authority until those older labels are reconciled.
+Use this file and the version constants inside the deployable source files as the version authority; `README.md` and `netlify.toml` point here instead of carrying version labels. `tests/web-version-parity.test.mjs` fails when the -WEB versions differ.
 
 ## System boundaries
 
@@ -179,7 +168,7 @@ Do not use `index-old.html` as current source. Do not modify or delete `_karl-ed
 Browser
   -> Netlify /api/inventory
   -> Inventory API Apps Script
-  -> staging Google Sheets
+  -> Google Sheets (Distribution Hub, Inventory Backend, Badger Invoice Tracker)
   -> Distribution Outreach Apps Script for email only
   -> Zoho Mail API
 ```
@@ -188,7 +177,7 @@ Browser
 - Inventory API owns spreadsheet reads/writes, saved drafts, eligibility, activity, accounts, orders, inventory, and audit records.
 - Distribution Outreach owns Zoho credentials, final email validation, Karl-only test delivery, real delivery, idempotency receipts, and Activity Log send results.
 - `Pilot Review` is a read-only legacy archive and duplicate-send source. Do not restore sending from that tab.
-- The deployed system still sends one recipient at a time. The un-deployed campaign source adds a review-first batch controller that invokes the mailer sequentially, caps each run at 10, and stops at the first anomaly.
+- Campaigns and sequence steps send through the scheduler: the mailer is called one email at a time, paced by Hub Configuration `outreach_hourly_send_limit` (30) and 2 per 5 minutes, inside `outreach_send_window` (default 10:00-14:00 Mon-Fri); a Zoho Outbox hold makes the campaign wait and continue on its own.
 - Never report an email as sent unless Zoho returned a nonblank message ID and the Activity Log/Zoho state supports the result.
 
 ## Configuration names
@@ -288,11 +277,11 @@ If a send times out or returns an unreadable response, do not retry blindly. Che
 
 - Google Sheets can still respond slowly. The app now avoids several duplicate reads and shows timeout errors, but additional profiling may be needed if Orders & Accounts repeatedly fails.
 - Zoho OIDC login and Karl's `admin` role are deployed and verified. A second, non-admin staff-account verification remains outstanding.
-- Toast stock integration is not planned. Toast Standard API access requires a Restaurant Management Suite subscription the owner has declined (2026-09-25). The order page keeps staff-confirmed availability.
+- Toast API integration is not planned: Toast Standard API access requires a Restaurant Management Suite subscription the owner has declined (2026-09-25). Stock comes from the weekly Toast 86 Report CSV import instead (see Open items); SKUs without a Toast match show staff-confirmed availability.
 - Newsletter records exist, but newsletter sending remains disabled.
 - Campaigns verified live: Karl sent a 111-recipient campaign on 2026-09-25 without problems.
-- Production cutover is pending. See `docs/production-cutover-runbook-2026-09-25.md`. The Hub still reads the staging Inventory Backend copy (from 2026-09-15; missing the 2026-09-17 count) and the staging Badger Tracker.
-- Staff access tab (`.12-WEB`): complete the Staff Access tab, service-account share, Google Sheets API enablement, and `STAFF_ROSTER_SHEET_ID` before promotion; verify an admin and a non-admin sign-in in staging before promoting. If a promotion blocks sign-in, return foundation to `.8-WEB` commit `be8752c` as documented in `docs/staff-access-setup.md`.
+- No separate production cutover has happened or is pending in code: the Hub takes live orders, creates live Badger invoices and sends live campaigns on the sheets under Direct links. `docs/production-cutover-runbook-2026-09-25.md` describes a move that never ran and is out of date.
+- Staff access (roster via `STAFF_ROSTER_SHEET_ID`, `netlify/lib/staff-roster.js`) is live; the old `.12-WEB` rollback to `.8-WEB` no longer applies.
 
 
 ## Low-token workflow for future Codex tasks

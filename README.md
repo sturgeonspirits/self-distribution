@@ -1,11 +1,10 @@
 # Sturgeon Distribution Hub
 
-- Web version: `2026.10.05.20-WEB`
-- Inventory API version: `2026.10.05.27-APP`
+- Release versions: see `PROJECT_STATUS.md` (Current state). The versions inside each deployable file are the authority.
 
-Repository: `sturgeonspirits/sturgeon-distribution-hub`
+Repository: `sturgeonspirits/self-distribution`
 
-Netlify site: `sturgeon-distribution-hub`
+Netlify site: `distribution-hub`
 
 Public site: `https://distribution.sturgeonspirits.com`
 

@@ -1,4 +1,4 @@
-# App version: 2026.10.28.58-WEB
+# Release versions: see PROJECT_STATUS.md (Current state).
 [build]
   publish = "."
   functions = "netlify/functions"
