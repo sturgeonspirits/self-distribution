@@ -1,6 +1,6 @@
 # Sturgeon Distribution Hub — Project Status
 
-Last updated: 2026-11-21
+Last updated: 2026-11-24
 
 Read this file before inspecting the repository or changing the application. Never put secret values in this file.
 
@@ -43,6 +43,7 @@ Standing facts:
 
 ### Follow-ups
 
+- Sell sheet print/PDF should not show the "Place an order" buttons; hide them in print (Karl, 2026-11-24).
 - **Toast stock is stale:** every SKUs `toast_stock_date` is still 2026-10-04 and the **Toast 86 Reports** Drive folder (`1kwjhWWg4KONWlcl-FmQ8oXeR9De6e5d_`) showed no CSV on 2026-11-21. The weekly step (2026-10-04 plan, `claude/wholesale-catalog-and-pricing-2026-10-04.md`): after the weekly Toast count, export Toast Reports > Menus > 86 Report (threshold 9999) as CSV and save it in that folder; the hourly `importLatestToastStockReport` updates `toast_stock` / `toast_stock_date` on the SKUs tab (Inventory Backend) and logs unmatched items to the Hub Audit Log. The order page shows only In stock / Out of stock.
 - **Directory quality check, first live run Monday 2026-11-23:** expect about 929 DOR licensees within 30 miles added to the Directory (11-20 preview) and the License Leads tab filled; check both afterward.
 - Order emails (2026-11-17, live; chat review pending, `claude/chat-request-order-notification-clarity-2026-11-17.md`): first live order ORD-20261117-C50E96EA (Acorn Ridge / Tim's Hardware Store) asked for Dill Vodka and Orange Vodka; Karl set both `active` = TRUE on 2026-11-17.
@@ -67,6 +68,7 @@ Standing facts:
 
 ## Recent changes (one line each; details in `docs/history/` and git)
 
+- 2026-11-24 `.93-WEB` (Claude): fixed broken sign-in. Commit 493dca3 left stale `closed`/`shown` lines in the Outreach count label, so the page script failed to parse and no button worked. Removed them.
 - 2026-11-21 (Claude, docs and tests only): recorded the live `.107`, outreach `.37` and page `.92`; corrected stale staging/cutover, sending, Toast and staff-access notes; open items grouped by decision / follow-up / parked; entries before 2026-11-13 moved to `docs/history/PROJECT_STATUS-2026-10-12-to-2026-11-12.md`; added `tests/web-version-parity.test.mjs` (go.js header comment corrected to `.92`).
 - 2026-11-20 `.107-APP` (Claude): the licensee count differed on every preview. Live tests: DOR's default sort=0 reorders ties per request, so pages overlap and skip (Class A: 3,835 of 3,849 distinct); sort=1 returned the identical complete list on repeated parallel pulls; DOR stores 2 Class A records twice. Pulls now use sort=1 and are checked (page start rows, cross-page repeats) with a one-at-a-time refetch. Tests: `tests/directory-quality.test.mjs`.
 - 2026-11-20 `.106-APP` (Claude): second preview: 3,123 would-adds within 60 mi (50 within 15, 929 within 30, 2,115 within 45), 159 fills, 29 real differences, Badger 1 fill and 2 differences, 19 bounces. Karl chose to add new businesses only within 30 miles (straight line): Campaign Settings "New business radius miles"; fills keep the 60-mile service area. Tests: `tests/directory-quality.test.mjs`.

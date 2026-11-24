@@ -1,7 +1,7 @@
-// App version: 2026.11.20.92-WEB
+// App version: 2026.11.24.93-WEB
 import { createHmac, timingSafeEqual } from "node:crypto";
 
-const APP_VERSION = "2026.11.20.92-WEB";
+const APP_VERSION = "2026.11.24.93-WEB";
 const TRACKED_TARGETS = new Set(["sell_sheet", "application", "order"]);
 // Directory details carried through so the form or ordering page is filled in for the customer.
 const PREFILL_PARAMS = ["business", "email", "contact", "phone", "address", "city", "state", "zip"];
